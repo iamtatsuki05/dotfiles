@@ -39,6 +39,7 @@ brew install --cask unity-hub
 brew install --cask rectangle-pro
 brew install --cask betterdisplay
 brew install --cask wireshark
+brew install --cask google-cloud-sdk
 brew install --cask obs
 
 
@@ -61,3 +62,4 @@ brew install derailed/k9s/k9s
 brew install cloudflared
 brew install uv
 brew install jq
+brew install awscli
