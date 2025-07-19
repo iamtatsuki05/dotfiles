@@ -41,6 +41,7 @@ brew install --cask betterdisplay
 brew install --cask wireshark
 brew install --cask google-cloud-sdk
 brew install --cask obs
+brew install --cask 1password-cli
 
 
 # Install CLI tools
