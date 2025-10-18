@@ -1,7 +1,7 @@
 #!/usr/bin/zsh
 
-# copy dotfiles
-cp -r dotfiles/* ~/
+# copy dotfiles (use dotfiles/. to include hidden files and avoid zsh glob "no matches" errors)
+cp -r dotfiles/. ~/
 
 # Install Homebrew
 sh brew_install.sh
