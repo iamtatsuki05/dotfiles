@@ -1,8 +1,8 @@
 # dotfiles
 
-Please this command
+Please this command(support for mac)
 ```
-git clone https://github.com/iamtatsuki05/m1_mac_setup.git
-cd m1_mac_setup
+git clone https://github.com/iamtatsuki05/dotfiles.git
+cd dotfiles
 sh main.sh
 ```
