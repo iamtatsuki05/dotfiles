@@ -1,4 +1,4 @@
-# mac_setup
+# dotfiles
 
 Please this command
 ```
