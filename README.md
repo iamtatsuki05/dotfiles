@@ -1,4 +1,4 @@
-# m1_mac_setup
+# mac_setup
 
 Please this command
 ```
