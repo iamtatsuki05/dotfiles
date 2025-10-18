@@ -1,5 +1,8 @@
 #!/usr/bin/zsh
 
+# copy dotfiles
+cp -r dotfiles/* ~/
+
 # Install Homebrew
 sh brew_install.sh
 
