@@ -1,0 +1,25 @@
+[general]
+import = ["~/.config/alacritty/themes/themes/cyber_punk_neon.toml"]
+live_config_reload = true
+
+[terminal]
+
+[terminal.shell]
+program = "/bin/zsh"
+args = ['--login']
+
+[window]
+dimensions = { columns = 200, lines = 60 }
+padding = { x = 8, y = 4 }
+# opacity = 0.85
+
+[cursor]
+style = "Beam"
+
+[scrolling]
+history = 100000
+multiplier = 3
+
+[font]
+size = 14.0
+offset = { x = 0, y = 2 }
