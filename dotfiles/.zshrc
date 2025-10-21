@@ -285,4 +285,4 @@ eval "$(mise activate zsh)"
 export PATH="/Users/okadatatsuki/.local/bin:$PATH"
 
 # start default apps
-tmux
+# tmux
