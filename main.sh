@@ -18,8 +18,7 @@ curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
 git clone https://github.com/tomasiser/vim-code-dark.git ~/.config/nvim/bundle/vim-code-dark.git
 ln -s ~/.config/nvim/bundle/vim-code-dark.git/colors/codedark.vim ~/.config/nvim/colors/codedark.vim
 
-git clone https://github.com/iamtatsuki05/neovim_config.git
-cp neovim_config/init.vim ~/.config/nvim/
+cp config/init.vim ~/.config/nvim/
 
 # Install Vim plugins automatically
 nvim -c 'PlugInstall' -c 'qa'
