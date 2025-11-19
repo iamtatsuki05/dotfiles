@@ -1,20 +1,23 @@
 #!/usr/bin/zsh
 
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
+SCRIPTS_DIR="$REPO_ROOT/scripts"
+DOTFILES_DIR="$REPO_ROOT/dotfiles"
+
 # copy dotfiles (use dotfiles/. to include hidden files and avoid zsh glob "no matches" errors)
-cp -r dotfiles/. ~/
+cp -r "$DOTFILES_DIR"/. ~/
 
 # Install Homebrew
-sh brew_install.sh
+sh "$SCRIPTS_DIR/brew_install.sh"
 
 # Setup default settings
-sh default_setup.sh
-# alacritty config
-mkdir -p ~/.config/alacritty
-cp configs/alacritty.yml ~/.config/alacritty/alacritty.yml
-# mise config
-mkdir -p ~/.config/mise
-cp configs/mise-config.toml ~/.config/mise/config.toml
+sh "$SCRIPTS_DIR/default_setup.sh"
 
+# Setup config settings
+sh "$SCRIPTS_DIR/setup_config.sh"
 
 # Install neovimconfig
 curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
