@@ -138,6 +138,7 @@ main() {
   # Log to stderr for user visibility
   echo "INFO: PID=$pid" >&2
   echo "INFO: LOG=$log_file" >&2
+  echo "INFO: To kill process: kill $pid" >&2
 
   # Send start notification
   notify_start "$pid" "$log_file"
