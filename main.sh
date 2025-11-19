@@ -8,8 +8,13 @@ sh brew_install.sh
 
 # Setup default settings
 sh default_setup.sh
+# alacritty config
 mkdir -p ~/.config/alacritty
 cp configs/alacritty.yml ~/.config/alacritty/alacritty.yml
+# mise config
+mkdir -p ~/.config/mise
+cp configs/mise-config.toml ~/.config/mise/config.toml
+
 
 # Install neovimconfig
 curl -fLo ~/.vim/autoload/plug.vim --create-dirs \

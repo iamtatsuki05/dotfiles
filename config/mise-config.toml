@@ -1,0 +1,37 @@
+[tools]
+node = "20.10.0"
+go = "1.25.4"
+bun = "latest"
+java = "21"
+python = "3.13.9"
+rust = "latest"
+
+[tasks.python-format]
+alias = "ruff-format"
+description = "ruffを使ってコードformatを実行"
+run = "uv run ruff check . --fix;uv run ruff format ."
+
+[tasks.python-lint]
+alias = "tox"
+description = "toxを実行"
+run = "uv run tox"
+
+[tasks.go-build]
+alias = "go-build"
+description = "goでbuildするコマンド"
+run = "GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build"
+
+[tasks.docker-compose]
+alias = "docker-compose-build"
+description = "compose fileを起動するコマンド"
+run = "docker compose up -d --build"
+
+[tasks.homebrew-update]
+alias = "brew-update"
+description = "homebrew, packageをアプデする"
+run = "brew update --auto-update;brew upgrade;brew cleanup"
+
+[tasks.git-head-commit-reset]
+alias = "git-head-commit-rest"
+description = "git commitの直近1件を取り消す"
+run = "git reset --soft HEAD^"
