@@ -34,6 +34,16 @@ alias = "tox"
 description = "toxを実行"
 run = "uv run tox"
 
+[tasks.tensorboard]
+alias = "tensorboard"
+description = "tensorboardを起動"
+run = "tensorboard --port 6006 --logdir ./ --host 0.0.0.0"
+
+[tasks.jupyterlab]
+alias = "jupyter"
+description = "jupyterlabを起動"
+run = "jupyter lab --port=8888 --ip=0.0.0.0 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+
 [tasks.go-build]
 alias = "go-build"
 description = "goでbuildするコマンド"
