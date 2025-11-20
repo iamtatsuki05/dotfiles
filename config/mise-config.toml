@@ -1,10 +1,27 @@
 [tools]
+# lang
+bun = "latest"
 node = "20.10.0"
 go = "1.25.4"
-bun = "latest"
-java = "21"
+golangci-lint = "latest"
+task = "latest"
+# mise use -g java@zulu-8.90.0.19 or zulu-11.84.17.0 or zulu-17.62.17.0 or zulu-21.46.19.0
+java = "zulu-21.46.19.0"
 python = "3.13.9"
+uv = "latest"
+poetry = "latest"
 rust = "latest"
+# infra
+docker-cli = "latest"
+docker-compose = "latest"
+k9s = "latest"
+mysql = "8.0.33"
+postgres = "16.11"
+redis = "8.2.0"
+terraform = "latest"
+aws-cli = "latest"
+aws-vault = "latest"
+gcloud = "latest"
 
 [tasks.python-format]
 alias = "ruff-format"
@@ -30,6 +47,11 @@ run = "docker compose up -d --build"
 alias = "brew-update"
 description = "homebrew, packageをアプデする"
 run = "brew update --auto-update;brew upgrade;brew cleanup"
+
+[tasks.homebrew-dump]
+alias = "brew-dump"
+description = "homebrewの依存関係を吐き出す"
+run = "rm ~/.Brewfile;brew bundle dump --global"
 
 [tasks.git-head-commit-reset]
 alias = "git-head-commit-rest"
