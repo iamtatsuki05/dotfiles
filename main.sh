@@ -53,6 +53,12 @@ setup_configs() {
   log_success "Application configs set up"
 }
 
+sync_agent_files() {
+  log_step "Syncing agent prompts and skills"
+  zsh "$DOTFILES_DIR/.agent/sync.sh"
+  log_success "Agent prompts and skills synced"
+}
+
 setup_neovim() {
   log_step "Setting up Neovim"
   sh "$SCRIPTS_DIR/setup_nvim.sh"
@@ -67,6 +73,7 @@ main() {
   echo
 
   copy_dotfiles
+  sync_agent_files
   install_homebrew
   setup_defaults
   setup_configs
