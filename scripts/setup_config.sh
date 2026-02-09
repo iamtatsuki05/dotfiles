@@ -36,6 +36,11 @@ main() {
     "$XDG_CONFIG_HOME/alacritty/alacritty.toml"
 
   install_config \
+    "Ghostty" \
+    "$CONFIG_DIR/ghostty/config" \
+    "$XDG_CONFIG_HOME/ghostty/config"
+
+  install_config \
     "mise" \
     "$CONFIG_DIR/mise-config.toml" \
     "$XDG_CONFIG_HOME/mise/config.toml"
