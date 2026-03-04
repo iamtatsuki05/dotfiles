@@ -1,6 +1,6 @@
 ---
 name: claude-code
-description: Claude Code CLI（Anthropic）を使用してコードや文言について相談・レビューを行う。トリガー: "claude-code", "claudeと相談", "claudeに聞いて", "コードレビュー", "レビューして"。使用場面: (1) 文言・メッセージの検討、(2) コードレビュー、(3) 設計の相談、(4) バグ調査、(5) 解消困難な問題の調査
+description: "Claude Code CLI（Anthropic）を使用してコードや文言について相談・レビューを行う。トリガー: \"claude-code\", \"claudeと相談\", \"claudeに聞いて\", \"コードレビュー\", \"レビューして\"。使用場面: (1) 文言・メッセージの検討、(2) コードレビュー、(3) 設計の相談、(4) バグ調査、(5) 解消困難な問題の調査"
 ---
 
 # Claude Code
