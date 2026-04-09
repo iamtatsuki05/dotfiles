@@ -10,6 +10,9 @@ readonly BREW_PATH="/opt/homebrew/bin/brew"
 readonly ZPROFILE="$HOME/.zprofile"
 readonly ZSHRC="$HOME/.zshrc"
 readonly SHELLENV_LINE='eval "$(/opt/homebrew/bin/brew shellenv)"'
+readonly HOMEBREW_PREFIX_LINE='export HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-/opt/homebrew}"'
+readonly POSTGRES_ICU_PATH_LINE='export PATH="${HOMEBREW_PREFIX}/opt/icu4c/bin:$PATH"'
+readonly POSTGRES_PKG_CONFIG_PATH_LINE='export PKG_CONFIG_PATH="${HOMEBREW_PREFIX}/opt/icu4c/lib/pkgconfig:${HOMEBREW_PREFIX}/opt/curl/lib/pkgconfig:${HOMEBREW_PREFIX}/opt/zlib/lib/pkgconfig:${PKG_CONFIG_PATH:-}"'
 readonly MISE_LINE='eval "$(/opt/homebrew/bin/mise activate zsh)"'
 
 # -----------------------------------------------------------------------------
@@ -64,6 +67,13 @@ configure_mise() {
   append_if_missing "$ZSHRC" "$MISE_LINE"
 }
 
+configure_postgres_build_environment() {
+  echo "Configuring PostgreSQL build environment..."
+  append_if_missing "$ZSHRC" "$HOMEBREW_PREFIX_LINE"
+  append_if_missing "$ZSHRC" "$POSTGRES_ICU_PATH_LINE"
+  append_if_missing "$ZSHRC" "$POSTGRES_PKG_CONFIG_PATH_LINE"
+}
+
 # -----------------------------------------------------------------------------
 # Main execution
 # -----------------------------------------------------------------------------
@@ -71,6 +81,7 @@ main() {
   install_homebrew
   configure_shell_environment
   install_packages
+  configure_postgres_build_environment
   configure_mise
 
   echo "Homebrew setup complete"
