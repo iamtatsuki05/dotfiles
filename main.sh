@@ -10,6 +10,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$SCRIPT_DIR"
 readonly SCRIPTS_DIR="$REPO_ROOT/scripts"
 readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
+readonly HOMEBREW_MISE_PATH="/opt/homebrew/bin/mise"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -53,6 +54,27 @@ setup_configs() {
   log_success "Application configs set up"
 }
 
+mise_command() {
+  if command -v mise >/dev/null 2>&1; then
+    command -v mise
+    return
+  fi
+
+  if [ -x "$HOMEBREW_MISE_PATH" ]; then
+    echo "$HOMEBREW_MISE_PATH"
+    return
+  fi
+
+  log_error "mise is not installed or not found in PATH"
+  return 1
+}
+
+install_mise_tools() {
+  log_step "Installing tools managed by mise"
+  "$(mise_command)" install
+  log_success "mise tools installed"
+}
+
 sync_agent_files() {
   log_step "Syncing agent prompts and skills"
   zsh "$DOTFILES_DIR/.agent/sync.sh"
@@ -77,6 +99,7 @@ main() {
   install_homebrew
   setup_defaults
   setup_configs
+  install_mise_tools
   setup_neovim
 
   echo
