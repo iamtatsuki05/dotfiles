@@ -61,7 +61,7 @@ run = "docker compose up -d --build"
 [tasks.homebrew-update]
 alias = "brew-update"
 description = "homebrew, packageをアプデする"
-run = "brew update --auto-update;brew upgrade;brew cleanup"
+run = "brew update --auto-update;brew upgrade;brew upgrade --cask --greedy;brew cleanup"
 
 [tasks.homebrew-dump]
 alias = "brew-dump"
