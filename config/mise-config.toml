@@ -25,6 +25,9 @@ aws-cli = "latest"
 aws-vault = "latest"
 gcloud = "latest"
 
+[env]
+HOMEBREW_BUNDLE_DUMP_NO_GO = "1"
+
 [tasks.python-format]
 alias = "ruff-format"
 description = "ruffを使ってコードformatを実行"
