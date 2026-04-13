@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkItDown"
+  short_description: "Convert files & URLs to Markdown"
+  default_prompt: "Use $markitdown to convert this PDF to Markdown."
