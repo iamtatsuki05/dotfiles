@@ -70,10 +70,54 @@ main() {
     "$XDG_CONFIG_HOME/shell/secrets.env"
 
   # claude/codex/gemini の settings.json 等は sync.sh のシンボリックリンクで管理。
-  # codex_hooks の feature flag のみセットアップ時に設定する。
+  # codex は動的更新される config.toml を持つため、base 設定のマージとfeature flagのみここで処理する。
+  setup_codex_config
   setup_codex_feature_flag
 
   echo "All configs installed successfully"
+}
+
+setup_codex_config() {
+  local base_file="$CONFIG_DIR/codex/config.toml.base"
+  local config_file="$HOME/.codex/config.toml"
+
+  if [[ ! -f "$base_file" ]]; then
+    echo "  skip: $base_file not found"
+    return 0
+  fi
+
+  if [[ ! -f "$config_file" ]]; then
+    # 新規マシン: base をそのままコピー
+    mkdir -p "$(dirname "$config_file")"
+    cp "$base_file" "$config_file"
+    chmod 600 "$config_file"
+    echo "  $base_file -> $config_file (new)"
+    return 0
+  fi
+
+  # 既存 config.toml: http_headers を env_http_headers に置き換えてAPIキーをsecretsに逃がす
+  if grep -q "http_headers" "$config_file" 2>/dev/null && ! grep -q "env_http_headers" "$config_file" 2>/dev/null; then
+    python3 - "$config_file" << 'PYEOF'
+import re, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+content = re.sub(
+    r'^(http_headers\s*=\s*\{[^\n]*"Authorization"[^\n]*\})',
+    'env_http_headers = { "Authorization" = "DEVIN_BEARER_TOKEN" }',
+    content,
+    flags=re.MULTILINE
+)
+
+with open(path, 'w') as f:
+    f.write(content)
+PYEOF
+    echo "  http_headers -> env_http_headers in $config_file"
+  else
+    echo "  skip: $config_file already uses env_http_headers or has no http_headers"
+  fi
 }
 
 setup_codex_feature_flag() {
