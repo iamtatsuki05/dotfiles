@@ -2,6 +2,13 @@
   "general": {
     "previewFeatures": true
   },
+  "context": {
+    "fileFiltering": {
+      "customIgnoreFilePaths": [
+        "~/.gemini/ignore"
+      ]
+    }
+  },
   "ide": {
     "enabled": true,
     "hasSeenNudge": true
