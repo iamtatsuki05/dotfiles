@@ -92,6 +92,12 @@ setup_configs() {
   log_success "Application configs set up"
 }
 
+setup_cron() {
+  log_step "Syncing cron jobs"
+  zsh "$SCRIPTS_DIR/setup_cron.sh"
+  log_success "Cron jobs synced"
+}
+
 mise_command() {
   if command -v mise >/dev/null 2>&1; then
     command -v mise
@@ -145,6 +151,7 @@ main() {
   configure_postgres_build_environment
   setup_defaults
   setup_configs
+  setup_cron
   install_mise_tools
   setup_neovim
 
