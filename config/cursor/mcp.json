@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "gemini-cli": {
+      "command": "bunx",
+      "args": ["mcp-gemini-cli", "--allow-npx"]
+    },
+    "codex": {
+      "command": "codex",
+      "args": ["mcp-server"]
+    },
+    "notion": {
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "playwright": {
+      "command": "bunx",
+      "args": ["@playwright/mcp@latest"]
+    },
+    "deepwiki": {
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "devin": {
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:DEVIN_API_KEY}"
+      }
+    }
+  }
+}

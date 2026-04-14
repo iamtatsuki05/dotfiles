@@ -20,7 +20,9 @@
     "codex": {
       "type": "stdio",
       "command": "codex",
-      "args": ["mcp-server"],
+      "args": [
+        "mcp-server"
+      ],
       "env": {}
     },
     "notion": {
@@ -30,7 +32,9 @@
     "playwright": {
       "type": "stdio",
       "command": "bunx",
-      "args": ["@playwright/mcp@latest"],
+      "args": [
+        "@playwright/mcp@latest"
+      ],
       "env": {}
     },
     "deepwiki": {
@@ -57,5 +61,8 @@
         ]
       }
     ]
+  },
+  "model": {
+    "name": "auto-gemini-3"
   }
 }
