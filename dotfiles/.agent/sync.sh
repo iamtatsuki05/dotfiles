@@ -72,4 +72,3 @@ link_symlink "$CONFIG_DIR/claude/settings.json" ~/.claude/settings.json
 link_symlink "$CONFIG_DIR/claude/.mcp.json"     ~/.claude/.mcp.json
 link_symlink "$CONFIG_DIR/codex/hooks.json"     ~/.codex/hooks.json
 link_symlink "$CONFIG_DIR/gemini/settings.json" ~/.gemini/settings.json
-link_symlink "$CONFIG_DIR/gemini/_settings.json" ~/.gemini/_settings.json

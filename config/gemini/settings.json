@@ -16,6 +16,35 @@
       "selectedType": "oauth-personal"
     }
   },
+  "mcpServers": {
+    "codex": {
+      "type": "stdio",
+      "command": "codex",
+      "args": ["mcp-server"],
+      "env": {}
+    },
+    "notion": {
+      "type": "http",
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["@playwright/mcp@latest"],
+      "env": {}
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "devin": {
+      "type": "http",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
+      }
+    }
+  },
   "hooks": {
     "AfterTool": [
       {

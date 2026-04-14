@@ -16,7 +16,7 @@ startup_timeout_sec = 60
 
 [mcp_servers.devin]
 url = "https://mcp.devin.ai/mcp"
-env_http_headers = { "Authorization" = "DEVIN_BEARER_TOKEN" }
+bearer_token_env_var = "DEVIN_API_KEY"
 startup_timeout_sec = 60
 
 [mcp_servers.gemini-cli]
