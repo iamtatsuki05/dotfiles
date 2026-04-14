@@ -237,14 +237,13 @@ alias fgcc_p='
       compute instances list \
       | fzf --header-lines=1 \
       | awk '"'"'{ print $2"@"$3 }'"'"'
-  )
-  ()$4; do
+  ); do
     gcloud \
       compute ssh \
-	  --zone ${h##*@} ${h%%@*} \
-	  --tunnel-through-iap \
-	  --ssh-flag="-A" \
-	  --ssh-flag="-L $4:localhost:$4
+      --zone ${h##*@} ${h%%@*} \
+      --tunnel-through-iap \
+      --ssh-flag="-A" \
+      --ssh-flag="-L $4:localhost:$4
   done
 '
 alias fgrs='
@@ -282,7 +281,11 @@ export PATH=/opt/homebrew/bin:$PATH
 alias intel="env /usr/bin/arch -x86_64 /bin/zsh --login"
 alias arm="env /usr/bin/arch -arm64 /bin/zsh --login"
 eval "$(mise activate zsh)"
-export PATH="/Users/okadatatsuki/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+
+if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]]; then
+  source "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
+fi
 
 # start default apps
 # tmux

@@ -22,3 +22,15 @@ cron ジョブは `config/cron/crontab` で管理できます。
 ```cron
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
 ```
+
+## API キーの管理
+
+ローカルの秘密情報は `~/.config/shell/secrets.env`（gitignore 済み）で管理します。
+
+初回セットアップ時に `config/shell/secrets.env.example` から自動生成されます。値を入力してシェルを再起動してください。
+
+```bash
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+export OPENAI_API_KEY=""
+export ANTHROPIC_API_KEY=""
+```

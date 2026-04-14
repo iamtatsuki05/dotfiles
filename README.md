@@ -22,3 +22,15 @@ Example:
 ```cron
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
 ```
+
+## API keys and secrets
+
+Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).
+
+On first setup, `scripts/setup_config.sh` copies `config/shell/secrets.env.example` to `~/.config/shell/secrets.env`. Fill in the values and restart the shell.
+
+```bash
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+export OPENAI_API_KEY=""
+export ANTHROPIC_API_KEY=""
+```

@@ -10,7 +10,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-readonly WEBHOOK_URL=""
+readonly WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
 readonly SLACK_USERNAME="ハチワレちゃん"
 readonly LOG_DIR="${NOTIFY_SLACK_LOG_DIR:-$HOME/.notify_slack/logs}"
 
@@ -30,6 +30,11 @@ readonly LOG_TAIL_LINES=5
 if [[ $# -ne 1 ]]; then
   echo "ERROR: Exactly one command argument is required" >&2
   echo "Usage: $0 \"command to execute\"" >&2
+  exit 1
+fi
+
+if [[ -z "$WEBHOOK_URL" ]]; then
+  echo "ERROR: SLACK_WEBHOOK_URL is not set. Add it to ~/.config/shell/secrets.env" >&2
   exit 1
 fi
 

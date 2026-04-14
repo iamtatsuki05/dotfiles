@@ -2,3 +2,4 @@
 .tmp
 .venv
 dotfiles/.agent/changes/
+config/shell/secrets.env
