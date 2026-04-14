@@ -23,6 +23,27 @@ Example:
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
 ```
 
+## AI tool configuration (Claude Code / Codex / Gemini CLI)
+
+Settings files for each AI tool are managed in `config/` and symlinked to the appropriate locations by `sync.sh`:
+
+| Repository path | Symlinked to |
+|---|---|
+| `config/claude/settings.json` | `~/.claude/settings.json` |
+| `config/codex/hooks.json` | `~/.codex/hooks.json` |
+| `config/gemini/settings.json` | `~/.gemini/settings.json` |
+
+Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, and `~/.gemini/hooks/`.
+
+### Jupyter Notebook (jupytext)
+
+To reduce token consumption, AI tools are configured to edit `.py` files only. `jupytext --sync` runs automatically after each file edit via hooks, keeping the paired `.ipynb` up to date.
+
+To pair a new notebook:
+```bash
+jupytext --set-formats ipynb,py:percent notebook.py
+```
+
 ## API keys and secrets
 
 Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).

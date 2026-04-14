@@ -23,6 +23,28 @@ cron ジョブは `config/cron/crontab` で管理できます。
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
 ```
 
+## AI ツール設定（Claude Code / Codex / Gemini CLI）
+
+各 AI ツールの設定ファイルは `config/` で管理し、`sync.sh` がシンボリックリンクで配置します。
+
+| リポジトリのパス | リンク先 |
+|---|---|
+| `config/claude/settings.json` | `~/.claude/settings.json` |
+| `config/codex/hooks.json` | `~/.codex/hooks.json` |
+| `config/gemini/settings.json` | `~/.gemini/settings.json` |
+
+`dotfiles/.agent/hooks/` のフックスクリプトは `~/.claude/hooks/`・`~/.codex/hooks/`・`~/.gemini/hooks/` にシンボリックリンクされます。
+
+### Jupyter Notebook（jupytext）
+
+トークン消費を抑えるため、AI ツールは `.py` ファイルのみを編集する構成にしています。ファイル編集のたびにフックで `jupytext --sync` が自動実行され、ペアリングされた `.ipynb` に反映されます。
+
+新規ノートブックをペアリングする場合:
+
+```bash
+jupytext --set-formats ipynb,py:percent notebook.py
+```
+
 ## API キーの管理
 
 ローカルの秘密情報は `~/.config/shell/secrets.env`（gitignore 済み）で管理します。

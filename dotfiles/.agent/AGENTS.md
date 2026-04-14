@@ -45,6 +45,13 @@
 - タスクに応じて適切なスキルを選択して使用してください。
 - バグなどを見つけたときは、printデバッグなどを積極的に使って自走してください。
 
+# Jupyter Notebook の操作
+
+- `.ipynb` を直接読み書きしないでください。base64エンコードされた画像データ（matplotlibなど）が埋め込まれているとファイルが肥大化し、トークンを大量消費します。
+- jupytextでペアリングされた `.py` ファイルを代わりに操作してください。
+- `.ipynb` と `.py` の同期はhookが自動処理します（Edit/Write/MultiEdit後に `jupytext --sync` を実行）。
+- 新規ノートブックを作成する場合は `.py` ファイルを作成し、`jupytext --set-formats ipynb,py:percent <file>.py` でペアリングしてください。
+
 # ツール利用方針
 
 ## 優先順位

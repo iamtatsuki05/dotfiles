@@ -1,0 +1,32 @@
+{
+  "general": {
+    "previewFeatures": true
+  },
+  "ide": {
+    "enabled": true,
+    "hasSeenNudge": true
+  },
+  "ui": {
+    "footer": {
+      "hideModelInfo": false
+    }
+  },
+  "security": {
+    "auth": {
+      "selectedType": "oauth-personal"
+    }
+  },
+  "hooks": {
+    "AfterTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.gemini/hooks/jupytext_sync.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
