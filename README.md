@@ -1,5 +1,7 @@
 # dotfiles
 
+Japanese version: [README_JA.md](README_JA.md)
+
 Please this command(support for mac)
 ```
 git clone https://github.com/iamtatsuki05/dotfiles.git
