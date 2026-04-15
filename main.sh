@@ -10,8 +10,6 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$SCRIPT_DIR"
 readonly SCRIPTS_DIR="$REPO_ROOT/scripts"
 readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
-readonly HOMEBREW_BREW_PATH="/opt/homebrew/bin/brew"
-readonly HOMEBREW_MISE_PATH="/opt/homebrew/bin/mise"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -46,14 +44,13 @@ install_homebrew() {
 activate_homebrew_environment() {
   log_step "Activating Homebrew environment for this setup run"
 
-  if command -v brew >/dev/null 2>&1; then
-    eval "$(brew shellenv)"
-  elif [ -x "$HOMEBREW_BREW_PATH" ]; then
-    eval "$("$HOMEBREW_BREW_PATH" shellenv)"
-  else
+  local brew_path
+  brew_path="$(brew_command)" || {
     log_error "brew is not installed or not found in PATH"
     return 1
-  fi
+  }
+
+  eval "$("$brew_path" shellenv)"
 
   log_success "Homebrew environment activated"
 }
@@ -104,12 +101,28 @@ mise_command() {
     return
   fi
 
-  if [ -x "$HOMEBREW_MISE_PATH" ]; then
-    echo "$HOMEBREW_MISE_PATH"
+  log_error "mise is not installed or not found in PATH"
+  return 1
+}
+
+brew_command() {
+  if command -v brew >/dev/null 2>&1; then
+    command -v brew
     return
   fi
 
-  log_error "mise is not installed or not found in PATH"
+  if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -x "${HOMEBREW_PREFIX}/bin/brew" ]; then
+    echo "${HOMEBREW_PREFIX}/bin/brew"
+    return
+  fi
+
+  local brew_path
+  brew_path="$(zsh -lic 'command -v brew' 2>/dev/null)" || true
+  if [ -n "$brew_path" ] && [ -x "$brew_path" ]; then
+    echo "$brew_path"
+    return
+  fi
+
   return 1
 }
 

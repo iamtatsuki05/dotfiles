@@ -1,6 +1,6 @@
 # Enable jobs in this file. Comment-only files are treated as "no managed jobs".
 SHELL=/bin/zsh
-PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 # Update this repository from origin/main once per day at 06:00.
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
