@@ -1,4 +1,5 @@
 model = "gpt-5.4"
+sandbox_mode = "workspace-write"
 ignore_patterns = [
   "**/.env",
   "**/secrets.env",
@@ -13,6 +14,9 @@ disable_response_storage = true
 rmcp_client = true
 notify = ["bash", "-lc", "afplay /System/Library/Sounds/Ping.aiff"]
 personality = "pragmatic"
+
+[sandbox_workspace_write]
+network_access = true
 
 [mcp_servers.deepwiki]
 url = "https://mcp.deepwiki.com/mcp"

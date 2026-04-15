@@ -104,6 +104,52 @@ PYEOF
   else
     echo "  skip: $config_file already uses bearer_token_env_var or has no http_headers"
   fi
+
+  python3 - "$config_file" << 'PYEOF'
+import re, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+original = content
+
+if re.search(r'^sandbox_mode\s*=.*$', content, flags=re.MULTILINE):
+    content = re.sub(
+        r'^sandbox_mode\s*=.*$',
+        'sandbox_mode = "workspace-write"',
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+else:
+    content = 'sandbox_mode = "workspace-write"\n' + content
+
+section_pattern = r'(?ms)^\[sandbox_workspace_write\]\n.*?(?=^\[|\Z)'
+match = re.search(section_pattern, content)
+if match:
+    section = match.group(0)
+    if re.search(r'^network_access\s*=.*$', section, flags=re.MULTILINE):
+        updated = re.sub(
+            r'^network_access\s*=.*$',
+            'network_access = true',
+            section,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    else:
+        updated = section.rstrip() + '\nnetwork_access = true\n'
+    content = content[:match.start()] + updated + content[match.end():]
+else:
+    if not content.endswith('\n'):
+        content += '\n'
+    content += '\n[sandbox_workspace_write]\nnetwork_access = true\n'
+
+if content != original:
+    with open(path, 'w') as f:
+        f.write(content)
+PYEOF
+  echo "  ensured workspace-write sandbox defaults in $config_file"
 }
 
 migrate_secrets_env() {
