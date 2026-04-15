@@ -15,8 +15,7 @@ notify = ["bash", "-lc", "afplay /System/Library/Sounds/Ping.aiff"]
 personality = "pragmatic"
 
 [mcp_servers.deepwiki]
-command = "bunx"
-args = ["mcp-remote", "https://mcp.deepwiki.com/mcp"]
+url = "https://mcp.deepwiki.com/mcp"
 startup_timeout_sec = 60
 
 [mcp_servers.devin]
@@ -29,8 +28,7 @@ command = "bunx"
 args = ["mcp-gemini-cli", "--allow-npx"]
 
 [mcp_servers.notion]
-command = "bunx"
-args = ["mcp-remote", "https://mcp.notion.com/mcp"]
+url = "https://mcp.notion.com/mcp"
 startup_timeout_sec = 60
 
 [mcp_servers.playwright]
