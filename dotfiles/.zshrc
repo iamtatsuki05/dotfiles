@@ -277,10 +277,14 @@ PROMPT='%F{33}%~%f `git-current-branch`
  🥺  ▶  '
 
 # environment
-export PATH=/opt/homebrew/bin:$PATH
+if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -d "${HOMEBREW_PREFIX}/bin" ]; then
+  export PATH="${HOMEBREW_PREFIX}/bin:$PATH"
+fi
 alias intel="env /usr/bin/arch -x86_64 /bin/zsh --login"
 alias arm="env /usr/bin/arch -arm64 /bin/zsh --login"
-eval "$(mise activate zsh)"
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate zsh)"
+fi
 export PATH="$HOME/.local/bin:$PATH"
 
 if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]]; then
