@@ -35,7 +35,6 @@ readonly VIM_PLUG_URL="https://raw.githubusercontent.com/junegunn/vim-plug/maste
 install_vim_plug() {
   echo "Installing vim-plug..."
   # Neovim loads vim-plug from its own autoload path, so install both paths explicitly.
-  curl -fLo "$NVIM_AUTOLOAD/plug.vim" --create-dirs "$VIM_PLUG_URL"
   curl -fLo "$VIM_AUTOLOAD/plug.vim" --create-dirs "$VIM_PLUG_URL"
   echo "vim-plug installed to $NVIM_AUTOLOAD/plug.vim and $VIM_AUTOLOAD/plug.vim"
 }
