@@ -62,12 +62,13 @@
   "enabledPlugins": {
     "agent-sdk-dev@claude-code-plugins": true
   },
-  "effortLevel": "low",
+  "effortLevel": "xhigh",
   "co_authored_commits": true,
   "BASH_DEFAULT_TIMEOUT_MS": 600000,
   "BASH_MAX_TIMEOUT_MS": 600000,
   "MCP_TOOL_TIMEOUT": 600000,
   "DISABLE_AUTOUPDATER": "0",
   "ANTHROPIC_MODEL": "claude-sonnet-4-6",
-  "MAX_THINKING_TOKENS": 16000
+  "MAX_THINKING_TOKENS": 16000,
+  "model": "opus"
 }
