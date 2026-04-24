@@ -2,11 +2,49 @@
 
 Japanese version: [README_JA.md](README_JA.md)
 
-Please this command(support for mac)
-```
+Run:
+
+```sh
 git clone https://github.com/iamtatsuki05/dotfiles.git
 cd dotfiles
 zsh main.sh
+```
+
+## Setup profiles
+
+`main.sh` picks a default profile by OS:
+
+- macOS: `full`
+- Linux: `cli`
+
+`full` is the complete macOS setup. It installs Homebrew casks, VS Code extensions, macOS defaults, cron, configs, mise tools, and Neovim.
+
+`cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips casks, VS Code extensions, macOS-only tools, macOS defaults, and cron, then installs CLI tools from `dotfiles/.Brewfile.cli`. The cli profile also activates the CLI bundle as `~/.Brewfile`.
+
+```sh
+# Ubuntu / Linux, or CLI-only setup on macOS
+zsh main.sh --cli-only
+
+# Install only CLI Homebrew packages
+zsh scripts/brew_install.sh --cli-only
+```
+
+## Updating Brewfiles
+
+On macOS, you can dump the current Homebrew state to `dotfiles/.Brewfile` and the portable CLI bundle at `dotfiles/.Brewfile.cli`.
+
+```sh
+zsh scripts/brew_dump.sh
+# or
+mise run brew-dump
+```
+
+The CLI bundle is generated with Homebrew Bundle's `--tap`, `--formula`, and `--uv` filters.
+When installed by `setup_config.sh`, the mise config runs this repository's `scripts/brew_dump.sh` regardless of the directory where `mise run brew-dump` is invoked.
+
+```sh
+# Regenerate only dotfiles/.Brewfile.cli from the current Homebrew state
+zsh scripts/brew_dump.sh --generate-cli-only
 ```
 
 ## Cron jobs

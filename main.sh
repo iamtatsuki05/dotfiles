@@ -10,6 +10,10 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$SCRIPT_DIR"
 readonly SCRIPTS_DIR="$REPO_ROOT/scripts"
 readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
+readonly LIB_DIR="$SCRIPTS_DIR/lib"
+
+source "$LIB_DIR/setup_profile.sh"
+source "$LIB_DIR/homebrew.sh"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -26,18 +30,32 @@ log_error() {
   echo "✗ ERROR: $*" >&2
 }
 
+log_skip() {
+  echo "- Skipped: $*"
+}
+
 # -----------------------------------------------------------------------------
 # Setup steps
 # -----------------------------------------------------------------------------
 copy_dotfiles() {
+  local profile="$1"
+
   log_step "Copying dotfiles to home directory"
   cp -r "$DOTFILES_DIR"/. ~/
+
+  if [[ "$profile" == "cli" ]]; then
+    cp "$DOTFILES_DIR/.Brewfile.cli" "$HOME/.Brewfile"
+    log_success "CLI Brewfile activated at ~/.Brewfile"
+  fi
+
   log_success "Dotfiles copied"
 }
 
 install_homebrew() {
+  local profile="$1"
+
   log_step "Installing Homebrew and packages"
-  zsh "$SCRIPTS_DIR/brew_install.sh"
+  zsh "$SCRIPTS_DIR/brew_install.sh" --profile "$profile"
   log_success "Homebrew setup complete"
 }
 
@@ -45,7 +63,7 @@ activate_homebrew_environment() {
   log_step "Activating Homebrew environment for this setup run"
 
   local brew_path
-  brew_path="$(brew_command)" || {
+  brew_path="$(dotfiles_brew_command)" || {
     log_error "brew is not installed or not found in PATH"
     return 1
   }
@@ -56,6 +74,11 @@ activate_homebrew_environment() {
 }
 
 configure_postgres_build_environment() {
+  if ! dotfiles_is_macos; then
+    log_skip "PostgreSQL Homebrew build environment is macOS-specific"
+    return 0
+  fi
+
   log_step "Configuring PostgreSQL build environment for mise"
 
   export HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-$(brew --prefix)}"
@@ -78,6 +101,11 @@ configure_postgres_build_environment() {
 }
 
 setup_defaults() {
+  if ! dotfiles_is_macos; then
+    log_skip "macOS default settings are not available on $DOTFILES_OS_NAME"
+    return 0
+  fi
+
   log_step "Configuring macOS default settings"
   zsh "$SCRIPTS_DIR/default_setup.sh"
   log_success "Default settings configured"
@@ -105,35 +133,14 @@ mise_command() {
   return 1
 }
 
-brew_command() {
-  if command -v brew >/dev/null 2>&1; then
-    command -v brew
-    return
-  fi
-
-  if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -x "${HOMEBREW_PREFIX}/bin/brew" ]; then
-    echo "${HOMEBREW_PREFIX}/bin/brew"
-    return
-  fi
-
-  local brew_path
-  brew_path="$(zsh -lic 'command -v brew' 2>/dev/null)" || true
-  if [ -n "$brew_path" ] && [ -x "$brew_path" ]; then
-    echo "$brew_path"
-    return
-  fi
-
-  return 1
-}
-
 install_mise_tools() {
   log_step "Installing tools managed by mise"
   # Passing these via the shell environment works reliably, while mise config [env] did not affect vfox-postgres configure options.
-  CPPFLAGS="$CPPFLAGS" \
-    LDFLAGS="$LDFLAGS" \
-    LIBS="$LIBS" \
-    PKG_CONFIG_PATH="$PKG_CONFIG_PATH" \
-    POSTGRES_CONFIGURE_OPTIONS="$POSTGRES_CONFIGURE_OPTIONS" \
+  CPPFLAGS="${CPPFLAGS:-}" \
+    LDFLAGS="${LDFLAGS:-}" \
+    LIBS="${LIBS:-}" \
+    PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
+    POSTGRES_CONFIGURE_OPTIONS="${POSTGRES_CONFIGURE_OPTIONS:-}" \
     "$(mise_command)" install
   log_success "mise tools installed"
 }
@@ -154,17 +161,30 @@ setup_neovim() {
 # Main execution
 # -----------------------------------------------------------------------------
 main() {
+  dotfiles_parse_profile_args "main.sh" "$@"
+  local profile="$DOTFILES_PROFILE"
+
   echo "Starting dotfiles setup..."
+  echo "OS: $DOTFILES_OS_NAME"
+  echo "Profile: $profile"
   echo
 
-  copy_dotfiles
+  copy_dotfiles "$profile"
   sync_agent_files
-  install_homebrew
+  install_homebrew "$profile"
   activate_homebrew_environment
   configure_postgres_build_environment
-  setup_defaults
+  if [[ "$profile" == "full" ]]; then
+    setup_defaults
+  else
+    log_skip "macOS default settings are not part of the cli profile"
+  fi
   setup_configs
-  setup_cron
+  if [[ "$profile" == "full" ]]; then
+    setup_cron
+  else
+    log_skip "cron sync is not part of the cli profile"
+  fi
   install_mise_tools
   setup_neovim
 

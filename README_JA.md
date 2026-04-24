@@ -1,11 +1,48 @@
 # dotfiles
 
-macOS 向けの dotfiles セットアップ手順です。
+macOS / Linux 向けの dotfiles セットアップ手順です。
 
 ```sh
 git clone https://github.com/iamtatsuki05/dotfiles.git
 cd dotfiles
 zsh main.sh
+```
+
+## セットアッププロファイル
+
+`main.sh` は OS に応じて既定プロファイルを切り替えます。
+
+- macOS: `full`
+- Linux: `cli`
+
+`full` は macOS 向けの全体セットアップです。Homebrew cask、VS Code 拡張、macOS defaults、cron、設定ファイル、mise、Neovim をセットアップします。
+
+`cli` は Ubuntu などでも使いやすい CLI 中心のセットアップです。cask、VS Code 拡張、macOS 専用ツール、macOS defaults、cron は実行せず、`dotfiles/.Brewfile.cli` から CLI ツールをインストールします。CLI プロファイルでは `~/.Brewfile` も CLI 版に差し替えます。
+
+```sh
+# Ubuntu / Linux や CLI だけを入れたい macOS
+zsh main.sh --cli-only
+
+# Homebrew の CLI パッケージだけを入れたい場合
+zsh scripts/brew_install.sh --cli-only
+```
+
+## Brewfile の更新
+
+macOS で現在の Homebrew 状態から `dotfiles/.Brewfile` と CLI 版の `dotfiles/.Brewfile.cli` を更新できます。
+
+```sh
+zsh scripts/brew_dump.sh
+# または
+mise run brew-dump
+```
+
+CLI 版は Homebrew Bundle の `--tap` / `--formula` / `--uv` で生成します。
+`setup_config.sh` でインストールされた mise config では、`mise run brew-dump` をどのディレクトリから実行しても、このリポジトリの `scripts/brew_dump.sh` が実行されます。
+
+```sh
+# 現在の Homebrew 状態から CLI 版だけを再生成
+zsh scripts/brew_dump.sh --generate-cli-only
 ```
 
 ## Cron ジョブ

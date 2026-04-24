@@ -67,8 +67,9 @@ run = "brew update --auto-update && brew upgrade && brew upgrade --cask && brew 
 
 [tasks.homebrew-dump]
 alias = "brew-dump"
-description = "homebrewの依存関係を吐き出す"
-run = "rm ~/.Brewfile;brew bundle dump --global"
+description = "Homebrewの状態から.BrewfileとCLI版Brewfileを更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/brew_dump.sh"
 
 [tasks.git-head-commit-reset]
 alias = "git-head-commit-rest"

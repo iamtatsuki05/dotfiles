@@ -40,10 +40,7 @@ main() {
     "$CONFIG_DIR/ghostty/config" \
     "$XDG_CONFIG_HOME/ghostty/config"
 
-  install_config \
-    "mise" \
-    "$CONFIG_DIR/mise-config.toml" \
-    "$XDG_CONFIG_HOME/mise/config.toml"
+  install_mise_config
 
   # リポジトリ側の secrets.env を先にマイグレーションしてから ~/.config/ にコピーする
   migrate_secrets_env
@@ -60,6 +57,25 @@ main() {
   setup_gemini_env
 
   echo "All configs installed successfully"
+}
+
+install_mise_config() {
+  local source_file="$CONFIG_DIR/mise-config.toml"
+  local target_file="$XDG_CONFIG_HOME/mise/config.toml"
+  local target_dir="${target_file%/*}"
+  local tmp
+  local line
+
+  echo "Installing mise config..."
+  mkdir -p "$target_dir"
+  tmp="$(mktemp)"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    print -r -- "${line//__DOTFILES_REPO_ROOT__/$REPO_ROOT}"
+  done < "$source_file" > "$tmp"
+
+  mv "$tmp" "$target_file"
+  echo "  $source_file -> $target_file"
 }
 
 setup_codex_config() {
