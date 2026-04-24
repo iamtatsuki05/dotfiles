@@ -1,3 +1,7 @@
+[settings]
+# リリース直後の侵害リスクを避けるため、fuzzy/latest 解決は7日経過後に限定する。
+install_before = "7d"
+
 [tools]
 # lang
 bun = "latest"
