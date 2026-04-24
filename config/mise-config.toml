@@ -61,7 +61,9 @@ run = "docker compose up -d --build"
 [tasks.homebrew-update]
 alias = "brew-update"
 description = "homebrew, packageをアプデする"
-run = "brew update --auto-update;brew upgrade;brew upgrade --cask --greedy;brew cleanup"
+# Do not use --greedy here. Auto-updating casks such as Google Chrome can be
+# uninstalled and reinstalled by Homebrew; if the reinstall fails, the app disappears.
+run = "brew update --auto-update && brew upgrade && brew upgrade --cask && brew cleanup"
 
 [tasks.homebrew-dump]
 alias = "brew-dump"
