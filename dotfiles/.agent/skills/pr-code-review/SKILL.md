@@ -1,6 +1,6 @@
 ---
 name: pr-code-review
-description: GitHubのPull Request（PR）に対するコードレビューを実施し、レビュー結果をマークダウンファイルとして出力する。PRのレビュー依頼、コードレビュー、PRレビュー、差分確認、コード品質チェックなどのリクエスト時に使用。ghコマンドでPR情報を取得し、セキュリティ、パフォーマンス、可読性、ベストプラクティスの観点からレビューを行い、結果をローカルファイルに保存する。
+description: "Use when the user asks to review a GitHub Pull Request, inspect PR diffs, assess changed code, or produce PR review findings with severity, file/line references, risks, and test gaps."
 ---
 
 # PR Code Review
@@ -76,6 +76,13 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 以下のテンプレートに従ってレビューレポートを作成する。
 
+重大度の基準:
+- Critical: マージ前に直すべき correctness / security / data loss / production regression
+- Warning: 修正または明確な説明が必要なリスク
+- Suggestion: 品質改善だが、マージ可否を直接左右しない提案
+
+指摘は必ずファイル・行・理由・影響・修正方針を含める。好みだけの指摘は避ける。
+
 ```markdown
 # PR Code Review Report
 
@@ -136,7 +143,7 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 ## Step 4: ファイル出力
 
-レビュー結果を以下のパスに保存する。
+ユーザーが保存を求めた場合、または長いレビューで後から参照する価値がある場合は、レビュー結果を以下のパスに保存する。通常の会話内レビューだけで十分な場合は、保存せず回答してよい。
 
 ```
 ./pr-review-[PR番号]-[YYYYMMDD-HHMM].md
@@ -160,7 +167,7 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 ## 注意事項
 
-- レビュー結果はGitHubにコメントせず、ローカルファイルに保存する
+- GitHubへの投稿はユーザーが明示した場合だけ行う。通常は会話内回答またはローカルファイル保存に留める
 - 大きなPRの場合は、重要な変更に焦点を当てる
 - コードの文脈を理解するため、必要に応じて関連ファイルも読む
 - 指摘は具体的かつ建設的に行う

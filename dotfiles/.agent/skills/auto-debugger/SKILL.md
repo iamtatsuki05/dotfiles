@@ -1,6 +1,6 @@
 ---
 name: auto-debugger
-description: エラー・バグの自立的なデバッグを行う汎用スキル。コード調査→仮説立案→printデバッグ実行→原因特定→修正→リグレッションテスト作成→ユーザー報告の一連サイクルを自律実行する。ユーザーがエラーメッセージ・スタックトレースを提示した場合、「デバッグして」「このエラーを直して」「なぜ失敗するの？」「テストが通らない」「ビルドエラー」「実行時エラー」「バグを調査して」などを言った際にトリガー。Python、Go、TypeScript、Java等の言語、および任意のフレームワークに対応。
+description: "Use when the user provides an error, failing test, stack trace, build/runtime failure, or asks to debug, fix this error, investigate a bug, or explain why something fails across any language or framework."
 ---
 
 # Auto Debugger
@@ -51,6 +51,8 @@ result = target_function(input_data)
 print(f"[DEBUG] result: {result!r}")
 ```
 
+デバッグ補助ファイルは、既存の一時ディレクトリ、`tmp/`、またはプロジェクトのテスト用 scratch 領域に置く。恒久的な成果物でない場合は修正完了後に削除するか、削除できない理由を報告する。
+
 **調査ループ（原因特定まで繰り返す）:**
 1. 仮説に基づいたデバッグスクリプトを作成して実行
 2. 出力結果から仮説を検証・絞り込む
@@ -98,6 +100,8 @@ pytest path/to/test_file.py  # Python
 go test ./...                 # Go
 npm test                      # Node.js
 ```
+
+テスト基盤がない、外部サービスが必要、または再現条件を自動化できない場合は、代替検証（最小再現コマンド、型チェック、lint、手動確認手順）を実行し、未検証の範囲を明示する。
 
 ### Phase 5: ユーザーへの報告
 

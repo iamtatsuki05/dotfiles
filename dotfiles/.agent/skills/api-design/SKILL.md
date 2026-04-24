@@ -1,6 +1,6 @@
 ---
 name: api-design
-description: "OpenAPI/Swagger仕様書の作成とRESTful API設計を支援する汎用スキル。API仕様書(.yaml/.json)の作成・編集、エンドポイント設計、スキーマ定義、エラーレスポンス設計、バージョニング戦略を支援。「API設計」「OpenAPI作成」「Swagger仕様書」「REST API設計」「エンドポイント設計」「APIスキーマ定義」などのリクエスト時に使用。"
+description: "Use when the user asks to design, edit, validate, or review REST APIs, OpenAPI/Swagger specs, endpoints, schemas, error responses, authentication, authorization, or versioning strategy."
 ---
 
 # API設計スキル
@@ -64,6 +64,15 @@ components:
 ```
 
 ---
+
+## 既存OpenAPI仕様書の編集ワークフロー
+
+1. 既存仕様の `openapi` バージョン、分割構成、共通 schema、security scheme、既存命名規則を確認する。
+2. 変更対象の endpoint / schema / response を特定し、不要な再整形や無関係な並び替えを避ける。
+3. 破壊的変更（パス削除、必須フィールド追加、型変更、レスポンス形式変更、認証スコープ変更）がある場合は、互換性への影響を明示してユーザー確認を取る。
+4. 既存スタイルに合わせて最小差分で編集する。
+5. `openapi validate`、`redocly lint`、`swagger-cli validate` など、プロジェクトで使われている検証コマンドを優先して実行する。無ければ実行できなかった理由を報告する。
+6. 最終報告には変更した endpoint / schema、互換性影響、実行した検証、未検証リスクを含める。
 
 ## RESTful設計原則
 

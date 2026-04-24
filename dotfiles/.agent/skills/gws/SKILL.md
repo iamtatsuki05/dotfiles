@@ -1,6 +1,6 @@
 ---
 name: gws
-description: "Google Workspace CLI（gws）を使って Calendar・Drive・Gmail・Tasks を操作するスキル。「カレンダーを確認して」「今日の予定は？」「今週のスケジュール」「ドライブのファイルを探して」「Driveにアップロード」「メールを送って」「受信トレイを確認」「タスクを見せて」などのリクエストでトリガー。認証が必要な場合は gws auth login を案内する。"
+description: "Use when the user asks to inspect or operate Google Calendar, Drive, Gmail, or Tasks through the gws CLI, including calendar agendas, event creation, Drive search/upload/download, Gmail triage/read/send/reply, or task list requests."
 ---
 
 # Google Workspace CLI (gws)
@@ -22,6 +22,13 @@ gws auth status
 ```bash
 gws auth login   # ブラウザが開いて OAuth2 認証
 ```
+
+## 安全弁
+
+- 書き込み系操作（予定作成、メール送信・返信、Drive upload、共有・削除、Tasks 変更）は、対象アカウント、宛先/参加者、日時、本文、ファイル名、実行コマンドを提示してからユーザー承認を取る。
+- `--dry-run` がある操作は先に dry-run を実行し、確認結果を提示してから本実行する。
+- 「今日」「明日」「来週」などの相対日付は、現在日付とタイムゾーンを踏まえて絶対日付に直して確認する。
+- メール本文・カレンダー詳細・Drive ファイル名には個人情報が含まれるため、最終報告では必要な範囲だけ要約し、秘密情報や長い本文を不用意に再掲しない。
 
 ---
 
@@ -233,10 +240,18 @@ gws tasks tasks list --params '{"tasklist": "TASKLIST_ID"}'
 3. `--dry-run` で確認してからユーザーに提示する
 4. ユーザーの承認後に `--dry-run` なしで実行する
 
+### メールを送信・返信する
+
+1. 宛先、件名、本文、添付、CC/BCC をユーザーに提示する
+2. 下書きでよい場合は `--draft` を優先する
+3. 送信・返信はユーザー承認後に実行する
+4. 実行後は message id、宛先、件名を報告する
+
 ### Drive でファイルを探す
 
 1. `gws drive files list --params '{"q": "name contains '\''キーワード'\''"}' --format table` で検索する
 2. 必要なら `fileId` を取得してダウンロードする
+3. upload/download は対象ファイル、出力先、上書き有無を確認してから実行する
 
 ## 詳細リファレンス
 

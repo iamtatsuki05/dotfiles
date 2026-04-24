@@ -1,6 +1,6 @@
 ---
 name: go-dev
-description: Go開発のための汎用スキル。コード実装、リファクタリング、テスト作成、デバッグ、コードレビューを支援。Goファイル(.go)の作成・編集、go test によるテスト、エラーハンドリング改善、コード品質改善、ベストプラクティス適用時に使用。
+description: "Use when the user asks to implement, refactor, test, debug, or review Go code, Go modules, error handling, concurrency, interfaces, generics, or go test/build/vet failures."
 ---
 
 # Go開発スキル
@@ -15,6 +15,8 @@ Goコードの実装、テスト、デバッグ、リファクタリングを効
 - `go.mod`: Goバージョン（1.21+推奨）、依存ライブラリ
 - `Makefile`: ビルド、テスト、lint コマンド
 - `.golangci.yml`: linter設定（存在する場合）
+- 既存の package 構成、テストヘルパー、エラー処理、context の使い方
+- `Makefile` がない場合は `go test ./...`、`go test ./path`、`go vet ./...` など標準コマンドを確認する
 
 ### プロジェクト構造例
 
@@ -34,6 +36,7 @@ project/
 ├── go.sum
 ├── Makefile
 └── compose.yml
+```
 
 ## コーディング規約
 
@@ -305,6 +308,8 @@ func NewClient(opts ...Option) *Client {
 - `go test ./...` が通過するか
 - `go vet ./...` で警告がないか
 - `golangci-lint run`（設定がある場合）
+- 変更範囲が狭い場合は該当 package のテストを先に実行し、最後に可能な範囲で全体確認する
+- 実行不能な検証があれば、理由と代替確認を報告する
 
 ## リファレンス
 

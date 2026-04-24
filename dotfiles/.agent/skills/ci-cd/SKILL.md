@@ -1,6 +1,6 @@
 ---
 name: ci-cd
-description: CI/CDパイプラインの作成、編集、デバッグ、最適化を支援する汎用スキル。GitHub Actions、GitLab CI、CircleCI、Jenkins等のワークフロー設計・実装。YAMLファイル(.yml/.yaml)の作成・編集、パイプライン構成、ジョブ・ステップ定義、シークレット管理、キャッシュ設定、マトリックスビルド、デプロイメント自動化時に使用。「CIを設定」「パイプライン作成」「GitHub Actions追加」「デプロイ自動化」等のリクエストでトリガー。
+description: "Use when the user asks to create, edit, debug, or optimize CI/CD pipelines, workflow YAML, build/test jobs, deployment automation, matrix builds, caches, permissions, or secrets in GitHub Actions, GitLab CI, CircleCI, Jenkins, or similar systems."
 ---
 
 # CI/CDスキル
@@ -12,6 +12,9 @@ CI/CDパイプラインの設計、実装、デバッグ、最適化を効率的
 1. **既存のCI/CD設定を確認**: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`
 2. **プロジェクト構成を確認**: 言語、フレームワーク、ビルドツール、テストフレームワーク
 3. **デプロイ先を確認**: クラウドプロバイダー、コンテナレジストリ、Kubernetes等
+4. **本番影響を確認**: push / pull_request / schedule / workflow_dispatch のどれで動くか、deploy job が本番に触れるか
+5. **権限とsecretを確認**: `permissions` は最小権限にし、secret 名は参照だけに留め、値を出力しない
+6. **既存workflowの意図を確認**: 無関係な job、branch 条件、cache key、artifact retention を変更しない
 
 ## プラットフォーム別クイックスタート
 
@@ -331,6 +334,13 @@ jobs:
 - name: Run Semgrep
   uses: returntocorp/semgrep-action@v1
 ```
+
+## 実装後の検証と報告
+
+- YAML 構文検証、既存の lint、`actionlint`、`gitlab-ci-lint` などプロジェクトに合う検証を実行する。
+- 可能ならローカルで同等の build/test コマンドを実行する。CI 上でしか確認できない場合は、その前提を報告する。
+- デプロイ、権限拡大、secret 追加、外部サービス更新を伴う変更は、対象環境と影響を明示してユーザー承認を取る。
+- 最終報告には、変更した workflow/job、trigger、権限、secret 参照、実行した検証、残るリスクを含める。
 
 ## リファレンス
 

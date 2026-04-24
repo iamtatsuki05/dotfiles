@@ -1,6 +1,6 @@
 ---
 name: security-check
-description: コードのセキュリティ脆弱性を検出・分析するための汎用スキル。OWASP Top 10に基づく脆弱性チェック、シークレット漏洩検出、インジェクション脆弱性、安全でないデシリアライゼーション、アクセス制御の不備などを検出。セキュリティレビュー、脆弱性診断、コード監査、セキュリティチェック、ペネトレーションテスト準備、セキュアコーディングレビュー時に使用。
+description: "Use when the user asks for a security review, vulnerability scan, secure coding check, OWASP-style audit, secret leak detection, injection/auth/access-control review, or penetration-test preparation."
 ---
 
 # Security Check
@@ -42,6 +42,8 @@ rg -i "(DB_PASSWORD|JWT_SECRET|STRIPE_KEY)\s*="
 ```
 
 **除外対象**: `.env.example`, `*.test.*`, `*_test.go`, `mock*`
+
+検出した secret 候補は値を再掲しない。ファイル、行、種類、露出の疑いを示し、値は先頭/末尾数文字も含めて原則マスクする。明らかなテスト fixture や `.env.example` でも、実在する形式のキーに見える場合は誤検知候補として分類する。
 
 ## Phase 2: インジェクション脆弱性スキャン
 
@@ -99,6 +101,18 @@ rg "router\.(get|post|put|delete)" --type ts
 
 既知の脆弱性がないかバージョンを確認。
 
+利用可能なら以下を優先する:
+
+```bash
+npm audit --audit-level=high
+pip-audit
+uv run pip-audit
+govulncheck ./...
+bundle audit
+```
+
+導入されていないツールは勝手に追加せず、利用不可として報告するか、必要性を説明して確認する。
+
 ## Phase 5: レポート生成
 
 ### レポートフォーマット
@@ -144,6 +158,12 @@ rg "router\.(get|post|put|delete)" --type ts
 | High | SQLインジェクション、XSS、SSRF |
 | Medium | 弱い暗号化、セッション管理の不備 |
 | Low | 情報漏洩（バージョン情報等）、ベストプラクティス違反 |
+
+## 報告ルール
+
+- レビュー専用依頼では、勝手に修正しない。修正まで求められた場合だけ最小変更で対応する。
+- 誤検知、要確認、実害ありを分けて記載する。
+- 最終報告には対象範囲、実行した検索/ツール、検出件数、値をマスクした findings、未確認範囲を含める。
 
 ## リファレンス
 

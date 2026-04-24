@@ -1,6 +1,6 @@
 ---
 name: magika
-description: "Google製AI駆動型ファイルタイプ検出ツール「Magika」を使ってファイルの種別を識別する。「このファイルの種類を調べて」「ファイルタイプを検出して」「拡張子が正しいか確認して」「magikaを使って」「ディレクトリ内のファイルを分類して」などのリクエストでトリガー。magikaがインストールされていない場合はインストール手順も案内する。"
+description: "Use when the user asks to identify file types, verify whether an extension matches file content, classify files in a directory, or explicitly asks to use Magika."
 ---
 
 # Magika
@@ -18,6 +18,8 @@ magika --version
 ```
 
 **インストールされていない場合:**
+
+インストールは環境変更を伴うため、ユーザーに確認してから実行する。
 
 ```bash
 # CLIツールとして使う場合（推奨）
@@ -124,15 +126,22 @@ for r in results:
 ### 単一ファイルの種別を調べる
 
 1. `magika --version` でインストールを確認
-2. 未インストールなら `pipx install magika` を案内
+2. 未インストールなら `pipx install magika` を案内し、実行前にユーザー承認を取る
 3. `magika --json <ファイル>` で識別
 4. 結果の `output.label` / `output.description` をユーザーにわかりやすく報告
 
-### ディレクトリ内のファイルを分類する
+### ディレクトリを分類する
 
-1. `magika --recursive --jsonl <ディレクトリ>` で全ファイルを識別
-2. `jq` でグループやラベルごとに集計・フィルタ
-3. 結果をユーザーに整理して報告
+1. 対象ディレクトリ、再帰の有無、除外したい機密ファイルや巨大ファイルを確認する
+2. 必要なら `rg --files` などで対象件数を概算する
+3. `magika --jsonl --recursive <dir>` を実行する
+4. 種別ごとの件数、拡張子不一致、低 confidence の候補を整理して報告する
+
+### 低 confidence / 不一致の扱い
+
+- confidence が低い、または拡張子と内容が矛盾する場合は、Magika の結果だけで断定しない。
+- 必要に応じて `file <path>`、MIME type、先頭数行の安全な確認を併用する。
+- 機密性が高そうなファイル内容は本文を再掲せず、パスと判定概要だけを報告する。
 
 ### 拡張子と実態が一致しているか確認する
 

@@ -1,6 +1,6 @@
 ---
 name: markitdown
-description: "Microsoft製のファイル→Markdown変換ツール「MarkItDown」を使って、PDF・Word・PowerPoint・Excel・HTML・画像・音声・URLなど多様なファイルをMarkdownに変換する。「PDFをMarkdownに変換したい」「WordファイルをMarkdownにしたい」「markitdownを使って」「HTMLをMarkdownに変換」「ファイルをMarkdownに変換」などのリクエストでトリガー。MarkItDownがインストールされていない場合はインストール手順も案内する。"
+description: "Use when the user asks to convert PDF, Word, PowerPoint, Excel, HTML, image, audio, URL, or another supported source into Markdown, or explicitly asks to use MarkItDown."
 ---
 
 # MarkItDown
@@ -18,6 +18,8 @@ markitdown --version
 ```
 
 **インストールされていない場合:**
+
+インストールは環境変更を伴うため、ユーザーに確認してから実行する。OCR・音声文字起こしが必要な場合だけ `[all]` を検討する。
 
 ```bash
 # 標準インストール（PDF・Word・Excel・HTML 等に対応）
@@ -75,9 +77,17 @@ print(result.text_content)
 ## ワークフロー
 
 1. `markitdown --version` でインストールを確認
-2. 未インストールなら `pip install markitdown` を案内・実行
-3. 変換コマンドを実行
-4. 出力を確認し、必要なら `-o` でファイルに保存
+2. 入力ファイル/URL、出力先、既存ファイルの上書き可否を確認する
+3. 未インストールなら `pip install markitdown` を案内し、ユーザー承認後に実行する
+4. 変換コマンドを実行する
+5. 先頭・末尾・見出し・表・コードブロックなどを確認し、変換崩れや欠落を報告する
+6. ファイル保存が必要なら `-o` を使う。既存ファイルを上書きする場合は事前確認する
+
+## 注意
+
+- このリポジトリでは `.ipynb` を直接読み書きしない方針がある。ノートブック変換が必要な場合は、まず jupytext のペア `.py` があるか確認し、`.ipynb` 本体を丸ごと読み込まない。
+- URL 変換では外部アクセスが発生する。認証付きページ、社内資料、個人情報を含む URL はユーザー確認後に扱う。
+- 画像 OCR や音声文字起こしは追加依存・処理時間・外部モデル利用の可能性があるため、必要性を確認してから進める。
 
 ## 詳細リファレンス
 
