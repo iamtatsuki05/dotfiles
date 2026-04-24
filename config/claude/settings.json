@@ -46,6 +46,7 @@
       "Bash(umount:*)"
     ]
   },
+  "model": "opus",
   "hooks": {
     "PostToolUse": [
       {
@@ -69,6 +70,5 @@
   "MCP_TOOL_TIMEOUT": 600000,
   "DISABLE_AUTOUPDATER": "0",
   "ANTHROPIC_MODEL": "claude-sonnet-4-6",
-  "MAX_THINKING_TOKENS": 16000,
-  "model": "opus"
+  "MAX_THINKING_TOKENS": 32000
 }
