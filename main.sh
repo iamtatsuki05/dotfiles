@@ -123,6 +123,14 @@ setup_cron() {
   log_success "Cron jobs synced"
 }
 
+setup_git_hooks() {
+  local profile="$1"
+
+  log_step "Installing git hooks"
+  zsh "$SCRIPTS_DIR/setup_git_hooks.sh" --profile "$profile"
+  log_success "Git hooks installed"
+}
+
 mise_command() {
   if command -v mise >/dev/null 2>&1; then
     command -v mise
@@ -185,6 +193,7 @@ main() {
   else
     log_skip "cron sync is not part of the cli profile"
   fi
+  setup_git_hooks "$profile"
   install_mise_tools
   setup_neovim
 

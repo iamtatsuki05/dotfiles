@@ -60,6 +60,22 @@ cron ジョブは `config/cron/crontab` で管理できます。
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
 ```
 
+## Git pull 後の自動同期
+
+`main.sh` は Git hook を `.git/hooks/` にインストールします。
+
+- `post-merge`: `git pull` / merge 後に実行
+- `post-rewrite`: `git pull --rebase` 後に実行
+- `post-checkout`: branch checkout 後に実行
+
+hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、dotfiles、AI ツール設定、アプリ設定、cron、hook 自体を軽く同期します。Homebrew の install や mise tool install は重いため自動実行しません。
+
+手動で再インストールする場合:
+
+```sh
+zsh scripts/setup_git_hooks.sh
+```
+
 ## AI ツール設定（Claude Code / Codex / Gemini CLI）
 
 各 AI ツールの設定ファイルは `config/` で管理し、`sync.sh` がシンボリックリンクで配置します。

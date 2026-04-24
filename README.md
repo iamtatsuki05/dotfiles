@@ -61,6 +61,22 @@ Example:
 0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
 ```
 
+## Auto-sync after git pull
+
+`main.sh` installs Git hooks into `.git/hooks/`.
+
+- `post-merge`: runs after `git pull` / merge
+- `post-rewrite`: runs after `git pull --rebase`
+- `post-checkout`: runs after branch checkout
+
+The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which lightly syncs dotfiles, AI tool files, app configs, cron, and the hooks themselves. Heavy operations such as Homebrew install and mise tool install are not run automatically.
+
+To reinstall hooks manually:
+
+```sh
+zsh scripts/setup_git_hooks.sh
+```
+
 ## AI tool configuration (Claude Code / Codex / Gemini CLI)
 
 Settings files for each AI tool are managed in `config/` and symlinked to the appropriate locations by `sync.sh`:
