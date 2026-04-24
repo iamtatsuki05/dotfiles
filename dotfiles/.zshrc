@@ -273,8 +273,17 @@ function git-current-branch {
 }
 
 setopt prompt_subst
+function prompt-machine-emoji {
+  local checksum
+  local -a emojis=(🥺 🥹 🥺ྀི 😎 😇 😘 🤗 🤔 🤖 🧠 🚀 🎧 🎮 🎹 🎨)
+
+  checksum="$(printf '%s' "${HOST:-$(hostname)}" | cksum)"
+  printf '%s' "$emojis[$(( ${checksum%% *} % ${#emojis[@]} + 1 ))]"
+}
+
+PROMPT_MACHINE_EMOJI="${PROMPT_MACHINE_EMOJI:-$(prompt-machine-emoji)}"
 PROMPT='%F{33}%~%f `git-current-branch`
- 🥺  ▶  '
+ ${PROMPT_MACHINE_EMOJI}  ▶  '
 
 # environment
 if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -d "${HOMEBREW_PREFIX}/bin" ]; then
