@@ -7,6 +7,7 @@ DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 REPO_ROOT="$DEFAULT_REPO_ROOT"
 APPLY=0
+PREFER_HOME_ZSHRC=0
 
 usage() {
   cat <<EOF
@@ -17,6 +18,8 @@ Usage:
 Options:
   --apply            Write .chezmoiroot and home/ source state files.
   --dry-run          Show planned changes without writing files. This is the default.
+  --prefer-home-zshrc
+                     Use ~/.zshrc even when dotfiles/.zshrc exists.
   --repo-root PATH   Override repository root. Intended for tests.
   -h, --help         Show this help.
 EOF
@@ -30,6 +33,9 @@ parse_args() {
         ;;
       --dry-run)
         APPLY=0
+        ;;
+      --prefer-home-zshrc)
+        PREFER_HOME_ZSHRC=1
         ;;
       --repo-root)
         shift
@@ -108,6 +114,48 @@ copy_file() {
   fi
 }
 
+copy_file_with_home_fallback() {
+  local source_relative_path="$1"
+  local home_relative_path="$2"
+  local target_relative_path="$3"
+  local source="$REPO_ROOT/$source_relative_path"
+  local home_source="$HOME/$home_relative_path"
+  local target="$REPO_ROOT/$target_relative_path"
+
+  if [[ -f "$source" ]]; then
+    copy_file "$source_relative_path" "$target_relative_path"
+    return
+  fi
+
+  if [[ ! -f "$home_source" ]]; then
+    echo "ERROR: required source file not found: $source_relative_path or ~/$home_relative_path" >&2
+    return 1
+  fi
+
+  log_action "copy ~/$home_relative_path ->" "$target_relative_path"
+  if (( APPLY )); then
+    ensure_parent_dir "$target"
+    cp "$home_source" "$target"
+  fi
+}
+
+copy_zshrc() {
+  if (( PREFER_HOME_ZSHRC )); then
+    copy_file_with_home_fallback "__missing_dotfiles_zshrc__" ".zshrc" "home/dot_zshrc"
+    return
+  fi
+
+  copy_file_with_home_fallback "dotfiles/.zshrc" ".zshrc" "home/dot_zshrc"
+}
+
+remove_stale_generated_paths() {
+  if (( ! APPLY )); then
+    return
+  fi
+
+  rm -rf "$REPO_ROOT/home/dot_config"
+}
+
 generate_chezmoi_source_state() {
   local brewfile_template
   local mise_template
@@ -126,18 +174,19 @@ generate_chezmoi_source_state() {
 {{- end -}}
 {{ include ".chezmoitemplates/mise-config.toml" | replace "__DOTFILES_REPO_ROOT__" $repoRoot }}'
 
+  remove_stale_generated_paths
   write_file ".chezmoiroot" "home"
-  copy_file "dotfiles/.zshrc" "home/dot_zshrc"
+  copy_zshrc
   copy_file "dotfiles/.tmux.conf" "home/dot_tmux.conf"
   copy_file "dotfiles/.Brewfile" "home/.chezmoitemplates/Brewfile"
   copy_file "dotfiles/.Brewfile.cli" "home/.chezmoitemplates/Brewfile.cli"
   copy_file "config/mise-config.toml" "home/.chezmoitemplates/mise-config.toml"
   write_file "home/dot_Brewfile.tmpl" "$brewfile_template"
-  copy_file "config/alacritty.toml" "home/dot_config/alacritty/alacritty.toml"
-  copy_file "config/ghostty/config" "home/dot_config/ghostty/config"
-  write_file "home/dot_config/mise/private_config.toml.tmpl" "$mise_template"
-  copy_file "config/init.vim" "home/dot_config/nvim/init.vim"
-  copy_file "config/shell/secrets.env.example" "home/dot_config/shell/create_private_secrets.env"
+  copy_file "config/alacritty.toml" "home/private_dot_config/alacritty/alacritty.toml"
+  copy_file "config/ghostty/config" "home/private_dot_config/ghostty/config"
+  write_file "home/private_dot_config/mise/private_config.toml.tmpl" "$mise_template"
+  copy_file "config/init.vim" "home/private_dot_config/nvim/init.vim"
+  copy_file "config/shell/secrets.env.example" "home/private_dot_config/shell/create_private_secrets.env"
 }
 
 main() {

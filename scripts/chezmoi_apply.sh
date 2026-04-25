@@ -124,6 +124,15 @@ has_mise_command() {
   command -v mise >/dev/null 2>&1
 }
 
+home_local_chezmoi_command() {
+  if [[ -x "$HOME/.local/bin/chezmoi" ]]; then
+    print -r -- "$HOME/.local/bin/chezmoi"
+    return 0
+  fi
+
+  return 1
+}
+
 mise_chezmoi_command() {
   local install_dir
 
@@ -152,10 +161,16 @@ EOF
 }
 
 run_chezmoi() {
+  local home_chezmoi_bin
   local mise_chezmoi_bin
 
   if command -v chezmoi >/dev/null 2>&1; then
     DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" chezmoi "$@"
+    return 0
+  fi
+
+  if home_chezmoi_bin="$(home_local_chezmoi_command)"; then
+    DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" "$home_chezmoi_bin" "$@"
     return 0
   fi
 

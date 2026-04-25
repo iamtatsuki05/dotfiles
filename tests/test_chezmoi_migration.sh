@@ -60,6 +60,13 @@ create_fixture_repo() {
   print -r -- 'export API_KEY=""' > "$repo/config/shell/secrets.env.example"
 }
 
+create_fixture_home() {
+  local home_dir="$1"
+
+  mkdir -p "$home_dir"
+  print -r -- 'export FALLBACK_ZSHRC=1' > "$home_dir/.zshrc"
+}
+
 create_fake_chezmoi() {
   local bin_dir="$1"
   local log_file="$2"
@@ -102,6 +109,21 @@ create_fake_mise() {
   chmod +x "$install_dir/chezmoi"
 }
 
+create_fake_home_chezmoi() {
+  local home_dir="$1"
+  local log_file="$2"
+
+  mkdir -p "$home_dir/.local/bin"
+  {
+    print -r -- '#!/usr/bin/env zsh'
+    print -r -- 'set -euo pipefail'
+    print -r -- "print -r -- \"DOTFILES_PROFILE=\${DOTFILES_PROFILE:-}\" >> ${(qqq)log_file}"
+    print -r -- "print -r -- \"DOTFILES_REPO_ROOT=\${DOTFILES_REPO_ROOT:-}\" >> ${(qqq)log_file}"
+    print -r -- "print -r -- \"HOME_CHEZMOI:\$*\" >> ${(qqq)log_file}"
+  } > "$home_dir/.local/bin/chezmoi"
+  chmod +x "$home_dir/.local/bin/chezmoi"
+}
+
 test_apply_generates_chezmoi_source_state() {
   local repo
   repo="$(mktemp -d)"
@@ -115,10 +137,10 @@ test_apply_generates_chezmoi_source_state() {
   assert_dir "$repo/home"
   cmp "$repo/dotfiles/.zshrc" "$repo/home/dot_zshrc" >/dev/null
   cmp "$repo/dotfiles/.tmux.conf" "$repo/home/dot_tmux.conf" >/dev/null
-  cmp "$repo/config/alacritty.toml" "$repo/home/dot_config/alacritty/alacritty.toml" >/dev/null
-  cmp "$repo/config/ghostty/config" "$repo/home/dot_config/ghostty/config" >/dev/null
-  cmp "$repo/config/init.vim" "$repo/home/dot_config/nvim/init.vim" >/dev/null
-  cmp "$repo/config/shell/secrets.env.example" "$repo/home/dot_config/shell/create_private_secrets.env" >/dev/null
+  cmp "$repo/config/alacritty.toml" "$repo/home/private_dot_config/alacritty/alacritty.toml" >/dev/null
+  cmp "$repo/config/ghostty/config" "$repo/home/private_dot_config/ghostty/config" >/dev/null
+  cmp "$repo/config/init.vim" "$repo/home/private_dot_config/nvim/init.vim" >/dev/null
+  cmp "$repo/config/shell/secrets.env.example" "$repo/home/private_dot_config/shell/create_private_secrets.env" >/dev/null
   cmp "$repo/dotfiles/.Brewfile" "$repo/home/.chezmoitemplates/Brewfile" >/dev/null
   cmp "$repo/dotfiles/.Brewfile.cli" "$repo/home/.chezmoitemplates/Brewfile.cli" >/dev/null
   cmp "$repo/config/mise-config.toml" "$repo/home/.chezmoitemplates/mise-config.toml" >/dev/null
@@ -126,9 +148,9 @@ test_apply_generates_chezmoi_source_state() {
   assert_contains "$repo/home/dot_Brewfile.tmpl" '{{ include ".chezmoitemplates/Brewfile"'
   assert_contains "$repo/home/dot_Brewfile.tmpl" '{{ include ".chezmoitemplates/Brewfile.cli"'
   assert_contains "$repo/home/dot_Brewfile.tmpl" 'DOTFILES_PROFILE'
-  assert_contains "$repo/home/dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
-  assert_contains "$repo/home/dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
-  assert_contains "$repo/home/dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
+  assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
+  assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
   rm -rf "$repo"
 }
 
@@ -148,6 +170,37 @@ test_dry_run_does_not_write_source_state() {
   assert_contains "$output" "home/dot_zshrc"
 
   rm -rf "$repo"
+}
+
+test_apply_uses_home_zshrc_when_repo_zshrc_is_missing() {
+  local repo
+  local home_dir
+  repo="$(mktemp -d)"
+  home_dir="$(mktemp -d)"
+  create_fixture_repo "$repo"
+  create_fixture_home "$home_dir"
+  rm "$repo/dotfiles/.zshrc"
+
+  HOME="$home_dir" zsh "$MIGRATION_SCRIPT" --repo-root "$repo" --apply >/dev/null
+
+  cmp "$home_dir/.zshrc" "$repo/home/dot_zshrc" >/dev/null
+
+  rm -rf "$repo" "$home_dir"
+}
+
+test_apply_can_prefer_home_zshrc_even_when_repo_zshrc_exists() {
+  local repo
+  local home_dir
+  repo="$(mktemp -d)"
+  home_dir="$(mktemp -d)"
+  create_fixture_repo "$repo"
+  create_fixture_home "$home_dir"
+
+  HOME="$home_dir" zsh "$MIGRATION_SCRIPT" --repo-root "$repo" --apply --prefer-home-zshrc >/dev/null
+
+  cmp "$home_dir/.zshrc" "$repo/home/dot_zshrc" >/dev/null
+
+  rm -rf "$repo" "$home_dir"
 }
 
 test_chezmoi_apply_uses_repo_source_in_dry_run() {
@@ -222,14 +275,17 @@ test_chezmoi_apply_falls_back_to_mise_install_when_chezmoi_is_not_on_path() {
   local repo
   local bin_dir
   local log_file
+  local home_dir
   repo="$(mktemp -d)"
   bin_dir="$repo/bin"
   log_file="$repo/mise.log"
+  home_dir="$repo/home-dir"
   print -r -- "home" > "$repo/.chezmoiroot"
   mkdir -p "$repo/home"
+  mkdir -p "$home_dir"
   create_fake_mise "$bin_dir" "$log_file"
 
-  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" zsh "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
+  HOME="$home_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" zsh "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
 
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
@@ -238,13 +294,36 @@ test_chezmoi_apply_falls_back_to_mise_install_when_chezmoi_is_not_on_path() {
   rm -rf "$repo"
 }
 
+test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path() {
+  local repo
+  local home_dir
+  local log_file
+  repo="$(mktemp -d)"
+  home_dir="$(mktemp -d)"
+  log_file="$repo/chezmoi.log"
+  print -r -- "home" > "$repo/.chezmoiroot"
+  mkdir -p "$repo/home"
+  create_fake_home_chezmoi "$home_dir" "$log_file"
+
+  HOME="$home_dir" PATH="/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" zsh "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
+
+  assert_contains "$log_file" "DOTFILES_PROFILE=cli"
+  assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
+  assert_contains "$log_file" "HOME_CHEZMOI:-S $repo apply -n -v"
+
+  rm -rf "$repo" "$home_dir"
+}
+
 main() {
   test_apply_generates_chezmoi_source_state
   test_dry_run_does_not_write_source_state
+  test_apply_uses_home_zshrc_when_repo_zshrc_is_missing
+  test_apply_can_prefer_home_zshrc_even_when_repo_zshrc_exists
   test_chezmoi_apply_uses_repo_source_in_dry_run
   test_chezmoi_apply_can_mark_chezmoi_as_default_manager
   test_chezmoi_apply_passes_profile_to_templates
   test_chezmoi_apply_falls_back_to_mise_install_when_chezmoi_is_not_on_path
+  test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path
   echo "chezmoi migration tests passed"
 }
 

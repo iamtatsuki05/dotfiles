@@ -24,6 +24,20 @@ assert_same_file() {
   cmp "$expected" "$actual" >/dev/null || fail "expected $actual to match $expected"
 }
 
+assert_same_file_or_home_fallback() {
+  local expected="$1"
+  local home_relative_path="$2"
+  local actual="$3"
+
+  assert_file "$actual"
+
+  if [[ -f "$expected" ]] && cmp "$expected" "$actual" >/dev/null; then
+    return
+  fi
+
+  assert_same_file "$HOME/$home_relative_path" "$actual"
+}
+
 assert_contains() {
   local file_path="$1"
   local expected="$2"
@@ -41,11 +55,18 @@ assert_not_contains() {
 }
 
 run_chezmoi() {
+  local home_chezmoi_bin
   local mise_chezmoi_bin
   local mise_install_dir
 
   if command -v chezmoi >/dev/null 2>&1; then
     chezmoi "$@"
+    return
+  fi
+
+  home_chezmoi_bin="$HOME/.local/bin/chezmoi"
+  if [[ -x "$home_chezmoi_bin" ]]; then
+    "$home_chezmoi_bin" "$@"
     return
   fi
 
@@ -91,7 +112,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
     return 0
   fi
 
-  assert_same_file "$REPO_ROOT/dotfiles/.zshrc" "$temp_home/.zshrc"
+  assert_same_file_or_home_fallback "$REPO_ROOT/dotfiles/.zshrc" ".zshrc" "$temp_home/.zshrc"
   assert_same_file "$REPO_ROOT/dotfiles/.tmux.conf" "$temp_home/.tmux.conf"
   assert_same_file "$REPO_ROOT/dotfiles/.Brewfile.cli" "$temp_home/.Brewfile"
   assert_same_file "$REPO_ROOT/config/alacritty.toml" "$temp_home/.config/alacritty/alacritty.toml"
