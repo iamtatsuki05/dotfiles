@@ -6,6 +6,7 @@ readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly MIGRATION_SCRIPT="$REPO_ROOT/scripts/migrate_brew_to_nix.sh"
 readonly INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_install.sh"
+readonly NIX_PORTABLE_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_portable_install.sh"
 readonly ROOTLESS_NIX_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_rootless_install.sh"
 readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
 readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
@@ -48,6 +49,11 @@ fail() {
 assert_file() {
   local file_path="$1"
   [[ -f "$file_path" ]] || fail "expected file: $file_path"
+}
+
+assert_executable() {
+  local file_path="$1"
+  [[ -x "$file_path" ]] || fail "expected executable file: $file_path"
 }
 
 assert_not_exists() {
@@ -443,6 +449,57 @@ test_rootless_nix_install_script_supports_no_sudo_linux() {
   assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" '--shell'
 }
 
+test_nix_portable_install_script_supports_no_sudo_nix_main_path() {
+  local tmp_dir
+  local log_file
+  local output_file
+  tmp_dir="$(mktemp -d)"
+  log_file="$tmp_dir/nix-portable.log"
+  output_file="$tmp_dir/output.log"
+
+  cat > "$tmp_dir/nix-portable" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'NP_RUNTIME=%s\n' "${NP_RUNTIME:-}"
+  printf 'ARGS=%s\n' "$*"
+} >> "$NIX_PORTABLE_TEST_LOG"
+
+if [[ "$*" == "nix --version" ]]; then
+  printf 'nix (Nix) fake\n'
+elif [[ "$*" == nix\ shell* ]]; then
+  printf 'fake nix shell\n'
+fi
+EOF
+  chmod +x "$tmp_dir/nix-portable"
+
+  NIX_PORTABLE_BIN_DIR="$tmp_dir" NIX_PORTABLE_TEST_LOG="$log_file" \
+    "$TEST_ZSH_BIN" "$NIX_PORTABLE_INSTALL_SCRIPT" > "$output_file"
+  assert_output_contains "$output_file" "nix-portable is ready."
+  assert_output_contains "$log_file" "NP_RUNTIME=proot"
+  assert_output_contains "$log_file" "ARGS=nix --version"
+  assert_executable "$tmp_dir/nixp"
+  assert_executable "$tmp_dir/dotfiles-nix-shell"
+  assert_executable "$tmp_dir/dotfiles-nix-run"
+
+  : > "$log_file"
+  NIX_PORTABLE_BIN_DIR="$tmp_dir" NIX_PORTABLE_TEST_LOG="$log_file" \
+    "$tmp_dir/nixp" --version > "$output_file"
+  assert_output_contains "$log_file" "ARGS=nix --version"
+
+  : > "$log_file"
+  NIX_PORTABLE_BIN_DIR="$tmp_dir" NIX_PORTABLE_TEST_LOG="$log_file" \
+    "$tmp_dir/dotfiles-nix-run" echo ok > "$output_file"
+  assert_output_contains "$log_file" "ARGS=nix shell path:$REPO_ROOT#dotfiles-cli-packages -c echo ok"
+
+  : > "$log_file"
+  NIX_PORTABLE_BIN_DIR="$tmp_dir" NIX_PORTABLE_TEST_LOG="$log_file" \
+    "$TEST_ZSH_BIN" "$NIX_PORTABLE_INSTALL_SCRIPT" --with-gui-apps --run echo ok > "$output_file"
+  assert_output_contains "$log_file" "ARGS=nix shell path:$REPO_ROOT#dotfiles-full-packages -c echo ok"
+
+  rm -rf "$tmp_dir"
+}
+
 test_remove_homebrew_script_is_explicit_and_dry_run_first() {
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" '--dry-run'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" '--apply'
@@ -467,6 +524,10 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply-with-gui-apps]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --with-gui-apps"'
+  assert_contains "$MISE_CONFIG" '[tasks.nix-portable-install]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh"'
+  assert_contains "$MISE_CONFIG" '[tasks.nix-portable-shell]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh --shell"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
   assert_not_contains "$MISE_CONFIG" '[tasks.homebrew-dump]'
   assert_not_contains "$MISE_CONFIG" 'brew_dump.sh'
@@ -523,6 +584,7 @@ main() {
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
   test_rootless_nix_install_script_supports_no_sudo_linux
+  test_nix_portable_install_script_supports_no_sudo_nix_main_path
   test_remove_homebrew_script_is_explicit_and_dry_run_first
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
   test_bash_templates_support_dynamic_shell_setup

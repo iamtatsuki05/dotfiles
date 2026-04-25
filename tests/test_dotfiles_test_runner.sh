@@ -79,6 +79,10 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply-with-gui-apps]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --with-gui-apps"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-portable-install]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-portable-shell]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh --shell"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-remove-homebrew]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-mise-upgrade]"

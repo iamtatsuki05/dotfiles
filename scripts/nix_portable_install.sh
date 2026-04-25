@@ -1,4 +1,4 @@
-#!/usr/bin/zsh
+#!/usr/bin/env zsh
 
 set -euo pipefail
 
@@ -95,19 +95,19 @@ write_wrappers() {
   cat > "$nixp_wrapper" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-exec ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --nix "\$@"
+exec zsh ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --nix "\$@"
 EOF
 
   cat > "$shell_wrapper" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-exec ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --shell "\$@"
+exec zsh ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --shell "\$@"
 EOF
 
   cat > "$run_wrapper" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-exec ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --run "\$@"
+exec zsh ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --run "\$@"
 EOF
 
   chmod +x "$nixp_wrapper" "$shell_wrapper" "$run_wrapper"
