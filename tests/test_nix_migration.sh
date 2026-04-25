@@ -309,7 +309,8 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
 
   assert_contains "$DARWIN_MODULE" 'system.stateVersion'
   assert_contains "$DARWIN_MODULE" 'nix.enable = false'
-  assert_contains "$DARWIN_MODULE" 'security.pam.services.sudo_local.enable = false'
+  assert_contains "$DARWIN_MODULE" 'security.pam.services.sudo_local = {'
+  assert_contains "$DARWIN_MODULE" 'touchIdAuth = true'
   assert_contains "$DARWIN_MODULE" 'enableGuiApps'
   assert_contains "$DARWIN_MODULE" 'import ../gui-packages.nix'
   assert_contains "$DARWIN_MODULE" 'import ../homebrew-fallback.nix'
@@ -329,6 +330,10 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_not_contains "$DARWIN_MODULE" 'nix.settings'
   assert_not_contains "$DARWIN_MODULE" 'nix.optimise'
   assert_contains "$DARWIN_MODULE" 'users.users.${username}.home'
+  assert_contains "$DARWIN_MODULE" 'InitialKeyRepeat = 12'
+  assert_contains "$DARWIN_MODULE" 'KeyRepeat = 1'
+  assert_not_contains "$MAIN_SCRIPT" 'default_setup.sh'
+  assert_not_exists "$REPO_ROOT/scripts/default_setup.sh"
 }
 
 test_nix_install_script_switches_nix_darwin_or_home_manager() {

@@ -23,7 +23,10 @@ in
 
   programs.zsh.enable = true;
 
-  security.pam.services.sudo_local.enable = false;
+  security.pam.services.sudo_local = {
+    enable = true;
+    touchIdAuth = true;
+  };
 
   environment.shells = [
     pkgs.zsh

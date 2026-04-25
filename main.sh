@@ -71,17 +71,6 @@ activate_nix_environment() {
   log_success "Nix environment activated"
 }
 
-setup_defaults() {
-  if ! dotfiles_is_macos; then
-    log_skip "macOS default settings are not available on $DOTFILES_OS_NAME"
-    return 0
-  fi
-
-  log_step "Configuring macOS default settings"
-  zsh "$SCRIPTS_DIR/default_setup.sh"
-  log_success "Default settings configured"
-}
-
 setup_configs() {
   log_step "Setting up application configs"
   zsh "$SCRIPTS_DIR/setup_config.sh"
@@ -152,11 +141,6 @@ main() {
   sync_agent_files
   install_nix "$profile"
   activate_nix_environment
-  if [[ "$profile" == "full" ]]; then
-    setup_defaults
-  else
-    log_skip "macOS default settings are not part of the cli profile"
-  fi
   setup_configs
   if [[ "$profile" == "full" ]]; then
     setup_cron
