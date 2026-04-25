@@ -1,4 +1,13 @@
-ssh-add ~/.ssh/id_rsa
+function dotfiles_add_default_ssh_key {
+  local key_path="$HOME/.ssh/id_rsa"
+
+  if [[ -o interactive && -r "$key_path" && -S "${SSH_AUTH_SOCK:-}" ]]; then
+    ssh-add -q "$key_path" 2>/dev/null || true
+  fi
+}
+
+dotfiles_add_default_ssh_key
+unfunction dotfiles_add_default_ssh_key
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -85,6 +94,20 @@ function dotfiles_cleanup_stale_homebrew_completion {
 function dotfiles_compinit {
   dotfiles_cleanup_stale_homebrew_completion
 
+  local dotfiles_completion_dir
+  for dotfiles_completion_dir in \
+    "$HOME/.linuxbrew/share/zsh/site-functions" \
+    "$HOME/.linuxbrew/share/zsh-completions" \
+    "/home/linuxbrew/.linuxbrew/share/zsh/site-functions" \
+    "/home/linuxbrew/.linuxbrew/share/zsh-completions" \
+    "/opt/homebrew/share/zsh/site-functions" \
+    "/usr/local/share/zsh/site-functions"
+  do
+    if [[ -d "$dotfiles_completion_dir" ]]; then
+      fpath=("$dotfiles_completion_dir" $fpath)
+    fi
+  done
+
   local zcompdump_dir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
   mkdir -p "$zcompdump_dir"
   autoload -Uz compinit
@@ -151,36 +174,21 @@ zstyle ':completion:*' menu select
 # 補完候補をできるだけ詰めて表示する
 setopt list_packed
 
-# -----------------------------
-# Plugin
-# -----------------------------
-# zplugが無ければインストール
-if [[ ! -d ~/.zplug ]];then
-  git clone https://github.com/zplug/zplug ~/.zplug
-fi
+# Optional plugins are installed by Nix, Homebrew, or the host package manager.
+function dotfiles_source_if_readable {
+  local source_path="$1"
+  [[ -r "$source_path" ]] && source "$source_path"
+}
 
-# zplugを有効化する
-source ~/.zplug/init.zsh
-
-# プラグインList
-# zplug "ユーザー名/リポジトリ名", タグ
-zplug "zsh-users/zsh-completions"
-zplug "zsh-users/zsh-autosuggestions"
-zplug "zsh-users/zsh-syntax-highlighting", defer:2
-zplug "b4b4r07/enhancd", use:init.sh
-#zplug "junegunn/fzf-bin", as:command, from:gh-r, file:fzf
-
-# インストールしていないプラグインをインストール
-if ! zplug check --verbose; then
-  printf "Install? [y/N]: "
-  if read -q; then
-      echo; zplug install
-  fi
-fi
-
-# コマンドをリンクして、PATH に追加し、プラグインは読み込む
-zplug load --verbose
-
+dotfiles_source_if_readable "$HOME/.linuxbrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+dotfiles_source_if_readable "/home/linuxbrew/.linuxbrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+dotfiles_source_if_readable "/opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+dotfiles_source_if_readable "/usr/local/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+dotfiles_source_if_readable "$HOME/.linuxbrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+dotfiles_source_if_readable "/home/linuxbrew/.linuxbrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+dotfiles_source_if_readable "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+dotfiles_source_if_readable "/usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+unfunction dotfiles_source_if_readable
 
 # commands
 
@@ -302,6 +310,12 @@ PROMPT='%F{33}%~%f `git-current-branch`
  ${PROMPT_MACHINE_EMOJI}  ▶  '
 
 # environment
+if [ -d "$HOME/.linuxbrew/bin" ]; then
+  export PATH="$HOME/.linuxbrew/bin:$HOME/.linuxbrew/sbin:$PATH"
+elif [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
+  export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+fi
+
 export PATH="$HOME/.local/bin:$PATH"
 if [ -d "$HOME/.nix-profile/bin" ]; then
   export PATH="$HOME/.nix-profile/bin:$PATH"
