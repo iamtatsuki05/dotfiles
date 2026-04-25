@@ -15,9 +15,9 @@ zsh main.sh
 - macOS: `full`
 - Linux: `cli`
 
-`full` は macOS 向けの全体セットアップです。nix-darwin、Home Manager、GUI アプリ、macOS defaults、cron、設定ファイル、mise、Neovim をセットアップします。
+`full` は macOS 向けの全体セットアップです。nix-darwin、Home Manager、GUI アプリ、macOS defaults、launchd / systemd user timer、設定ファイル、mise、Neovim をセットアップします。
 
-`cli` は Ubuntu などでも使いやすい CLI 中心のセットアップです。GUI アプリ、macOS 専用ツール、macOS defaults、cron は実行せず、Nix の CLI package set だけを適用します。
+`cli` は Ubuntu などでも使いやすい CLI 中心のセットアップです。GUI アプリ、macOS 専用ツール、macOS defaults、launchd / systemd user timer は実行せず、Nix の CLI package set だけを適用します。
 
 ```sh
 # Ubuntu / Linux や CLI だけを入れたい macOS
@@ -141,20 +141,9 @@ zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 
 `--brewfile` を省略した場合、script は `brew bundle dump` で一時 Brewfile を作り、Nix package list に移行した後、その一時ファイルを削除します。
 
-## Cron ジョブ
+## 定期更新
 
-cron ジョブは `config/cron/crontab` で管理できます。
-
-- `main.sh` は `scripts/setup_cron.sh` を実行し、このリポジトリが管理するブロックだけを `crontab` に同期します。
-- managed block 以外の既存 cron エントリは保持されます。
-- `config/cron/crontab` に有効な cron エントリが 1 つもなければ、managed block は削除されます。
-- デフォルトでは、このリポジトリに対して毎日 06:00 に `git pull --ff-only` を実行し、ログを `/tmp/dotfiles-git-pull.log` に出力します。
-
-例:
-
-```cron
-0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
-```
+`full` profile では、macOS は nix-darwin の launchd agent、Linux は Home Manager の systemd user timer で `dotfiles-auto-update` を管理します。毎日 06:00 に `${HOME}/src/dotfiles` で `git pull --ff-only` を実行し、ログを `/tmp/dotfiles-git-pull.log` に出力します。macOS では、旧 `setup_cron.sh` が入れた managed cron block を nix-darwin activation 時に削除します。
 
 ## Git pull 後の自動同期
 
@@ -164,7 +153,7 @@ cron ジョブは `config/cron/crontab` で管理できます。
 - `post-rewrite`: `git pull --rebase` 後に実行
 - `post-checkout`: branch checkout 後に実行
 
-hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、dotfiles、AI ツール設定、アプリ設定、cron、hook 自体を同期します。nix-darwin / Home Manager の switch、Homebrew の uninstall、mise tool install は自動実行しません。
+hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、dotfiles、AI ツール設定、アプリ設定、hook 自体を同期します。nix-darwin / Home Manager の switch、Homebrew の uninstall、mise tool install は自動実行しません。
 
 手動で再インストールする場合:
 

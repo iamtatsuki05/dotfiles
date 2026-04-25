@@ -305,6 +305,12 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_MODULE" 'homeManagerProvidedPackageNames'
   assert_contains "$HOME_MANAGER_MODULE" 'lib.getName pkg'
   assert_contains "$HOME_MANAGER_MODULE" 'hm-session-vars.sh'
+  assert_contains "$HOME_MANAGER_MODULE" 'systemd.user.services.dotfiles-auto-update'
+  assert_contains "$HOME_MANAGER_MODULE" 'systemd.user.timers.dotfiles-auto-update'
+  assert_contains "$HOME_MANAGER_MODULE" 'config.dotfiles.profile == "full" && !pkgs.stdenv.hostPlatform.isDarwin'
+  assert_contains "$HOME_MANAGER_MODULE" 'OnCalendar = "*-*-* 06:00:00"'
+  assert_contains "$HOME_MANAGER_MODULE" 'Persistent = true'
+  assert_contains "$HOME_MANAGER_MODULE" '/tmp/dotfiles-git-pull.log'
   assert_not_contains "$HOME_MANAGER_MODULE" "brew shellenv"
 
   assert_contains "$DARWIN_MODULE" 'system.stateVersion'
@@ -332,8 +338,20 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_MODULE" 'users.users.${username}.home'
   assert_contains "$DARWIN_MODULE" 'InitialKeyRepeat = 12'
   assert_contains "$DARWIN_MODULE" 'KeyRepeat = 1'
+  assert_contains "$DARWIN_MODULE" 'launchd.user.agents.dotfiles-auto-update'
+  assert_contains "$DARWIN_MODULE" 'profile == "full"'
+  assert_contains "$DARWIN_MODULE" 'StartCalendarInterval'
+  assert_contains "$DARWIN_MODULE" 'Hour = 6'
+  assert_contains "$DARWIN_MODULE" 'Minute = 0'
+  assert_contains "$DARWIN_MODULE" '/tmp/dotfiles-git-pull.log'
+  assert_contains "$DARWIN_MODULE" 'system.activationScripts.postActivation.text = lib.mkAfter'
+  assert_contains "$DARWIN_MODULE" 'removed legacy dotfiles cron block'
   assert_not_contains "$MAIN_SCRIPT" 'default_setup.sh'
+  assert_not_contains "$MAIN_SCRIPT" 'setup_cron.sh'
+  assert_not_contains "$APPLY_UPDATES_SCRIPT" 'setup_cron.sh'
   assert_not_exists "$REPO_ROOT/scripts/default_setup.sh"
+  assert_not_exists "$REPO_ROOT/scripts/setup_cron.sh"
+  assert_not_exists "$REPO_ROOT/config/cron/crontab"
 }
 
 test_nix_install_script_switches_nix_darwin_or_home_manager() {

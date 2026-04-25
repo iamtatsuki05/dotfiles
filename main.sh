@@ -77,12 +77,6 @@ setup_configs() {
   log_success "Application configs set up"
 }
 
-setup_cron() {
-  log_step "Syncing cron jobs"
-  zsh "$SCRIPTS_DIR/setup_cron.sh"
-  log_success "Cron jobs synced"
-}
-
 setup_git_hooks() {
   local profile="$1"
 
@@ -142,11 +136,6 @@ main() {
   install_nix "$profile"
   activate_nix_environment
   setup_configs
-  if [[ "$profile" == "full" ]]; then
-    setup_cron
-  else
-    log_skip "cron sync is not part of the cli profile"
-  fi
   setup_git_hooks "$profile"
   install_mise_tools
   setup_neovim

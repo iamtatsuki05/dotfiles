@@ -94,17 +94,6 @@ sync_configs() {
   zsh "$SCRIPT_DIR/setup_config.sh"
 }
 
-sync_cron_if_needed() {
-  local profile="$1"
-
-  if [[ "$profile" != "full" ]]; then
-    return 0
-  fi
-
-  log "Syncing cron"
-  zsh "$SCRIPT_DIR/setup_cron.sh"
-}
-
 refresh_git_hooks() {
   local profile="$1"
 
@@ -123,7 +112,6 @@ main() {
   sync_home_state "$profile"
   sync_agent_files
   sync_configs
-  sync_cron_if_needed "$profile"
   refresh_git_hooks "$profile"
 
   if [[ "$FROM_HOOK" == "1" ]]; then

@@ -17,9 +17,9 @@ zsh main.sh
 - macOS: `full`
 - Linux: `cli`
 
-`full` is the complete macOS setup. It applies nix-darwin, Home Manager, GUI apps, macOS defaults, cron, configs, mise tools, and Neovim.
+`full` is the complete macOS setup. It applies nix-darwin, Home Manager, GUI apps, macOS defaults, launchd / systemd user timers, configs, mise tools, and Neovim.
 
-`cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips GUI apps, macOS-only tools, macOS defaults, and cron, then applies only the Nix CLI package set.
+`cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips GUI apps, macOS-only tools, macOS defaults, and launchd / systemd user timers, then applies only the Nix CLI package set.
 
 ```sh
 # Ubuntu / Linux, or CLI-only setup on macOS
@@ -143,19 +143,9 @@ zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 
 When `--brewfile` is omitted, the script uses `brew bundle dump` to create a temporary Brewfile, migrates it to Nix package lists, and then removes the temporary file.
 
-## Cron jobs
+## Scheduled Updates
 
-You can manage cron jobs from `config/cron/crontab`.
-
-- `main.sh` runs `scripts/setup_cron.sh` and syncs only the block managed by this repository.
-- Existing cron entries outside the managed block are preserved.
-- If `config/cron/crontab` does not contain any active cron entries, the managed block is removed.
-- The default managed job runs `git pull --ff-only` for this repository once per day at 06:00 and writes logs to `/tmp/dotfiles-git-pull.log`.
-
-Example:
-```cron
-0 6 * * * /usr/bin/git -C /Users/tatsuki/src/dotfiles pull --ff-only >> /tmp/dotfiles-git-pull.log 2>&1
-```
+On `full` profiles, macOS uses a nix-darwin launchd agent and Linux uses a Home Manager systemd user timer for `dotfiles-auto-update`. It runs `git pull --ff-only` in `${HOME}/src/dotfiles` every day at 06:00 and writes logs to `/tmp/dotfiles-git-pull.log`. On macOS, nix-darwin activation removes the old managed cron block installed by `setup_cron.sh`.
 
 ## Auto-sync after git pull
 
@@ -165,7 +155,7 @@ Example:
 - `post-rewrite`: runs after `git pull --rebase`
 - `post-checkout`: runs after branch checkout
 
-The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which syncs dotfiles, AI tool files, app configs, cron, and the hooks themselves. nix-darwin / Home Manager switch, Homebrew uninstall, and mise tool install are not run automatically.
+The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which syncs dotfiles, AI tool files, app configs, and the hooks themselves. nix-darwin / Home Manager switch, Homebrew uninstall, and mise tool install are not run automatically.
 
 To reinstall hooks manually:
 
