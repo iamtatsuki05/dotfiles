@@ -62,7 +62,8 @@ create_fixture_repo() {
   print -r -- 'experimental-features = nix-command flakes' > "$repo/config/nix/nix.conf"
   print -r -- 'set number' > "$repo/config/nvim/init.vim"
   print -r -- 'export API_KEY=""' > "$repo/config/shell/secrets.env.example"
-  print -r -- 'export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"' > "$repo/config/shell/bashrc.tmpl"
+  print -r -- 'export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"' > "$repo/config/shell/dotfiles-shell-common.tmpl"
+  print -r -- 'if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh" ]; then . "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh"; fi' > "$repo/config/shell/bashrc.tmpl"
   print -r -- 'if [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi' > "$repo/config/shell/bash_profile.tmpl"
 }
 
@@ -151,6 +152,7 @@ test_apply_generates_chezmoi_source_state() {
   cmp "$repo/config/mise/config.toml" "$repo/home/.chezmoitemplates/mise-config.toml" >/dev/null
   cmp "$repo/config/shell/bashrc.tmpl" "$repo/home/.chezmoitemplates/bashrc" >/dev/null
   cmp "$repo/config/shell/bash_profile.tmpl" "$repo/home/.chezmoitemplates/bash_profile" >/dev/null
+  cmp "$repo/config/shell/dotfiles-shell-common.tmpl" "$repo/home/.chezmoitemplates/dotfiles-shell-common.sh" >/dev/null
 
   assert_not_exists "$repo/home/dot_Brewfile.tmpl"
   assert_not_exists "$repo/home/.chezmoitemplates/Brewfile"
@@ -158,9 +160,10 @@ test_apply_generates_chezmoi_source_state() {
   assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
   assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
   assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
-  assert_contains "$repo/home/dot_bashrc.tmpl" '__DOTFILES_REPO_ROOT__'
   assert_contains "$repo/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
   assert_contains "$repo/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
+  assert_contains "$repo/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$repo/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '.chezmoitemplates/dotfiles-shell-common.sh'
   rm -rf "$repo"
 }
 

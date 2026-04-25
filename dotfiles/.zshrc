@@ -310,50 +310,8 @@ PROMPT='%F{33}%~%f `git-current-branch`
  ${PROMPT_MACHINE_EMOJI}  ▶  '
 
 # environment
-if [ -d "$HOME/.linuxbrew/bin" ]; then
-  export PATH="$HOME/.linuxbrew/bin:$HOME/.linuxbrew/sbin:$PATH"
-elif [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
-  export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
-fi
-
-export PATH="$HOME/.local/bin:$PATH"
-if [ -d "$HOME/.nix-profile/bin" ]; then
-  export PATH="$HOME/.nix-profile/bin:$PATH"
-fi
-if [ -d "/etc/profiles/per-user/$USER/bin" ]; then
-  export PATH="/etc/profiles/per-user/$USER/bin:$PATH"
-fi
-if [ -d "/run/current-system/sw/bin" ]; then
-  export PATH="/run/current-system/sw/bin:$PATH"
-fi
-if [ -d "/nix/var/nix/profiles/default/bin" ]; then
-  export PATH="/nix/var/nix/profiles/default/bin:$PATH"
-fi
-if [ -d "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin" ]; then
-  export PATH="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin:$PATH"
-fi
-for dotfiles_hm_vars in \
-  "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
-  "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
-do
-  if [ -r "$dotfiles_hm_vars" ]; then
-    source "$dotfiles_hm_vars"
-  fi
-done
-unset dotfiles_hm_vars
-if [ -r "$HOME/.nix-profile/etc/profile.d/z.sh" ]; then
-  source "$HOME/.nix-profile/etc/profile.d/z.sh"
-fi
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  alias intel="env /usr/bin/arch -x86_64 /bin/zsh --login"
-  alias arm="env /usr/bin/arch -arm64 /bin/zsh --login"
-fi
-if command -v mise >/dev/null 2>&1; then
-  eval "$(command mise activate zsh)"
-fi
-
-if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]]; then
-  source "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
+if [[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh" ]]; then
+  source "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh"
 fi
 
 # start default apps

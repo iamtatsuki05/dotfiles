@@ -139,6 +139,11 @@ install_mise_config() {
 
 install_shell_startup_files() {
   render_repo_root_template \
+    "$CONFIG_DIR/shell/dotfiles-shell-common.tmpl" \
+    "$XDG_CONFIG_HOME/shell/dotfiles-shell-common.sh" \
+    "shared shell config"
+
+  render_repo_root_template \
     "$CONFIG_DIR/shell/bashrc.tmpl" \
     "$HOME/.bashrc" \
     "bashrc"

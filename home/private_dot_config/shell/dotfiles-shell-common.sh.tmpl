@@ -1,0 +1,5 @@
+{{- $repoRoot := .chezmoi.sourceDir -}}
+{{- if ne (env "DOTFILES_REPO_ROOT") "" -}}
+{{- $repoRoot = env "DOTFILES_REPO_ROOT" -}}
+{{- end -}}
+{{ include ".chezmoitemplates/dotfiles-shell-common.sh" | replace "__DOTFILES_REPO_ROOT__" $repoRoot }}

@@ -15,6 +15,7 @@ readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly ZSHRC_FILE="$REPO_ROOT/dotfiles/.zshrc"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
+readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
 readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
@@ -469,23 +470,26 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
   assert_not_contains "$MISE_CONFIG" '[tasks.homebrew-dump]'
   assert_not_contains "$MISE_CONFIG" 'brew_dump.sh'
-  assert_contains "$ZSHRC_FILE" '$HOME/.nix-profile/bin'
-  assert_contains "$ZSHRC_FILE" 'hm-session-vars.sh'
   assert_contains "$ZSHRC_FILE" 'dotfiles_cleanup_stale_homebrew_completion'
+  assert_contains "$ZSHRC_FILE" 'dotfiles-shell-common.sh'
   assert_contains "$ZSHRC_FILE" 'zcompdump-$ZSH_VERSION'
   assert_not_contains "$ZSHRC_FILE" 'HOMEBREW_PREFIX'
   assert_not_contains "$ZSHRC_FILE" 'brew shellenv'
+  assert_not_contains "$ZSHRC_FILE" 'hm-session-vars.sh'
   assert_not_contains "$APPLY_UPDATES_SCRIPT" "sync_nix_profile"
 }
 
 test_bash_templates_support_dynamic_shell_setup() {
-  assert_contains "$BASHRC_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
-  assert_contains "$BASHRC_TEMPLATE_FILE" 'mise activate bash'
-  assert_contains "$BASHRC_TEMPLATE_FILE" 'hm-session-vars.sh'
-  assert_contains "$BASHRC_TEMPLATE_FILE" 'shell/secrets.env'
+  assert_contains "$BASHRC_TEMPLATE_FILE" 'dotfiles-shell-common.sh'
   assert_contains "$BASH_PROFILE_TEMPLATE_FILE" '. "$HOME/.bashrc"'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '$HOME/.nix-profile/bin'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'mise activate "$dotfiles_shell_name"'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'hm-session-vars.sh'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'shell/secrets.env'
   assert_contains "$REPO_ROOT/scripts/setup_config.sh" '.bashrc'
   assert_contains "$REPO_ROOT/scripts/setup_config.sh" '.bash_profile'
+  assert_contains "$REPO_ROOT/scripts/setup_config.sh" 'dotfiles-shell-common.sh'
 }
 
 test_managed_update_script_updates_mise_and_nix() {

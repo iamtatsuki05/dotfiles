@@ -109,6 +109,16 @@ description = "GUIが使える環境でNix構成とGUI appsを適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_install.sh --with-gui-apps"
 
+[tasks.nix-portable-install]
+description = "sudoなしLinux向けにnix-portableを導入する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/nix_portable_install.sh"
+
+[tasks.nix-portable-shell]
+description = "nix-portableでdotfilesのCLI package setを使うshellを起動する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/nix_portable_install.sh --shell"
+
 [tasks.nix-remove-homebrew]
 description = "Nix適用後にHomebrewを明示的に削除する"
 dir = "__DOTFILES_REPO_ROOT__"

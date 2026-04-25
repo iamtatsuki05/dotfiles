@@ -113,16 +113,18 @@ mise run nix-apply-with-gui-apps
 
 On first macOS setup, `darwin-rebuild` may not be available in `PATH` yet. [scripts/nix_install.sh](scripts/nix_install.sh) handles that by running the flake-provided `darwin-rebuild`. On Linux, it similarly uses the flake-provided `home-manager` when the command is not installed yet.
 
-On Linux hosts where `sudo` is unavailable, use rootless Nix through `nix-user-chroot`. This maps `${HOME}/.nix` to `/nix` only inside the chroot, so Nix commands and tools installed by Nix must be run through `nix-rootless` or `rootless-nix-shell`.
+On Linux hosts where `sudo` is unavailable, use `nix-portable` as the primary path instead of Homebrew. It virtualizes `${HOME}/.nix-portable/store` as `/nix/store`, so Nix-managed packages are used through `nixp`, `dotfiles-nix-shell`, or `dotfiles-nix-run`. The default runtime is `proot`, which works on restricted hosts such as `pine11` where mount namespaces are blocked.
 
 ```sh
-zsh scripts/nix_rootless_install.sh
-nix-rootless --version
-rootless-nix-shell
+zsh scripts/nix_portable_install.sh
+nixp --version
+dotfiles-nix-shell
 
-# Run a command inside rootless Nix
-zsh scripts/nix_rootless_install.sh --run nix --version
+# Run a command inside the dotfiles CLI package set
+dotfiles-nix-run git --version
 ```
+
+[scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) remains available for `nix-user-chroot`, but because its `/nix/store` is only visible inside the chroot, [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) is the preferred sudo-free Linux path.
 
 To bump everything managed by both `mise` and Nix to the latest versions and apply the result, use:
 
@@ -212,7 +214,7 @@ Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).
 
 On first setup, `scripts/setup_config.sh` copies `config/shell/secrets.env.example` to `~/.config/shell/secrets.env`. Fill in the values and restart the shell.
 
-The same step also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.tmpl` into `~/.bashrc` and `~/.bash_profile`, replacing `__DOTFILES_REPO_ROOT__` for the current clone path.
+The same step also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.tmpl` into `~/.bashrc` and `~/.bash_profile`, and renders `config/shell/dotfiles-shell-common.tmpl` into `~/.config/shell/dotfiles-shell-common.sh`. Both `~/.bashrc` and `.zshrc` source that shared file, and `__DOTFILES_REPO_ROOT__` is replaced there for the current clone path.
 
 ```bash
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."

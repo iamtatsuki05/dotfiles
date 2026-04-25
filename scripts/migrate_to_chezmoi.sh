@@ -162,7 +162,7 @@ remove_stale_generated_paths() {
 
 generate_chezmoi_source_state() {
   local mise_template
-  local bashrc_template
+  local shell_common_template
   local bash_profile_template
 
   mise_template='{{- $repoRoot := .chezmoi.sourceDir -}}
@@ -171,20 +171,22 @@ generate_chezmoi_source_state() {
 {{- end -}}
 {{ include ".chezmoitemplates/mise-config.toml" | replace "__DOTFILES_REPO_ROOT__" $repoRoot }}'
 
-  bashrc_template='{{- $repoRoot := .chezmoi.sourceDir -}}
+  shell_common_template='{{- $repoRoot := .chezmoi.sourceDir -}}
 {{- if ne (env "DOTFILES_REPO_ROOT") "" -}}
 {{- $repoRoot = env "DOTFILES_REPO_ROOT" -}}
 {{- end -}}
-{{ include ".chezmoitemplates/bashrc" | replace "__DOTFILES_REPO_ROOT__" $repoRoot }}'
+{{ include ".chezmoitemplates/dotfiles-shell-common.sh" | replace "__DOTFILES_REPO_ROOT__" $repoRoot }}'
 
   bash_profile_template='{{ include ".chezmoitemplates/bash_profile" }}'
 
   remove_stale_generated_paths
   write_file ".chezmoiroot" "home"
   copy_zshrc
+  copy_file "config/shell/dotfiles-shell-common.tmpl" "home/.chezmoitemplates/dotfiles-shell-common.sh"
   copy_file "config/shell/bashrc.tmpl" "home/.chezmoitemplates/bashrc"
   copy_file "config/shell/bash_profile.tmpl" "home/.chezmoitemplates/bash_profile"
-  write_file "home/dot_bashrc.tmpl" "$bashrc_template"
+  write_file "home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" "$shell_common_template"
+  write_file "home/dot_bashrc.tmpl" '{{ include ".chezmoitemplates/bashrc" }}'
   write_file "home/dot_bash_profile.tmpl" "$bash_profile_template"
   copy_file "dotfiles/.tmux.conf" "home/dot_tmux.conf"
   copy_file "config/mise/config.toml" "home/.chezmoitemplates/mise-config.toml"

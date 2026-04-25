@@ -48,13 +48,19 @@ create_fixture_repo() {
   print -r -- 'repo = "__DOTFILES_REPO_ROOT__"' > "$repo/config/mise/config.toml"
   print -r -- 'experimental-features = nix-command flakes' > "$repo/config/nix/nix.conf"
   print -r -- 'export DEVIN_API_KEY=test-key' > "$repo/config/shell/secrets.env"
-  cat > "$repo/config/shell/bashrc.tmpl" <<'EOF'
+  cat > "$repo/config/shell/dotfiles-shell-common.tmpl" <<'EOF'
 export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"
 if command -v mise >/dev/null 2>&1; then
-  eval "$(command mise activate bash)"
+  dotfiles_shell_name=bash
+  eval "$(command mise activate "$dotfiles_shell_name")"
 fi
 if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]; then
   . "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
+fi
+EOF
+  cat > "$repo/config/shell/bashrc.tmpl" <<'EOF'
+if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh" ]; then
+  . "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh"
 fi
 EOF
   cat > "$repo/config/shell/bash_profile.tmpl" <<'EOF'
@@ -78,10 +84,12 @@ test_setup_config_renders_dynamic_bash_files() {
 
   assert_file "$home_dir/.bashrc"
   assert_file "$home_dir/.bash_profile"
-  assert_contains "$home_dir/.bashrc" "$repo"
-  assert_not_contains "$home_dir/.bashrc" "__DOTFILES_REPO_ROOT__"
-  assert_contains "$home_dir/.bashrc" 'mise activate bash'
-  assert_contains "$home_dir/.bashrc" '.config}/shell/secrets.env'
+  assert_file "$xdg_config_home/shell/dotfiles-shell-common.sh"
+  assert_contains "$home_dir/.bashrc" 'dotfiles-shell-common.sh'
+  assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" "$repo"
+  assert_not_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" "__DOTFILES_REPO_ROOT__"
+  assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" 'mise activate "$dotfiles_shell_name"'
+  assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" '.config}/shell/secrets.env'
   assert_contains "$home_dir/.bash_profile" '. "$HOME/.bashrc"'
   assert_file "$xdg_config_home/mise/config.toml"
   assert_contains "$xdg_config_home/mise/config.toml" "$repo"

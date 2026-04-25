@@ -111,16 +111,18 @@ mise run nix-apply-with-gui-apps
 
 macOS の初回適用では `darwin-rebuild` がまだ PATH に無いことがあります。その場合も [scripts/nix_install.sh](scripts/nix_install.sh) が flake 内の `darwin-rebuild` を `nix run` で呼びます。Linux では `home-manager` が無ければ flake 内の `home-manager` を使います。
 
-sudo が使えない Linux では、`nix-user-chroot` を使って `${HOME}/.nix` を chroot 内の `/nix` として扱う rootless Nix を使えます。これは通常のログインシェルから `/nix/store` を直接参照できないため、Nix コマンドや Nix で入れたツールは `nix-rootless` または `rootless-nix-shell` 経由で使います。
+sudo が使えない Linux では、Homebrew ではなく `nix-portable` を主経路にします。`nix-portable` は `${HOME}/.nix-portable/store` を仮想的な `/nix/store` として扱うため、Nix 由来の package は `nixp`、`dotfiles-nix-shell`、`dotfiles-nix-run` 経由で使います。`pine11` のように mount namespace が制限された環境でも動くよう、既定 runtime は `proot` です。
 
 ```sh
-zsh scripts/nix_rootless_install.sh
-nix-rootless --version
-rootless-nix-shell
+zsh scripts/nix_portable_install.sh
+nixp --version
+dotfiles-nix-shell
 
-# rootless Nix の中でコマンドを実行
-zsh scripts/nix_rootless_install.sh --run nix --version
+# dotfiles の CLI package set 内でコマンドを実行
+dotfiles-nix-run git --version
 ```
+
+`nix-user-chroot` を使う [scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) も残していますが、通常のログインシェルから `/nix/store` を直接参照できないため、sudo なし Linux の第一候補は [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) です。
 
 `mise` と `Nix` の両方で管理しているものをまとめて最新化して適用するには、次を使います。
 
@@ -211,7 +213,7 @@ jupytext --set-formats ipynb,py:percent notebook.py
 
 初回セットアップ時に `config/shell/secrets.env.example` から自動生成されます。値を入力してシェルを再起動してください。
 
-同じ `scripts/setup_config.sh` で `config/shell/bashrc.tmpl` と `config/shell/bash_profile.tmpl` も `~/.bashrc` と `~/.bash_profile` に生成し、`__DOTFILES_REPO_ROOT__` は現在の clone path に合わせて置換します。
+同じ `scripts/setup_config.sh` で `config/shell/bashrc.tmpl` と `config/shell/bash_profile.tmpl` を `~/.bashrc` と `~/.bash_profile` に生成し、`config/shell/dotfiles-shell-common.tmpl` を `~/.config/shell/dotfiles-shell-common.sh` に生成します。`~/.bashrc` と `.zshrc` はこの共通 file を source し、`__DOTFILES_REPO_ROOT__` はそこで現在の clone path に合わせて置換します。
 
 ```bash
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
