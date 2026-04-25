@@ -211,6 +211,8 @@ jupytext --set-formats ipynb,py:percent notebook.py
 
 初回セットアップ時に `config/shell/secrets.env.example` から自動生成されます。値を入力してシェルを再起動してください。
 
+同じ `scripts/setup_config.sh` で `config/shell/bashrc.tmpl` と `config/shell/bash_profile.tmpl` も `~/.bashrc` と `~/.bash_profile` に生成し、`__DOTFILES_REPO_ROOT__` は現在の clone path に合わせて置換します。
+
 ```bash
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 export OPENAI_API_KEY=""

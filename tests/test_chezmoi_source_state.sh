@@ -65,6 +65,8 @@ test_copied_source_state_matches_current_sources() {
   assert_same_file "$REPO_ROOT/config/nvim/init.vim" "$REPO_ROOT/home/private_dot_config/nvim/init.vim"
   assert_same_file "$REPO_ROOT/config/shell/secrets.env.example" "$REPO_ROOT/home/private_dot_config/shell/create_private_secrets.env"
   assert_same_file "$REPO_ROOT/config/mise/config.toml" "$REPO_ROOT/home/.chezmoitemplates/mise-config.toml"
+  assert_same_file "$REPO_ROOT/config/shell/bashrc.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bashrc"
+  assert_same_file "$REPO_ROOT/config/shell/bash_profile.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bash_profile"
   assert_not_exists "$REPO_ROOT/home/dot_Brewfile.tmpl"
   assert_not_exists "$REPO_ROOT/home/.chezmoitemplates/Brewfile"
   assert_not_exists "$REPO_ROOT/home/.chezmoitemplates/Brewfile.cli"
@@ -74,6 +76,9 @@ test_templates_keep_repo_root_behavior() {
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
+  assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
+  assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
 }
 
 main() {

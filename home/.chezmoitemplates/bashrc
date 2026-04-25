@@ -1,0 +1,62 @@
+export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"
+
+dotfiles_prepend_path() {
+  local candidate="$1"
+
+  if [ ! -d "$candidate" ]; then
+    return 0
+  fi
+
+  case ":$PATH:" in
+    *":$candidate:"*)
+      ;;
+    *)
+      PATH="$candidate:$PATH"
+      ;;
+  esac
+}
+
+if [ -d "$HOME/.linuxbrew/bin" ]; then
+  dotfiles_prepend_path "$HOME/.linuxbrew/sbin"
+  dotfiles_prepend_path "$HOME/.linuxbrew/bin"
+elif [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
+  dotfiles_prepend_path "/home/linuxbrew/.linuxbrew/sbin"
+  dotfiles_prepend_path "/home/linuxbrew/.linuxbrew/bin"
+fi
+
+dotfiles_prepend_path "$HOME/.local/bin"
+dotfiles_prepend_path "$HOME/.nix-profile/bin"
+dotfiles_prepend_path "/etc/profiles/per-user/$USER/bin"
+dotfiles_prepend_path "/run/current-system/sw/bin"
+dotfiles_prepend_path "/nix/var/nix/profiles/default/bin"
+dotfiles_prepend_path "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin"
+export PATH
+
+for dotfiles_hm_vars in \
+  "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
+  "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+do
+  if [ -r "$dotfiles_hm_vars" ]; then
+    . "$dotfiles_hm_vars"
+  fi
+done
+unset dotfiles_hm_vars
+
+if [ -r "$HOME/.nix-profile/etc/profile.d/z.sh" ]; then
+  . "$HOME/.nix-profile/etc/profile.d/z.sh"
+fi
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  alias intel='env /usr/bin/arch -x86_64 /bin/bash -l'
+  alias arm='env /usr/bin/arch -arm64 /bin/bash -l'
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  eval "$(command mise activate bash)"
+fi
+
+if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]; then
+  . "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
+fi
+
+unset -f dotfiles_prepend_path

@@ -7,9 +7,52 @@ set -euo pipefail
 # =============================================================================
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-readonly CONFIG_DIR="$REPO_ROOT/config"
+DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$DEFAULT_REPO_ROOT"
+CONFIG_DIR="$REPO_ROOT/config"
 readonly XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+usage() {
+  cat <<EOF
+Usage:
+  zsh scripts/setup_config.sh [--repo-root PATH]
+
+Options:
+  --repo-root PATH  Override repository root. Intended for tests.
+  -h, --help        Show this help.
+EOF
+}
+
+parse_args() {
+  while (($#)); do
+    case "$1" in
+      --repo-root)
+        shift
+        if ((! $#)); then
+          echo "ERROR: --repo-root requires a value" >&2
+          return 1
+        fi
+        REPO_ROOT="$1"
+        ;;
+      --repo-root=*)
+        REPO_ROOT="${1#--repo-root=}"
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "ERROR: unknown argument: $1" >&2
+        usage >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+  CONFIG_DIR="$REPO_ROOT/config"
+}
 
 # -----------------------------------------------------------------------------
 # Helper function
@@ -26,10 +69,32 @@ install_config() {
   echo "  $source_file -> $target_file"
 }
 
+render_repo_root_template() {
+  local source_file="$1"
+  local target_file="$2"
+  local app_name="$3"
+  local target_dir="${target_file%/*}"
+  local tmp
+  local line
+
+  echo "Installing $app_name..."
+  mkdir -p "$target_dir"
+  tmp="$(mktemp)"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    print -r -- "${line//__DOTFILES_REPO_ROOT__/$REPO_ROOT}"
+  done < "$source_file" > "$tmp"
+
+  mv "$tmp" "$target_file"
+  echo "  $source_file -> $target_file"
+}
+
 # -----------------------------------------------------------------------------
 # Main execution
 # -----------------------------------------------------------------------------
 main() {
+  parse_args "$@"
+
   install_config \
     "Alacritty" \
     "$CONFIG_DIR/alacritty/alacritty.toml" \
@@ -46,6 +111,7 @@ main() {
     "$XDG_CONFIG_HOME/nix/nix.conf"
 
   install_mise_config
+  install_shell_startup_files
 
   # リポジトリ側の secrets.env を先にマイグレーションしてから ~/.config/ にコピーする
   migrate_secrets_env
@@ -65,22 +131,22 @@ main() {
 }
 
 install_mise_config() {
-  local source_file="$CONFIG_DIR/mise/config.toml"
-  local target_file="$XDG_CONFIG_HOME/mise/config.toml"
-  local target_dir="${target_file%/*}"
-  local tmp
-  local line
+  render_repo_root_template \
+    "$CONFIG_DIR/mise/config.toml" \
+    "$XDG_CONFIG_HOME/mise/config.toml" \
+    "mise config"
+}
 
-  echo "Installing mise config..."
-  mkdir -p "$target_dir"
-  tmp="$(mktemp)"
+install_shell_startup_files() {
+  render_repo_root_template \
+    "$CONFIG_DIR/shell/bashrc.tmpl" \
+    "$HOME/.bashrc" \
+    "bashrc"
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    print -r -- "${line//__DOTFILES_REPO_ROOT__/$REPO_ROOT}"
-  done < "$source_file" > "$tmp"
-
-  mv "$tmp" "$target_file"
-  echo "  $source_file -> $target_file"
+  render_repo_root_template \
+    "$CONFIG_DIR/shell/bash_profile.tmpl" \
+    "$HOME/.bash_profile" \
+    "bash profile"
 }
 
 setup_codex_config() {

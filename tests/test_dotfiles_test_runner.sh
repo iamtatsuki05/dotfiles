@@ -48,6 +48,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "run_syntax_checks"
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
+  assert_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
   "$TEST_ZSH_BIN" "$TEST_RUNNER" --list > "$output"
   assert_output_contains "$output" "syntax"

@@ -212,6 +212,8 @@ Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).
 
 On first setup, `scripts/setup_config.sh` copies `config/shell/secrets.env.example` to `~/.config/shell/secrets.env`. Fill in the values and restart the shell.
 
+The same step also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.tmpl` into `~/.bashrc` and `~/.bash_profile`, replacing `__DOTFILES_REPO_ROOT__` for the current clone path.
+
 ```bash
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 export OPENAI_API_KEY=""
