@@ -76,8 +76,25 @@ plugins=(git zsh-syntax-highlighting)
 plugins=(git zsh-syntax-highlighting zsh-completions)
 
 # zsh-completionsの設定
-autoload -U compinit && compinit -u
-source $ZSH/oh-my-zsh.sh
+function dotfiles_cleanup_stale_homebrew_completion {
+  if [[ -L /opt/homebrew/share/zsh/site-functions/_brew && ! -e /opt/homebrew/share/zsh/site-functions/_brew ]]; then
+    fpath=(${fpath:#/opt/homebrew/share/zsh/site-functions})
+  fi
+}
+
+function dotfiles_compinit {
+  dotfiles_cleanup_stale_homebrew_completion
+
+  local zcompdump_dir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
+  mkdir -p "$zcompdump_dir"
+  autoload -Uz compinit
+  compinit -u -d "$zcompdump_dir/zcompdump-$ZSH_VERSION"
+}
+
+dotfiles_compinit
+if [[ -r "$ZSH/oh-my-zsh.sh" ]]; then
+  source "$ZSH/oh-my-zsh.sh"
+fi
 
 # User configuration
 
@@ -124,8 +141,7 @@ zstyle ':completion:*:sudo:*' command-path /usr/local/sbin /usr/local/bin \
 zstyle ':completion:*:processes' command 'ps x -o pid,s,args'
 # パスの最後のスラッシュを削除しない
 setopt noautoremoveslash
-# 自動補完を有効にする
-autoload -Uz compinit ; compinit
+# 自動補完は dotfiles_compinit で初期化済み
 # コマンドミスを修正
 setopt correct
 
@@ -286,15 +302,41 @@ PROMPT='%F{33}%~%f `git-current-branch`
  ${PROMPT_MACHINE_EMOJI}  ▶  '
 
 # environment
-if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -d "${HOMEBREW_PREFIX}/bin" ]; then
-  export PATH="${HOMEBREW_PREFIX}/bin:$PATH"
-fi
-alias intel="env /usr/bin/arch -x86_64 /bin/zsh --login"
-alias arm="env /usr/bin/arch -arm64 /bin/zsh --login"
-if command -v mise >/dev/null 2>&1; then
-  eval "$(mise activate zsh)"
-fi
 export PATH="$HOME/.local/bin:$PATH"
+if [ -d "$HOME/.nix-profile/bin" ]; then
+  export PATH="$HOME/.nix-profile/bin:$PATH"
+fi
+if [ -d "/etc/profiles/per-user/$USER/bin" ]; then
+  export PATH="/etc/profiles/per-user/$USER/bin:$PATH"
+fi
+if [ -d "/run/current-system/sw/bin" ]; then
+  export PATH="/run/current-system/sw/bin:$PATH"
+fi
+if [ -d "/nix/var/nix/profiles/default/bin" ]; then
+  export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+fi
+if [ -d "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin" ]; then
+  export PATH="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin:$PATH"
+fi
+for dotfiles_hm_vars in \
+  "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
+  "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+do
+  if [ -r "$dotfiles_hm_vars" ]; then
+    source "$dotfiles_hm_vars"
+  fi
+done
+unset dotfiles_hm_vars
+if [ -r "$HOME/.nix-profile/etc/profile.d/z.sh" ]; then
+  source "$HOME/.nix-profile/etc/profile.d/z.sh"
+fi
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  alias intel="env /usr/bin/arch -x86_64 /bin/zsh --login"
+  alias arm="env /usr/bin/arch -arm64 /bin/zsh --login"
+fi
+if command -v mise >/dev/null 2>&1; then
+  eval "$(command mise activate zsh)"
+fi
 
 if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]]; then
   source "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"

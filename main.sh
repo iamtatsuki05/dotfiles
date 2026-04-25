@@ -13,7 +13,6 @@ readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
 readonly LIB_DIR="$SCRIPTS_DIR/lib"
 
 source "$LIB_DIR/setup_profile.sh"
-source "$LIB_DIR/homebrew.sh"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -43,61 +42,33 @@ copy_dotfiles() {
   log_step "Copying dotfiles to home directory"
   cp -r "$DOTFILES_DIR"/. ~/
 
-  if [[ "$profile" == "cli" ]]; then
-    cp "$DOTFILES_DIR/.Brewfile.cli" "$HOME/.Brewfile"
-    log_success "CLI Brewfile activated at ~/.Brewfile"
-  fi
-
   log_success "Dotfiles copied"
 }
 
-install_homebrew() {
+install_nix() {
   local profile="$1"
 
-  log_step "Installing Homebrew and packages"
-  zsh "$SCRIPTS_DIR/brew_install.sh" --profile "$profile"
-  log_success "Homebrew setup complete"
+  log_step "Applying Nix configuration"
+  zsh "$SCRIPTS_DIR/nix_install.sh" --profile "$profile"
+  log_success "Nix setup complete"
 }
 
-activate_homebrew_environment() {
-  log_step "Activating Homebrew environment for this setup run"
+activate_nix_environment() {
+  log_step "Activating Nix environment for this setup run"
 
-  local brew_path
-  brew_path="$(dotfiles_brew_command)" || {
-    log_error "brew is not installed or not found in PATH"
-    return 1
-  }
+  export PATH="/run/current-system/sw/bin:/etc/profiles/per-user/$USER/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
 
-  eval "$("$brew_path" shellenv)"
+  local hm_vars
+  for hm_vars in \
+    "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
+    "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+  do
+    if [[ -r "$hm_vars" ]]; then
+      source "$hm_vars"
+    fi
+  done
 
-  log_success "Homebrew environment activated"
-}
-
-configure_postgres_build_environment() {
-  if ! dotfiles_is_macos; then
-    log_skip "PostgreSQL Homebrew build environment is macOS-specific"
-    return 0
-  fi
-
-  log_step "Configuring PostgreSQL build environment for mise"
-
-  export HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-$(brew --prefix)}"
-  local icu_prefix
-  local openssl_prefix
-  local util_linux_prefix
-  icu_prefix="$(brew --prefix icu4c)"
-  openssl_prefix="$(brew --prefix openssl@3)"
-  util_linux_prefix="$(brew --prefix util-linux)"
-
-  # vfox-postgres defaults to --with-uuid=ossp on macOS, but that fails with the SDK uuid_t headers.
-  export PATH="${icu_prefix}/bin:$PATH"
-  export PKG_CONFIG_PATH="${icu_prefix}/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-  export CPPFLAGS="-I${util_linux_prefix}/include ${CPPFLAGS:-}"
-  export LDFLAGS="-L${util_linux_prefix}/lib ${LDFLAGS:-}"
-  export LIBS="-luuid ${LIBS:-}"
-  export POSTGRES_CONFIGURE_OPTIONS="--with-openssl --with-zlib --with-uuid=e2fs --with-libraries=${openssl_prefix}/lib:${icu_prefix}/lib:${util_linux_prefix}/lib --with-includes=${openssl_prefix}/include:${icu_prefix}/include:${util_linux_prefix}/include"
-
-  log_success "PostgreSQL build environment configured"
+  log_success "Nix environment activated"
 }
 
 setup_defaults() {
@@ -179,9 +150,8 @@ main() {
 
   copy_dotfiles "$profile"
   sync_agent_files
-  install_homebrew "$profile"
-  activate_homebrew_environment
-  configure_postgres_build_environment
+  install_nix "$profile"
+  activate_nix_environment
   if [[ "$profile" == "full" ]]; then
     setup_defaults
   else

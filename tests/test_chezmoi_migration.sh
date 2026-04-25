@@ -6,6 +6,7 @@ readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly MIGRATION_SCRIPT="$REPO_ROOT/scripts/migrate_to_chezmoi.sh"
 readonly APPLY_SCRIPT="$REPO_ROOT/scripts/chezmoi_apply.sh"
+readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -51,8 +52,6 @@ create_fixture_repo() {
 
   print -r -- 'export TEST_ZSHRC=1' > "$repo/dotfiles/.zshrc"
   print -r -- 'set -g mouse on' > "$repo/dotfiles/.tmux.conf"
-  print -r -- 'brew "git"' > "$repo/dotfiles/.Brewfile"
-  print -r -- 'brew "git"' > "$repo/dotfiles/.Brewfile.cli"
   print -r -- 'window.opacity = 0.95' > "$repo/config/alacritty.toml"
   print -r -- 'theme = dark' > "$repo/config/ghostty/config"
   print -r -- 'repo = "__DOTFILES_REPO_ROOT__"' > "$repo/config/mise-config.toml"
@@ -73,7 +72,7 @@ create_fake_chezmoi() {
 
   mkdir -p "$bin_dir"
   {
-    print -r -- '#!/usr/bin/env zsh'
+    print -r -- "#!$TEST_ZSH_BIN"
     print -r -- 'set -euo pipefail'
     print -r -- "print -r -- \"DOTFILES_PROFILE=\${DOTFILES_PROFILE:-}\" >> ${(qqq)log_file}"
     print -r -- "print -r -- \"DOTFILES_REPO_ROOT=\${DOTFILES_REPO_ROOT:-}\" >> ${(qqq)log_file}"
@@ -90,7 +89,7 @@ create_fake_mise() {
   mkdir -p "$bin_dir"
   mkdir -p "$install_dir"
   {
-    print -r -- '#!/usr/bin/env zsh'
+    print -r -- "#!$TEST_ZSH_BIN"
     print -r -- 'set -euo pipefail'
     print -r -- 'if [[ "${1:-}" == "where" ]]; then'
     print -r -- "  print -r -- ${(qqq)install_dir}"
@@ -99,7 +98,7 @@ create_fake_mise() {
     print -r -- "print -r -- \"MISE:\$*\" >> ${(qqq)log_file}"
   } > "$bin_dir/mise"
   {
-    print -r -- '#!/usr/bin/env zsh'
+    print -r -- "#!$TEST_ZSH_BIN"
     print -r -- 'set -euo pipefail'
     print -r -- "print -r -- \"DOTFILES_PROFILE=\${DOTFILES_PROFILE:-}\" >> ${(qqq)log_file}"
     print -r -- "print -r -- \"DOTFILES_REPO_ROOT=\${DOTFILES_REPO_ROOT:-}\" >> ${(qqq)log_file}"
@@ -115,7 +114,7 @@ create_fake_home_chezmoi() {
 
   mkdir -p "$home_dir/.local/bin"
   {
-    print -r -- '#!/usr/bin/env zsh'
+    print -r -- "#!$TEST_ZSH_BIN"
     print -r -- 'set -euo pipefail'
     print -r -- "print -r -- \"DOTFILES_PROFILE=\${DOTFILES_PROFILE:-}\" >> ${(qqq)log_file}"
     print -r -- "print -r -- \"DOTFILES_REPO_ROOT=\${DOTFILES_REPO_ROOT:-}\" >> ${(qqq)log_file}"
@@ -129,7 +128,7 @@ test_apply_generates_chezmoi_source_state() {
   repo="$(mktemp -d)"
   create_fixture_repo "$repo"
 
-  zsh "$MIGRATION_SCRIPT" --repo-root "$repo" --apply >/dev/null
+  "$TEST_ZSH_BIN" "$MIGRATION_SCRIPT" --repo-root "$repo" --apply >/dev/null
 
   assert_file "$repo/.chezmoiroot"
   [[ "$(cat "$repo/.chezmoiroot")" == "home" ]] || fail ".chezmoiroot should point to home"
@@ -141,13 +140,11 @@ test_apply_generates_chezmoi_source_state() {
   cmp "$repo/config/ghostty/config" "$repo/home/private_dot_config/ghostty/config" >/dev/null
   cmp "$repo/config/init.vim" "$repo/home/private_dot_config/nvim/init.vim" >/dev/null
   cmp "$repo/config/shell/secrets.env.example" "$repo/home/private_dot_config/shell/create_private_secrets.env" >/dev/null
-  cmp "$repo/dotfiles/.Brewfile" "$repo/home/.chezmoitemplates/Brewfile" >/dev/null
-  cmp "$repo/dotfiles/.Brewfile.cli" "$repo/home/.chezmoitemplates/Brewfile.cli" >/dev/null
   cmp "$repo/config/mise-config.toml" "$repo/home/.chezmoitemplates/mise-config.toml" >/dev/null
 
-  assert_contains "$repo/home/dot_Brewfile.tmpl" '{{ include ".chezmoitemplates/Brewfile"'
-  assert_contains "$repo/home/dot_Brewfile.tmpl" '{{ include ".chezmoitemplates/Brewfile.cli"'
-  assert_contains "$repo/home/dot_Brewfile.tmpl" 'DOTFILES_PROFILE'
+  assert_not_exists "$repo/home/dot_Brewfile.tmpl"
+  assert_not_exists "$repo/home/.chezmoitemplates/Brewfile"
+  assert_not_exists "$repo/home/.chezmoitemplates/Brewfile.cli"
   assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
   assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
   assert_contains "$repo/home/private_dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
@@ -161,7 +158,7 @@ test_dry_run_does_not_write_source_state() {
   output="$repo/dry-run.log"
   create_fixture_repo "$repo"
 
-  zsh "$MIGRATION_SCRIPT" --repo-root "$repo" --dry-run > "$output"
+  "$TEST_ZSH_BIN" "$MIGRATION_SCRIPT" --repo-root "$repo" --dry-run > "$output"
 
   assert_not_exists "$repo/.chezmoiroot"
   assert_not_exists "$repo/home"
@@ -181,7 +178,7 @@ test_apply_uses_home_zshrc_when_repo_zshrc_is_missing() {
   create_fixture_home "$home_dir"
   rm "$repo/dotfiles/.zshrc"
 
-  HOME="$home_dir" zsh "$MIGRATION_SCRIPT" --repo-root "$repo" --apply >/dev/null
+  HOME="$home_dir" "$TEST_ZSH_BIN" "$MIGRATION_SCRIPT" --repo-root "$repo" --apply >/dev/null
 
   cmp "$home_dir/.zshrc" "$repo/home/dot_zshrc" >/dev/null
 
@@ -196,7 +193,7 @@ test_apply_can_prefer_home_zshrc_even_when_repo_zshrc_exists() {
   create_fixture_repo "$repo"
   create_fixture_home "$home_dir"
 
-  HOME="$home_dir" zsh "$MIGRATION_SCRIPT" --repo-root "$repo" --apply --prefer-home-zshrc >/dev/null
+  HOME="$home_dir" "$TEST_ZSH_BIN" "$MIGRATION_SCRIPT" --repo-root "$repo" --apply --prefer-home-zshrc >/dev/null
 
   cmp "$home_dir/.zshrc" "$repo/home/dot_zshrc" >/dev/null
 
@@ -214,7 +211,7 @@ test_chezmoi_apply_uses_repo_source_in_dry_run() {
   mkdir -p "$repo/home"
   create_fake_chezmoi "$bin_dir" "$log_file"
 
-  PATH="$bin_dir:$PATH" zsh "$APPLY_SCRIPT" --repo-root "$repo" --dry-run >/dev/null
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --dry-run >/dev/null
 
   assert_contains "$log_file" "-S $repo apply -n -v"
 
@@ -236,7 +233,7 @@ test_chezmoi_apply_can_mark_chezmoi_as_default_manager() {
   mkdir -p "$repo/home"
   create_fake_chezmoi "$bin_dir" "$log_file"
 
-  PATH="$bin_dir:$PATH" zsh "$APPLY_SCRIPT" \
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" \
     --repo-root "$repo" \
     --manager-file "$manager_file" \
     --profile-file "$profile_file" \
@@ -263,7 +260,7 @@ test_chezmoi_apply_passes_profile_to_templates() {
   mkdir -p "$repo/home"
   create_fake_chezmoi "$bin_dir" "$log_file"
 
-  PATH="$bin_dir:$PATH" zsh "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
 
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
@@ -285,7 +282,7 @@ test_chezmoi_apply_falls_back_to_mise_install_when_chezmoi_is_not_on_path() {
   mkdir -p "$home_dir"
   create_fake_mise "$bin_dir" "$log_file"
 
-  HOME="$home_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" zsh "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
+  HOME="$home_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
 
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
@@ -305,7 +302,7 @@ test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path() {
   mkdir -p "$repo/home"
   create_fake_home_chezmoi "$home_dir" "$log_file"
 
-  HOME="$home_dir" PATH="/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" zsh "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
+  HOME="$home_dir" PATH="/bin:/usr/bin:/usr/sbin:/sbin:/opt/homebrew/bin" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --dry-run >/dev/null
 
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"

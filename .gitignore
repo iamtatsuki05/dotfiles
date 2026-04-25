@@ -1,5 +1,7 @@
 .DS_Store
 .tmp
 .venv
+result
+result-*
 dotfiles/.agent/changes/
 config/shell/secrets.env

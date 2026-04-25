@@ -154,19 +154,14 @@ remove_stale_generated_paths() {
   fi
 
   rm -rf "$REPO_ROOT/home/dot_config"
+  rm -f \
+    "$REPO_ROOT/home/dot_Brewfile.tmpl" \
+    "$REPO_ROOT/home/.chezmoitemplates/Brewfile" \
+    "$REPO_ROOT/home/.chezmoitemplates/Brewfile.cli"
 }
 
 generate_chezmoi_source_state() {
-  local brewfile_template
   local mise_template
-
-  brewfile_template='{{- if eq (env "DOTFILES_PROFILE") "cli" -}}
-{{ include ".chezmoitemplates/Brewfile.cli" -}}
-{{- else if eq .chezmoi.os "darwin" -}}
-{{ include ".chezmoitemplates/Brewfile" -}}
-{{- else -}}
-{{ include ".chezmoitemplates/Brewfile.cli" -}}
-{{- end -}}'
 
   mise_template='{{- $repoRoot := .chezmoi.sourceDir -}}
 {{- if ne (env "DOTFILES_REPO_ROOT") "" -}}
@@ -178,10 +173,7 @@ generate_chezmoi_source_state() {
   write_file ".chezmoiroot" "home"
   copy_zshrc
   copy_file "dotfiles/.tmux.conf" "home/dot_tmux.conf"
-  copy_file "dotfiles/.Brewfile" "home/.chezmoitemplates/Brewfile"
-  copy_file "dotfiles/.Brewfile.cli" "home/.chezmoitemplates/Brewfile.cli"
   copy_file "config/mise-config.toml" "home/.chezmoitemplates/mise-config.toml"
-  write_file "home/dot_Brewfile.tmpl" "$brewfile_template"
   copy_file "config/alacritty.toml" "home/private_dot_config/alacritty/alacritty.toml"
   copy_file "config/ghostty/config" "home/private_dot_config/ghostty/config"
   write_file "home/private_dot_config/mise/private_config.toml.tmpl" "$mise_template"

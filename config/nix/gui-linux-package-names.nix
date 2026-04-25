@@ -1,0 +1,9 @@
+[
+  "android-studio"
+  "freefilesync"
+  "ghostty"
+  "pcloud"
+  "qtspim"
+  "unityhub"
+  "vlc"
+]

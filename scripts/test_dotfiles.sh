@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
 LIST_ONLY=0
 SYNTAX_ONLY=0
@@ -58,13 +59,14 @@ syntax
 unit
 source-state
 chezmoi-render
+nix-static
 EOF
 }
 
 run_zsh_syntax_for() {
   local file_path="$1"
 
-  zsh -n "$file_path"
+  "$TEST_ZSH_BIN" -n "$file_path"
 }
 
 run_syntax_checks() {
@@ -80,13 +82,14 @@ run_syntax_checks() {
 
 run_unit_tests() {
   log_step "Running shell unit tests"
-  zsh "$REPO_ROOT/tests/test_chezmoi_migration.sh"
-  zsh "$REPO_ROOT/tests/test_dotfiles_test_runner.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_migration.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_dotfiles_test_runner.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_nix_migration.sh"
 }
 
 run_source_state_tests() {
   log_step "Checking chezmoi source state"
-  zsh "$REPO_ROOT/tests/test_chezmoi_source_state.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_source_state.sh"
 }
 
 run_chezmoi_render_test() {
@@ -96,7 +99,17 @@ run_chezmoi_render_test() {
   fi
 
   log_step "Rendering chezmoi source state into a temporary home"
-  zsh "$REPO_ROOT/tests/test_chezmoi_rendered_home.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_rendered_home.sh"
+}
+
+run_nix_static_tests() {
+  log_step "Checking Nix files"
+
+  if command -v nix-instantiate >/dev/null 2>&1; then
+    nix-instantiate --parse "$REPO_ROOT/flake.nix" >/dev/null
+  else
+    echo "SKIP: nix-instantiate is not installed"
+  fi
 }
 
 main() {
@@ -115,6 +128,7 @@ main() {
   run_unit_tests
   run_source_state_tests
   run_chezmoi_render_test
+  run_nix_static_tests
 
   echo "dotfiles tests passed"
 }

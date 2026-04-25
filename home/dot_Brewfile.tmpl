@@ -1,7 +1,0 @@
-{{- if eq (env "DOTFILES_PROFILE") "cli" -}}
-{{ include ".chezmoitemplates/Brewfile.cli" -}}
-{{- else if eq .chezmoi.os "darwin" -}}
-{{ include ".chezmoitemplates/Brewfile" -}}
-{{- else -}}
-{{ include ".chezmoitemplates/Brewfile.cli" -}}
-{{- end -}}

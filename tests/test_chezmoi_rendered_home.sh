@@ -15,6 +15,11 @@ assert_file() {
   [[ -f "$file_path" ]] || fail "expected file: $file_path"
 }
 
+assert_not_exists() {
+  local target_path="$1"
+  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
+}
+
 assert_same_file() {
   local expected="$1"
   local actual="$2"
@@ -114,7 +119,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
 
   assert_same_file_or_home_fallback "$REPO_ROOT/dotfiles/.zshrc" ".zshrc" "$temp_home/.zshrc"
   assert_same_file "$REPO_ROOT/dotfiles/.tmux.conf" "$temp_home/.tmux.conf"
-  assert_same_file "$REPO_ROOT/dotfiles/.Brewfile.cli" "$temp_home/.Brewfile"
+  assert_not_exists "$temp_home/.Brewfile"
   assert_same_file "$REPO_ROOT/config/alacritty.toml" "$temp_home/.config/alacritty/alacritty.toml"
   assert_same_file "$REPO_ROOT/config/ghostty/config" "$temp_home/.config/ghostty/config"
   assert_same_file "$REPO_ROOT/config/init.vim" "$temp_home/.config/nvim/init.vim"

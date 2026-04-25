@@ -50,10 +50,6 @@ copy_dotfiles() {
 
   log "Syncing dotfiles"
   cp -r "$DOTFILES_DIR"/. ~/
-
-  if [[ "$profile" == "cli" ]]; then
-    cp "$DOTFILES_DIR/.Brewfile.cli" "$HOME/.Brewfile"
-  fi
 }
 
 current_dotfiles_manager() {

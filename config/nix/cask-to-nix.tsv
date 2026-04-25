@@ -1,0 +1,37 @@
+# Homebrew cask	Nixpkgs attribute	Nix scope
+# Nix scope: common, macos, or linux.
+1password	_1password-gui	common
+1password-cli	_1password-cli	common
+alacritty	alacritty	common
+alt-tab	alt-tab-macos	macos
+android-studio	android-studio	linux
+antigravity	antigravity	common
+betterdisplay	betterdisplay	macos
+blackhole-2ch	blackhole	macos
+claude-code@latest	claude-code	common
+codex	codex	common
+copilot-cli	copilot-cli	common
+cursor	code-cursor	common
+cursor-cli	cursor-cli	common
+daisydisk	daisydisk	macos
+discord	discord	common
+freefilesync	freefilesync	linux
+ghostty	ghostty	linux
+git-credential-manager	git-credential-manager	common
+google-chrome	google-chrome	common
+iterm2	iterm2	macos
+keycastr	keycastr	macos
+lyraphase/pcloud/pcloud-drive	pcloud	linux
+ngrok	ngrok	common
+notion	notion-app	macos
+orbstack	orbstack	macos
+qtspim	qtspim	linux
+raycast	raycast	macos
+rectangle-pro	rectangle-pro	macos
+slack	slack	common
+temurin	temurin-bin	common
+unity-hub	unityhub	linux
+visual-studio-code	vscode	common
+vlc	vlc	linux
+xquartz	xquartz	macos
+zed	zed-editor	common

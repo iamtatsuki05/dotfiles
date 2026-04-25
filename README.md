@@ -17,16 +17,16 @@ zsh main.sh
 - macOS: `full`
 - Linux: `cli`
 
-`full` is the complete macOS setup. It installs Homebrew casks, VS Code extensions, macOS defaults, cron, configs, mise tools, and Neovim.
+`full` is the complete macOS setup. It applies nix-darwin, Home Manager, GUI apps, macOS defaults, cron, configs, mise tools, and Neovim.
 
-`cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips casks, VS Code extensions, macOS-only tools, macOS defaults, and cron, then installs CLI tools from `dotfiles/.Brewfile.cli`. The cli profile also activates the CLI bundle as `~/.Brewfile`.
+`cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips GUI apps, macOS-only tools, macOS defaults, and cron, then applies only the Nix CLI package set.
 
 ```sh
 # Ubuntu / Linux, or CLI-only setup on macOS
 zsh main.sh --cli-only
 
-# Install only CLI Homebrew packages
-zsh scripts/brew_install.sh --cli-only
+# Apply only Nix/Home Manager CLI packages
+zsh scripts/nix_install.sh --cli-only
 ```
 
 ## Chezmoi migration
@@ -46,7 +46,7 @@ Install `chezmoi` with any supported package manager, then preview and apply:
 
 ```sh
 sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
-# or: brew install chezmoi
+# or: nix run nixpkgs#chezmoi -- init
 # or: mise use --global chezmoi@latest
 
 zsh scripts/chezmoi_apply.sh --dry-run
@@ -74,23 +74,60 @@ The test runner checks zsh syntax, migration helpers, generated chezmoi source s
 
 GitHub Actions runs the same checks on `ubuntu-latest` and `macos-latest`, installs `chezmoi`, and verifies that the source state can be applied to a temporary home on both platforms.
 
-## Updating Brewfiles
+## Nix package migration
 
-On macOS, you can dump the current Homebrew state to `dotfiles/.Brewfile` and the portable CLI bundle at `dotfiles/.Brewfile.cli`.
+Homebrew is no longer the primary setup path. macOS uses nix-darwin plus Home Manager, and Linux uses standalone Home Manager with the same package sets. CLI packages live in [config/nix/package-names.nix](config/nix/package-names.nix). GUI apps are split by platform in [config/nix/gui-common-package-names.nix](config/nix/gui-common-package-names.nix), [config/nix/gui-macos-package-names.nix](config/nix/gui-macos-package-names.nix), and [config/nix/gui-linux-package-names.nix](config/nix/gui-linux-package-names.nix). Homebrew entries that cannot be moved to Nix are recorded in [config/nix/unmapped-homebrew.tsv](config/nix/unmapped-homebrew.tsv), and the macOS fallback managed by nix-darwin is generated as [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix).
 
 ```sh
-zsh scripts/brew_dump.sh
+# Regenerate Nix package lists and the unmapped Homebrew report from current Homebrew state
+zsh scripts/migrate_brew_to_nix.sh --apply
+# or migrate an exported Brewfile from another machine
+zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 # or
-mise run brew-dump
+mise run nix-migrate-brew
+
+# Build the selected Nix configuration without switching
+zsh scripts/nix_install.sh --dry-run
+# or
+mise run nix-build
+
+# Apply with nix-darwin on macOS or Home Manager on Linux
+zsh scripts/nix_install.sh
+# or
+mise run nix-apply
+
+# Apply CLI packages only
+zsh scripts/nix_install.sh --cli-only
+# or
+mise run nix-apply-cli
+
+# Install GUI apps too on hosts that support GUI apps, including Ubuntu desktop
+zsh scripts/nix_install.sh --with-gui-apps
+# or
+mise run nix-apply-with-gui-apps
 ```
 
-The CLI bundle is generated with Homebrew Bundle's `--tap`, `--formula`, and `--uv` filters.
-When installed by `setup_config.sh`, the mise config runs this repository's `scripts/brew_dump.sh` regardless of the directory where `mise run brew-dump` is invoked.
+On first macOS setup, `darwin-rebuild` may not be available in `PATH` yet. [scripts/nix_install.sh](scripts/nix_install.sh) handles that by running the flake-provided `darwin-rebuild`. On Linux, it similarly uses the flake-provided `home-manager` when the command is not installed yet.
+
+If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, and VS Code extensions. Formulae are applied even in the CLI profile. Casks and VS Code extensions are applied only with `--with-gui-apps`. If the fallback is empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
 
 ```sh
-# Regenerate only dotfiles/.Brewfile.cli from the current Homebrew state
-zsh scripts/brew_dump.sh --generate-cli-only
+zsh scripts/remove_homebrew.sh --dry-run
+zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready
 ```
+
+`zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready` refuses to remove Homebrew while fallback entries exist. `zsh scripts/nix_install.sh --uninstall-homebrew` runs the same removal only after the selected Nix switch succeeds.
+
+## Migrating Another Homebrew Machine
+
+Committed `.Brewfile` files are no longer used. On an old macOS machine that still has Homebrew, run the migration directly from the live Homebrew state, or pass an exported Brewfile explicitly.
+
+```sh
+zsh scripts/migrate_brew_to_nix.sh --apply
+zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
+```
+
+When `--brewfile` is omitted, the script uses `brew bundle dump` to create a temporary Brewfile, migrates it to Nix package lists, and then removes the temporary file.
 
 ## Cron jobs
 
@@ -114,7 +151,7 @@ Example:
 - `post-rewrite`: runs after `git pull --rebase`
 - `post-checkout`: runs after branch checkout
 
-The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which lightly syncs dotfiles, AI tool files, app configs, cron, and the hooks themselves. Heavy operations such as Homebrew install and mise tool install are not run automatically.
+The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which syncs dotfiles, AI tool files, app configs, cron, and the hooks themselves. nix-darwin / Home Manager switch, Homebrew uninstall, and mise tool install are not run automatically.
 
 To reinstall hooks manually:
 

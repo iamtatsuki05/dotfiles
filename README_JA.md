@@ -15,16 +15,16 @@ zsh main.sh
 - macOS: `full`
 - Linux: `cli`
 
-`full` は macOS 向けの全体セットアップです。Homebrew cask、VS Code 拡張、macOS defaults、cron、設定ファイル、mise、Neovim をセットアップします。
+`full` は macOS 向けの全体セットアップです。nix-darwin、Home Manager、GUI アプリ、macOS defaults、cron、設定ファイル、mise、Neovim をセットアップします。
 
-`cli` は Ubuntu などでも使いやすい CLI 中心のセットアップです。cask、VS Code 拡張、macOS 専用ツール、macOS defaults、cron は実行せず、`dotfiles/.Brewfile.cli` から CLI ツールをインストールします。CLI プロファイルでは `~/.Brewfile` も CLI 版に差し替えます。
+`cli` は Ubuntu などでも使いやすい CLI 中心のセットアップです。GUI アプリ、macOS 専用ツール、macOS defaults、cron は実行せず、Nix の CLI package set だけを適用します。
 
 ```sh
 # Ubuntu / Linux や CLI だけを入れたい macOS
 zsh main.sh --cli-only
 
-# Homebrew の CLI パッケージだけを入れたい場合
-zsh scripts/brew_install.sh --cli-only
+# Nix/Home Manager の CLI パッケージだけを入れたい場合
+zsh scripts/nix_install.sh --cli-only
 ```
 
 ## chezmoi への移行
@@ -44,7 +44,7 @@ mise run chezmoi-migrate
 
 ```sh
 sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
-# または: brew install chezmoi
+# または: nix run nixpkgs#chezmoi -- init
 # または: mise use --global chezmoi@latest
 
 zsh scripts/chezmoi_apply.sh --dry-run
@@ -72,23 +72,60 @@ mise run test-dotfiles
 
 GitHub Actions では `ubuntu-latest` と `macos-latest` の両方で同じ検証を実行します。CI では `chezmoi` もインストールし、両 OS で source state が一時 HOME に適用できることを確認します。
 
-## Brewfile の更新
+## Nix package migration
 
-macOS で現在の Homebrew 状態から `dotfiles/.Brewfile` と CLI 版の `dotfiles/.Brewfile.cli` を更新できます。
+Homebrew は主経路から外し、macOS は nix-darwin + Home Manager、Linux は Home Manager で同じ package set を適用します。CLI package は [config/nix/package-names.nix](config/nix/package-names.nix)、GUI app は common / macOS / Linux に分けた [config/nix/gui-common-package-names.nix](config/nix/gui-common-package-names.nix)、[config/nix/gui-macos-package-names.nix](config/nix/gui-macos-package-names.nix)、[config/nix/gui-linux-package-names.nix](config/nix/gui-linux-package-names.nix) で管理します。Nix に移せない Homebrew entry は [config/nix/unmapped-homebrew.tsv](config/nix/unmapped-homebrew.tsv) に残し、macOS で nix-darwin が管理する fallback は [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) に生成します。
 
 ```sh
-zsh scripts/brew_dump.sh
+# 現在の Homebrew 状態から Nix package list と未移行レポートを再生成
+zsh scripts/migrate_brew_to_nix.sh --apply
+# 他 PC で export した Brewfile を指定して移行
+zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 # または
-mise run brew-dump
+mise run nix-migrate-brew
+
+# Nix 構成の build dry-run
+zsh scripts/nix_install.sh --dry-run
+# または
+mise run nix-build
+
+# macOS では nix-darwin、Linux では Home Manager で適用
+zsh scripts/nix_install.sh
+# または
+mise run nix-apply
+
+# CLI だけを適用
+zsh scripts/nix_install.sh --cli-only
+# または
+mise run nix-apply-cli
+
+# Ubuntu など GUI が使える Linux でも Slack 等の GUI app を入れる
+zsh scripts/nix_install.sh --with-gui-apps
+# または
+mise run nix-apply-with-gui-apps
 ```
 
-CLI 版は Homebrew Bundle の `--tap` / `--formula` / `--uv` で生成します。
-`setup_config.sh` でインストールされた mise config では、`mise run brew-dump` をどのディレクトリから実行しても、このリポジトリの `scripts/brew_dump.sh` が実行されます。
+macOS の初回適用では `darwin-rebuild` がまだ PATH に無いことがあります。その場合も [scripts/nix_install.sh](scripts/nix_install.sh) が flake 内の `darwin-rebuild` を `nix run` で呼びます。Linux では `home-manager` が無ければ flake 内の `home-manager` を使います。
+
+[config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) に entry がある間は、macOS の fallback formula、cask、tap、VS Code extension のために Homebrew が必要です。formula は CLI profile でも適用し、cask と VS Code extension は `--with-gui-apps` の時だけ適用します。fallback が空で、Nix 適用後に問題なければ Homebrew は明示的に削除できます。これは破壊的操作なので dry-run でコマンドを確認してから実行します。
 
 ```sh
-# 現在の Homebrew 状態から CLI 版だけを再生成
-zsh scripts/brew_dump.sh --generate-cli-only
+zsh scripts/remove_homebrew.sh --dry-run
+zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready
 ```
+
+`zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready` は fallback entry が残っている場合は削除を拒否します。`zsh scripts/nix_install.sh --uninstall-homebrew` を使うと、Nix 適用が成功した後に同じ削除処理を実行します。
+
+## 他の Homebrew マシンからの移行
+
+commit 済みの `.Brewfile` は使いません。まだ Homebrew が残っている古い macOS では、現在の Homebrew 状態から直接移行するか、export した Brewfile を明示的に渡します。
+
+```sh
+zsh scripts/migrate_brew_to_nix.sh --apply
+zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
+```
+
+`--brewfile` を省略した場合、script は `brew bundle dump` で一時 Brewfile を作り、Nix package list に移行した後、その一時ファイルを削除します。
 
 ## Cron ジョブ
 
@@ -113,7 +150,7 @@ cron ジョブは `config/cron/crontab` で管理できます。
 - `post-rewrite`: `git pull --rebase` 後に実行
 - `post-checkout`: branch checkout 後に実行
 
-hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、dotfiles、AI ツール設定、アプリ設定、cron、hook 自体を軽く同期します。Homebrew の install や mise tool install は重いため自動実行しません。
+hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、dotfiles、AI ツール設定、アプリ設定、cron、hook 自体を同期します。nix-darwin / Home Manager の switch、Homebrew の uninstall、mise tool install は自動実行しません。
 
 手動で再インストールする場合:
 

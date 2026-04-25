@@ -63,19 +63,6 @@ alias = "docker-compose-build"
 description = "compose fileを起動するコマンド"
 run = "docker compose up -d --build"
 
-[tasks.homebrew-update]
-alias = "brew-update"
-description = "homebrew, packageをアプデする"
-# Do not use --greedy here. Auto-updating casks such as Google Chrome can be
-# uninstalled and reinstalled by Homebrew; if the reinstall fails, the app disappears.
-run = "brew update --auto-update && brew upgrade && brew upgrade --cask && brew cleanup"
-
-[tasks.homebrew-dump]
-alias = "brew-dump"
-description = "Homebrewの状態から.BrewfileとCLI版Brewfileを更新する"
-dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/brew_dump.sh"
-
 [tasks.chezmoi-migrate]
 description = "既存のdotfiles/configからchezmoi source stateを生成する"
 dir = "__DOTFILES_REPO_ROOT__"
@@ -96,6 +83,36 @@ alias = "test-dotfiles"
 description = "dotfilesのshell scriptとchezmoi source stateを検証する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/test_dotfiles.sh"
+
+[tasks.nix-migrate-brew]
+description = "現在のHomebrew状態または指定したBrewfileからNix package listと未移行レポートを生成する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/migrate_brew_to_nix.sh --apply"
+
+[tasks.nix-build]
+description = "Nix構成をswitchせずにbuildする"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/nix_install.sh --dry-run"
+
+[tasks.nix-apply]
+description = "Nix構成を現在のOSへ適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/nix_install.sh"
+
+[tasks.nix-apply-cli]
+description = "CLI only profileでNix構成を適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/nix_install.sh --cli-only"
+
+[tasks.nix-apply-with-gui-apps]
+description = "GUIが使える環境でNix構成とGUI appsを適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/nix_install.sh --with-gui-apps"
+
+[tasks.nix-remove-homebrew]
+description = "Nix適用後にHomebrewを明示的に削除する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"
 
 [tasks.git-head-commit-reset]
 alias = "git-head-commit-rest"

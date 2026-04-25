@@ -1,0 +1,13 @@
+[
+  "alt-tab-macos"
+  "betterdisplay"
+  "blackhole"
+  "daisydisk"
+  "iterm2"
+  "keycastr"
+  "notion-app"
+  "orbstack"
+  "raycast"
+  "rectangle-pro"
+  "xquartz"
+]
