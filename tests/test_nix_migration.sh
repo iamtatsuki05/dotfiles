@@ -20,8 +20,10 @@ readonly NIX_GUI_MACOS_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-macos-packa
 readonly NIX_GUI_LINUX_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-linux-package-names.nix"
 readonly UNMAPPED_HOMEBREW_FILE="$REPO_ROOT/config/nix/unmapped-homebrew.tsv"
 readonly HOMEBREW_FALLBACK_FILE="$REPO_ROOT/config/nix/homebrew-fallback.nix"
+readonly MAS_APPS_FILE="$REPO_ROOT/config/nix/mas-apps.nix"
 readonly MIGRATED_FORMULAE_FILE="$REPO_ROOT/config/nix/migrated-brew-formulae.txt"
 readonly MIGRATED_CASKS_FILE="$REPO_ROOT/config/nix/migrated-brew-casks.txt"
+readonly MIGRATED_MAS_APPS_FILE="$REPO_ROOT/config/nix/migrated-mas-apps.tsv"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
 fail() {
@@ -75,6 +77,16 @@ ghostty	ghostty	linux
 raycast	raycast	macos
 EOF
 
+  cat > "$repo/config/nix/mas-to-nix.tsv" <<'EOF'
+# mas app name	app store id	nix	nix scope
+Bitwarden	1352778147	bitwarden-desktop	common
+EOF
+
+  cat > "$repo/config/nix/mas-to-cask.tsv" <<'EOF'
+# mas app name	app store id	cask
+Affinity Photo	824183456	affinity-photo
+EOF
+
   cat > "$repo/input/Brewfile" <<'EOF'
 tap "example/tap"
 brew "git"
@@ -86,6 +98,9 @@ cask "alacritty"
 cask "ghostty"
 cask "raycast"
 cask "private-app"
+mas "Bitwarden", id: 1352778147
+mas "Affinity Photo", id: 824183456
+mas "Xcode", id: 497799835
 vscode "example.extension"
 uv "claude-monitor"
 EOF
@@ -106,6 +121,7 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/package-names.nix" '"dotfiles.mise"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"slack"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"alacritty"'
+  assert_contains "$repo/config/nix/gui-common-package-names.nix" '"bitwarden-desktop"'
   assert_contains "$repo/config/nix/gui-linux-package-names.nix" '"ghostty"'
   assert_contains "$repo/config/nix/gui-macos-package-names.nix" '"raycast"'
   assert_contains "$repo/config/nix/migrated-brew-formulae.txt" "gnu-sed"
@@ -118,8 +134,14 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"private-tool"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"ghostty"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"private-app"'
+  assert_contains "$repo/config/nix/homebrew-fallback.nix" '"affinity-photo"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"example.extension"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"claude-monitor"'
+  assert_contains "$repo/config/nix/mas-apps.nix" '"Xcode" = 497799835;'
+  assert_not_contains "$repo/config/nix/mas-apps.nix" 'Bitwarden'
+  assert_not_contains "$repo/config/nix/mas-apps.nix" 'Affinity Photo'
+  assert_contains "$repo/config/nix/migrated-mas-apps.tsv" $'Bitwarden	nix	bitwarden-desktop'
+  assert_contains "$repo/config/nix/migrated-mas-apps.tsv" $'Affinity Photo	brew	affinity-photo'
   assert_not_exists "$repo/config/homebrew/fallback.Brewfile"
   assert_not_exists "$repo/config/homebrew/macos-casks.Brewfile"
 
@@ -146,6 +168,8 @@ test_brewfile_migration_dry_run_does_not_write_outputs() {
   assert_not_exists "$repo/config/nix/gui-linux-package-names.nix"
   assert_not_exists "$repo/config/nix/unmapped-homebrew.tsv"
   assert_not_exists "$repo/config/nix/homebrew-fallback.nix"
+  assert_not_exists "$repo/config/nix/mas-apps.nix"
+  assert_not_exists "$repo/config/nix/migrated-mas-apps.tsv"
 
   rm -rf "$repo"
 }
@@ -226,15 +250,22 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	yoink'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'vscode	adpyke.codesnap'
   assert_contains "$MIGRATED_FORMULAE_FILE" "mise"
+  assert_contains "$MIGRATED_MAS_APPS_FILE" $'Alfred	nix	alfred'
+  assert_contains "$MIGRATED_MAS_APPS_FILE" $'Affinity Photo	brew	affinity-photo'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'taps = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"cloudflare/cloudflare"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'casks = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity-photo"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'vscode = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"adpyke.codesnap"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'unsupportedUvPackages = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"claude-monitor"'
+  assert_file "$MAS_APPS_FILE"
+  assert_contains "$MAS_APPS_FILE" '"Xcode" = 497799835;'
+  assert_not_contains "$MAS_APPS_FILE" '"Alfred"'
+  assert_not_contains "$MAS_APPS_FILE" '"Bitwarden"'
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
@@ -282,15 +313,17 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_MODULE" 'enableGuiApps'
   assert_contains "$DARWIN_MODULE" 'import ../gui-packages.nix'
   assert_contains "$DARWIN_MODULE" 'import ../homebrew-fallback.nix'
+  assert_contains "$DARWIN_MODULE" 'import ../mas-apps.nix'
   assert_contains "$DARWIN_MODULE" 'lib.optionals enableGuiApps guiPackages'
   assert_contains "$DARWIN_MODULE" 'homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ]'
-  assert_contains "$DARWIN_MODULE" 'homebrewFallbackHasGuiEntries = homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ]'
+  assert_contains "$DARWIN_MODULE" 'homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ] || macAppStoreApps != { }'
   assert_contains "$DARWIN_MODULE" 'homebrewFallbackEnabled = homebrewFallbackHasCliEntries || (enableGuiApps && homebrewFallbackHasGuiEntries)'
   assert_contains "$DARWIN_MODULE" 'homebrew = lib.mkIf homebrewFallbackEnabled'
   assert_contains "$DARWIN_MODULE" 'enable = true'
   assert_contains "$DARWIN_MODULE" 'taps = homebrewFallback.taps'
   assert_contains "$DARWIN_MODULE" 'brews = homebrewFallback.brews'
   assert_contains "$DARWIN_MODULE" 'casks = lib.optionals enableGuiApps homebrewFallback.casks'
+  assert_contains "$DARWIN_MODULE" 'masApps = lib.optionalAttrs enableGuiApps macAppStoreApps'
   assert_contains "$DARWIN_MODULE" 'vscode = lib.optionals enableGuiApps homebrewFallback.vscode'
   assert_contains "$DARWIN_MODULE" 'cleanup = "none"'
   assert_not_contains "$DARWIN_MODULE" 'nix.settings'
@@ -329,7 +362,9 @@ test_remove_homebrew_script_is_explicit_and_dry_run_first() {
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" '--confirm-nix-ready'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" '--force'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'homebrew-fallback.nix'
+  assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'mas-apps.nix'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'taps|brews|casks|vscode'
+  assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'mas_apps_has_entries'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Refusing to remove Homebrew'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Homebrew uninstall command'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh'

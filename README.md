@@ -76,7 +76,9 @@ GitHub Actions runs the same checks on `ubuntu-latest` and `macos-latest`, insta
 
 ## Nix package migration
 
-Homebrew is no longer the primary setup path. macOS uses nix-darwin plus Home Manager, and Linux uses standalone Home Manager with the same package sets. CLI packages live in [config/nix/package-names.nix](config/nix/package-names.nix). GUI apps are split by platform in [config/nix/gui-common-package-names.nix](config/nix/gui-common-package-names.nix), [config/nix/gui-macos-package-names.nix](config/nix/gui-macos-package-names.nix), and [config/nix/gui-linux-package-names.nix](config/nix/gui-linux-package-names.nix). Homebrew entries that cannot be moved to Nix are recorded in [config/nix/unmapped-homebrew.tsv](config/nix/unmapped-homebrew.tsv), and the macOS fallback managed by nix-darwin is generated as [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix).
+Homebrew is no longer the primary setup path. macOS uses nix-darwin plus Home Manager, and Linux uses standalone Home Manager with the same package sets. CLI packages live in [config/nix/package-names.nix](config/nix/package-names.nix). GUI apps are split by platform in [config/nix/gui-common-package-names.nix](config/nix/gui-common-package-names.nix), [config/nix/gui-macos-package-names.nix](config/nix/gui-macos-package-names.nix), and [config/nix/gui-linux-package-names.nix](config/nix/gui-linux-package-names.nix). Mac App Store apps are managed on macOS in [config/nix/mas-apps.nix](config/nix/mas-apps.nix). Homebrew entries that cannot be moved to Nix are recorded in [config/nix/unmapped-homebrew.tsv](config/nix/unmapped-homebrew.tsv), and the macOS fallback managed by nix-darwin is generated as [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix).
+
+App registration follows `Nix > Homebrew > MAS`. During Brewfile migration, Mac App Store entries are first matched against [config/nix/mas-to-nix.tsv](config/nix/mas-to-nix.tsv), then [config/nix/mas-to-cask.tsv](config/nix/mas-to-cask.tsv), and only unmatched entries are written to [config/nix/mas-apps.nix](config/nix/mas-apps.nix).
 
 ```sh
 # Regenerate Nix package lists and the unmapped Homebrew report from current Homebrew state
@@ -109,7 +111,17 @@ mise run nix-apply-with-gui-apps
 
 On first macOS setup, `darwin-rebuild` may not be available in `PATH` yet. [scripts/nix_install.sh](scripts/nix_install.sh) handles that by running the flake-provided `darwin-rebuild`. On Linux, it similarly uses the flake-provided `home-manager` when the command is not installed yet.
 
-If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, and VS Code extensions. Formulae are applied even in the CLI profile. Casks and VS Code extensions are applied only with `--with-gui-apps`. If the fallback is empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
+If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) or [config/nix/mas-apps.nix](config/nix/mas-apps.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, VS Code extensions, or Mac App Store apps. Formulae are applied even in the CLI profile. Casks, VS Code extensions, and Mac App Store apps are applied only with `--with-gui-apps`. If those files are empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
+
+Mac App Store apps use nix-darwin's `homebrew.masApps` support. The key is the app name and the value is the App Store ADAM ID:
+
+```nix
+{
+  "Xcode" = 497799835;
+}
+```
+
+You must be signed in to the Mac App Store. Removing an app from `mas-apps.nix` does not automatically uninstall it because Homebrew Bundle does not support MAS cleanup.
 
 ```sh
 zsh scripts/remove_homebrew.sh --dry-run

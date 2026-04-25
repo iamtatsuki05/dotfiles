@@ -140,9 +140,52 @@ load_cask_mapping() {
   done < "$map_file"
 }
 
+load_mas_to_nix_mapping() {
+  local map_file="$REPO_ROOT/config/nix/mas-to-nix.tsv"
+  local app_name
+  local app_id
+  local nix_name
+  local nix_scope
+
+  [[ -f "$map_file" ]] || return 0
+
+  while IFS=$'\t' read -r app_name app_id nix_name nix_scope _rest; do
+    [[ -n "$app_name" ]] || continue
+    [[ "$app_name" == \#* ]] && continue
+    [[ -n "$nix_name" ]] || continue
+    NIX_BY_MAS_NAME[$app_name]="$nix_name"
+    NIX_SCOPE_BY_MAS_NAME[$app_name]="${nix_scope:-macos}"
+    if [[ -n "$app_id" ]]; then
+      NIX_BY_MAS_ID[$app_id]="$nix_name"
+      NIX_SCOPE_BY_MAS_ID[$app_id]="${nix_scope:-macos}"
+    fi
+  done < "$map_file"
+}
+
+load_mas_to_cask_mapping() {
+  local map_file="$REPO_ROOT/config/nix/mas-to-cask.tsv"
+  local app_name
+  local app_id
+  local cask_name
+
+  [[ -f "$map_file" ]] || return 0
+
+  while IFS=$'\t' read -r app_name app_id cask_name _rest; do
+    [[ -n "$app_name" ]] || continue
+    [[ "$app_name" == \#* ]] && continue
+    [[ -n "$cask_name" ]] || continue
+    CASK_BY_MAS_NAME[$app_name]="$cask_name"
+    if [[ -n "$app_id" ]]; then
+      CASK_BY_MAS_ID[$app_id]="$cask_name"
+    fi
+  done < "$map_file"
+}
+
 load_mappings() {
   load_mapping_file "$REPO_ROOT/config/nix/brew-to-nix.tsv" NIX_BY_BREW
   load_cask_mapping
+  load_mas_to_nix_mapping
+  load_mas_to_cask_mapping
 }
 
 quote_nix_string() {
@@ -193,6 +236,60 @@ append_homebrew_fallback() {
   esac
 }
 
+append_mas_app() {
+  local name="$1"
+  local app_id="$2"
+
+  append_unique MAS_APP_NAMES "$name"
+  MAS_APP_IDS[$name]="$app_id"
+}
+
+append_gui_package_by_scope() {
+  local nix_name="$1"
+  local nix_scope="$2"
+
+  case "$nix_scope" in
+    common|all)
+      append_unique GUI_COMMON_PACKAGE_NAMES "$nix_name"
+      ;;
+    macos|darwin)
+      append_unique GUI_MACOS_PACKAGE_NAMES "$nix_name"
+      ;;
+    linux)
+      append_unique GUI_LINUX_PACKAGE_NAMES "$nix_name"
+      ;;
+    *)
+      echo "ERROR: unsupported Nix MAS scope for $nix_name: $nix_scope" >&2
+      return 1
+      ;;
+  esac
+}
+
+register_mas_app_by_priority() {
+  local name="$1"
+  local app_id="$2"
+  local nix_name
+  local nix_scope
+  local cask_name
+
+  nix_name="${NIX_BY_MAS_NAME[$name]:-${NIX_BY_MAS_ID[$app_id]:-}}"
+  if [[ -n "$nix_name" ]]; then
+    nix_scope="${NIX_SCOPE_BY_MAS_NAME[$name]:-${NIX_SCOPE_BY_MAS_ID[$app_id]:-macos}}"
+    append_gui_package_by_scope "$nix_name" "$nix_scope"
+    append_unique MIGRATED_MAS_APPS "$name"$'\t'"nix"$'\t'"$nix_name"
+    return
+  fi
+
+  cask_name="${CASK_BY_MAS_NAME[$name]:-${CASK_BY_MAS_ID[$app_id]:-}}"
+  if [[ -n "$cask_name" ]]; then
+    append_homebrew_fallback cask "$cask_name"
+    append_unique MIGRATED_MAS_APPS "$name"$'\t'"brew"$'\t'"$cask_name"
+    return
+  fi
+
+  append_mas_app "$name" "$app_id"
+}
+
 parse_brewfile() {
   local line
   local kind
@@ -208,6 +305,11 @@ parse_brewfile() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "$line" ]] || continue
     [[ "$line" == \#* ]] && continue
+
+    if [[ "$line" =~ '^mas "([^"]+)", id: ([0-9]+)' ]]; then
+      register_mas_app_by_priority "${match[1]}" "${match[2]}"
+      continue
+    fi
 
     if [[ "$line" =~ '^(tap|brew|cask|vscode|uv) "([^"]+)"' ]]; then
       kind="${match[1]}"
@@ -308,6 +410,7 @@ write_line_list() {
 write_migration_reports() {
   write_line_list "$REPO_ROOT/config/nix/migrated-brew-formulae.txt" MIGRATED_BREW_FORMULAE
   write_line_list "$REPO_ROOT/config/nix/migrated-brew-casks.txt" MIGRATED_BREW_CASKS
+  write_line_list "$REPO_ROOT/config/nix/migrated-mas-apps.tsv" MIGRATED_MAS_APPS
 
   local target="$REPO_ROOT/config/nix/unmapped-homebrew.tsv"
   local line
@@ -335,6 +438,22 @@ write_homebrew_fallback_config() {
     write_nix_attr_string_list "vscode" HOMEBREW_FALLBACK_VSCODE
     echo ""
     write_nix_attr_string_list "unsupportedUvPackages" HOMEBREW_FALLBACK_UNSUPPORTED_UV
+    echo "}"
+  } > "$target"
+}
+
+write_mas_apps_config() {
+  local target="$REPO_ROOT/config/nix/mas-apps.nix"
+  local name
+  local app_id
+
+  mkdir -p "${target:h}"
+  {
+    echo "{"
+    for name in "${MAS_APP_NAMES[@]}"; do
+      app_id="${MAS_APP_IDS[$name]}"
+      echo "  $(quote_nix_string "$name") = $app_id;"
+    done
     echo "}"
   } > "$target"
 }
@@ -370,6 +489,7 @@ print_summary() {
   echo "Homebrew fallback formulae: ${#HOMEBREW_FALLBACK_BREWS[@]}"
   echo "Homebrew fallback casks: ${#HOMEBREW_FALLBACK_CASKS[@]}"
   echo "Homebrew fallback VS Code extensions: ${#HOMEBREW_FALLBACK_VSCODE[@]}"
+  echo "Mac App Store apps: ${#MAS_APP_NAMES[@]}"
   echo "unsupported uv tool entries: ${#HOMEBREW_FALLBACK_UNSUPPORTED_UV[@]}"
 
   if (( ! APPLY )); then
@@ -381,18 +501,27 @@ main() {
   typeset -gA NIX_BY_BREW=()
   typeset -gA NIX_BY_CASK=()
   typeset -gA NIX_SCOPE_BY_CASK=()
+  typeset -gA NIX_BY_MAS_NAME=()
+  typeset -gA NIX_BY_MAS_ID=()
+  typeset -gA NIX_SCOPE_BY_MAS_NAME=()
+  typeset -gA NIX_SCOPE_BY_MAS_ID=()
+  typeset -gA CASK_BY_MAS_NAME=()
+  typeset -gA CASK_BY_MAS_ID=()
   typeset -ga NIX_PACKAGE_NAMES=()
   typeset -ga GUI_COMMON_PACKAGE_NAMES=()
   typeset -ga GUI_MACOS_PACKAGE_NAMES=()
   typeset -ga GUI_LINUX_PACKAGE_NAMES=()
   typeset -ga MIGRATED_BREW_FORMULAE=()
   typeset -ga MIGRATED_BREW_CASKS=()
+  typeset -ga MIGRATED_MAS_APPS=()
   typeset -ga UNMAPPED_HOMEBREW_LINES=()
   typeset -ga HOMEBREW_FALLBACK_TAPS=()
   typeset -ga HOMEBREW_FALLBACK_BREWS=()
   typeset -ga HOMEBREW_FALLBACK_CASKS=()
   typeset -ga HOMEBREW_FALLBACK_VSCODE=()
   typeset -ga HOMEBREW_FALLBACK_UNSUPPORTED_UV=()
+  typeset -gA MAS_APP_IDS=()
+  typeset -ga MAS_APP_NAMES=()
 
   parse_args "$@"
   resolve_brewfile
@@ -405,6 +534,7 @@ main() {
     write_gui_package_names
     write_migration_reports
     write_homebrew_fallback_config
+    write_mas_apps_config
     remove_legacy_homebrew_fallbacks
   fi
 }

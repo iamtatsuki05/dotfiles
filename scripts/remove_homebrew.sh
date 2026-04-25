@@ -5,6 +5,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
+readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 
 APPLY=0
 CONFIRM_NIX_READY=0
@@ -20,7 +21,7 @@ Options:
   --dry-run            Print the Homebrew uninstall command without running it. This is the default.
   --apply              Run the official Homebrew uninstall script.
   --confirm-nix-ready  Required with --apply. Confirms Nix setup already works.
-  --force              Allow removal even when a Homebrew fallback config exists.
+  --force              Allow removal even when Homebrew-managed fallback or Mac App Store entries exist.
   -h, --help           Show this help.
 EOF
 }
@@ -64,6 +65,11 @@ homebrew_fallback_has_entries() {
   ' "$HOMEBREW_FALLBACK_CONFIG"
 }
 
+mas_apps_has_entries() {
+  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
+  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
+}
+
 print_command() {
   cat <<'EOF'
 Homebrew uninstall command:
@@ -85,9 +91,9 @@ remove_homebrew() {
     return 1
   fi
 
-  if (( ! FORCE )) && homebrew_fallback_has_entries; then
-    echo "ERROR: Refusing to remove Homebrew because config/nix/homebrew-fallback.nix still contains fallback packages." >&2
-    echo "Remove those fallback entries first, or rerun with --force if you intentionally want to break Homebrew-managed fallbacks." >&2
+  if (( ! FORCE )) && { homebrew_fallback_has_entries || mas_apps_has_entries; }; then
+    echo "ERROR: Refusing to remove Homebrew because Homebrew-managed fallback packages or Mac App Store apps remain configured." >&2
+    echo "Remove config/nix/homebrew-fallback.nix and config/nix/mas-apps.nix entries first, or rerun with --force if you intentionally want to break those activations." >&2
     return 1
   fi
 

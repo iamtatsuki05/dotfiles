@@ -1,0 +1,37 @@
+{
+  "BetterSnapTool" = 417375580;
+  "Blackmagic Disk Speed Test" = 425264550;
+  "CleverFiles Duplicates Finder" = 1152611077;
+  "Compressor" = 424390742;
+  "DaVinci Resolve" = 571213070;
+  "Dropover" = 1355679052;
+  "Endel" = 1346247457;
+  "Final Cut Pro" = 424389933;
+  "GarageBand" = 682658836;
+  "Goodnotes" = 1444383602;
+  "Keynote" = 409183694;
+  "Kindle" = 302584613;
+  "Kindle Classic" = 405399194;
+  "LadioCast" = 411213048;
+  "LINE" = 539883307;
+  "Logic Pro" = 634148309;
+  "Magnet" = 441258766;
+  "MainStage" = 634159523;
+  "Notion Web Clipper" = 1559269364;
+  "Numbers" = 409203825;
+  "Pages" = 409201541;
+  "Perplexity" = 6714467650;
+  "Pieoneer" = 6739781207;
+  "Prime Video" = 545519333;
+  "RunCat" = 1429033973;
+  "ScreenPointer" = 1368204906;
+  "Speedtest" = 1153157709;
+  "Steam Link" = 1246969117;
+  "TeraBox" = 1509453185;
+  "Urban VPN Desktop" = 1517772049;
+  "Video Speed Controller" = 1588368612;
+  "WireGuard" = 1451685025;
+  "Xcode" = 497799835;
+  "cmdQuit" = 423137709;
+  "iMovie" = 408981434;
+}

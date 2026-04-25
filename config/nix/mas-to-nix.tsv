@@ -1,0 +1,4 @@
+# MAS app name	App Store ADAM ID	Nixpkgs attribute	Nix scope
+# Nix scope: common, macos, or linux.
+Alfred	405843582	alfred	macos
+Bitwarden	1352778147	bitwarden-desktop	common

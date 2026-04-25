@@ -1,9 +1,11 @@
 [
+  "alfred"
   "alt-tab-macos"
   "betterdisplay"
   "blackhole"
   "daisydisk"
   "iterm2"
+  "karabiner-elements"
   "keycastr"
   "notion-app"
   "orbstack"
