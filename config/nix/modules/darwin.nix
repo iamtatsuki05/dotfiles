@@ -13,6 +13,7 @@ let
   homebrewFallback = import ../homebrew-fallback.nix;
   macAppStoreApps = import ../mas-apps.nix;
   dotfilesRepoRoot = "${homeDirectory}/src/dotfiles";
+  screenshotsDirectory = "${homeDirectory}/SS";
   homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ];
   homebrewFallbackHasGuiEntries =
     homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ] || macAppStoreApps != { };
@@ -80,6 +81,8 @@ in
   };
 
   system.activationScripts.postActivation.text = lib.mkAfter ''
+    sudo --user=${username} -- mkdir -p ${lib.escapeShellArg screenshotsDirectory}
+
     if command -v crontab >/dev/null 2>&1; then
       current_cron="$(mktemp)"
       stripped_cron="$(mktemp)"
@@ -108,5 +111,9 @@ in
   system.defaults.NSGlobalDomain = {
     InitialKeyRepeat = 12;
     KeyRepeat = 1;
+  };
+
+  system.defaults.screencapture = {
+    location = screenshotsDirectory;
   };
 }
