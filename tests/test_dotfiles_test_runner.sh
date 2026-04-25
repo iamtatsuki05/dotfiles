@@ -80,6 +80,8 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --with-gui-apps"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-remove-homebrew]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-mise-upgrade]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
 }
 
 test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {

@@ -113,6 +113,28 @@ mise run nix-apply-with-gui-apps
 
 On first macOS setup, `darwin-rebuild` may not be available in `PATH` yet. [scripts/nix_install.sh](scripts/nix_install.sh) handles that by running the flake-provided `darwin-rebuild`. On Linux, it similarly uses the flake-provided `home-manager` when the command is not installed yet.
 
+On Linux hosts where `sudo` is unavailable, use rootless Nix through `nix-user-chroot`. This maps `${HOME}/.nix` to `/nix` only inside the chroot, so Nix commands and tools installed by Nix must be run through `nix-rootless` or `rootless-nix-shell`.
+
+```sh
+zsh scripts/nix_rootless_install.sh
+nix-rootless --version
+rootless-nix-shell
+
+# Run a command inside rootless Nix
+zsh scripts/nix_rootless_install.sh --run nix --version
+```
+
+To bump everything managed by both `mise` and Nix to the latest versions and apply the result, use:
+
+```bash
+mise run nix-mise-upgrade
+
+# Use bash for the helper scripts instead of zsh
+mise run nix-mise-upgrade -- --shell bash
+```
+
+This task updates `config/mise/config.toml` with `mise upgrade --bump`, syncs `home/.chezmoitemplates/mise-config.toml` and `~/.config/mise/config.toml`, then runs `nix flake update` followed by `scripts/nix_install.sh`.
+
 If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) or [config/nix/mas-apps.nix](config/nix/mas-apps.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, VS Code extensions, or Mac App Store apps. Formulae are applied even in the CLI profile. Casks, VS Code extensions, and Mac App Store apps are applied only with `--with-gui-apps`. If those files are empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
 
 Mac App Store apps use nix-darwin's `homebrew.masApps` support. The key is the app name and the value is the App Store ADAM ID:

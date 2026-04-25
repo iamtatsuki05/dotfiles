@@ -6,7 +6,9 @@ readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly MIGRATION_SCRIPT="$REPO_ROOT/scripts/migrate_brew_to_nix.sh"
 readonly INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_install.sh"
+readonly ROOTLESS_NIX_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_rootless_install.sh"
 readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
+readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
 readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
@@ -64,6 +66,13 @@ assert_not_contains() {
 
   assert_file "$file_path"
   ! grep -Fq -- "$unexpected" "$file_path" || fail "expected $file_path not to contain: $unexpected"
+}
+
+assert_output_contains() {
+  local output_file="$1"
+  local expected="$2"
+
+  grep -Fq -- "$expected" "$output_file" || fail "expected output to contain: $expected"
 }
 
 create_fixture_repo() {
@@ -404,6 +413,7 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'aarch64-darwin-full'
   assert_contains "$INSTALL_SCRIPT" 'x86_64-linux-cli'
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
+  assert_contains "$INSTALL_SCRIPT" 'command -v nix-rootless'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"'
   assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake'
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
@@ -415,6 +425,19 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_not_contains "$INSTALL_SCRIPT" '$(nix_args)'
   assert_not_contains "$INSTALL_SCRIPT" 'brew bundle'
   assert_not_contains "$INSTALL_SCRIPT" 'fallback.Brewfile'
+}
+
+test_rootless_nix_install_script_supports_no_sudo_linux() {
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'nix-user-chroot'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'unshare --user --pid true'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'ROOTLESS_NIX_DIR'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'experimental-features = nix-command flakes'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'curl -L https://nixos.org/nix/install'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" '--no-daemon'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'nix-rootless'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'rootless-nix-shell'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" '--run'
+  assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" '--shell'
 }
 
 test_remove_homebrew_script_is_explicit_and_dry_run_first() {
@@ -453,6 +476,29 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_not_contains "$APPLY_UPDATES_SCRIPT" "sync_nix_profile"
 }
 
+test_managed_update_script_updates_mise_and_nix() {
+  local output
+  output="$(mktemp)"
+
+  assert_contains "$MISE_CONFIG" '[tasks.nix-mise-upgrade]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'MISE_GLOBAL_CONFIG_FILE'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'config/mise/config.toml'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'home/.chezmoitemplates/mise-config.toml'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'XDG_CONFIG_HOME'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix flake update'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix_install.sh'
+
+  bash "$UPDATE_MANAGED_VERSIONS_SCRIPT" --help > "$output"
+  assert_output_contains "$output" '--shell zsh|bash'
+  assert_output_contains "$output" '--cli-only'
+  assert_output_contains "$output" '--with-gui-apps'
+
+  rm -f "$output"
+}
+
 main() {
   test_brewfile_migration_writes_nix_lists_and_unmapped_report
   test_brewfile_migration_dry_run_does_not_write_outputs
@@ -460,8 +506,10 @@ main() {
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
+  test_rootless_nix_install_script_supports_no_sudo_linux
   test_remove_homebrew_script_is_explicit_and_dry_run_first
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
+  test_managed_update_script_updates_mise_and_nix
   echo "nix migration tests passed"
 }
 

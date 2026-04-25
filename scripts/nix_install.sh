@@ -164,6 +164,11 @@ nix_command() {
     return
   fi
 
+  if command -v nix-rootless >/dev/null 2>&1; then
+    command -v nix-rootless
+    return
+  fi
+
   echo "ERROR: nix is not installed or not found in PATH" >&2
   echo "Install Nix first, then rerun this script." >&2
   return 1

@@ -111,6 +111,28 @@ mise run nix-apply-with-gui-apps
 
 macOS の初回適用では `darwin-rebuild` がまだ PATH に無いことがあります。その場合も [scripts/nix_install.sh](scripts/nix_install.sh) が flake 内の `darwin-rebuild` を `nix run` で呼びます。Linux では `home-manager` が無ければ flake 内の `home-manager` を使います。
 
+sudo が使えない Linux では、`nix-user-chroot` を使って `${HOME}/.nix` を chroot 内の `/nix` として扱う rootless Nix を使えます。これは通常のログインシェルから `/nix/store` を直接参照できないため、Nix コマンドや Nix で入れたツールは `nix-rootless` または `rootless-nix-shell` 経由で使います。
+
+```sh
+zsh scripts/nix_rootless_install.sh
+nix-rootless --version
+rootless-nix-shell
+
+# rootless Nix の中でコマンドを実行
+zsh scripts/nix_rootless_install.sh --run nix --version
+```
+
+`mise` と `Nix` の両方で管理しているものをまとめて最新化して適用するには、次を使います。
+
+```bash
+mise run nix-mise-upgrade
+
+# helper script を bash で動かしたい場合
+mise run nix-mise-upgrade -- --shell bash
+```
+
+この task は `config/mise/config.toml` を `mise upgrade --bump` で更新し、`home/.chezmoitemplates/mise-config.toml` と `~/.config/mise/config.toml` を同期したあと、`nix flake update` と `scripts/nix_install.sh` を順に実行します。
+
 [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) または [config/nix/mas-apps.nix](config/nix/mas-apps.nix) に entry がある間は、macOS の fallback formula、cask、tap、VS Code extension、Mac App Store app のために Homebrew が必要です。formula は CLI profile でも適用し、cask、VS Code extension、Mac App Store app は `--with-gui-apps` の時だけ適用します。これらが空で、Nix 適用後に問題なければ Homebrew は明示的に削除できます。これは破壊的操作なので dry-run でコマンドを確認してから実行します。
 
 Mac App Store app は nix-darwin の `homebrew.masApps` で管理します。key は app 名、value は App Store の ADAM ID です。

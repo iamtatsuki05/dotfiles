@@ -40,6 +40,11 @@ main() {
     "$CONFIG_DIR/ghostty/config" \
     "$XDG_CONFIG_HOME/ghostty/config"
 
+  install_config \
+    "Nix" \
+    "$CONFIG_DIR/nix/nix.conf" \
+    "$XDG_CONFIG_HOME/nix/nix.conf"
+
   install_mise_config
 
   # リポジトリ側の secrets.env を先にマイグレーションしてから ~/.config/ にコピーする

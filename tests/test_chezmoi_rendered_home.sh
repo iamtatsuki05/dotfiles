@@ -122,6 +122,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_not_exists "$temp_home/.Brewfile"
   assert_same_file "$REPO_ROOT/config/alacritty/alacritty.toml" "$temp_home/.config/alacritty/alacritty.toml"
   assert_same_file "$REPO_ROOT/config/ghostty/config" "$temp_home/.config/ghostty/config"
+  assert_same_file "$REPO_ROOT/config/nix/nix.conf" "$temp_home/.config/nix/nix.conf"
   assert_same_file "$REPO_ROOT/config/nvim/init.vim" "$temp_home/.config/nvim/init.vim"
   assert_contains "$temp_home/.config/mise/config.toml" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/mise/config.toml" "__DOTFILES_REPO_ROOT__"

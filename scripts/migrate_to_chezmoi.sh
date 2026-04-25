@@ -176,6 +176,7 @@ generate_chezmoi_source_state() {
   copy_file "config/mise/config.toml" "home/.chezmoitemplates/mise-config.toml"
   copy_file "config/alacritty/alacritty.toml" "home/private_dot_config/alacritty/alacritty.toml"
   copy_file "config/ghostty/config" "home/private_dot_config/ghostty/config"
+  copy_file "config/nix/nix.conf" "home/private_dot_config/nix/nix.conf"
   write_file "home/private_dot_config/mise/private_config.toml.tmpl" "$mise_template"
   copy_file "config/nvim/init.vim" "home/private_dot_config/nvim/init.vim"
   copy_file "config/shell/secrets.env.example" "home/private_dot_config/shell/create_private_secrets.env"

@@ -114,6 +114,11 @@ description = "Nix適用後にHomebrewを明示的に削除する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"
 
+[tasks.nix-mise-upgrade]
+description = "miseとNixで管理しているものを最新化して適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh"
+
 [tasks.git-head-commit-reset]
 alias = "git-head-commit-rest"
 description = "git commitの直近1件を取り消す"
