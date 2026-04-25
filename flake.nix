@@ -59,7 +59,7 @@
             homeDirectory = homeDirectoryFor system;
           };
           modules = [
-            ./config/nix/modules/home-manager.nix
+            ./config/nix/home-manager
           ];
         };
 
@@ -73,7 +73,7 @@
             inherit inputs profile enableGuiApps system username homeDirectory;
           };
           modules = [
-            ./config/nix/modules/darwin.nix
+            ./config/nix/darwin
             home-manager.darwinModules.home-manager
             {
               home-manager.useGlobalPkgs = true;
@@ -82,7 +82,7 @@
               home-manager.extraSpecialArgs = {
                 inherit inputs profile enableGuiApps system username homeDirectory;
               };
-              home-manager.users.${username} = import ./config/nix/modules/home-manager.nix;
+              home-manager.users.${username} = import ./config/nix/home-manager;
             }
           ];
         };

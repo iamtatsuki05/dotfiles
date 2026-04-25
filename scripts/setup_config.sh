@@ -32,7 +32,7 @@ install_config() {
 main() {
   install_config \
     "Alacritty" \
-    "$CONFIG_DIR/alacritty.toml" \
+    "$CONFIG_DIR/alacritty/alacritty.toml" \
     "$XDG_CONFIG_HOME/alacritty/alacritty.toml"
 
   install_config \
@@ -60,7 +60,7 @@ main() {
 }
 
 install_mise_config() {
-  local source_file="$CONFIG_DIR/mise-config.toml"
+  local source_file="$CONFIG_DIR/mise/config.toml"
   local target_file="$XDG_CONFIG_HOME/mise/config.toml"
   local target_dir="${target_file%/*}"
   local tmp

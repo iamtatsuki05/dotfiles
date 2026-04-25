@@ -23,7 +23,7 @@ readonly THEME_DIR="$NVIM_BUNDLE_DIR/vim-code-dark.git"
 readonly THEME_FILE="$THEME_DIR/colors/codedark.vim"
 
 # Config files
-readonly INIT_VIM_SOURCE="$CONFIG_DIR/init.vim"
+readonly INIT_VIM_SOURCE="$CONFIG_DIR/nvim/init.vim"
 readonly INIT_VIM_TARGET="$NVIM_DIR/init.vim"
 
 # URLs

@@ -173,11 +173,11 @@ generate_chezmoi_source_state() {
   write_file ".chezmoiroot" "home"
   copy_zshrc
   copy_file "dotfiles/.tmux.conf" "home/dot_tmux.conf"
-  copy_file "config/mise-config.toml" "home/.chezmoitemplates/mise-config.toml"
-  copy_file "config/alacritty.toml" "home/private_dot_config/alacritty/alacritty.toml"
+  copy_file "config/mise/config.toml" "home/.chezmoitemplates/mise-config.toml"
+  copy_file "config/alacritty/alacritty.toml" "home/private_dot_config/alacritty/alacritty.toml"
   copy_file "config/ghostty/config" "home/private_dot_config/ghostty/config"
   write_file "home/private_dot_config/mise/private_config.toml.tmpl" "$mise_template"
-  copy_file "config/init.vim" "home/private_dot_config/nvim/init.vim"
+  copy_file "config/nvim/init.vim" "home/private_dot_config/nvim/init.vim"
   copy_file "config/shell/secrets.env.example" "home/private_dot_config/shell/create_private_secrets.env"
 }
 

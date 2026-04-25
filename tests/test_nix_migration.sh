@@ -11,9 +11,18 @@ readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly ZSHRC_FILE="$REPO_ROOT/dotfiles/.zshrc"
-readonly MISE_CONFIG="$REPO_ROOT/config/mise-config.toml"
-readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/modules/home-manager.nix"
-readonly DARWIN_MODULE="$REPO_ROOT/config/nix/modules/darwin.nix"
+readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
+readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
+readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
+readonly HOME_MANAGER_ZSH_MODULE="$REPO_ROOT/config/nix/home-manager/zsh.nix"
+readonly HOME_MANAGER_NEOVIM_MODULE="$REPO_ROOT/config/nix/home-manager/neovim.nix"
+readonly HOME_MANAGER_AUTO_UPDATE_MODULE="$REPO_ROOT/config/nix/home-manager/auto-update.nix"
+readonly HOME_MANAGER_SESSION_MODULE="$REPO_ROOT/config/nix/home-manager/session.nix"
+readonly DARWIN_MODULE="$REPO_ROOT/config/nix/darwin/default.nix"
+readonly DARWIN_BASE_MODULE="$REPO_ROOT/config/nix/darwin/base.nix"
+readonly DARWIN_DEFAULTS_MODULE="$REPO_ROOT/config/nix/darwin/defaults.nix"
+readonly DARWIN_HOMEBREW_MODULE="$REPO_ROOT/config/nix/darwin/homebrew.nix"
+readonly DARWIN_AUTO_UPDATE_MODULE="$REPO_ROOT/config/nix/darwin/auto-update.nix"
 readonly NIX_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/package-names.nix"
 readonly NIX_GUI_COMMON_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-common-package-names.nix"
 readonly NIX_GUI_MACOS_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-macos-package-names.nix"
@@ -284,71 +293,97 @@ test_flake_exposes_nix_darwin_and_home_manager_profiles() {
   assert_contains "$FLAKE_FILE" 'x86_64-linux-full'
   assert_contains "$FLAKE_FILE" 'dotfiles-full-packages'
   assert_contains "$FLAKE_FILE" 'dotfiles-cli-packages'
+  assert_contains "$FLAKE_FILE" './config/nix/home-manager'
+  assert_contains "$FLAKE_FILE" './config/nix/darwin'
   assert_not_contains "$FLAKE_FILE" "nix-homebrew"
+  assert_not_contains "$FLAKE_FILE" './config/nix/modules/home-manager.nix'
+  assert_not_contains "$FLAKE_FILE" './config/nix/modules/darwin.nix'
 }
 
 test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_MODULE" 'dotfiles.profile'
   assert_contains "$HOME_MANAGER_MODULE" 'dotfiles.enableGuiApps'
-  assert_contains "$HOME_MANAGER_MODULE" 'home.packages'
-  assert_contains "$HOME_MANAGER_MODULE" '!pkgs.stdenv.hostPlatform.isDarwin'
   assert_contains "$HOME_MANAGER_MODULE" 'targets.darwin.copyApps.enable = false'
   assert_contains "$HOME_MANAGER_MODULE" 'targets.darwin.linkApps.enable = false'
   assert_contains "$HOME_MANAGER_MODULE" 'programs.home-manager.enable = true'
-  assert_contains "$HOME_MANAGER_MODULE" 'programs.zsh.enable = true'
-  assert_contains "$HOME_MANAGER_MODULE" 'programs.zsh.completionInit'
-  assert_contains "$HOME_MANAGER_MODULE" '/opt/homebrew/share/zsh/site-functions/_brew'
-  assert_contains "$HOME_MANAGER_MODULE" 'PROMPT_MACHINE_EMOJI'
-  assert_contains "$HOME_MANAGER_MODULE" 'prompt-machine-emoji'
-  assert_contains "$HOME_MANAGER_MODULE" 'command mise activate zsh'
-  assert_contains "$HOME_MANAGER_MODULE" 'programs.neovim.enable = true'
-  assert_contains "$HOME_MANAGER_MODULE" 'homeManagerProvidedPackageNames'
-  assert_contains "$HOME_MANAGER_MODULE" 'lib.getName pkg'
-  assert_contains "$HOME_MANAGER_MODULE" 'hm-session-vars.sh'
-  assert_contains "$HOME_MANAGER_MODULE" 'systemd.user.services.dotfiles-auto-update'
-  assert_contains "$HOME_MANAGER_MODULE" 'systemd.user.timers.dotfiles-auto-update'
-  assert_contains "$HOME_MANAGER_MODULE" 'config.dotfiles.profile == "full" && !pkgs.stdenv.hostPlatform.isDarwin'
-  assert_contains "$HOME_MANAGER_MODULE" 'OnCalendar = "*-*-* 06:00:00"'
-  assert_contains "$HOME_MANAGER_MODULE" 'Persistent = true'
-  assert_contains "$HOME_MANAGER_MODULE" '/tmp/dotfiles-git-pull.log'
+  assert_contains "$HOME_MANAGER_MODULE" './packages.nix'
+  assert_contains "$HOME_MANAGER_MODULE" './zsh.nix'
+  assert_contains "$HOME_MANAGER_MODULE" './neovim.nix'
+  assert_contains "$HOME_MANAGER_MODULE" './auto-update.nix'
+  assert_contains "$HOME_MANAGER_MODULE" './session.nix'
+
+  assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'home.packages'
+  assert_contains "$HOME_MANAGER_PACKAGES_MODULE" '!pkgs.stdenv.hostPlatform.isDarwin'
+  assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'homeManagerProvidedPackageNames'
+  assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'lib.getName pkg'
+
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.enable = true'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.completionInit'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" '/opt/homebrew/share/zsh/site-functions/_brew'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'PROMPT_MACHINE_EMOJI'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'prompt-machine-emoji'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'hm-session-vars.sh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" "brew shellenv"
+
+  assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'programs.neovim.enable = true'
+
+  assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'systemd.user.services.dotfiles-auto-update'
+  assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'systemd.user.timers.dotfiles-auto-update'
+  assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'config.dotfiles.profile == "full" && !pkgs.stdenv.hostPlatform.isDarwin'
+  assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'OnCalendar = "*-*-* 06:00:00"'
+  assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'Persistent = true'
+  assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" '/tmp/dotfiles-git-pull.log'
+
+  assert_contains "$HOME_MANAGER_SESSION_MODULE" 'home.sessionVariables'
   assert_not_contains "$HOME_MANAGER_MODULE" "brew shellenv"
 
-  assert_contains "$DARWIN_MODULE" 'system.stateVersion'
-  assert_contains "$DARWIN_MODULE" 'nix.enable = false'
-  assert_contains "$DARWIN_MODULE" 'security.pam.services.sudo_local = {'
-  assert_contains "$DARWIN_MODULE" 'touchIdAuth = true'
-  assert_contains "$DARWIN_MODULE" 'enableGuiApps'
-  assert_contains "$DARWIN_MODULE" 'import ../gui-packages.nix'
-  assert_contains "$DARWIN_MODULE" 'import ../homebrew-fallback.nix'
-  assert_contains "$DARWIN_MODULE" 'import ../mas-apps.nix'
-  assert_contains "$DARWIN_MODULE" 'lib.optionals enableGuiApps guiPackages'
-  assert_contains "$DARWIN_MODULE" 'homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ]'
-  assert_contains "$DARWIN_MODULE" 'homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ] || macAppStoreApps != { }'
-  assert_contains "$DARWIN_MODULE" 'homebrewFallbackEnabled = homebrewFallbackHasCliEntries || (enableGuiApps && homebrewFallbackHasGuiEntries)'
-  assert_contains "$DARWIN_MODULE" 'homebrew = lib.mkIf homebrewFallbackEnabled'
-  assert_contains "$DARWIN_MODULE" 'enable = true'
-  assert_contains "$DARWIN_MODULE" 'taps = homebrewFallback.taps'
-  assert_contains "$DARWIN_MODULE" 'brews = homebrewFallback.brews'
-  assert_contains "$DARWIN_MODULE" 'casks = lib.optionals enableGuiApps homebrewFallback.casks'
-  assert_contains "$DARWIN_MODULE" 'masApps = lib.optionalAttrs enableGuiApps macAppStoreApps'
-  assert_contains "$DARWIN_MODULE" 'vscode = lib.optionals enableGuiApps homebrewFallback.vscode'
-  assert_contains "$DARWIN_MODULE" 'cleanup = "none"'
-  assert_not_contains "$DARWIN_MODULE" 'nix.settings'
-  assert_not_contains "$DARWIN_MODULE" 'nix.optimise'
-  assert_contains "$DARWIN_MODULE" 'users.users.${username}.home'
-  assert_contains "$DARWIN_MODULE" 'InitialKeyRepeat = 12'
-  assert_contains "$DARWIN_MODULE" 'KeyRepeat = 1'
-  assert_contains "$DARWIN_MODULE" 'screenshotsDirectory = "${homeDirectory}/SS"'
-  assert_contains "$DARWIN_MODULE" 'system.defaults.screencapture = {'
-  assert_contains "$DARWIN_MODULE" 'location = screenshotsDirectory'
-  assert_contains "$DARWIN_MODULE" 'launchd.user.agents.dotfiles-auto-update'
-  assert_contains "$DARWIN_MODULE" 'profile == "full"'
-  assert_contains "$DARWIN_MODULE" 'StartCalendarInterval'
-  assert_contains "$DARWIN_MODULE" 'Hour = 6'
-  assert_contains "$DARWIN_MODULE" 'Minute = 0'
-  assert_contains "$DARWIN_MODULE" '/tmp/dotfiles-git-pull.log'
-  assert_contains "$DARWIN_MODULE" 'system.activationScripts.postActivation.text = lib.mkAfter'
-  assert_contains "$DARWIN_MODULE" 'removed legacy dotfiles cron block'
+  assert_contains "$DARWIN_MODULE" './base.nix'
+  assert_contains "$DARWIN_MODULE" './defaults.nix'
+  assert_contains "$DARWIN_MODULE" './homebrew.nix'
+  assert_contains "$DARWIN_MODULE" './auto-update.nix'
+
+  assert_contains "$DARWIN_BASE_MODULE" 'system.stateVersion'
+  assert_contains "$DARWIN_BASE_MODULE" 'nix.enable = false'
+  assert_contains "$DARWIN_BASE_MODULE" 'enableGuiApps'
+  assert_contains "$DARWIN_BASE_MODULE" 'import ../gui-packages.nix'
+  assert_contains "$DARWIN_BASE_MODULE" 'lib.optionals enableGuiApps guiPackages'
+  assert_contains "$DARWIN_BASE_MODULE" 'users.users.${username}.home'
+  assert_not_contains "$DARWIN_BASE_MODULE" 'nix.settings'
+  assert_not_contains "$DARWIN_BASE_MODULE" 'nix.optimise'
+
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'security.pam.services.sudo_local = {'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'touchIdAuth = true'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'InitialKeyRepeat = 12'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'KeyRepeat = 1'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'screenshotsDirectory = "${homeDirectory}/SS"'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'system.defaults.screencapture = {'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'location = screenshotsDirectory'
+
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'import ../homebrew-fallback.nix'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'import ../mas-apps.nix'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ]'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ] || macAppStoreApps != { }'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackEnabled = homebrewFallbackHasCliEntries || (enableGuiApps && homebrewFallbackHasGuiEntries)'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrew = lib.mkIf homebrewFallbackEnabled'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'enable = true'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'taps = homebrewFallback.taps'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'brews = homebrewFallback.brews'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'casks = lib.optionals enableGuiApps homebrewFallback.casks'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'masApps = lib.optionalAttrs enableGuiApps macAppStoreApps'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'vscode = lib.optionals enableGuiApps homebrewFallback.vscode'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'cleanup = "none"'
+
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'launchd.user.agents.dotfiles-auto-update'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'profile == "full"'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'StartCalendarInterval'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'Hour = 6'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'Minute = 0'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" '/tmp/dotfiles-git-pull.log'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'system.activationScripts.postActivation.text = lib.mkAfter'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'removed legacy dotfiles cron block'
+  assert_not_exists "$REPO_ROOT/config/nix/modules/darwin.nix"
+  assert_not_exists "$REPO_ROOT/config/nix/modules/home-manager.nix"
   assert_not_contains "$MAIN_SCRIPT" 'default_setup.sh'
   assert_not_contains "$MAIN_SCRIPT" 'setup_cron.sh'
   assert_not_contains "$APPLY_UPDATES_SCRIPT" 'setup_cron.sh'

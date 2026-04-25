@@ -5,7 +5,7 @@ set -euo pipefail
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly TEST_RUNNER="$REPO_ROOT/scripts/test_dotfiles.sh"
-readonly MISE_CONFIG="$REPO_ROOT/config/mise-config.toml"
+readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 

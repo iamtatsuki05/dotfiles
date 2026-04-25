@@ -47,15 +47,18 @@ create_fixture_repo() {
 
   mkdir -p \
     "$repo/dotfiles" \
+    "$repo/config/alacritty" \
     "$repo/config/ghostty" \
+    "$repo/config/mise" \
+    "$repo/config/nvim" \
     "$repo/config/shell"
 
   print -r -- 'export TEST_ZSHRC=1' > "$repo/dotfiles/.zshrc"
   print -r -- 'set -g mouse on' > "$repo/dotfiles/.tmux.conf"
-  print -r -- 'window.opacity = 0.95' > "$repo/config/alacritty.toml"
+  print -r -- 'window.opacity = 0.95' > "$repo/config/alacritty/alacritty.toml"
   print -r -- 'theme = dark' > "$repo/config/ghostty/config"
-  print -r -- 'repo = "__DOTFILES_REPO_ROOT__"' > "$repo/config/mise-config.toml"
-  print -r -- 'set number' > "$repo/config/init.vim"
+  print -r -- 'repo = "__DOTFILES_REPO_ROOT__"' > "$repo/config/mise/config.toml"
+  print -r -- 'set number' > "$repo/config/nvim/init.vim"
   print -r -- 'export API_KEY=""' > "$repo/config/shell/secrets.env.example"
 }
 
@@ -136,11 +139,11 @@ test_apply_generates_chezmoi_source_state() {
   assert_dir "$repo/home"
   cmp "$repo/dotfiles/.zshrc" "$repo/home/dot_zshrc" >/dev/null
   cmp "$repo/dotfiles/.tmux.conf" "$repo/home/dot_tmux.conf" >/dev/null
-  cmp "$repo/config/alacritty.toml" "$repo/home/private_dot_config/alacritty/alacritty.toml" >/dev/null
+  cmp "$repo/config/alacritty/alacritty.toml" "$repo/home/private_dot_config/alacritty/alacritty.toml" >/dev/null
   cmp "$repo/config/ghostty/config" "$repo/home/private_dot_config/ghostty/config" >/dev/null
-  cmp "$repo/config/init.vim" "$repo/home/private_dot_config/nvim/init.vim" >/dev/null
+  cmp "$repo/config/nvim/init.vim" "$repo/home/private_dot_config/nvim/init.vim" >/dev/null
   cmp "$repo/config/shell/secrets.env.example" "$repo/home/private_dot_config/shell/create_private_secrets.env" >/dev/null
-  cmp "$repo/config/mise-config.toml" "$repo/home/.chezmoitemplates/mise-config.toml" >/dev/null
+  cmp "$repo/config/mise/config.toml" "$repo/home/.chezmoitemplates/mise-config.toml" >/dev/null
 
   assert_not_exists "$repo/home/dot_Brewfile.tmpl"
   assert_not_exists "$repo/home/.chezmoitemplates/Brewfile"
