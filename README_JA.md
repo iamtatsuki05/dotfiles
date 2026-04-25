@@ -27,6 +27,51 @@ zsh main.sh --cli-only
 zsh scripts/brew_install.sh --cli-only
 ```
 
+## chezmoi への移行
+
+このリポジトリには chezmoi の source state として `home/` を追加しています。`.chezmoiroot` は `home` を指します。既存の `dotfiles/` と `config/` は今の setup scripts の source of truth として残しているので、段階的に移行できます。
+
+chezmoi source state を生成・更新します。
+
+```sh
+zsh scripts/migrate_to_chezmoi.sh --dry-run
+zsh scripts/migrate_to_chezmoi.sh --apply
+# または
+mise run chezmoi-migrate
+```
+
+`chezmoi` 本体を任意の方法でインストールしてから、適用内容を確認して反映します。
+
+```sh
+sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
+# または: brew install chezmoi
+# または: mise use --global chezmoi@latest
+
+zsh scripts/chezmoi_apply.sh --dry-run
+zsh scripts/chezmoi_apply.sh --mark-default
+# macOS で CLI-only にしたい場合:
+zsh scripts/chezmoi_apply.sh --cli-only --mark-default
+# または
+mise run chezmoi-diff
+mise run chezmoi-apply
+```
+
+`--mark-default` は `~/.config/dotfiles/manager` に `chezmoi` を書き込み、選択した profile を `~/.config/dotfiles/profile` に保存します。その後、このリポジトリの Git pull hook は `chezmoi` が使える場合に `chezmoi apply` を実行し、使えない場合は従来のコピー方式へフォールバックします。
+
+## dotfiles のテスト
+
+設定の検証は [scripts/test_dotfiles.sh](scripts/test_dotfiles.sh) にまとめています。
+
+```sh
+zsh scripts/test_dotfiles.sh
+# または
+mise run test-dotfiles
+```
+
+この runner は zsh の構文、移行ヘルパー、生成済み chezmoi source state の drift、chezmoi による一時 HOME への展開を確認します。ローカルに `chezmoi` が無い場合は、展開テストだけ skip します。
+
+GitHub Actions では `ubuntu-latest` と `macos-latest` の両方で同じ検証を実行します。CI では `chezmoi` もインストールし、両 OS で source state が一時 HOME に適用できることを確認します。
+
 ## Brewfile の更新
 
 macOS で現在の Homebrew 状態から `dotfiles/.Brewfile` と CLI 版の `dotfiles/.Brewfile.cli` を更新できます。

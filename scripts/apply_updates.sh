@@ -8,6 +8,7 @@ readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 readonly PROFILE_FILE="$XDG_CONFIG_HOME/dotfiles/profile"
+readonly MANAGER_FILE="$XDG_CONFIG_HOME/dotfiles/manager"
 
 source "$LIB_DIR/setup_profile.sh"
 
@@ -55,6 +56,34 @@ copy_dotfiles() {
   fi
 }
 
+current_dotfiles_manager() {
+  if [[ -f "$MANAGER_FILE" ]]; then
+    sed -n '1p' "$MANAGER_FILE"
+    return
+  fi
+
+  echo "legacy"
+}
+
+sync_home_state() {
+  local profile="$1"
+  local manager
+  manager="$(current_dotfiles_manager)"
+
+  if [[ "$manager" == "chezmoi" ]]; then
+    if [[ -f "$REPO_ROOT/.chezmoiroot" ]]; then
+      log "Applying chezmoi source state"
+      if zsh "$SCRIPT_DIR/chezmoi_apply.sh" --profile "$profile"; then
+        return
+      fi
+    fi
+
+    echo "WARNING: chezmoi manager is selected but unavailable; falling back to legacy dotfiles copy" >&2
+  fi
+
+  copy_dotfiles "$profile"
+}
+
 sync_agent_files() {
   if [[ ! -f "$DOTFILES_DIR/.agent/sync.sh" ]]; then
     return 0
@@ -95,7 +124,7 @@ main() {
   local profile="$DOTFILES_PROFILE"
   log "Applying dotfiles updates (profile: $profile)"
 
-  copy_dotfiles "$profile"
+  sync_home_state "$profile"
   sync_agent_files
   sync_configs
   sync_cron_if_needed "$profile"

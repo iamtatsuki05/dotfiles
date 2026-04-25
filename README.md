@@ -29,6 +29,51 @@ zsh main.sh --cli-only
 zsh scripts/brew_install.sh --cli-only
 ```
 
+## Chezmoi migration
+
+The repository now includes a chezmoi source state under `home/`, with `.chezmoiroot` pointing to that directory. The existing `dotfiles/` and `config/` layout is still kept as the source of truth for the current setup scripts, so migration can be done gradually.
+
+Generate or refresh the chezmoi source state:
+
+```sh
+zsh scripts/migrate_to_chezmoi.sh --dry-run
+zsh scripts/migrate_to_chezmoi.sh --apply
+# or
+mise run chezmoi-migrate
+```
+
+Install `chezmoi` with any supported package manager, then preview and apply:
+
+```sh
+sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
+# or: brew install chezmoi
+# or: mise use --global chezmoi@latest
+
+zsh scripts/chezmoi_apply.sh --dry-run
+zsh scripts/chezmoi_apply.sh --mark-default
+# On macOS CLI-only machines:
+zsh scripts/chezmoi_apply.sh --cli-only --mark-default
+# or
+mise run chezmoi-diff
+mise run chezmoi-apply
+```
+
+`--mark-default` writes `~/.config/dotfiles/manager` with `chezmoi` and stores the selected profile in `~/.config/dotfiles/profile`. After that, the git pull hooks installed by this repo use `chezmoi apply` when `chezmoi` is available, and fall back to the legacy copy flow otherwise.
+
+## Testing dotfiles
+
+Configuration checks are centralized in [scripts/test_dotfiles.sh](scripts/test_dotfiles.sh).
+
+```sh
+zsh scripts/test_dotfiles.sh
+# or
+mise run test-dotfiles
+```
+
+The test runner checks zsh syntax, migration helpers, generated chezmoi source state drift, and chezmoi rendering into a temporary home directory. If `chezmoi` is not installed locally, only the rendered-home integration check is skipped.
+
+GitHub Actions runs the same checks on `ubuntu-latest` and `macos-latest`, installs `chezmoi`, and verifies that the source state can be applied to a temporary home on both platforms.
+
 ## Updating Brewfiles
 
 On macOS, you can dump the current Homebrew state to `dotfiles/.Brewfile` and the portable CLI bundle at `dotfiles/.Brewfile.cli`.
