@@ -314,5 +314,9 @@ if [[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh" ]]; 
   source "${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh"
 fi
 
+if command -v mise >/dev/null 2>&1; then
+  eval "$(command mise activate zsh)"
+fi
+
 # start default apps
 # tmux

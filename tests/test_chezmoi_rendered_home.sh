@@ -129,8 +129,10 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_same_file "$REPO_ROOT/config/nvim/init.vim" "$temp_home/.config/nvim/init.vim"
   assert_contains "$temp_home/.bashrc" 'dotfiles-shell-common.sh'
   assert_contains "$temp_home/.zshrc" 'dotfiles-shell-common.sh'
+  assert_contains "$temp_home/.zshrc" 'command mise activate zsh'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "__DOTFILES_REPO_ROOT__"
+  assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" '[ "$dotfiles_shell_name" = "bash" ]'
   assert_contains "$temp_home/.bash_profile" '. "$HOME/.bashrc"'
   assert_contains "$temp_home/.config/mise/config.toml" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/mise/config.toml" "__DOTFILES_REPO_ROOT__"

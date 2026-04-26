@@ -63,7 +63,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 if command -v mise >/dev/null 2>&1; then
-  if [ "$dotfiles_shell_name" = "zsh" ] || [ "$dotfiles_shell_name" = "bash" ]; then
+  if [ "$dotfiles_shell_name" = "bash" ]; then
     eval "$(command mise activate "$dotfiles_shell_name")"
   fi
 fi

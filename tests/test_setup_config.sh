@@ -50,7 +50,9 @@ create_fixture_repo() {
 export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"
 if command -v mise >/dev/null 2>&1; then
   dotfiles_shell_name=bash
-  eval "$(command mise activate "$dotfiles_shell_name")"
+  if [ "$dotfiles_shell_name" = "bash" ]; then
+    eval "$(command mise activate "$dotfiles_shell_name")"
+  fi
 fi
 if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]; then
   . "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
@@ -86,6 +88,7 @@ test_setup_config_renders_dynamic_bash_files() {
   assert_contains "$home_dir/.bashrc" 'dotfiles-shell-common.sh'
   assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" "$repo"
   assert_not_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" "__DOTFILES_REPO_ROOT__"
+  assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" '[ "$dotfiles_shell_name" = "bash" ]'
   assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" 'mise activate "$dotfiles_shell_name"'
   assert_contains "$xdg_config_home/shell/dotfiles-shell-common.sh" '.config}/shell/secrets.env'
   assert_contains "$home_dir/.bash_profile" '. "$HOME/.bashrc"'
