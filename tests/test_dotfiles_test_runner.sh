@@ -48,6 +48,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "run_syntax_checks"
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
+  assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
   assert_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
   "$TEST_ZSH_BIN" "$TEST_RUNNER" --list > "$output"
@@ -85,6 +86,8 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh --shell"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-remove-homebrew]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-brew-cleanup]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/cleanup_package_caches.sh"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-lock-update]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock"'
   assert_contains "$MISE_CONFIG" "[tasks.nixpkgs-lock-update]"

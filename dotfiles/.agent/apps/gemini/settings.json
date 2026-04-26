@@ -1,6 +1,9 @@
 {
   "general": {
-    "previewFeatures": true
+    "previewFeatures": true,
+    "sessionRetention": {
+      "enabled": false
+    }
   },
   "context": {
     "fileFiltering": {

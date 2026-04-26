@@ -36,14 +36,12 @@ create_fixture_repo() {
 
   mkdir -p \
     "$repo/config/alacritty" \
-    "$repo/config/codex" \
     "$repo/config/ghostty" \
     "$repo/config/mise" \
     "$repo/config/nix" \
     "$repo/config/shell"
 
   print -r -- 'window.opacity = 0.95' > "$repo/config/alacritty/alacritty.toml"
-  print -r -- 'sandbox_mode = "workspace-write"' > "$repo/config/codex/config.toml.base"
   print -r -- 'theme = dark' > "$repo/config/ghostty/config"
   print -r -- 'repo = "__DOTFILES_REPO_ROOT__"' > "$repo/config/mise/config.toml"
   print -r -- 'experimental-features = nix-command flakes' > "$repo/config/nix/nix.conf"

@@ -119,7 +119,7 @@ install_mise_tools() {
 
 sync_agent_files() {
   log_step "Syncing agent prompts and skills"
-  zsh "$DOTFILES_DIR/.agent/sync.sh"
+  zsh "$SCRIPTS_DIR/setup_agent_files.sh"
   log_success "Agent prompts and skills synced"
 }
 

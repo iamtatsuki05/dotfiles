@@ -81,12 +81,12 @@ sync_home_state() {
 }
 
 sync_agent_files() {
-  if [[ ! -f "$DOTFILES_DIR/.agent/sync.sh" ]]; then
+  if [[ ! -f "$SCRIPT_DIR/setup_agent_files.sh" ]]; then
     return 0
   fi
 
   log "Syncing agent files"
-  zsh "$DOTFILES_DIR/.agent/sync.sh"
+  zsh "$SCRIPT_DIR/setup_agent_files.sh"
 }
 
 sync_configs() {

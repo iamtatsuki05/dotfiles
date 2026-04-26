@@ -82,7 +82,7 @@ GitHub Actions runs the same checks on `ubuntu-latest` and `macos-latest`, insta
 
 Homebrew is no longer the primary setup path. macOS uses nix-darwin plus Home Manager, and Linux uses standalone Home Manager with the same package sets. CLI packages live in [config/nix/package-names.nix](config/nix/package-names.nix). GUI apps are split by platform in [config/nix/gui-common-package-names.nix](config/nix/gui-common-package-names.nix), [config/nix/gui-macos-package-names.nix](config/nix/gui-macos-package-names.nix), and [config/nix/gui-linux-package-names.nix](config/nix/gui-linux-package-names.nix). Mac App Store apps are managed on macOS in [config/nix/mas-apps.nix](config/nix/mas-apps.nix). Homebrew entries that cannot be moved to Nix are recorded in [config/nix/unmapped-homebrew.tsv](config/nix/unmapped-homebrew.tsv), and the macOS fallback managed by nix-darwin is generated as [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix).
 
-Nix modules are split into [config/nix/darwin](config/nix/darwin) and [config/nix/home-manager](config/nix/home-manager), with each `default.nix` importing small responsibility-focused modules. macOS keyboard repeat, screenshot location, and sudo Touch ID are managed in [config/nix/darwin/defaults.nix](config/nix/darwin/defaults.nix). Screenshots are saved to `${HOME}/SS`. The setup no longer mutates `/etc/pam.d/sudo_local` or runs `defaults write` directly.
+Nix modules are split into [config/nix/darwin](config/nix/darwin) and [config/nix/home-manager](config/nix/home-manager), with each `default.nix` importing small responsibility-focused modules. macOS keyboard repeat, screenshot location, and sudo Touch ID are managed in [config/nix/darwin/defaults.nix](config/nix/darwin/defaults.nix). Screenshots are saved to `${HOME}/SS`. On the first macOS apply, [scripts/nix_install.sh](scripts/nix_install.sh) automatically backs up an existing `/etc/pam.d/sudo_local` to `/etc/pam.d/sudo_local.before-nix-darwin` before activation so nix-darwin can take over cleanly. The setup no longer relies on ad-hoc `defaults write` calls.
 
 App registration follows `Nix > Homebrew > MAS`. During Brewfile migration, Mac App Store entries are first matched against [config/nix/mas-to-nix.tsv](config/nix/mas-to-nix.tsv), then [config/nix/mas-to-cask.tsv](config/nix/mas-to-cask.tsv), and only unmatched entries are written to [config/nix/mas-apps.nix](config/nix/mas-apps.nix).
 
@@ -178,6 +178,15 @@ zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready
 
 `zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready` refuses to remove Homebrew while fallback entries exist. `zsh scripts/nix_install.sh --uninstall-homebrew` runs the same removal only after the selected Nix switch succeeds.
 
+To reclaim space from old Nix generations and Homebrew caches:
+
+```sh
+mise run nix-brew-cleanup
+mise run nix-brew-cleanup -- --apply
+```
+
+The task runs `nix profile wipe-history --older-than 30d`, `nix-collect-garbage --delete-older-than 30d`, `nix store optimise`, and `brew cleanup --prune=all --scrub`. The default is a dry-run because deleting old generations reduces rollback history.
+
 ## Migrating Another Homebrew Machine
 
 Committed `.Brewfile` files are no longer used. On an old macOS machine that still has Homebrew, run the migration directly from the live Homebrew state, or pass an exported Brewfile explicitly.
@@ -211,13 +220,23 @@ zsh scripts/setup_git_hooks.sh
 
 ## AI tool configuration (Claude Code / Codex / Gemini CLI)
 
-Settings files for each AI tool are managed in `config/` and symlinked to the appropriate locations by `sync.sh`:
+The source of truth for AI agent files lives under `dotfiles/.agent/`. Edit settings in `dotfiles/.agent/apps/`, the shared prompt in `dotfiles/.agent/AGENTS.md`, hooks in `dotfiles/.agent/hooks/`, and skills in `dotfiles/.agent/skills/`.
 
-| Repository path | Symlinked to |
+To push `.agent` changes to your local tool homes immediately, run:
+
+```bash
+zsh dotfiles/.agent/sync.sh
+```
+
+`dotfiles/.agent/sync.sh` is a thin wrapper; the implementation lives in `scripts/setup_agent_files.sh`. Each agent config under `dotfiles/.agent/apps/` is treated as the source of truth and symlinked into the corresponding tool home.
+
+| Repository path | Applied to |
 |---|---|
-| `config/claude/settings.json` | `~/.claude/settings.json` |
-| `config/codex/hooks.json` | `~/.codex/hooks.json` |
-| `config/gemini/settings.json` | `~/.gemini/settings.json` |
+| `dotfiles/.agent/apps/claude/settings.json` | `~/.claude/settings.json` |
+| `dotfiles/.agent/apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
+| `dotfiles/.agent/apps/codex/config.toml` | `~/.codex/config.toml` |
+| `dotfiles/.agent/apps/codex/hooks.json` | `~/.codex/hooks.json` |
+| `dotfiles/.agent/apps/gemini/settings.json` | `~/.gemini/settings.json` |
 
 Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, and `~/.gemini/hooks/`.
 
