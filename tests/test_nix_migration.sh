@@ -9,10 +9,12 @@ readonly INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_install.sh"
 readonly NIX_PORTABLE_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_portable_install.sh"
 readonly ROOTLESS_NIX_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_rootless_install.sh"
 readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
+readonly INSTALL_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/install_homebrew.sh"
 readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
 readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
+readonly HOMEBREW_LIB="$REPO_ROOT/scripts/lib/homebrew.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly ZSHRC_FILE="$REPO_ROOT/dotfiles/.zshrc"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
@@ -429,6 +431,7 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
   assert_contains "$INSTALL_SCRIPT" 'sudo env HOME=/var/root'
   assert_contains "$INSTALL_SCRIPT" 'scripts/remove_homebrew.sh'
+  assert_contains "$INSTALL_SCRIPT" 'Run zsh scripts/install_homebrew.sh --profile $profile_name'
   assert_contains "$INSTALL_SCRIPT" '$REMOVE_HOMEBREW_SCRIPT" --apply --confirm-nix-ready'
   assert_contains "$INSTALL_SCRIPT" '--exclude result'
   assert_contains "$INSTALL_SCRIPT" '--exclude .agent'
@@ -513,11 +516,23 @@ test_remove_homebrew_script_is_explicit_and_dry_run_first() {
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Refusing to remove Homebrew'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Homebrew uninstall command'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh'
-  assert_not_contains "$MAIN_SCRIPT" "brew_install.sh"
+  assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
+}
+
+test_install_homebrew_script_supports_required_profiles() {
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" '--dry-run'
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'profile_requires_homebrew'
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'raw.githubusercontent.com/Homebrew/install/HEAD/install.sh'
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'dotfiles_prepend_homebrew_to_path'
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'Skipping Homebrew install because the selected profile does not require it'
+  assert_contains "$HOMEBREW_LIB" 'dotfiles_find_homebrew'
+  assert_contains "$HOMEBREW_LIB" '/opt/homebrew/bin/brew'
+  assert_contains "$HOMEBREW_LIB" '/usr/local/bin/brew'
 }
 
 test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MAIN_SCRIPT" 'nix_install.sh'
+  assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
   assert_contains "$MAIN_SCRIPT" '--profile "$profile"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh"'
@@ -539,6 +554,191 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_not_contains "$ZSHRC_FILE" 'brew shellenv'
   assert_not_contains "$ZSHRC_FILE" 'hm-session-vars.sh'
   assert_not_contains "$APPLY_UPDATES_SCRIPT" "sync_nix_profile"
+}
+
+test_main_script_runs_homebrew_before_nix_setup() {
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+  local install_line
+  local nix_line
+
+  repo="$(mktemp -d)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_config.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_config" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_nvim.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_nvim" >> "$log_file"
+EOF
+  cat > "$repo/dotfiles/.agent/sync.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/dotfiles/.zshrc" <<'EOF'
+# test dotfile
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$repo/scripts/setup_nvim.sh" \
+    "$repo/dotfiles/.agent/sync.sh" \
+    "$bin_dir/mise"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --profile full > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_contains "$log_file" 'sync_agent'
+  assert_contains "$log_file" 'install_homebrew:--profile full'
+  assert_contains "$log_file" 'nix_install:--profile full'
+  assert_contains "$log_file" 'setup_config'
+  assert_contains "$log_file" 'setup_git_hooks:--profile full'
+  assert_contains "$log_file" 'mise:install'
+  assert_contains "$log_file" 'setup_nvim'
+  assert_file "$home_dir/.zshrc"
+
+  install_line="$(grep -n 'install_homebrew:--profile full' "$log_file" | cut -d: -f1)"
+  nix_line="$(grep -n 'nix_install:--profile full' "$log_file" | cut -d: -f1)"
+  [[ -n "$install_line" && -n "$nix_line" && "$install_line" -lt "$nix_line" ]] || \
+    fail "expected Homebrew install step to run before nix_install"
+
+  rm -rf "$repo"
+}
+
+test_main_script_skips_homebrew_install_on_linux_cli_setup() {
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  repo="$(mktemp -d)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  cp "$INSTALL_HOMEBREW_SCRIPT" "$repo/scripts/install_homebrew.sh"
+
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Linux"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "x86_64"
+else
+  print -r -- "Linux"
+fi
+EOF
+  cat > "$bin_dir/curl" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "curl:\$*" >> "$log_file"
+exit 99
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_config.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_config" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_nvim.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_nvim" >> "$log_file"
+EOF
+  cat > "$repo/dotfiles/.agent/sync.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/dotfiles/.zshrc" <<'EOF'
+# test dotfile
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$repo/scripts/setup_nvim.sh" \
+    "$repo/dotfiles/.agent/sync.sh" \
+    "$bin_dir/uname" \
+    "$bin_dir/curl" \
+    "$bin_dir/mise"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/main.sh" > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "OS: Linux"
+  assert_output_contains "$repo/output.log" "Profile: cli"
+  assert_output_contains "$repo/output.log" "Skipping Homebrew install because this host is not macOS"
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_contains "$log_file" 'sync_agent'
+  assert_contains "$log_file" 'nix_install:--profile cli'
+  assert_contains "$log_file" 'setup_config'
+  assert_contains "$log_file" 'setup_git_hooks:--profile cli'
+  assert_contains "$log_file" 'mise:install'
+  assert_contains "$log_file" 'setup_nvim'
+  assert_not_contains "$log_file" 'curl:'
+  assert_file "$home_dir/.zshrc"
+
+  rm -rf "$repo"
 }
 
 test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
@@ -573,6 +773,7 @@ test_codex_updates_without_homebrew_full_profile() {
   assert_contains "$INSTALL_SCRIPT" 'Use --cli-only'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_nix_apply_profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'falling back to the CLI Nix profile'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'warn "Homebrew is not installed; falling back to the CLI Nix profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'homebrew_fallback_has_cli_entries'
 }
 
@@ -595,6 +796,24 @@ test_managed_update_script_updates_mise_and_nix() {
 
   assert_contains "$MISE_CONFIG" '[tasks.nix-mise-upgrade]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
+  assert_contains "$MISE_CONFIG" '[tasks.nix-lock-update]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock"'
+  assert_contains "$MISE_CONFIG" '[tasks.nixpkgs-lock-update]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nixpkgs"'
+  assert_contains "$MISE_CONFIG" '[tasks.home-manager-lock-update]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input home-manager"'
+  assert_contains "$MISE_CONFIG" '[tasks.nix-darwin-lock-update]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nix-darwin"'
+  assert_contains "$MISE_CONFIG" '[tasks.nix-upgrade]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix"'
+  assert_contains "$MISE_CONFIG" '[tasks.nixpkgs-upgrade]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nixpkgs"'
+  assert_contains "$MISE_CONFIG" '[tasks.home-manager-upgrade]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"'
+  assert_contains "$MISE_CONFIG" '[tasks.nix-darwin-upgrade]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"'
+  assert_contains "$MISE_CONFIG" '[tasks.mise-upgrade]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
   assert_contains "$MISE_CONFIG" 'node = "20"'
   assert_contains "$MISE_CONFIG" 'go = "1.25"'
   assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
@@ -608,6 +827,12 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'MISE_GLOBAL_CONFIG_FILE'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$(mise_command)" upgrade'
   assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix flake lock --update-input'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nixpkgs|home-manager|nix-darwin'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'render_progress_bar'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'SHOW_PROGRESS'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'DOTFILES_SHOW_PROGRESS'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '[[ -t 1 ]]'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'config/mise/config.toml'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'home/.chezmoitemplates/mise-config.toml'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'XDG_CONFIG_HOME'
@@ -622,6 +847,8 @@ test_managed_update_script_updates_mise_and_nix() {
   bash "$UPDATE_MANAGED_VERSIONS_SCRIPT" --help > "$output"
   assert_output_contains "$output" '--shell zsh|bash'
   assert_output_contains "$output" '--cli-only'
+  assert_output_contains "$output" '--only all|lock|nix|mise'
+  assert_output_contains "$output" '--nix-input all|nixpkgs|home-manager|nix-darwin'
   assert_output_contains "$output" '--with-gui-apps'
 
   rm -f "$output"
@@ -637,7 +864,10 @@ main() {
   test_rootless_nix_install_script_supports_no_sudo_linux
   test_nix_portable_install_script_supports_no_sudo_nix_main_path
   test_remove_homebrew_script_is_explicit_and_dry_run_first
+  test_install_homebrew_script_supports_required_profiles
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
+  test_main_script_runs_homebrew_before_nix_setup
+  test_main_script_skips_homebrew_install_on_linux_cli_setup
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
   test_codex_updates_without_homebrew_full_profile
   test_bash_templates_support_dynamic_shell_setup

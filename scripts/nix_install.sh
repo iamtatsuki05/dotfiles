@@ -10,6 +10,8 @@ readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 readonly -a NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")
 readonly HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"
 
+source "$SCRIPT_DIR/lib/homebrew.sh"
+
 DRY_RUN=0
 PROFILE=""
 INSTALL_GUI_APPS=0
@@ -177,7 +179,7 @@ nix_command() {
 }
 
 homebrew_command_exists() {
-  command -v brew >/dev/null 2>&1
+  dotfiles_has_homebrew
 }
 
 list_setting_has_entries() {
@@ -229,6 +231,7 @@ ensure_homebrew_available_for_profile() {
   fi
 
   echo "ERROR: Homebrew is required for this Nix profile but brew is not installed." >&2
+  echo "Run zsh scripts/install_homebrew.sh --profile $profile_name, then rerun this script." >&2
 
   if homebrew_fallback_has_cli_entries; then
     echo "config/nix/homebrew-fallback.nix still has brew entries, so even the CLI profile depends on Homebrew." >&2

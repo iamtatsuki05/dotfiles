@@ -18,6 +18,7 @@ zsh main.sh
 - Linux: `cli`
 
 `full` is the complete macOS setup. It applies nix-darwin, Home Manager, GUI apps, macOS defaults, launchd / systemd user timers, configs, mise tools, and Neovim.
+If Homebrew fallback entries are still configured for that profile, `main.sh` installs Homebrew before running the Nix switch.
 
 `cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips GUI apps, macOS-only tools, macOS defaults, and launchd / systemd user timers, then applies only the Nix CLI package set.
 
@@ -27,6 +28,9 @@ zsh main.sh --cli-only
 
 # Apply only Nix/Home Manager CLI packages
 zsh scripts/nix_install.sh --cli-only
+
+# Install only Homebrew first when fallback apps still require it
+zsh scripts/install_homebrew.sh --profile full
 ```
 
 ## Chezmoi migration
@@ -126,16 +130,33 @@ dotfiles-nix-run git --version
 
 [scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) remains available for `nix-user-chroot`, but because its `/nix/store` is only visible inside the chroot, [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) is the preferred sudo-free Linux path.
 
-To update everything managed by both `mise` and Nix and apply the result, use:
+Pick the lightest update path that matches what you need:
 
 ```bash
+# Update only flake.lock
+mise run nix-lock-update
+
+# Update only the nixpkgs input in flake.lock
+mise run nixpkgs-lock-update
+
+# Update and apply only Nix-managed tools
+mise run nix-upgrade
+
+# Update and apply only nixpkgs-backed packages such as codex
+mise run nixpkgs-upgrade
+
+# Update only mise-managed tools within the current release lines
+mise run mise-upgrade
+
+# Update everything
 mise run nix-mise-upgrade
 
 # Use bash for the helper scripts instead of zsh
 mise run nix-mise-upgrade -- --shell bash
 ```
 
-This task runs `nix flake update`, applies `scripts/nix_install.sh`, syncs `home/.chezmoitemplates/mise-config.toml` and `~/.config/mise/config.toml`, then runs `mise upgrade` for the latest versions within the release lines configured in `config/mise/config.toml`. To move to a new major line such as `node@22` or `postgres@17`, edit `config/mise/config.toml` explicitly first.
+`mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. Use `mise run nix-upgrade` when you only need Nix-managed tools such as `codex`, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. To move to a new major line such as `node@22` or `postgres@17`, edit `config/mise/config.toml` explicitly first.
+The helper script now also supports input-scoped updates inspired by `nix flake lock --update-input ...`, and it prints a stage-based progress bar so you can see whether it is updating the lockfile, applying Nix, or upgrading `mise` tools.
 If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so CLI tools such as `codex` can still be updated.
 
 If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) or [config/nix/mas-apps.nix](config/nix/mas-apps.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, VS Code extensions, or Mac App Store apps. Formulae are applied even in the CLI profile. Casks, VS Code extensions, and Mac App Store apps are applied only with `--with-gui-apps`. If those files are empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.

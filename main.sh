@@ -13,6 +13,7 @@ readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
 readonly LIB_DIR="$SCRIPTS_DIR/lib"
 
 source "$LIB_DIR/setup_profile.sh"
+source "$LIB_DIR/homebrew.sh"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -51,6 +52,15 @@ install_nix() {
   log_step "Applying Nix configuration"
   zsh "$SCRIPTS_DIR/nix_install.sh" --profile "$profile"
   log_success "Nix setup complete"
+}
+
+install_homebrew_if_needed() {
+  local profile="$1"
+
+  log_step "Ensuring Homebrew is available when required"
+  zsh "$SCRIPTS_DIR/install_homebrew.sh" --profile "$profile"
+  dotfiles_prepend_homebrew_to_path || true
+  log_success "Homebrew prerequisites checked"
 }
 
 activate_nix_environment() {
@@ -133,6 +143,7 @@ main() {
 
   copy_dotfiles "$profile"
   sync_agent_files
+  install_homebrew_if_needed "$profile"
   install_nix "$profile"
   activate_nix_environment
   setup_configs

@@ -13,9 +13,15 @@ readonly XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 TEMP_PKG_CONFIG_SHIM_DIR=""
 
 source "$LIB_DIR/setup_profile.sh"
+source "$LIB_DIR/homebrew.sh"
 
 SELECTED_SHELL="zsh"
 INSTALL_GUI_APPS=0
+UPDATE_SCOPE="all"
+NIX_INPUT="all"
+SHOW_PROGRESS=0
+TOTAL_STEPS=0
+CURRENT_STEP=0
 
 usage() {
   cat <<EOF
@@ -27,19 +33,88 @@ Options:
   --shell zsh|bash        Shell to use for repository helper scripts. Default: zsh.
   --profile full|cli      Select setup profile. macOS defaults to full; Linux defaults to cli.
   --cli-only              Alias for --profile cli.
+  --only all|lock|nix|mise
+                          Limit the update flow. Default: all.
+  --nix-input all|nixpkgs|home-manager|nix-darwin
+                          Limit the flake input updated by the Nix step. Default: all.
   --with-gui-apps         Include GUI apps when applying the updated Nix profile.
   -h, --help              Show this help.
 
-This command:
+Default flow:
   1. updates flake.lock with nix flake update
   2. applies the updated Nix configuration
   3. syncs home/.chezmoitemplates/mise-config.toml and ~/.config/mise/config.toml
   4. upgrades mise-managed tools within the configured release lines
+
+Use --only lock to update flake.lock only.
+Use --only nix to update flake.lock and apply Nix only.
+Use --only mise to sync mise config and upgrade mise-managed tools only.
+Use --nix-input nixpkgs to update only nixpkgs before applying.
 EOF
 }
 
 log() {
   echo "===> $*"
+}
+
+warn() {
+  echo "===> $*" >&2
+}
+
+render_progress_bar() {
+  local step="$1"
+  local total="$2"
+  local label="$3"
+  local width=28
+  local completed=$((step - 1))
+  local filled=$((completed * width / total))
+  local next_filled=$((step * width / total))
+  local active=$((next_filled - filled))
+  local remaining
+  local done_bar
+  local active_bar
+  local pending_bar
+  local percent=$((completed * 100 / total))
+
+  if ((active < 1)); then
+    active=1
+  fi
+
+  remaining=$((width - filled - active))
+  if ((remaining < 0)); then
+    remaining=0
+  fi
+
+  done_bar="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+  active_bar="$(printf '%*s' "$active" '' | tr ' ' '>')"
+  pending_bar="$(printf '%*s' "$remaining" '' | tr ' ' '-')"
+
+  printf '===> [%s%s%s] %d/%d %s (%d%%)\n' \
+    "$done_bar" "$active_bar" "$pending_bar" "$step" "$total" "$label" "$percent"
+}
+
+start_step() {
+  local label="$1"
+
+  CURRENT_STEP=$((CURRENT_STEP + 1))
+  if [[ "$SHOW_PROGRESS" == "1" ]]; then
+    render_progress_bar "$CURRENT_STEP" "$TOTAL_STEPS" "$label"
+  else
+    log "$label"
+  fi
+}
+
+finish_progress() {
+  local width=28
+  local bar
+
+  if [[ "$SHOW_PROGRESS" != "1" ]]; then
+    return 0
+  fi
+
+  bar="$(printf '%*s' "$width" '' | tr ' ' '#')"
+  printf '===> [%s] %d/%d Managed version update complete (100%%)\n' \
+    "$bar" "$TOTAL_STEPS" "$TOTAL_STEPS"
 }
 
 mise_command() {
@@ -70,7 +145,7 @@ run_repo_script() {
 }
 
 homebrew_command_exists() {
-  command -v brew >/dev/null 2>&1
+  dotfiles_has_homebrew
 }
 
 list_setting_has_entries() {
@@ -196,7 +271,7 @@ resolve_nix_apply_profile() {
   fi
 
   if [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries; then
-    log "Homebrew is not installed; falling back to the CLI Nix profile for this managed update. Homebrew-managed GUI fallback apps will not be updated."
+    warn "Homebrew is not installed; falling back to the CLI Nix profile for this managed update. Homebrew-managed GUI fallback apps will not be updated."
     print -r -- "cli"
     return 0
   fi
@@ -271,6 +346,28 @@ parse_args() {
       --profile=*|--cli-only|--full)
         profile_args+=("$1")
         ;;
+      --only)
+        shift
+        if ((! $#)); then
+          echo "ERROR: --only requires all, lock, nix, or mise" >&2
+          return 1
+        fi
+        UPDATE_SCOPE="$1"
+        ;;
+      --only=*)
+        UPDATE_SCOPE="${1#--only=}"
+        ;;
+      --nix-input)
+        shift
+        if ((! $#)); then
+          echo "ERROR: --nix-input requires all, nixpkgs, home-manager, or nix-darwin" >&2
+          return 1
+        fi
+        NIX_INPUT="$1"
+        ;;
+      --nix-input=*)
+        NIX_INPUT="${1#--nix-input=}"
+        ;;
       --with-gui-apps)
         INSTALL_GUI_APPS=1
         ;;
@@ -302,17 +399,40 @@ parse_args() {
     return 1
   fi
 
+  case "$UPDATE_SCOPE" in
+    all|lock|nix|mise)
+      ;;
+    *)
+      echo "ERROR: unsupported update scope: $UPDATE_SCOPE" >&2
+      echo "Choose one of: all, lock, nix, mise" >&2
+      return 1
+      ;;
+  esac
+
+  case "$NIX_INPUT" in
+    all|nixpkgs|home-manager|nix-darwin)
+      ;;
+    *)
+      echo "ERROR: unsupported nix input: $NIX_INPUT" >&2
+      echo "Choose one of: all, nixpkgs, home-manager, nix-darwin" >&2
+      return 1
+      ;;
+  esac
+
+  if [[ "$UPDATE_SCOPE" == "mise" && "$NIX_INPUT" != "all" ]]; then
+    echo "ERROR: --nix-input cannot be used with --only mise" >&2
+    return 1
+  fi
+
   dotfiles_parse_profile_args "scripts/update_managed_versions.sh" "${profile_args[@]}"
 }
 
 update_mise_versions() {
-  log "Upgrading managed mise tools within the configured release lines"
   cleanup_stale_java_install_state
   MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$(mise_command)" upgrade
 }
 
 sync_mise_templates() {
-  log "Syncing tracked mise templates"
   cp "$MISE_CONFIG_FILE" "$MISE_TEMPLATE_FILE"
 }
 
@@ -322,7 +442,6 @@ sync_home_mise_config() {
   local tmp
   local line
 
-  log "Syncing ~/.config/mise/config.toml"
   mkdir -p "$target_dir"
   tmp="$(mktemp)"
 
@@ -348,11 +467,29 @@ cleanup_stale_java_install_state() {
   done < <(find "$java_root" -mindepth 2 -maxdepth 2 -type d -name Contents 2>/dev/null)
 }
 
+describe_nix_input() {
+  case "$NIX_INPUT" in
+    all)
+      printf '%s\n' "all flake inputs"
+      ;;
+    *)
+      printf '%s\n' "$NIX_INPUT"
+      ;;
+  esac
+}
+
 update_nix_lockfile() {
-  log "Updating flake.lock"
+  local nix_bin
+  nix_bin="$(nix_command)"
+
   (
     cd "$REPO_ROOT"
-    "$(nix_command)" flake update
+    if [[ "$NIX_INPUT" == "all" ]]; then
+      "$nix_bin" flake update
+    else
+      # Equivalent to: nix flake lock --update-input <input>
+      "$nix_bin" flake lock --update-input "$NIX_INPUT"
+    fi
   )
 }
 
@@ -367,21 +504,69 @@ apply_nix_configuration() {
     args+=("--with-gui-apps")
   fi
 
-  log "Applying updated Nix configuration"
   run_repo_script "nix_install.sh" "${args[@]}"
+}
+
+run_mise_update_flow() {
+  activate_nix_environment
+  start_step "Syncing tracked mise templates"
+  sync_mise_templates
+  start_step "Syncing ~/.config/mise/config.toml"
+  sync_home_mise_config
+  start_step "Upgrading managed mise tools within the configured release lines"
+  update_mise_versions
+}
+
+initialize_progress() {
+  SHOW_PROGRESS="${DOTFILES_SHOW_PROGRESS:-1}"
+
+  case "$UPDATE_SCOPE" in
+    lock)
+      TOTAL_STEPS=1
+      ;;
+    nix)
+      TOTAL_STEPS=2
+      ;;
+    mise)
+      TOTAL_STEPS=3
+      ;;
+    all)
+      TOTAL_STEPS=5
+      ;;
+  esac
 }
 
 main() {
   parse_args "$@"
   trap cleanup_temporary_dirs EXIT
+  initialize_progress
 
-  log "Updating versions managed by mise and Nix (profile: $DOTFILES_PROFILE, shell: $SELECTED_SHELL)"
-  update_nix_lockfile
-  apply_nix_configuration
-  activate_nix_environment
-  sync_mise_templates
-  sync_home_mise_config
-  update_mise_versions
+  log "Updating managed versions (scope: $UPDATE_SCOPE, nix-input: $(describe_nix_input), profile: $DOTFILES_PROFILE, shell: $SELECTED_SHELL)"
+
+  case "$UPDATE_SCOPE" in
+    lock)
+      start_step "Updating flake.lock ($(describe_nix_input))"
+      update_nix_lockfile
+      ;;
+    nix)
+      start_step "Updating flake.lock ($(describe_nix_input))"
+      update_nix_lockfile
+      start_step "Applying updated Nix configuration"
+      apply_nix_configuration
+      ;;
+    mise)
+      run_mise_update_flow
+      ;;
+    all)
+      start_step "Updating flake.lock ($(describe_nix_input))"
+      update_nix_lockfile
+      start_step "Applying updated Nix configuration"
+      apply_nix_configuration
+      run_mise_update_flow
+      ;;
+  esac
+
+  finish_progress
   log "Managed version update complete"
 }
 

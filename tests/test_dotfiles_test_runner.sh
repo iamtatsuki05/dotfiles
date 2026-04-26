@@ -85,6 +85,24 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh --shell"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-remove-homebrew]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-lock-update]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock"'
+  assert_contains "$MISE_CONFIG" "[tasks.nixpkgs-lock-update]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nixpkgs"'
+  assert_contains "$MISE_CONFIG" "[tasks.home-manager-lock-update]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input home-manager"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-darwin-lock-update]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nix-darwin"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-upgrade]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix"'
+  assert_contains "$MISE_CONFIG" "[tasks.nixpkgs-upgrade]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nixpkgs"'
+  assert_contains "$MISE_CONFIG" "[tasks.home-manager-upgrade]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-darwin-upgrade]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"'
+  assert_contains "$MISE_CONFIG" "[tasks.mise-upgrade]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-mise-upgrade]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
 }

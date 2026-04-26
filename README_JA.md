@@ -16,6 +16,7 @@ zsh main.sh
 - Linux: `cli`
 
 `full` は macOS 向けの全体セットアップです。nix-darwin、Home Manager、GUI アプリ、macOS defaults、launchd / systemd user timer、設定ファイル、mise、Neovim をセットアップします。
+この profile で Homebrew fallback entry が残っている場合、`main.sh` は Nix 適用前に Homebrew も自動で導入します。
 
 `cli` は Ubuntu などでも使いやすい CLI 中心のセットアップです。GUI アプリ、macOS 専用ツール、macOS defaults、launchd / systemd user timer は実行せず、Nix の CLI package set だけを適用します。
 
@@ -25,6 +26,9 @@ zsh main.sh --cli-only
 
 # Nix/Home Manager の CLI パッケージだけを入れたい場合
 zsh scripts/nix_install.sh --cli-only
+
+# Homebrew だけ先に入れたい場合
+zsh scripts/install_homebrew.sh --profile full
 ```
 
 ## chezmoi への移行
@@ -124,16 +128,33 @@ dotfiles-nix-run git --version
 
 `nix-user-chroot` を使う [scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) も残していますが、通常のログインシェルから `/nix/store` を直接参照できないため、sudo なし Linux の第一候補は [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) です。
 
-`mise` と `Nix` の両方で管理しているものをまとめて更新して適用するには、次を使います。
+更新は重さに応じて分けて使えます。
 
 ```bash
+# flake.lock だけ更新
+mise run nix-lock-update
+
+# flake.lock の nixpkgs だけ更新
+mise run nixpkgs-lock-update
+
+# Nix 管理の tool だけ更新して適用
+mise run nix-upgrade
+
+# codex などを含む nixpkgs だけ更新して適用
+mise run nixpkgs-upgrade
+
+# mise 管理の tool だけ現在の release line 内で更新
+mise run mise-upgrade
+
+# 全部まとめて更新
 mise run nix-mise-upgrade
 
 # helper script を bash で動かしたい場合
 mise run nix-mise-upgrade -- --shell bash
 ```
 
-この task は `nix flake update` と `scripts/nix_install.sh` を先に実行し、`home/.chezmoitemplates/mise-config.toml` と `~/.config/mise/config.toml` を同期したあと、`config/mise/config.toml` に書かれた release line の範囲内で `mise upgrade` を実行します。`node@22` や `postgres@17` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
+`mise run nix-mise-upgrade` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。重いので、通常は `codex` など Nix 管理の tool だけなら `mise run nix-upgrade`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-upgrade`、`node` や `python` など mise 管理の tool だけなら `mise run mise-upgrade` を使ってください。`node@22` や `postgres@17` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
+この script は記事の `nix flake lock --update-input ...` 方式に寄せており、`nixpkgs` / `home-manager` / `nix-darwin` を個別更新できます。実行中は段階ベースの progress bar を出すので、今どのフェーズか分かります。
 macOS で Homebrew が未導入でも、GUI fallback entry だけが残っている場合は、この task は CLI Nix profile にフォールバックして `codex` などの CLI tool を更新します。
 
 [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) または [config/nix/mas-apps.nix](config/nix/mas-apps.nix) に entry がある間は、macOS の fallback formula、cask、tap、VS Code extension、Mac App Store app のために Homebrew が必要です。formula は CLI profile でも適用し、cask、VS Code extension、Mac App Store app は `--with-gui-apps` の時だけ適用します。これらが空で、Nix 適用後に問題なければ Homebrew は明示的に削除できます。これは破壊的操作なので dry-run でコマンドを確認してから実行します。

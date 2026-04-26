@@ -124,6 +124,51 @@ description = "Nix適用後にHomebrewを明示的に削除する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"
 
+[tasks.nix-lock-update]
+description = "flake.lockだけを更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only lock"
+
+[tasks.nixpkgs-lock-update]
+description = "flake.lockのnixpkgs inputだけを更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nixpkgs"
+
+[tasks.home-manager-lock-update]
+description = "flake.lockのhome-manager inputだけを更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only lock --nix-input home-manager"
+
+[tasks.nix-darwin-lock-update]
+description = "flake.lockのnix-darwin inputだけを更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nix-darwin"
+
+[tasks.nix-upgrade]
+description = "Nixで管理しているものだけを最新化して適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only nix"
+
+[tasks.nixpkgs-upgrade]
+description = "nixpkgs inputだけ更新してNix構成を適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nixpkgs"
+
+[tasks.home-manager-upgrade]
+description = "home-manager inputだけ更新してNix構成を適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"
+
+[tasks.nix-darwin-upgrade]
+description = "nix-darwin inputだけ更新してNix構成を適用する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"
+
+[tasks.mise-upgrade]
+description = "miseで管理しているものだけを現在のrelease line内で更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only mise"
+
 [tasks.nix-mise-upgrade]
 description = "miseとNixで管理しているものを最新化して適用する"
 dir = "__DOTFILES_REPO_ROOT__"
