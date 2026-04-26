@@ -16,6 +16,7 @@ readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly HOMEBREW_LIB="$REPO_ROOT/scripts/lib/homebrew.sh"
+readonly HOME_SYNC_LIB="$REPO_ROOT/scripts/lib/home_sync.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly ZSHRC_FILE="$REPO_ROOT/dotfiles/.zshrc"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
@@ -722,6 +723,7 @@ test_main_script_runs_homebrew_before_nix_setup() {
   cp "$MAIN_SCRIPT" "$repo/main.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -807,6 +809,7 @@ test_main_script_skips_homebrew_install_on_linux_cli_setup() {
   cp "$MAIN_SCRIPT" "$repo/main.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
   cp "$INSTALL_HOMEBREW_SCRIPT" "$repo/scripts/install_homebrew.sh"
 
   cat > "$bin_dir/uname" <<'EOF'
@@ -886,6 +889,146 @@ EOF
   assert_contains "$log_file" 'setup_nvim'
   assert_not_contains "$log_file" 'curl:'
   assert_file "$home_dir/.zshrc"
+
+  rm -rf "$repo"
+}
+
+test_main_script_replaces_existing_symlinked_dotfile() {
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+  local linked_file
+
+  repo="$(mktemp -d)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+  linked_file="$repo/existing-zshrc"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_config.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_config" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_nvim.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_nvim" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/dotfiles/.zshrc" <<'EOF'
+# synced dotfile
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+
+  print -r -- "existing symlink target" > "$linked_file"
+  ln -s "$linked_file" "$home_dir/.zshrc"
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$repo/scripts/setup_nvim.sh" \
+    "$bin_dir/mise"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_file "$home_dir/.zshrc"
+  [[ ! -L "$home_dir/.zshrc" ]] || fail "expected $home_dir/.zshrc not to remain a symlink"
+  assert_contains "$home_dir/.zshrc" "# synced dotfile"
+  assert_contains "$linked_file" "existing symlink target"
+
+  rm -rf "$repo"
+}
+
+test_apply_updates_replaces_existing_symlinked_dotfile() {
+  local repo
+  local home_dir
+  local log_file
+  local linked_file
+
+  repo="$(mktemp -d)"
+  home_dir="$repo/home"
+  log_file="$repo/apply.log"
+  linked_file="$repo/existing-zshrc"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir"
+  cp "$APPLY_UPDATES_SCRIPT" "$repo/scripts/apply_updates.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
+
+  cat > "$repo/scripts/setup_config.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_config" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/dotfiles/.zshrc" <<'EOF'
+# synced by apply_updates
+EOF
+
+  print -r -- "existing symlink target" > "$linked_file"
+  ln -s "$linked_file" "$home_dir/.zshrc"
+
+  chmod +x \
+    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/setup_git_hooks.sh"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/apply_updates.sh" --cli-only > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Dotfiles update complete"
+  assert_file "$home_dir/.zshrc"
+  [[ ! -L "$home_dir/.zshrc" ]] || fail "expected $home_dir/.zshrc not to remain a symlink"
+  assert_contains "$home_dir/.zshrc" "# synced by apply_updates"
+  assert_contains "$linked_file" "existing symlink target"
+  assert_contains "$log_file" 'sync_agent'
+  assert_contains "$log_file" 'setup_config'
+  assert_contains "$log_file" 'setup_git_hooks:--profile cli'
 
   rm -rf "$repo"
 }
@@ -1020,6 +1163,8 @@ main() {
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
   test_main_script_runs_homebrew_before_nix_setup
   test_main_script_skips_homebrew_install_on_linux_cli_setup
+  test_main_script_replaces_existing_symlinked_dotfile
+  test_apply_updates_replaces_existing_symlinked_dotfile
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
   test_codex_updates_without_homebrew_full_profile
   test_bash_templates_support_dynamic_shell_setup

@@ -14,6 +14,7 @@ readonly LIB_DIR="$SCRIPTS_DIR/lib"
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
+source "$LIB_DIR/home_sync.sh"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -41,7 +42,7 @@ copy_dotfiles() {
   local profile="$1"
 
   log_step "Copying dotfiles to home directory"
-  cp -r "$DOTFILES_DIR"/. ~/
+  dotfiles_sync_home_tree "$DOTFILES_DIR" "$HOME"
 
   log_success "Dotfiles copied"
 }

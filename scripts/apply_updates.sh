@@ -11,6 +11,7 @@ readonly PROFILE_FILE="$XDG_CONFIG_HOME/dotfiles/profile"
 readonly MANAGER_FILE="$XDG_CONFIG_HOME/dotfiles/manager"
 
 source "$LIB_DIR/setup_profile.sh"
+source "$LIB_DIR/home_sync.sh"
 
 FROM_HOOK=0
 
@@ -49,7 +50,7 @@ copy_dotfiles() {
   local profile="$1"
 
   log "Syncing dotfiles"
-  cp -r "$DOTFILES_DIR"/. ~/
+  dotfiles_sync_home_tree "$DOTFILES_DIR" "$HOME"
 }
 
 current_dotfiles_manager() {
