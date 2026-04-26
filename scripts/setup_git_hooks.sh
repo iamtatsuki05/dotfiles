@@ -1,4 +1,4 @@
-#!/usr/bin/zsh
+#!/bin/zsh
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ install_hook() {
   fi
 
   cat > "$hook_file" <<EOF
-#!/usr/bin/zsh
+#!/bin/zsh
 $MANAGED_MARKER
 
 repo_root="$REPO_ROOT"

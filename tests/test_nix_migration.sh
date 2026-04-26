@@ -543,18 +543,21 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
 
 test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
   local repo
+  local home_dir
   local hook_file
   local xdg_config_home
   repo="$(mktemp -d)"
+  home_dir="$repo/home"
   hook_file="$repo/.git/hooks/post-checkout"
   xdg_config_home="$repo/xdg"
 
-  mkdir -p "$repo/scripts/lib" "$xdg_config_home"
+  mkdir -p "$repo/scripts/lib" "$xdg_config_home" "$home_dir"
   cp "$SETUP_GIT_HOOKS_SCRIPT" "$repo/scripts/setup_git_hooks.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
 
-  git -C "$repo" init >/dev/null
-  XDG_CONFIG_HOME="$xdg_config_home" "$TEST_ZSH_BIN" "$repo/scripts/setup_git_hooks.sh" --cli-only >/dev/null
+  HOME="$home_dir" GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" init >/dev/null
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" GIT_CONFIG_GLOBAL=/dev/null \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_git_hooks.sh" --cli-only >/dev/null
 
   assert_executable "$hook_file"
   assert_contains "$hook_file" '#!/bin/zsh'
