@@ -7,7 +7,10 @@ readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly MISE_CONFIG_FILE="$REPO_ROOT/config/mise/config.toml"
 readonly MISE_TEMPLATE_FILE="$REPO_ROOT/home/.chezmoitemplates/mise-config.toml"
+readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
+readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 readonly XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+TEMP_PKG_CONFIG_SHIM_DIR=""
 
 source "$LIB_DIR/setup_profile.sh"
 
@@ -28,10 +31,10 @@ Options:
   -h, --help              Show this help.
 
 This command:
-  1. bumps every tool in config/mise/config.toml to the latest version via mise upgrade --bump
-  2. syncs home/.chezmoitemplates/mise-config.toml and ~/.config/mise/config.toml
-  3. updates flake.lock with nix flake update
-  4. applies the updated Nix configuration
+  1. updates flake.lock with nix flake update
+  2. applies the updated Nix configuration
+  3. syncs home/.chezmoitemplates/mise-config.toml and ~/.config/mise/config.toml
+  4. upgrades mise-managed tools within the configured release lines
 EOF
 }
 
@@ -64,6 +67,180 @@ run_repo_script() {
   shift
 
   "$SELECTED_SHELL" "$SCRIPT_DIR/$script_name" "$@"
+}
+
+homebrew_command_exists() {
+  command -v brew >/dev/null 2>&1
+}
+
+list_setting_has_entries() {
+  local file_path="$1"
+  local setting_name="$2"
+
+  [[ -f "$file_path" ]] || return 1
+  awk -v target="$setting_name" '
+    BEGIN { in_section = 0 }
+    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
+    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
+    in_section && /^[[:space:]]*"[^"]+"/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$file_path"
+}
+
+homebrew_fallback_has_cli_entries() {
+  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "brews"
+}
+
+mas_apps_has_entries() {
+  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
+  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
+}
+
+homebrew_fallback_has_gui_entries() {
+  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "casks" \
+    || list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode" \
+    || mas_apps_has_entries
+}
+
+homebrew_is_required_for_profile() {
+  local profile_name="$1"
+
+  dotfiles_is_macos || return 1
+
+  if homebrew_fallback_has_cli_entries; then
+    return 0
+  fi
+
+  [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries
+}
+
+prepend_path_if_dir() {
+  local dir="$1"
+
+  [[ -d "$dir" ]] || return 0
+  case ":$PATH:" in
+    *":$dir:"*)
+      ;;
+    *)
+      PATH="$dir:$PATH"
+      export PATH
+      ;;
+  esac
+}
+
+prepend_env_dir() {
+  local var_name="$1"
+  local dir="$2"
+  local current
+
+  [[ -d "$dir" ]] || return 0
+  eval "current=\${$var_name:-}"
+  case ":$current:" in
+    *":$dir:"*)
+      return 0
+      ;;
+  esac
+
+  if [[ -n "$current" ]]; then
+    eval "export $var_name=\"$dir:$current\""
+  else
+    eval "export $var_name=\"$dir\""
+  fi
+}
+
+prepend_flag_path() {
+  local var_name="$1"
+  local flag_prefix="$2"
+  local dir="$3"
+  local current
+  local flag="$flag_prefix$dir"
+
+  [[ -d "$dir" ]] || return 0
+  eval "current=\${$var_name:-}"
+  case " $current " in
+    *" $flag "*)
+      return 0
+      ;;
+  esac
+
+  if [[ -n "$current" ]]; then
+    eval "export $var_name=\"$flag $current\""
+  else
+    eval "export $var_name=\"$flag\""
+  fi
+}
+
+cleanup_temporary_dirs() {
+  if [[ -n "$TEMP_PKG_CONFIG_SHIM_DIR" && -d "$TEMP_PKG_CONFIG_SHIM_DIR" ]]; then
+    rm -rf "$TEMP_PKG_CONFIG_SHIM_DIR"
+  fi
+}
+
+resolve_nix_apply_profile() {
+  local profile_name="$DOTFILES_PROFILE"
+
+  if ! dotfiles_is_macos || homebrew_command_exists || ! homebrew_is_required_for_profile "$profile_name"; then
+    print -r -- "$profile_name"
+    return 0
+  fi
+
+  if homebrew_fallback_has_cli_entries; then
+    echo "ERROR: Homebrew is not installed, and config/nix/homebrew-fallback.nix still has brew entries required even for the CLI profile." >&2
+    echo "Install Homebrew first, or migrate those fallback brews out of config/nix/homebrew-fallback.nix." >&2
+    return 1
+  fi
+
+  if [[ "$INSTALL_GUI_APPS" == "1" ]]; then
+    echo "ERROR: --with-gui-apps requires Homebrew on this macOS setup because GUI fallback entries are still configured." >&2
+    return 1
+  fi
+
+  if [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries; then
+    log "Homebrew is not installed; falling back to the CLI Nix profile for this managed update. Homebrew-managed GUI fallback apps will not be updated."
+    print -r -- "cli"
+    return 0
+  fi
+
+  print -r -- "$profile_name"
+}
+
+activate_nix_environment() {
+  local hm_vars
+
+  prepend_path_if_dir "$HOME/.nix-profile/bin"
+  prepend_path_if_dir "/etc/profiles/per-user/$USER/bin"
+  prepend_path_if_dir "/run/current-system/sw/bin"
+  prepend_path_if_dir "/nix/var/nix/profiles/default/bin"
+
+  for hm_vars in \
+    "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
+    "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+  do
+    if [[ -r "$hm_vars" ]]; then
+      source "$hm_vars"
+    fi
+  done
+
+  local pkg_prefix
+  for pkg_prefix in \
+    "$HOME/.nix-profile" \
+    "/etc/profiles/per-user/$USER" \
+    "/run/current-system/sw"
+  do
+    prepend_env_dir PKG_CONFIG_PATH "$pkg_prefix/lib/pkgconfig"
+    prepend_env_dir PKG_CONFIG_PATH "$pkg_prefix/share/pkgconfig"
+    prepend_flag_path CPPFLAGS "-I" "$pkg_prefix/include"
+    prepend_flag_path LDFLAGS "-L" "$pkg_prefix/lib"
+    prepend_env_dir LIBRARY_PATH "$pkg_prefix/lib"
+    prepend_env_dir C_INCLUDE_PATH "$pkg_prefix/include"
+    prepend_env_dir CPLUS_INCLUDE_PATH "$pkg_prefix/include"
+  done
+
+  if ! command -v pkg-config >/dev/null 2>&1 && command -v pkgconf >/dev/null 2>&1; then
+    TEMP_PKG_CONFIG_SHIM_DIR="$(mktemp -d)"
+    ln -sf "$(command -v pkgconf)" "$TEMP_PKG_CONFIG_SHIM_DIR/pkg-config"
+    prepend_path_if_dir "$TEMP_PKG_CONFIG_SHIM_DIR"
+  fi
 }
 
 parse_args() {
@@ -129,8 +306,9 @@ parse_args() {
 }
 
 update_mise_versions() {
-  log "Bumping managed mise tools to the latest versions"
-  MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$(mise_command)" upgrade --bump
+  log "Upgrading managed mise tools within the configured release lines"
+  cleanup_stale_java_install_state
+  MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$(mise_command)" upgrade
 }
 
 sync_mise_templates() {
@@ -155,6 +333,21 @@ sync_home_mise_config() {
   mv "$tmp" "$target_file"
 }
 
+cleanup_stale_java_install_state() {
+  local java_root="$HOME/.local/share/mise/installs/java"
+  local contents_path
+
+  [[ -d "$java_root" ]] || return 0
+
+  while IFS= read -r contents_path; do
+    [[ "$(basename "$(dirname "$contents_path")")" == zulu-* ]] || continue
+    if [[ -d "$contents_path" && ! -L "$contents_path" ]]; then
+      log "Removing stale Java app bundle directory: $contents_path"
+      rm -rf "$contents_path"
+    fi
+  done < <(find "$java_root" -mindepth 2 -maxdepth 2 -type d -name Contents 2>/dev/null)
+}
+
 update_nix_lockfile() {
   log "Updating flake.lock"
   (
@@ -164,7 +357,11 @@ update_nix_lockfile() {
 }
 
 apply_nix_configuration() {
-  local args=("--profile" "$DOTFILES_PROFILE")
+  local nix_apply_profile
+  local args
+
+  nix_apply_profile="$(resolve_nix_apply_profile)"
+  args=("--profile" "$nix_apply_profile")
 
   if [[ "$INSTALL_GUI_APPS" == "1" ]]; then
     args+=("--with-gui-apps")
@@ -176,13 +373,15 @@ apply_nix_configuration() {
 
 main() {
   parse_args "$@"
+  trap cleanup_temporary_dirs EXIT
 
   log "Updating versions managed by mise and Nix (profile: $DOTFILES_PROFILE, shell: $SELECTED_SHELL)"
-  update_mise_versions
-  sync_mise_templates
-  sync_home_mise_config
   update_nix_lockfile
   apply_nix_configuration
+  activate_nix_environment
+  sync_mise_templates
+  sync_home_mise_config
+  update_mise_versions
   log "Managed version update complete"
 }
 

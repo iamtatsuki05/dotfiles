@@ -124,7 +124,7 @@ dotfiles-nix-run git --version
 
 `nix-user-chroot` を使う [scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) も残していますが、通常のログインシェルから `/nix/store` を直接参照できないため、sudo なし Linux の第一候補は [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) です。
 
-`mise` と `Nix` の両方で管理しているものをまとめて最新化して適用するには、次を使います。
+`mise` と `Nix` の両方で管理しているものをまとめて更新して適用するには、次を使います。
 
 ```bash
 mise run nix-mise-upgrade
@@ -133,7 +133,8 @@ mise run nix-mise-upgrade
 mise run nix-mise-upgrade -- --shell bash
 ```
 
-この task は `config/mise/config.toml` を `mise upgrade --bump` で更新し、`home/.chezmoitemplates/mise-config.toml` と `~/.config/mise/config.toml` を同期したあと、`nix flake update` と `scripts/nix_install.sh` を順に実行します。
+この task は `nix flake update` と `scripts/nix_install.sh` を先に実行し、`home/.chezmoitemplates/mise-config.toml` と `~/.config/mise/config.toml` を同期したあと、`config/mise/config.toml` に書かれた release line の範囲内で `mise upgrade` を実行します。`node@22` や `postgres@17` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
+macOS で Homebrew が未導入でも、GUI fallback entry だけが残っている場合は、この task は CLI Nix profile にフォールバックして `codex` などの CLI tool を更新します。
 
 [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) または [config/nix/mas-apps.nix](config/nix/mas-apps.nix) に entry がある間は、macOS の fallback formula、cask、tap、VS Code extension、Mac App Store app のために Homebrew が必要です。formula は CLI profile でも適用し、cask、VS Code extension、Mac App Store app は `--with-gui-apps` の時だけ適用します。これらが空で、Nix 適用後に問題なければ Homebrew は明示的に削除できます。これは破壊的操作なので dry-run でコマンドを確認してから実行します。
 

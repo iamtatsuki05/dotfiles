@@ -126,7 +126,7 @@ dotfiles-nix-run git --version
 
 [scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) remains available for `nix-user-chroot`, but because its `/nix/store` is only visible inside the chroot, [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) is the preferred sudo-free Linux path.
 
-To bump everything managed by both `mise` and Nix to the latest versions and apply the result, use:
+To update everything managed by both `mise` and Nix and apply the result, use:
 
 ```bash
 mise run nix-mise-upgrade
@@ -135,7 +135,8 @@ mise run nix-mise-upgrade
 mise run nix-mise-upgrade -- --shell bash
 ```
 
-This task updates `config/mise/config.toml` with `mise upgrade --bump`, syncs `home/.chezmoitemplates/mise-config.toml` and `~/.config/mise/config.toml`, then runs `nix flake update` followed by `scripts/nix_install.sh`.
+This task runs `nix flake update`, applies `scripts/nix_install.sh`, syncs `home/.chezmoitemplates/mise-config.toml` and `~/.config/mise/config.toml`, then runs `mise upgrade` for the latest versions within the release lines configured in `config/mise/config.toml`. To move to a new major line such as `node@22` or `postgres@17`, edit `config/mise/config.toml` explicitly first.
+If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so CLI tools such as `codex` can still be updated.
 
 If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) or [config/nix/mas-apps.nix](config/nix/mas-apps.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, VS Code extensions, or Mac App Store apps. Formulae are applied even in the CLI profile. Casks, VS Code extensions, and Mac App Store apps are applied only with `--with-gui-apps`. If those files are empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
 

@@ -11,6 +11,7 @@ readonly ROOTLESS_NIX_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_rootless_install.sh
 readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
 readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
 readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
+readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly ZSHRC_FILE="$REPO_ROOT/dotfiles/.zshrc"
@@ -540,6 +541,38 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_not_contains "$APPLY_UPDATES_SCRIPT" "sync_nix_profile"
 }
 
+test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
+  local repo
+  local hook_file
+  local xdg_config_home
+  repo="$(mktemp -d)"
+  hook_file="$repo/.git/hooks/post-checkout"
+  xdg_config_home="$repo/xdg"
+
+  mkdir -p "$repo/scripts/lib" "$xdg_config_home"
+  cp "$SETUP_GIT_HOOKS_SCRIPT" "$repo/scripts/setup_git_hooks.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+
+  git -C "$repo" init >/dev/null
+  XDG_CONFIG_HOME="$xdg_config_home" "$TEST_ZSH_BIN" "$repo/scripts/setup_git_hooks.sh" --cli-only >/dev/null
+
+  assert_executable "$hook_file"
+  assert_contains "$hook_file" '#!/bin/zsh'
+  assert_not_contains "$hook_file" '#!/usr/bin/zsh'
+
+  rm -rf "$repo"
+}
+
+test_codex_updates_without_homebrew_full_profile() {
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
+  assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"codex"'
+  assert_contains "$INSTALL_SCRIPT" 'Homebrew is required for this Nix profile'
+  assert_contains "$INSTALL_SCRIPT" 'Use --cli-only'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_nix_apply_profile'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'falling back to the CLI Nix profile'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'homebrew_fallback_has_cli_entries'
+}
+
 test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$BASHRC_TEMPLATE_FILE" 'dotfiles-shell-common.sh'
   assert_contains "$BASH_PROFILE_TEMPLATE_FILE" '. "$HOME/.bashrc"'
@@ -559,14 +592,29 @@ test_managed_update_script_updates_mise_and_nix() {
 
   assert_contains "$MISE_CONFIG" '[tasks.nix-mise-upgrade]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
+  assert_contains "$MISE_CONFIG" 'node = "20"'
+  assert_contains "$MISE_CONFIG" 'go = "1.25"'
+  assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
+  assert_contains "$MISE_CONFIG" 'python = "3.13"'
+  assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
+  assert_contains "$MISE_CONFIG" 'postgres = "16"'
+  assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'
+  assert_contains "$MISE_CONFIG" 'redis = "8.2"'
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"pkg-config"'
+  assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"pkgconf"'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'MISE_GLOBAL_CONFIG_FILE'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$(mise_command)" upgrade'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'config/mise/config.toml'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'home/.chezmoitemplates/mise-config.toml'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'XDG_CONFIG_HOME'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '__DOTFILES_REPO_ROOT__'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix flake update'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix_install.sh'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'activate_nix_environment'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'cleanup_stale_java_install_state'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'PKG_CONFIG_PATH'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'pkg-config'
 
   bash "$UPDATE_MANAGED_VERSIONS_SCRIPT" --help > "$output"
   assert_output_contains "$output" '--shell zsh|bash'
@@ -587,6 +635,8 @@ main() {
   test_nix_portable_install_script_supports_no_sudo_nix_main_path
   test_remove_homebrew_script_is_explicit_and_dry_run_first
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
+  test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
+  test_codex_updates_without_homebrew_full_profile
   test_bash_templates_support_dynamic_shell_setup
   test_managed_update_script_updates_mise_and_nix
   echo "nix migration tests passed"

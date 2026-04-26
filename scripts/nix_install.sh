@@ -5,6 +5,8 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly REMOVE_HOMEBREW_SCRIPT="$SCRIPT_DIR/remove_homebrew.sh"
+readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
+readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 readonly -a NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")
 readonly HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"
 
@@ -174,6 +176,69 @@ nix_command() {
   return 1
 }
 
+homebrew_command_exists() {
+  command -v brew >/dev/null 2>&1
+}
+
+list_setting_has_entries() {
+  local file_path="$1"
+  local setting_name="$2"
+
+  [[ -f "$file_path" ]] || return 1
+  awk -v target="$setting_name" '
+    BEGIN { in_section = 0 }
+    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
+    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
+    in_section && /^[[:space:]]*"[^"]+"/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$file_path"
+}
+
+homebrew_fallback_has_cli_entries() {
+  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "brews"
+}
+
+mas_apps_has_entries() {
+  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
+  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
+}
+
+homebrew_fallback_has_gui_entries() {
+  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "casks" \
+    || list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode" \
+    || mas_apps_has_entries
+}
+
+profile_requires_homebrew() {
+  local profile_name="$1"
+
+  is_macos || return 1
+
+  if homebrew_fallback_has_cli_entries; then
+    return 0
+  fi
+
+  [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries
+}
+
+ensure_homebrew_available_for_profile() {
+  local profile_name="$1"
+
+  if ! profile_requires_homebrew "$profile_name" || homebrew_command_exists; then
+    return 0
+  fi
+
+  echo "ERROR: Homebrew is required for this Nix profile but brew is not installed." >&2
+
+  if homebrew_fallback_has_cli_entries; then
+    echo "config/nix/homebrew-fallback.nix still has brew entries, so even the CLI profile depends on Homebrew." >&2
+  else
+    echo "Only Homebrew-managed GUI fallback apps remain. Use --cli-only to continue without those GUI updates." >&2
+  fi
+
+  return 1
+}
+
 cleanup_flake_worktree() {
   if [[ -n "$NIX_FLAKE_WORKTREE" && -d "$NIX_FLAKE_WORKTREE" ]]; then
     rm -rf "$NIX_FLAKE_WORKTREE"
@@ -301,6 +366,7 @@ main() {
   local flake_path
   nix_bin="$(nix_command)"
   profile_name="$(selected_profile)"
+  ensure_homebrew_available_for_profile "$profile_name"
   attr="$(flake_attr "$profile_name")"
   flake_path="$(prepare_flake_path)"
 

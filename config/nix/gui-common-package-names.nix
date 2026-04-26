@@ -5,7 +5,6 @@
   "antigravity"
   "bitwarden-desktop"
   "claude-code"
-  "codex"
   "copilot-cli"
   "code-cursor"
   "cursor-cli"
