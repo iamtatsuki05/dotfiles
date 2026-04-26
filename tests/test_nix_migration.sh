@@ -9,6 +9,7 @@ readonly INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_install.sh"
 readonly NIX_PORTABLE_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_portable_install.sh"
 readonly ROOTLESS_NIX_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_rootless_install.sh"
 readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
+readonly CLEANUP_PACKAGE_CACHES_SCRIPT="$REPO_ROOT/scripts/cleanup_package_caches.sh"
 readonly INSTALL_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/install_homebrew.sh"
 readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
 readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
@@ -427,6 +428,10 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
   assert_contains "$INSTALL_SCRIPT" 'command -v nix-rootless'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"'
+  assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_SUDO_LOCAL_PATH'
+  assert_contains "$INSTALL_SCRIPT" 'DARWIN_SUDO_LOCAL_BACKUP_PATH'
+  assert_contains "$INSTALL_SCRIPT" 'backup_existing_darwin_sudo_local'
+  assert_contains "$INSTALL_SCRIPT" 'sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"'
   assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake'
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
   assert_contains "$INSTALL_SCRIPT" 'sudo env HOME=/var/root'
@@ -438,6 +443,79 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_not_contains "$INSTALL_SCRIPT" '$(nix_args)'
   assert_not_contains "$INSTALL_SCRIPT" 'brew bundle'
   assert_not_contains "$INSTALL_SCRIPT" 'fallback.Brewfile'
+}
+
+test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
+  local repo
+  local bin_dir
+  local etc_dir
+  local log_file
+  local output_file
+  local sudo_local
+  local backup_file
+
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  etc_dir="$repo/etc/pam.d"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+  sudo_local="$etc_dir/sudo_local"
+  backup_file="${sudo_local}.before-nix-darwin"
+
+  mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+
+  cat > "$sudo_local" <<'EOF'
+# sudo_local: local config file which survives system update and is included for sudo
+# uncomment following line to enable Touch ID for sudo
+auth sufficient pam_tid.so
+EOF
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$sudo_local" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
+
+  assert_output_contains "$output_file" "Backing up existing $sudo_local to $backup_file before nix-darwin manages sudo Touch ID."
+  assert_contains "$log_file" "sudo:mv $sudo_local $backup_file"
+  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake'
+  assert_contains "$log_file" 'darwin-rebuild:switch --flake'
+  assert_file "$backup_file"
+  assert_not_exists "$sudo_local"
+
+  rm -rf "$repo"
 }
 
 test_rootless_nix_install_script_supports_no_sudo_linux() {
@@ -519,6 +597,72 @@ test_remove_homebrew_script_is_explicit_and_dry_run_first() {
   assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
 }
 
+test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
+  local repo
+  local bin_dir
+  local log_file
+  local output_file
+
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  log_file="$repo/cleanup.log"
+  output_file="$repo/output.log"
+
+  assert_contains "$MISE_CONFIG" '[tasks.nix-brew-cleanup]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/cleanup_package_caches.sh"'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--older-than Nd'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--apply'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix profile wipe-history'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix-collect-garbage --delete-older-than'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix store optimise'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'brew cleanup --prune=all --scrub'
+
+  mkdir -p "$repo/scripts/lib" "$bin_dir"
+  cp "$CLEANUP_PACKAGE_CACHES_SCRIPT" "$repo/scripts/cleanup_package_caches.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/nix-collect-garbage" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix-collect-garbage:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/brew" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "brew:\$*" >> "$log_file"
+if [[ "\${1:-}" == "--prefix" ]]; then
+  print -r -- "/opt/homebrew"
+fi
+EOF
+
+  chmod +x "$repo/scripts/cleanup_package_caches.sh" "$bin_dir/nix" "$bin_dir/nix-collect-garbage" "$bin_dir/brew"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" > "$output_file"
+
+  assert_output_contains "$output_file" 'DRY-RUN: package caches were not removed'
+  assert_output_contains "$output_file" 'nix profile wipe-history --older-than 30d'
+  assert_output_contains "$output_file" 'nix-collect-garbage --delete-older-than 30d'
+  assert_output_contains "$output_file" 'nix store optimise'
+  assert_output_contains "$output_file" 'brew cleanup --prune=all --scrub'
+  assert_not_exists "$log_file"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" --apply > "$output_file"
+
+  assert_contains "$log_file" 'nix:profile wipe-history --older-than 30d'
+  assert_contains "$log_file" 'nix-collect-garbage:--delete-older-than 30d'
+  assert_contains "$log_file" 'nix:store optimise'
+  assert_contains "$log_file" 'brew:cleanup --prune=all --scrub'
+
+  rm -rf "$repo"
+}
+
 test_install_homebrew_script_supports_required_profiles() {
   assert_contains "$INSTALL_HOMEBREW_SCRIPT" '--dry-run'
   assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'profile_requires_homebrew'
@@ -532,6 +676,8 @@ test_install_homebrew_script_supports_required_profiles() {
 
 test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MAIN_SCRIPT" 'nix_install.sh'
+  assert_contains "$MAIN_SCRIPT" 'setup_agent_files.sh'
+  assert_not_contains "$MAIN_SCRIPT" 'dotfiles/.agent/sync.sh'
   assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
   assert_contains "$MAIN_SCRIPT" '--profile "$profile"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply]'
@@ -549,10 +695,13 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_not_contains "$MISE_CONFIG" 'brew_dump.sh'
   assert_contains "$ZSHRC_FILE" 'dotfiles_cleanup_stale_homebrew_completion'
   assert_contains "$ZSHRC_FILE" 'dotfiles-shell-common.sh'
+  assert_contains "$ZSHRC_FILE" 'command mise activate zsh'
   assert_contains "$ZSHRC_FILE" 'zcompdump-$ZSH_VERSION'
   assert_not_contains "$ZSHRC_FILE" 'HOMEBREW_PREFIX'
   assert_not_contains "$ZSHRC_FILE" 'brew shellenv'
   assert_not_contains "$ZSHRC_FILE" 'hm-session-vars.sh'
+  assert_contains "$APPLY_UPDATES_SCRIPT" 'setup_agent_files.sh'
+  assert_not_contains "$APPLY_UPDATES_SCRIPT" 'dotfiles/.agent/sync.sh'
   assert_not_contains "$APPLY_UPDATES_SCRIPT" "sync_nix_profile"
 }
 
@@ -599,7 +748,7 @@ EOF
 set -euo pipefail
 print -r -- "setup_nvim" >> "$log_file"
 EOF
-  cat > "$repo/dotfiles/.agent/sync.sh" <<EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
@@ -617,9 +766,9 @@ EOF
     "$repo/scripts/install_homebrew.sh" \
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
     "$repo/scripts/setup_nvim.sh" \
-    "$repo/dotfiles/.agent/sync.sh" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -697,7 +846,7 @@ EOF
 set -euo pipefail
 print -r -- "setup_nvim" >> "$log_file"
 EOF
-  cat > "$repo/dotfiles/.agent/sync.sh" <<EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
@@ -715,9 +864,9 @@ EOF
     "$repo/scripts/install_homebrew.sh" \
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
     "$repo/scripts/setup_nvim.sh" \
-    "$repo/dotfiles/.agent/sync.sh" \
     "$bin_dir/uname" \
     "$bin_dir/curl" \
     "$bin_dir/mise"
@@ -782,6 +931,7 @@ test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$BASH_PROFILE_TEMPLATE_FILE" '. "$HOME/.bashrc"'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '$HOME/.nix-profile/bin'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '[ "$dotfiles_shell_name" = "bash" ]'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'mise activate "$dotfiles_shell_name"'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'hm-session-vars.sh'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'shell/secrets.env'
@@ -861,9 +1011,11 @@ main() {
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
+  test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch
   test_rootless_nix_install_script_supports_no_sudo_linux
   test_nix_portable_install_script_supports_no_sudo_nix_main_path
   test_remove_homebrew_script_is_explicit_and_dry_run_first
+  test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup
   test_install_homebrew_script_supports_required_profiles
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
   test_main_script_runs_homebrew_before_nix_setup

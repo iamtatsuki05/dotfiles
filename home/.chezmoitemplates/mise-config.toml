@@ -124,6 +124,11 @@ description = "Nix適用後にHomebrewを明示的に削除する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"
 
+[tasks.nix-brew-cleanup]
+description = "NixとHomebrewの不要なcacheや古いgenerationを掃除する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/cleanup_package_caches.sh"
+
 [tasks.nix-lock-update]
 description = "flake.lockだけを更新する"
 dir = "__DOTFILES_REPO_ROOT__"

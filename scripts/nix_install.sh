@@ -9,6 +9,8 @@ readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
 readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 readonly -a NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")
 readonly HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"
+readonly DARWIN_SUDO_LOCAL_PATH="${DOTFILES_DARWIN_SUDO_LOCAL_PATH:-/etc/pam.d/sudo_local}"
+readonly DARWIN_SUDO_LOCAL_BACKUP_PATH="${DARWIN_SUDO_LOCAL_PATH}.${HOME_MANAGER_BACKUP_EXTENSION}"
 
 source "$SCRIPT_DIR/lib/homebrew.sh"
 
@@ -248,6 +250,24 @@ cleanup_flake_worktree() {
   fi
 }
 
+backup_existing_darwin_sudo_local() {
+  if ! is_macos || (( DRY_RUN )); then
+    return 0
+  fi
+
+  [[ -e "$DARWIN_SUDO_LOCAL_PATH" ]] || return 0
+  [[ -L "$DARWIN_SUDO_LOCAL_PATH" ]] && return 0
+
+  if [[ -e "$DARWIN_SUDO_LOCAL_BACKUP_PATH" ]]; then
+    echo "ERROR: $DARWIN_SUDO_LOCAL_PATH is blocking nix-darwin activation, but $DARWIN_SUDO_LOCAL_BACKUP_PATH already exists." >&2
+    echo "Please review both files, then rerun this script." >&2
+    return 1
+  fi
+
+  echo "Backing up existing $DARWIN_SUDO_LOCAL_PATH to $DARWIN_SUDO_LOCAL_BACKUP_PATH before nix-darwin manages sudo Touch ID."
+  sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"
+}
+
 has_untracked_nix_sources() {
   git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
   [[ -n "$(git -C "$REPO_ROOT" ls-files --others --exclude-standard -- flake.nix flake.lock config/nix scripts/nix_install.sh scripts/remove_homebrew.sh)" ]]
@@ -378,6 +398,7 @@ main() {
   echo "Flake path: $flake_path"
 
   if is_macos; then
+    backup_existing_darwin_sudo_local
     run_darwin_rebuild "$attr" "$nix_bin" "$flake_path"
   else
     run_home_manager "$attr" "$nix_bin" "$flake_path"
