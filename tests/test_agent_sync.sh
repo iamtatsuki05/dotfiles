@@ -2,11 +2,12 @@
 
 set -euo pipefail
 
-readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+readonly TEST_DIR="${0:A:h}"
+readonly REPO_ROOT="${TEST_DIR:h}"
 readonly SETUP_AGENT_SCRIPT="$REPO_ROOT/scripts/setup_agent_files.sh"
 readonly SYNC_SCRIPT="$REPO_ROOT/dotfiles/.agent/sync.sh"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
+readonly TEST_TIMEOUT_SECONDS="${DOTFILES_TEST_TIMEOUT_SECONDS:-10}"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -37,7 +38,30 @@ assert_symlink_target() {
   local expected_target="$2"
 
   [[ -L "$link_path" ]] || fail "expected symlink: $link_path"
-  [[ "$(readlink "$link_path")" == "$expected_target" ]] || fail "expected $link_path -> $expected_target"
+  [[ "$link_path" -ef "$expected_target" ]] || fail "expected $link_path -> $expected_target"
+}
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+
+  perl -e 'alarm shift @ARGV; exec @ARGV' "$timeout_seconds" "$@" || fail "command timed out: $*"
+}
+
+make_temp_dir() {
+  local candidate
+  local attempts=0
+
+  while (( attempts < 10 )); do
+    candidate="${TMPDIR:-/tmp}/dotfiles-test-$$-$RANDOM-$RANDOM"
+    if mkdir "$candidate" 2>/dev/null; then
+      REPLY="$candidate"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+  done
+
+  fail "failed to create temporary directory"
 }
 
 create_agent_fixture_repo() {
@@ -88,15 +112,21 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   local repo
   local home_dir
   local xdg_config_home
-  repo="$(mktemp -d)"
-  home_dir="$(mktemp -d)"
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
   xdg_config_home="$home_dir/.config"
 
   create_agent_fixture_repo "$repo"
   mkdir -p "$xdg_config_home/shell"
   print -r -- 'export DEVIN_API_KEY=test-key' > "$xdg_config_home/shell/secrets.env"
 
-  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
   assert_symlink_target "$home_dir/.claude/settings.json" "$repo/dotfiles/.agent/apps/claude/settings.json"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
@@ -127,8 +157,10 @@ test_agent_sync_replaces_existing_codex_config_with_managed_symlink() {
   local home_dir
   local xdg_config_home
   local codex_config
-  repo="$(mktemp -d)"
-  home_dir="$(mktemp -d)"
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
   xdg_config_home="$home_dir/.config"
   codex_config="$home_dir/.codex/config.toml"
 
@@ -150,7 +182,8 @@ max_unused_days = 7
 trust_level = "trusted"
 EOF
 
-  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
   assert_symlink_target "$codex_config" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_contains "$codex_config" 'sandbox_mode = "workspace-write"'

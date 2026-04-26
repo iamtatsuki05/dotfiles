@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly SCRIPT_DIR="${0:A:h}"
+DEFAULT_REPO_ROOT="${SCRIPT_DIR:h}"
 REPO_ROOT="$DEFAULT_REPO_ROOT"
 AGENT_DIR=""
 APPS_DIR=""
@@ -47,7 +47,7 @@ parse_args() {
     shift
   done
 
-  REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+  REPO_ROOT="${REPO_ROOT:A}"
   AGENT_DIR="$REPO_ROOT/dotfiles/.agent"
   APPS_DIR="$AGENT_DIR/apps"
 }
@@ -57,15 +57,18 @@ link_symlink() {
   local dst="$2"
 
   if [ -L "$dst" ]; then
-    local current
-    current="$(readlink "$dst")"
-    if [ "$current" = "$src" ]; then
+    if [[ "$dst" -ef "$src" ]]; then
       return 0
     fi
     rm -f "$dst"
   elif [ -e "$dst" ]; then
-    if [ -d "$dst" ] && [ -z "$(ls -A "$dst")" ]; then
-      rmdir "$dst"
+    if [ -d "$dst" ]; then
+      if rmdir "$dst" 2>/dev/null; then
+        :
+      else
+        echo "skip: $dst exists and is not an empty directory, regular file, or symlink" >&2
+        return 0
+      fi
     elif [ -f "$dst" ]; then
       rm -f "$dst"
     else
@@ -104,13 +107,15 @@ sync_shared_files() {
 sync_hooks() {
   local hooks_dir
   local hook_file
+  local hook_name
 
   for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks; do
     ensure_dir "$hooks_dir"
     for hook_file in "$AGENT_DIR/hooks"/*; do
       [ -f "$hook_file" ] || continue
+      hook_name="${hook_file:t}"
       chmod +x "$hook_file"
-      link_symlink "$hook_file" "$hooks_dir/$(basename "$hook_file")"
+      link_symlink "$hook_file" "$hooks_dir/$hook_name"
     done
   done
 }
@@ -132,18 +137,27 @@ sync_gemini_env() {
     return 0
   fi
 
-  ensure_dir "$(dirname "$gemini_env_file")"
+  ensure_dir "${gemini_env_file:h}"
 
   local vars=("DEVIN_API_KEY")
   local tmp
-  tmp="$(mktemp)"
+  tmp="${gemini_env_file}.tmp.$$"
+  rm -f "$tmp"
+  : > "$tmp"
 
   local var
   for var in "${vars[@]}"; do
-    local line
-    line=$(grep -E "^(export )?${var}=" "$SECRETS_FILE" 2>/dev/null | tail -1 | sed 's/^export //')
+    local line=""
+    local secret_line
+    while IFS= read -r secret_line; do
+      case "$secret_line" in
+        (${var}=*|export\ ${var}=*)
+          line="${secret_line#export }"
+          ;;
+      esac
+    done < "$SECRETS_FILE"
     if [[ -n "$line" ]]; then
-      echo "$line" >> "$tmp"
+      print -r -- "$line" >> "$tmp"
     fi
   done
 
