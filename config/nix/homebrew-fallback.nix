@@ -48,6 +48,7 @@
     "macfuse"
     "messenger"
     "minecraft"
+    # microsoft-office already installs OneDrive and conflicts with the standalone onedrive cask.
     "microsoft-office"
     "moom"
     "motion"
@@ -56,7 +57,6 @@
     "netdownloadhelpercoapp"
     "notchnook"
     "one-switch"
-    "onedrive"
     "parsec"
     "lyraphase/pcloud/pcloud-drive"
     "pliim"

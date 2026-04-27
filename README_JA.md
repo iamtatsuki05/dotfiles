@@ -151,9 +151,12 @@ mise run nix-mise-upgrade
 
 # helper script を bash で動かしたい場合
 mise run nix-mise-upgrade -- --shell bash
+
+# Homebrew 管理の GUI fallback app も更新したい場合
+mise run nix-mise-upgrade -- --with-gui-apps
 ```
 
-`mise run nix-mise-upgrade` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。重いので、通常は `codex` など Nix 管理の tool だけなら `mise run nix-upgrade`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-upgrade`、`node` や `python` など mise 管理の tool だけなら `mise run mise-upgrade` を使ってください。`node@22` や `postgres@17` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
+`mise run nix-mise-upgrade` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。macOS で Homebrew 管理の GUI fallback app が定義されている場合、既定では CLI Nix profile を適用し、GUI fallback app の更新は行いません。GUI fallback app も更新したいときだけ `--with-gui-apps` を明示してください。重いので、通常は `codex` など Nix 管理の tool だけなら `mise run nix-upgrade`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-upgrade`、`node` や `python` など mise 管理の tool だけなら `mise run mise-upgrade` を使ってください。`node@22` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
 この script は記事の `nix flake lock --update-input ...` 方式に寄せており、`nixpkgs` / `home-manager` / `nix-darwin` を個別更新できます。実行中は段階ベースの progress bar を出すので、今どのフェーズか分かります。
 macOS で Homebrew が未導入でも、GUI fallback entry だけが残っている場合は、この task は CLI Nix profile にフォールバックして `codex` などの CLI tool を更新します。
 

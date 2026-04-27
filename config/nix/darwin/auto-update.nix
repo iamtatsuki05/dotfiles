@@ -34,7 +34,6 @@ in
   system.activationScripts.postActivation.text = lib.mkAfter ''
     if command -v crontab >/dev/null 2>&1; then
       current_cron="$(mktemp)"
-      stripped_cron="$(mktemp)"
 
       if sudo --user=${username} -- crontab -l 2>/dev/null | cat > "$current_cron"; then
         if grep -q '# >>> dotfiles managed cron >>>' "$current_cron"; then
@@ -42,13 +41,12 @@ in
             $0 == "# >>> dotfiles managed cron >>>" { skip = 1; next }
             $0 == "# <<< dotfiles managed cron <<<" { skip = 0; next }
             skip != 1 { print }
-          ' "$current_cron" > "$stripped_cron"
-          sudo --user=${username} -- crontab "$stripped_cron"
+          ' "$current_cron" | sudo --user=${username} -- crontab -
           echo "removed legacy dotfiles cron block"
         fi
       fi
 
-      rm -f "$current_cron" "$stripped_cron"
+      rm -f "$current_cron"
     fi
   '';
 }

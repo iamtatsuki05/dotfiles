@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly SCRIPT_DIR="${0:A:h}"
+readonly REPO_ROOT="${SCRIPT_DIR:h}"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly MISE_CONFIG_FILE="$REPO_ROOT/config/mise/config.toml"
 readonly MISE_TEMPLATE_FILE="$REPO_ROOT/home/.chezmoitemplates/mise-config.toml"
@@ -22,6 +22,8 @@ NIX_INPUT="all"
 SHOW_PROGRESS=0
 TOTAL_STEPS=0
 CURRENT_STEP=0
+MISE_BIN=""
+NIX_BIN=""
 
 usage() {
   cat <<EOF
@@ -85,9 +87,12 @@ render_progress_bar() {
     remaining=0
   fi
 
-  done_bar="$(printf '%*s' "$filled" '' | tr ' ' '#')"
-  active_bar="$(printf '%*s' "$active" '' | tr ' ' '>')"
-  pending_bar="$(printf '%*s' "$remaining" '' | tr ' ' '-')"
+  printf -v done_bar '%*s' "$filled" ''
+  printf -v active_bar '%*s' "$active" ''
+  printf -v pending_bar '%*s' "$remaining" ''
+  done_bar="${done_bar// /#}"
+  active_bar="${active_bar// />}"
+  pending_bar="${pending_bar// /-}"
 
   printf '===> [%s%s%s] %d/%d %s (%d%%)\n' \
     "$done_bar" "$active_bar" "$pending_bar" "$step" "$total" "$label" "$percent"
@@ -112,14 +117,41 @@ finish_progress() {
     return 0
   fi
 
-  bar="$(printf '%*s' "$width" '' | tr ' ' '#')"
+  printf -v bar '%*s' "$width" ''
+  bar="${bar// /#}"
   printf '===> [%s] %d/%d Managed version update complete (100%%)\n' \
     "$bar" "$TOTAL_STEPS" "$TOTAL_STEPS"
 }
 
-mise_command() {
-  if command -v mise >/dev/null 2>&1; then
-    command -v mise
+resolve_command_from_path() {
+  local command_name="$1"
+  local candidate_dir
+  local candidate
+  local path_rest="$PATH"
+
+  while :; do
+    if [[ "$path_rest" == *:* ]]; then
+      candidate_dir="${path_rest%%:*}"
+      path_rest="${path_rest#*:}"
+    else
+      candidate_dir="$path_rest"
+      path_rest=""
+    fi
+    [[ -n "$candidate_dir" ]] || continue
+    candidate="${candidate_dir%/}/$command_name"
+    if [[ -x "$candidate" && ! -d "$candidate" ]]; then
+      REPLY="$candidate"
+      return 0
+    fi
+    [[ -n "$path_rest" ]] || break
+  done
+
+  return 1
+}
+
+resolve_mise_command() {
+  if resolve_command_from_path "mise"; then
+    MISE_BIN="$REPLY"
     return 0
   fi
 
@@ -127,14 +159,179 @@ mise_command() {
   return 1
 }
 
-nix_command() {
-  if command -v nix >/dev/null 2>&1; then
-    command -v nix
+resolve_nix_command() {
+  if resolve_command_from_path "nix"; then
+    NIX_BIN="$REPLY"
     return 0
   fi
 
   echo "ERROR: nix is not installed or not found in PATH" >&2
   return 1
+}
+
+temporary_directory_root() {
+  REPLY="${TMPDIR:-/tmp}"
+}
+
+create_unique_temp_directory() {
+  local temp_root="$1"
+  local prefix="$2"
+  local suffix_index=0
+  local candidate
+
+  while ((suffix_index < 1024)); do
+    candidate="$temp_root/${prefix}.$$.$suffix_index"
+    if mkdir "$candidate" 2>/dev/null; then
+      REPLY="$candidate"
+      return 0
+    fi
+    suffix_index=$((suffix_index + 1))
+  done
+
+  echo "ERROR: failed to create a temporary directory in $temp_root for $prefix" >&2
+  return 1
+}
+
+create_unique_temp_file() {
+  local temp_root="$1"
+  local prefix="$2"
+  local suffix_index=0
+  local candidate
+
+  while ((suffix_index < 1024)); do
+    candidate="$temp_root/${prefix}.$$.$suffix_index"
+    if [[ ! -e "$candidate" ]]; then
+      : > "$candidate"
+      REPLY="$candidate"
+      return 0
+    fi
+    suffix_index=$((suffix_index + 1))
+  done
+
+  echo "ERROR: failed to create a temporary file in $temp_root for $prefix" >&2
+  return 1
+}
+
+prepend_compiler_search_paths() {
+  local pkg_prefix="$1"
+
+  prepend_env_dir PKG_CONFIG_PATH "$pkg_prefix/lib/pkgconfig"
+  prepend_env_dir PKG_CONFIG_PATH "$pkg_prefix/share/pkgconfig"
+  prepend_flag_path CPPFLAGS "-I" "$pkg_prefix/include"
+  prepend_flag_path LDFLAGS "-L" "$pkg_prefix/lib"
+  prepend_env_dir LIBRARY_PATH "$pkg_prefix/lib"
+  prepend_env_dir C_INCLUDE_PATH "$pkg_prefix/include"
+  prepend_env_dir CPLUS_INCLUDE_PATH "$pkg_prefix/include"
+}
+
+prepend_paths_from_active_nix_profile() {
+  local nix_profile_path="$1"
+  local temp_root
+  local profile_list_file
+  local line
+  local store_path
+
+  [[ -e "$nix_profile_path" ]] || return 0
+
+  resolve_nix_command
+  temporary_directory_root
+  temp_root="$REPLY"
+  create_unique_temp_file "$temp_root" "dotfiles-nix-profile-list" || return 1
+  profile_list_file="$REPLY"
+
+  "$NIX_BIN" profile list --profile "$nix_profile_path" > "$profile_list_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      'Store paths:'*)
+        store_path="${line#Store paths:}"
+        store_path="${store_path#"${store_path%%[![:space:]]*}"}"
+        prepend_compiler_search_paths "$store_path"
+        ;;
+      [[:space:]]/nix/store/*)
+        store_path="${line#"${line%%[![:space:]]*}"}"
+        prepend_compiler_search_paths "$store_path"
+        ;;
+    esac
+  done < "$profile_list_file"
+
+  rm -f "$profile_list_file"
+}
+
+prepend_paths_from_repo_package_attr() {
+  local package_attr="$1"
+  local temp_root
+  local package_out_file
+  local package_out_path=""
+
+  resolve_nix_command
+  temporary_directory_root
+  temp_root="$REPLY"
+  create_unique_temp_file "$temp_root" "dotfiles-nix-package-out" || return 1
+  package_out_file="$REPLY"
+
+  if ! "$NIX_BIN" eval --raw "$REPO_ROOT#$package_attr.outPath" > "$package_out_file" 2>/dev/null; then
+    rm -f "$package_out_file"
+    return 0
+  fi
+
+  IFS= read -r package_out_path < "$package_out_file" || true
+  rm -f "$package_out_file"
+
+  [[ -n "$package_out_path" ]] || return 0
+  prepend_compiler_search_paths "$package_out_path"
+}
+
+prepend_paths_from_repo_package_envs() {
+  prepend_paths_from_repo_package_attr "dotfiles-cli-packages"
+
+  if [[ "$DOTFILES_PROFILE" == "full" || "$INSTALL_GUI_APPS" == "1" ]]; then
+    prepend_paths_from_repo_package_attr "dotfiles-full-packages"
+  fi
+}
+
+export_homebrew_prefix_if_available() {
+  local brew_path
+
+  [[ -n "${HOMEBREW_PREFIX:-}" ]] && return 0
+  dotfiles_find_homebrew >/dev/null 2>&1 || return 0
+  brew_path="$REPLY"
+  export HOMEBREW_PREFIX="${brew_path%/bin/brew}"
+}
+
+resolve_macos_sdk_root() {
+  local temp_root
+  local sdk_root_file
+
+  dotfiles_is_macos || return 1
+  temporary_directory_root
+  temp_root="$REPLY"
+  create_unique_temp_file "$temp_root" "dotfiles-sdk-root" || return 1
+  sdk_root_file="$REPLY"
+
+  if ! /usr/bin/xcrun --sdk macosx --show-sdk-path > "$sdk_root_file" 2>/dev/null; then
+    rm -f "$sdk_root_file"
+    return 1
+  fi
+
+  IFS= read -r REPLY < "$sdk_root_file" || true
+  rm -f "$sdk_root_file"
+  [[ -n "$REPLY" ]]
+}
+
+configure_macos_build_toolchain() {
+  local sdk_root
+
+  dotfiles_is_macos || return 0
+
+  export CC="/usr/bin/clang"
+  export CXX="/usr/bin/clang++"
+  export CPP="/usr/bin/clang -E"
+
+  if resolve_macos_sdk_root; then
+    sdk_root="$REPLY"
+    export SDKROOT="$sdk_root"
+  fi
 }
 
 run_repo_script() {
@@ -254,8 +451,18 @@ cleanup_temporary_dirs() {
 resolve_nix_apply_profile() {
   local profile_name="$DOTFILES_PROFILE"
 
+  if dotfiles_is_macos \
+    && [[ "$profile_name" == "full" ]] \
+    && [[ "$INSTALL_GUI_APPS" != "1" ]] \
+    && homebrew_fallback_has_gui_entries
+  then
+    warn "Managed update defaults to the CLI Nix profile on macOS when Homebrew-managed GUI fallback apps are configured. Pass --with-gui-apps to update them too."
+    REPLY="cli"
+    return 0
+  fi
+
   if ! dotfiles_is_macos || homebrew_command_exists || ! homebrew_is_required_for_profile "$profile_name"; then
-    print -r -- "$profile_name"
+    REPLY="$profile_name"
     return 0
   fi
 
@@ -272,11 +479,11 @@ resolve_nix_apply_profile() {
 
   if [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries; then
     warn "Homebrew is not installed; falling back to the CLI Nix profile for this managed update. Homebrew-managed GUI fallback apps will not be updated."
-    print -r -- "cli"
+    REPLY="cli"
     return 0
   fi
 
-  print -r -- "$profile_name"
+  REPLY="$profile_name"
 }
 
 activate_nix_environment() {
@@ -302,18 +509,18 @@ activate_nix_environment() {
     "/etc/profiles/per-user/$USER" \
     "/run/current-system/sw"
   do
-    prepend_env_dir PKG_CONFIG_PATH "$pkg_prefix/lib/pkgconfig"
-    prepend_env_dir PKG_CONFIG_PATH "$pkg_prefix/share/pkgconfig"
-    prepend_flag_path CPPFLAGS "-I" "$pkg_prefix/include"
-    prepend_flag_path LDFLAGS "-L" "$pkg_prefix/lib"
-    prepend_env_dir LIBRARY_PATH "$pkg_prefix/lib"
-    prepend_env_dir C_INCLUDE_PATH "$pkg_prefix/include"
-    prepend_env_dir CPLUS_INCLUDE_PATH "$pkg_prefix/include"
+    prepend_compiler_search_paths "$pkg_prefix"
   done
 
+  prepend_paths_from_active_nix_profile "$HOME/.local/state/nix/profiles/profile"
+  prepend_paths_from_repo_package_envs
+  configure_macos_build_toolchain
+
   if ! command -v pkg-config >/dev/null 2>&1 && command -v pkgconf >/dev/null 2>&1; then
-    TEMP_PKG_CONFIG_SHIM_DIR="$(mktemp -d)"
-    ln -sf "$(command -v pkgconf)" "$TEMP_PKG_CONFIG_SHIM_DIR/pkg-config"
+    temporary_directory_root
+    create_unique_temp_directory "$REPLY" "dotfiles-pkg-config" || return 1
+    TEMP_PKG_CONFIG_SHIM_DIR="$REPLY"
+    ln -sf "$commands[pkgconf]" "$TEMP_PKG_CONFIG_SHIM_DIR/pkg-config"
     prepend_path_if_dir "$TEMP_PKG_CONFIG_SHIM_DIR"
   fi
 }
@@ -429,7 +636,9 @@ parse_args() {
 
 update_mise_versions() {
   cleanup_stale_java_install_state
-  MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$(mise_command)" upgrade
+  resolve_mise_command
+  export_homebrew_prefix_if_available
+  MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$MISE_BIN" upgrade
 }
 
 sync_mise_templates() {
@@ -443,7 +652,8 @@ sync_home_mise_config() {
   local line
 
   mkdir -p "$target_dir"
-  tmp="$(mktemp)"
+  create_unique_temp_file "$target_dir" ".mise-config" || return 1
+  tmp="$REPLY"
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     printf '%s\n' "${line//__DOTFILES_REPO_ROOT__/$REPO_ROOT}"
@@ -454,51 +664,48 @@ sync_home_mise_config() {
 
 cleanup_stale_java_install_state() {
   local java_root="$HOME/.local/share/mise/installs/java"
+  local temp_root
+  local contents_list_file
   local contents_path
 
   [[ -d "$java_root" ]] || return 0
 
-  while IFS= read -r contents_path; do
-    [[ "$(basename "$(dirname "$contents_path")")" == zulu-* ]] || continue
+  temporary_directory_root
+  temp_root="$REPLY"
+  create_unique_temp_file "$temp_root" "dotfiles-java-contents" || return 1
+  contents_list_file="$REPLY"
+  find "$java_root" -mindepth 2 -maxdepth 2 -type d -name Contents 2>/dev/null > "$contents_list_file"
+
+  while IFS= read -r contents_path || [[ -n "$contents_path" ]]; do
+    [[ "${contents_path:h:t}" == zulu-* ]] || continue
     if [[ -d "$contents_path" && ! -L "$contents_path" ]]; then
       log "Removing stale Java app bundle directory: $contents_path"
       rm -rf "$contents_path"
     fi
-  done < <(find "$java_root" -mindepth 2 -maxdepth 2 -type d -name Contents 2>/dev/null)
-}
+  done < "$contents_list_file"
 
-describe_nix_input() {
-  case "$NIX_INPUT" in
-    all)
-      printf '%s\n' "all flake inputs"
-      ;;
-    *)
-      printf '%s\n' "$NIX_INPUT"
-      ;;
-  esac
+  rm -f "$contents_list_file"
 }
 
 update_nix_lockfile() {
-  local nix_bin
-  nix_bin="$(nix_command)"
+  resolve_nix_command
 
   (
     cd "$REPO_ROOT"
     if [[ "$NIX_INPUT" == "all" ]]; then
-      "$nix_bin" flake update
+      "$NIX_BIN" flake update
     else
       # Equivalent to: nix flake lock --update-input <input>
-      "$nix_bin" flake lock --update-input "$NIX_INPUT"
+      "$NIX_BIN" flake lock --update-input "$NIX_INPUT"
     fi
   )
 }
 
 apply_nix_configuration() {
-  local nix_apply_profile
   local args
 
-  nix_apply_profile="$(resolve_nix_apply_profile)"
-  args=("--profile" "$nix_apply_profile")
+  resolve_nix_apply_profile
+  args=("--profile" "$REPLY")
 
   if [[ "$INSTALL_GUI_APPS" == "1" ]]; then
     args+=("--with-gui-apps")
@@ -537,19 +744,26 @@ initialize_progress() {
 }
 
 main() {
+  local nix_input_description
+
   parse_args "$@"
   trap cleanup_temporary_dirs EXIT
   initialize_progress
+  if [[ "$NIX_INPUT" == "all" ]]; then
+    nix_input_description="all flake inputs"
+  else
+    nix_input_description="$NIX_INPUT"
+  fi
 
-  log "Updating managed versions (scope: $UPDATE_SCOPE, nix-input: $(describe_nix_input), profile: $DOTFILES_PROFILE, shell: $SELECTED_SHELL)"
+  log "Updating managed versions (scope: $UPDATE_SCOPE, nix-input: $nix_input_description, profile: $DOTFILES_PROFILE, shell: $SELECTED_SHELL)"
 
   case "$UPDATE_SCOPE" in
     lock)
-      start_step "Updating flake.lock ($(describe_nix_input))"
+      start_step "Updating flake.lock ($nix_input_description)"
       update_nix_lockfile
       ;;
     nix)
-      start_step "Updating flake.lock ($(describe_nix_input))"
+      start_step "Updating flake.lock ($nix_input_description)"
       update_nix_lockfile
       start_step "Applying updated Nix configuration"
       apply_nix_configuration
@@ -558,7 +772,7 @@ main() {
       run_mise_update_flow
       ;;
     all)
-      start_step "Updating flake.lock ($(describe_nix_input))"
+      start_step "Updating flake.lock ($nix_input_description)"
       update_nix_lockfile
       start_step "Applying updated Nix configuration"
       apply_nix_configuration

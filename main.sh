@@ -108,12 +108,10 @@ mise_command() {
 
 install_mise_tools() {
   log_step "Installing tools managed by mise"
-  # Passing these via the shell environment works reliably, while mise config [env] did not affect vfox-postgres configure options.
   CPPFLAGS="${CPPFLAGS:-}" \
     LDFLAGS="${LDFLAGS:-}" \
     LIBS="${LIBS:-}" \
     PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
-    POSTGRES_CONFIGURE_OPTIONS="${POSTGRES_CONFIGURE_OPTIONS:-}" \
     "$(mise_command)" install
   log_success "mise tools installed"
 }

@@ -405,6 +405,8 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_AUTO_UPDATE_MODULE" '/tmp/dotfiles-git-pull.log'
   assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'system.activationScripts.postActivation.text = lib.mkAfter'
   assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'removed legacy dotfiles cron block'
+  assert_contains "$DARWIN_AUTO_UPDATE_MODULE" '| sudo --user=${username} -- crontab -'
+  assert_not_contains "$DARWIN_AUTO_UPDATE_MODULE" 'stripped_cron'
   assert_not_exists "$REPO_ROOT/config/nix/modules/darwin.nix"
   assert_not_exists "$REPO_ROOT/config/nix/modules/home-manager.nix"
   assert_not_contains "$MAIN_SCRIPT" 'default_setup.sh'
@@ -428,19 +430,26 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'x86_64-linux-cli'
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
   assert_contains "$INSTALL_SCRIPT" 'command -v nix-rootless'
+  assert_contains "$INSTALL_SCRIPT" 'zmodload zsh/datetime'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"'
+  assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_ARCHIVE_EPOCH'
   assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_SUDO_LOCAL_PATH'
   assert_contains "$INSTALL_SCRIPT" 'DARWIN_SUDO_LOCAL_BACKUP_PATH'
+  assert_contains "$INSTALL_SCRIPT" 'archive_existing_home_manager_backups'
   assert_contains "$INSTALL_SCRIPT" 'backup_existing_darwin_sudo_local'
   assert_contains "$INSTALL_SCRIPT" 'sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"'
   assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake'
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
+  assert_contains "$INSTALL_SCRIPT" 'create_unique_temp_directory'
+  assert_contains "$INSTALL_SCRIPT" 'resolve_command_from_path'
+  assert_contains "$INSTALL_SCRIPT" 'path_rest="$PATH"'
   assert_contains "$INSTALL_SCRIPT" 'sudo env HOME=/var/root'
   assert_contains "$INSTALL_SCRIPT" 'scripts/remove_homebrew.sh'
   assert_contains "$INSTALL_SCRIPT" 'Run zsh scripts/install_homebrew.sh --profile $profile_name'
   assert_contains "$INSTALL_SCRIPT" '$REMOVE_HOMEBREW_SCRIPT" --apply --confirm-nix-ready'
   assert_contains "$INSTALL_SCRIPT" '--exclude result'
   assert_contains "$INSTALL_SCRIPT" '--exclude .agent'
+  assert_not_contains "$INSTALL_SCRIPT" '< <('
   assert_not_contains "$INSTALL_SCRIPT" '$(nix_args)'
   assert_not_contains "$INSTALL_SCRIPT" 'brew bundle'
   assert_not_contains "$INSTALL_SCRIPT" 'fallback.Brewfile'
@@ -515,6 +524,163 @@ EOF
   assert_contains "$log_file" 'darwin-rebuild:switch --flake'
   assert_file "$backup_file"
   assert_not_exists "$sudo_local"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_script_archives_existing_home_manager_backups_before_switch() {
+  local repo
+  local bin_dir
+  local home_dir
+  local config_dir
+  local log_file
+  local output_file
+  local old_zshrc_backup
+  local old_xdg_backup
+  local archived_zshrc_backup
+  local archived_xdg_backup
+
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  home_dir="$repo/home"
+  config_dir="$repo/xdg"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+  old_zshrc_backup="$home_dir/.zshrc.before-nix-darwin"
+  old_xdg_backup="$config_dir/mise/config.toml.before-nix-darwin"
+  archived_zshrc_backup="${old_zshrc_backup}.stale-1700000000"
+  archived_xdg_backup="${old_xdg_backup}.stale-1700000000"
+
+  mkdir -p "$repo/scripts/lib" "$bin_dir" "$home_dir" "$config_dir/mise"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+
+  cat > "$old_zshrc_backup" <<'EOF'
+legacy zshrc backup
+EOF
+  cat > "$old_xdg_backup" <<'EOF'
+legacy xdg backup
+EOF
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="1700000000" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
+
+  assert_output_contains "$output_file" "Archiving existing Home Manager backup $old_zshrc_backup to $archived_zshrc_backup before activation."
+  assert_output_contains "$output_file" "Archiving existing Home Manager backup $old_xdg_backup to $archived_xdg_backup before activation."
+  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake'
+  assert_file "$archived_zshrc_backup"
+  assert_file "$archived_xdg_backup"
+  assert_not_exists "$old_zshrc_backup"
+  assert_not_exists "$old_xdg_backup"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_script_handles_dirty_worktree_without_hanging() {
+  local repo
+  local bin_dir
+  local log_file
+  local output_file
+
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  cat > "$repo/flake.nix" <<'EOF'
+{ }
+EOF
+  cat > "$repo/flake.lock" <<'EOF'
+{ }
+EOF
+
+  cat > "$bin_dir/git" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "\$*" == *'rev-parse --is-inside-work-tree'* ]]; then
+  exit 0
+fi
+if [[ "\$*" == *'ls-files --others --exclude-standard --'* ]]; then
+  print -r -- "flake.lock"
+  exit 0
+fi
+print -r -- "git:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
+
+  assert_output_contains "$output_file" 'Flake path: /private/tmp/dotfiles-flake.'
+  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake path:/private/tmp/dotfiles-flake.'
+  assert_contains "$log_file" 'darwin-rebuild:switch --flake path:/private/tmp/dotfiles-flake.'
 
   rm -rf "$repo"
 }
@@ -673,6 +839,12 @@ test_install_homebrew_script_supports_required_profiles() {
   assert_contains "$HOMEBREW_LIB" 'dotfiles_find_homebrew'
   assert_contains "$HOMEBREW_LIB" '/opt/homebrew/bin/brew'
   assert_contains "$HOMEBREW_LIB" '/usr/local/bin/brew'
+  assert_not_contains "$HOMEBREW_LIB" '$(dotfiles_find_homebrew'
+  assert_not_contains "$HOMEBREW_LIB" '$(dirname "$brew_path")'
+  assert_contains "$HOMEBREW_LIB" 'path_rest="$PATH"'
+  assert_not_contains "$HOMEBREW_LIB" 'for candidate_dir in $PATH'
+  assert_not_contains "$REPO_ROOT/scripts/lib/setup_profile.sh" '$(dotfiles_default_profile)'
+  assert_not_contains "$REPO_ROOT/scripts/lib/setup_profile.sh" '$(uname -s)'
 }
 
 test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
@@ -1061,12 +1233,174 @@ test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
 test_codex_updates_without_homebrew_full_profile() {
   assert_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"codex"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"microsoft-office"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"onedrive"'
   assert_contains "$INSTALL_SCRIPT" 'Homebrew is required for this Nix profile'
   assert_contains "$INSTALL_SCRIPT" 'Use --cli-only'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_nix_apply_profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'falling back to the CLI Nix profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'warn "Homebrew is not installed; falling back to the CLI Nix profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'homebrew_fallback_has_cli_entries'
+}
+
+test_managed_update_script_skips_gui_profile_on_macos_unless_requested() {
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  repo="$(mktemp -d)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/update.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+
+  brews = [
+  ];
+
+  casks = [
+    "anki"
+  ];
+
+  vscode = [
+  ];
+
+  unsupportedUvPackages = [
+  ];
+}
+EOF
+  cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
+{ }
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+case "${1:-}" in
+  -s) print -r -- "Darwin" ;;
+  -m) print -r -- "arm64" ;;
+  *) print -r -- "Darwin" ;;
+esac
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/brew" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+exit 0
+EOF
+
+  chmod +x \
+    "$repo/scripts/update_managed_versions.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$bin_dir/uname" \
+    "$bin_dir/nix" \
+    "$bin_dir/brew"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix > "$repo/output.log"
+
+  assert_contains "$log_file" 'nix:flake update'
+  assert_contains "$log_file" 'nix_install:--profile cli'
+  assert_not_contains "$log_file" '--with-gui-apps'
+  assert_output_contains "$repo/output.log" 'Managed update defaults to the CLI Nix profile on macOS'
+
+  rm -rf "$repo"
+}
+
+test_managed_update_script_includes_gui_profile_when_requested() {
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  repo="$(mktemp -d)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/update.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+
+  brews = [
+  ];
+
+  casks = [
+    "anki"
+  ];
+
+  vscode = [
+  ];
+
+  unsupportedUvPackages = [
+  ];
+}
+EOF
+  cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
+{ }
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+case "${1:-}" in
+  -s) print -r -- "Darwin" ;;
+  -m) print -r -- "arm64" ;;
+  *) print -r -- "Darwin" ;;
+esac
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/brew" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+exit 0
+EOF
+
+  chmod +x \
+    "$repo/scripts/update_managed_versions.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$bin_dir/uname" \
+    "$bin_dir/nix" \
+    "$bin_dir/brew"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix --with-gui-apps > "$repo/output.log"
+
+  assert_contains "$log_file" 'nix:flake update'
+  assert_contains "$log_file" 'nix_install:--profile full --with-gui-apps'
+
+  rm -rf "$repo"
 }
 
 test_bash_templates_support_dynamic_shell_setup() {
@@ -1112,13 +1446,16 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
   assert_contains "$MISE_CONFIG" 'python = "3.13"'
   assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
-  assert_contains "$MISE_CONFIG" 'postgres = "16"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'
   assert_contains "$MISE_CONFIG" 'redis = "8.2"'
   assert_contains "$NIX_PACKAGE_NAMES_FILE" '"pkg-config"'
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"icu"'
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"icu.dev"'
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"openssl.out"'
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"openssl.dev"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"pkgconf"'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'MISE_GLOBAL_CONFIG_FILE'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$(mise_command)" upgrade'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$MISE_BIN" upgrade'
   assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix flake lock --update-input'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nixpkgs|home-manager|nix-darwin'
@@ -1134,10 +1471,36 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix_install.sh'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'activate_nix_environment'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'cleanup_stale_java_install_state'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '${contents_path:h:t}'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'create_unique_temp_directory'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'create_unique_temp_file'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_command_from_path'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'path_rest="$PATH"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_mise_command'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_nix_command'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'prepend_paths_from_repo_package_envs'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'export_homebrew_prefix_if_available'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'HOMEBREW_PREFIX="${brew_path%/bin/brew}"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'configure_macos_build_toolchain'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_macos_sdk_root'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'export CC="/usr/bin/clang"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'export SDKROOT="$sdk_root"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'prepend_paths_from_repo_package_attr "dotfiles-cli-packages"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'prepend_paths_from_repo_package_attr "dotfiles-full-packages"'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'PKG_CONFIG_PATH'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'pkg-config'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '< <('
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mktemp -d'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'tmp="$(mktemp)"'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '$commands[mise]'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '$commands[nix]'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'for candidate_dir in $PATH'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '$(basename "$(dirname "$contents_path")")'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '$(describe_nix_input)'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '$(mise_command)'
+  assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '$(nix_command)'
 
-  bash "$UPDATE_MANAGED_VERSIONS_SCRIPT" --help > "$output"
+  "$TEST_ZSH_BIN" "$UPDATE_MANAGED_VERSIONS_SCRIPT" --help > "$output"
   assert_output_contains "$output" '--shell zsh|bash'
   assert_output_contains "$output" '--cli-only'
   assert_output_contains "$output" '--only all|lock|nix|mise'
@@ -1155,6 +1518,8 @@ main() {
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
   test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch
+  test_nix_install_script_archives_existing_home_manager_backups_before_switch
+  test_nix_install_script_handles_dirty_worktree_without_hanging
   test_rootless_nix_install_script_supports_no_sudo_linux
   test_nix_portable_install_script_supports_no_sudo_nix_main_path
   test_remove_homebrew_script_is_explicit_and_dry_run_first
@@ -1167,6 +1532,8 @@ main() {
   test_apply_updates_replaces_existing_symlinked_dotfile
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
   test_codex_updates_without_homebrew_full_profile
+  test_managed_update_script_skips_gui_profile_on_macos_unless_requested
+  test_managed_update_script_includes_gui_profile_when_requested
   test_bash_templates_support_dynamic_shell_setup
   test_managed_update_script_updates_mise_and_nix
   echo "nix migration tests passed"

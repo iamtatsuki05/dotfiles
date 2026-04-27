@@ -1,6 +1,10 @@
 #!/usr/bin/zsh
 
-readonly DOTFILES_OS_NAME="$(uname -s)"
+if [[ "$OSTYPE" == darwin* ]]; then
+  readonly DOTFILES_OS_NAME="Darwin"
+else
+  readonly DOTFILES_OS_NAME="Linux"
+fi
 
 DOTFILES_PROFILE=""
 
@@ -10,9 +14,9 @@ dotfiles_is_macos() {
 
 dotfiles_default_profile() {
   if dotfiles_is_macos; then
-    echo "full"
+    REPLY="full"
   else
-    echo "cli"
+    REPLY="cli"
   fi
 }
 
@@ -90,6 +94,9 @@ dotfiles_parse_profile_args() {
     shift
   done
 
-  DOTFILES_PROFILE="${DOTFILES_PROFILE:-$(dotfiles_default_profile)}"
+  if [[ -z "$DOTFILES_PROFILE" ]]; then
+    dotfiles_default_profile
+    DOTFILES_PROFILE="$REPLY"
+  fi
   dotfiles_validate_profile "$DOTFILES_PROFILE"
 }

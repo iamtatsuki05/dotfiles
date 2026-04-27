@@ -1,7 +1,10 @@
 [
   "act"
   "icu"
+  "icu.dev"
   "openssl"
+  "openssl.out"
+  "openssl.dev"
   "readline"
   "agent-browser"
   "arp-scan"

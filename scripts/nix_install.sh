@@ -1,9 +1,10 @@
 #!/usr/bin/zsh
 
 set -euo pipefail
+zmodload zsh/datetime
 
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly SCRIPT_DIR="${0:A:h}"
+readonly REPO_ROOT="${SCRIPT_DIR:h}"
 readonly REMOVE_HOMEBREW_SCRIPT="$SCRIPT_DIR/remove_homebrew.sh"
 readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
 readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
@@ -11,6 +12,7 @@ readonly -a NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command fl
 readonly HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"
 readonly DARWIN_SUDO_LOCAL_PATH="${DOTFILES_DARWIN_SUDO_LOCAL_PATH:-/etc/pam.d/sudo_local}"
 readonly DARWIN_SUDO_LOCAL_BACKUP_PATH="${DARWIN_SUDO_LOCAL_PATH}.${HOME_MANAGER_BACKUP_EXTENSION}"
+readonly HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="${DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH:-$EPOCHSECONDS}"
 
 source "$SCRIPT_DIR/lib/homebrew.sh"
 
@@ -92,7 +94,10 @@ parse_args() {
     shift
   done
 
-  PROFILE="${PROFILE:-$(default_profile)}"
+  if [[ -z "$PROFILE" ]]; then
+    default_profile
+    PROFILE="$REPLY"
+  fi
   case "$PROFILE" in
     full|cli)
       ;;
@@ -103,41 +108,69 @@ parse_args() {
   esac
 }
 
-os_name() {
-  uname -s
+is_macos() {
+  [[ "$OSTYPE" == darwin* ]]
 }
 
-is_macos() {
-  [[ "$(os_name)" == "Darwin" ]]
+resolve_command_from_path() {
+  local command_name="$1"
+  local candidate_dir
+  local candidate
+  local path_rest="$PATH"
+
+  while :; do
+    if [[ "$path_rest" == *:* ]]; then
+      candidate_dir="${path_rest%%:*}"
+      path_rest="${path_rest#*:}"
+    else
+      candidate_dir="$path_rest"
+      path_rest=""
+    fi
+    [[ -n "$candidate_dir" ]] || continue
+    candidate="${candidate_dir%/}/$command_name"
+    if [[ -x "$candidate" && ! -d "$candidate" ]]; then
+      REPLY="$candidate"
+      return 0
+    fi
+    [[ -n "$path_rest" ]] || break
+  done
+
+  return 1
 }
 
 default_profile() {
   if is_macos; then
-    echo "full"
+    REPLY="full"
   else
-    echo "cli"
+    REPLY="cli"
   fi
 }
 
 system_attr() {
-  local machine
-  machine="$(uname -m)"
+  local os_name machine
 
-  case "$(os_name):$machine" in
+  if is_macos; then
+    os_name="Darwin"
+  else
+    os_name="Linux"
+  fi
+  machine="${CPUTYPE:-${MACHTYPE%%-*}}"
+
+  case "$os_name:$machine" in
     Darwin:arm64|Darwin:aarch64)
-      echo "aarch64-darwin"
+      REPLY="aarch64-darwin"
       ;;
     Darwin:x86_64)
-      echo "x86_64-darwin"
+      REPLY="x86_64-darwin"
       ;;
     Linux:aarch64|Linux:arm64)
-      echo "aarch64-linux"
+      REPLY="aarch64-linux"
       ;;
     Linux:x86_64|Linux:amd64)
-      echo "x86_64-linux"
+      REPLY="x86_64-linux"
       ;;
     *)
-      echo "ERROR: unsupported system: $(os_name) $machine" >&2
+      echo "ERROR: unsupported system: $os_name $machine" >&2
       return 1
       ;;
   esac
@@ -157,21 +190,19 @@ selected_profile() {
       echo "ERROR: GUI apps require macOS, DISPLAY, or WAYLAND_DISPLAY. Use --cli-only for CLI setup." >&2
       return 1
     fi
-    echo "full"
+    REPLY="full"
     return
   fi
 
-  echo "cli"
+  REPLY="cli"
 }
 
 nix_command() {
-  if command -v nix >/dev/null 2>&1; then
-    command -v nix
+  if resolve_command_from_path "nix"; then
     return
   fi
 
-  if command -v nix-rootless >/dev/null 2>&1; then
-    command -v nix-rootless
+  if resolve_command_from_path "nix-rootless"; then
     return
   fi
 
@@ -250,6 +281,43 @@ cleanup_flake_worktree() {
   fi
 }
 
+next_home_manager_backup_archive_path() {
+  local backup_path="$1"
+  local archive_path="${backup_path}.stale-${HOME_MANAGER_BACKUP_ARCHIVE_EPOCH}"
+  local suffix_index=0
+
+  while [[ -e "$archive_path" || -L "$archive_path" ]]; do
+    suffix_index=$((suffix_index + 1))
+    archive_path="${backup_path}.stale-${HOME_MANAGER_BACKUP_ARCHIVE_EPOCH}-${suffix_index}"
+  done
+
+  REPLY="$archive_path"
+}
+
+archive_existing_home_manager_backups() {
+  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local -a stale_backups=()
+  local backup_path
+  local archive_path
+
+  (( DRY_RUN )) && return 0
+
+  setopt local_options null_glob glob_dots
+  stale_backups+=("$HOME"/.*."$HOME_MANAGER_BACKUP_EXTENSION"(N))
+  if [[ -d "$config_dir" ]]; then
+    stale_backups+=("$config_dir"/**/*."$HOME_MANAGER_BACKUP_EXTENSION"(N))
+  fi
+
+  for backup_path in "${stale_backups[@]}"; do
+    [[ -e "$backup_path" || -L "$backup_path" ]] || continue
+
+    next_home_manager_backup_archive_path "$backup_path"
+    archive_path="$REPLY"
+    echo "Archiving existing Home Manager backup $backup_path to $archive_path before activation."
+    mv "$backup_path" "$archive_path"
+  done
+}
+
 backup_existing_darwin_sudo_local() {
   if ! is_macos || (( DRY_RUN )); then
     return 0
@@ -268,26 +336,66 @@ backup_existing_darwin_sudo_local() {
   sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"
 }
 
+temporary_directory_root() {
+  if is_macos; then
+    REPLY="/private/tmp"
+  else
+    REPLY="${TMPDIR:-/tmp}"
+  fi
+}
+
+create_unique_temp_directory() {
+  local temp_root="$1"
+  local prefix="$2"
+  local suffix_index=0
+  local candidate
+
+  while ((suffix_index < 1024)); do
+    candidate="$temp_root/${prefix}.$$.$suffix_index"
+    if mkdir "$candidate" 2>/dev/null; then
+      REPLY="$candidate"
+      return 0
+    fi
+    suffix_index=$((suffix_index + 1))
+  done
+
+  echo "ERROR: failed to create a temporary directory in $temp_root for $prefix" >&2
+  return 1
+}
+
 has_untracked_nix_sources() {
+  local temp_root
+  local temp_dir
+  local untracked_file
+  local untracked_entry
+
   git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-  [[ -n "$(git -C "$REPO_ROOT" ls-files --others --exclude-standard -- flake.nix flake.lock config/nix scripts/nix_install.sh scripts/remove_homebrew.sh)" ]]
+  temporary_directory_root
+  temp_root="$REPLY"
+  create_unique_temp_directory "$temp_root" "dotfiles-untracked" || return 1
+  temp_dir="$REPLY"
+  untracked_file="$temp_dir/list"
+
+  git -C "$REPO_ROOT" ls-files --others --exclude-standard -- \
+    flake.nix flake.lock config/nix scripts/nix_install.sh scripts/remove_homebrew.sh > "$untracked_file"
+  IFS= read -r untracked_entry < "$untracked_file" || true
+  rm -rf "$temp_dir"
+
+  [[ -n "$untracked_entry" ]]
 }
 
 prepare_flake_path() {
   local temp_root
 
   if ! has_untracked_nix_sources; then
-    echo "$REPO_ROOT"
+    REPLY="$REPO_ROOT"
     return
   fi
 
-  if is_macos; then
-    temp_root="/private/tmp"
-  else
-    temp_root="${TMPDIR:-/tmp}"
-  fi
-
-  NIX_FLAKE_WORKTREE="$(mktemp -d "$temp_root/dotfiles-flake.XXXXXX")"
+  temporary_directory_root
+  temp_root="$REPLY"
+  create_unique_temp_directory "$temp_root" "dotfiles-flake" || return 1
+  NIX_FLAKE_WORKTREE="$REPLY"
   if command -v rsync >/dev/null 2>&1; then
     rsync -a \
       --exclude .git \
@@ -305,25 +413,23 @@ prepare_flake_path() {
       "$NIX_FLAKE_WORKTREE/dotfiles/.agent"
     find "$NIX_FLAKE_WORKTREE" -maxdepth 1 \( -name result -o -name 'result-*' \) -exec rm -rf {} +
   fi
-  echo "$NIX_FLAKE_WORKTREE"
+  REPLY="$NIX_FLAKE_WORKTREE"
 }
 
 flake_url() {
-  local flake_path="$1"
-  echo "path:$flake_path"
+  REPLY="path:$1"
 }
 
 flake_attr() {
   local profile_name="$1"
-  local system_name
 
   if [[ -n "$HOST_ATTR" ]]; then
-    echo "$HOST_ATTR"
+    REPLY="$HOST_ATTR"
     return
   fi
 
-  system_name="$(system_attr)"
-  echo "${system_name}-${profile_name}"
+  system_attr
+  REPLY="${REPLY}-${profile_name}"
 }
 
 run_darwin_rebuild() {
@@ -331,7 +437,8 @@ run_darwin_rebuild() {
   local nix_bin="$2"
   local flake_path="$3"
   local flake_ref
-  flake_ref="$(flake_url "$flake_path")"
+  flake_url "$flake_path"
+  flake_ref="$REPLY"
 
   if (( DRY_RUN )); then
     if command -v darwin-rebuild >/dev/null 2>&1; then
@@ -354,7 +461,8 @@ run_home_manager() {
   local nix_bin="$2"
   local flake_path="$3"
   local flake_ref
-  flake_ref="$(flake_url "$flake_path")"
+  flake_url "$flake_path"
+  flake_ref="$REPLY"
 
   if (( DRY_RUN )); then
     if command -v home-manager >/dev/null 2>&1; then
@@ -381,26 +489,32 @@ remove_homebrew_after_switch() {
 }
 
 main() {
-  parse_args "$@"
-
   local nix_bin
   local profile_name
   local attr
   local flake_path
-  nix_bin="$(nix_command)"
-  profile_name="$(selected_profile)"
+  parse_args "$@"
+
+  nix_command
+  nix_bin="$REPLY"
+  selected_profile
+  profile_name="$REPLY"
   ensure_homebrew_available_for_profile "$profile_name"
-  attr="$(flake_attr "$profile_name")"
-  flake_path="$(prepare_flake_path)"
+  flake_attr "$profile_name"
+  attr="$REPLY"
+  prepare_flake_path
+  flake_path="$REPLY"
 
   echo "Nix profile: $profile_name"
   echo "Flake output: $attr"
   echo "Flake path: $flake_path"
 
   if is_macos; then
+    archive_existing_home_manager_backups
     backup_existing_darwin_sudo_local
     run_darwin_rebuild "$attr" "$nix_bin" "$flake_path"
   else
+    archive_existing_home_manager_backups
     run_home_manager "$attr" "$nix_bin" "$flake_path"
   fi
 
