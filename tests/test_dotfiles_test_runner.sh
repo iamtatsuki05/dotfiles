@@ -41,6 +41,53 @@ assert_output_contains() {
   grep -Fq -- "$expected" "$output_file" || fail "expected output to contain: $expected"
 }
 
+make_temp_dir() {
+  local candidate
+  local attempts=0
+
+  while (( attempts < 10 )); do
+    candidate="${TMPDIR:-/tmp}/dotfiles-runner-test-$$-$RANDOM-$RANDOM"
+    if mkdir "$candidate" 2>/dev/null; then
+      REPLY="$candidate"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+  done
+
+  fail "failed to create temporary directory"
+}
+
+write_fixture_zsh_script() {
+  local file_path="$1"
+  local message="$2"
+
+  mkdir -p "${file_path:h}"
+  {
+    print -r -- "#!$TEST_ZSH_BIN"
+    print -r -- "set -euo pipefail"
+    print -r -- "print -r -- ${(qqq)message}"
+  } > "$file_path"
+  chmod +x "$file_path"
+}
+
+create_runner_fixture() {
+  local repo="$1"
+
+  mkdir -p "$repo/scripts" "$repo/tests"
+  cp "$TEST_RUNNER" "$repo/tests/run.sh"
+  chmod +x "$repo/tests/run.sh"
+
+  write_fixture_zsh_script "$repo/main.sh" "main"
+  write_fixture_zsh_script "$repo/scripts/helper.sh" "helper"
+  write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
+  write_fixture_zsh_script "$repo/tests/test_chezmoi_migration.sh" "unit:chezmoi"
+  write_fixture_zsh_script "$repo/tests/test_dotfiles_test_runner.sh" "unit:runner"
+  write_fixture_zsh_script "$repo/tests/test_nix_migration.sh" "unit:nix"
+  write_fixture_zsh_script "$repo/tests/test_chezmoi_source_state.sh" "source-state"
+  write_fixture_zsh_script "$repo/tests/test_chezmoi_rendered_home.sh" "chezmoi-render-test-ran"
+  print -r -- "{}" > "$repo/flake.nix"
+}
+
 test_test_runner_exists_and_lists_checks() {
   local output
   output="$(mktemp)"
@@ -61,7 +108,63 @@ test_test_runner_exists_and_lists_checks() {
   assert_output_contains "$output" "chezmoi-render"
   assert_output_contains "$output" "nix-static"
 
+  "$TEST_ZSH_BIN" "$LEGACY_TEST_RUNNER" --list > "$output"
+  assert_output_contains "$output" "syntax"
+  assert_output_contains "$output" "nix-static"
+
   rm -f "$output"
+}
+
+test_test_runner_syntax_only_stops_before_unit_tests() {
+  local repo
+  local output
+
+  make_temp_dir
+  repo="${REPLY:A}"
+  output="$repo/output.log"
+  create_runner_fixture "$repo"
+
+  "$TEST_ZSH_BIN" "$repo/tests/run.sh" --syntax-only > "$output"
+
+  assert_output_contains "$output" "===> Running zsh syntax checks"
+  assert_not_contains "$output" "unit:agent"
+  assert_not_contains "$output" "source-state"
+  assert_not_contains "$output" "chezmoi-render-test-ran"
+
+  rm -rf "$repo"
+}
+
+test_test_runner_skip_chezmoi_keeps_fast_checks() {
+  local repo
+  local bin_dir
+  local nix_log
+  local output
+
+  make_temp_dir
+  repo="${REPLY:A}"
+  bin_dir="$repo/bin"
+  nix_log="$repo/nix.log"
+  output="$repo/output.log"
+  create_runner_fixture "$repo"
+  mkdir -p "$bin_dir"
+  {
+    print -r -- "#!$TEST_ZSH_BIN"
+    print -r -- "set -euo pipefail"
+    print -r -- "print -r -- \"nix-static:\$*\" >> ${(qqq)nix_log}"
+  } > "$bin_dir/nix-instantiate"
+  chmod +x "$bin_dir/nix-instantiate"
+
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$repo/tests/run.sh" --skip-chezmoi > "$output"
+
+  assert_output_contains "$output" "unit:agent"
+  assert_output_contains "$output" "unit:nix"
+  assert_output_contains "$output" "source-state"
+  assert_output_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
+  assert_output_contains "$output" "dotfiles tests passed"
+  assert_not_contains "$output" "chezmoi-render-test-ran"
+  assert_contains "$nix_log" "nix-static:--parse $repo/flake.nix"
+
+  rm -rf "$repo"
 }
 
 test_mise_task_runs_test_runner_from_repo_root() {
@@ -128,6 +231,8 @@ test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
 
 main() {
   test_test_runner_exists_and_lists_checks
+  test_test_runner_syntax_only_stops_before_unit_tests
+  test_test_runner_skip_chezmoi_keeps_fast_checks
   test_mise_task_runs_test_runner_from_repo_root
   test_mise_tasks_include_nix_migration_flow
   test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu

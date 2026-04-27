@@ -17,6 +17,11 @@ assert_file() {
   [[ -f "$file_path" ]] || fail "expected file: $file_path"
 }
 
+assert_not_exists() {
+  local target_path="$1"
+  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
+}
+
 assert_contains() {
   local file_path="$1"
   local expected="$2"
@@ -152,6 +157,35 @@ test_chezmoi_apply_can_mark_chezmoi_as_default_manager() {
   rm -rf "$repo"
 }
 
+test_chezmoi_dry_run_does_not_write_default_manager_marker() {
+  local repo
+  local bin_dir
+  local log_file
+  local manager_file
+  local profile_file
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  log_file="$repo/chezmoi.log"
+  manager_file="$repo/manager"
+  profile_file="$repo/profile"
+  create_chezmoi_source_repo "$repo"
+  create_fake_chezmoi "$bin_dir" "$log_file"
+
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" \
+    --repo-root "$repo" \
+    --manager-file "$manager_file" \
+    --profile-file "$profile_file" \
+    --cli-only \
+    --dry-run \
+    --mark-default >/dev/null
+
+  assert_contains "$log_file" "-S $repo apply -n -v"
+  assert_not_exists "$manager_file"
+  assert_not_exists "$profile_file"
+
+  rm -rf "$repo"
+}
+
 test_chezmoi_apply_passes_profile_to_templates() {
   local repo
   local bin_dir
@@ -214,6 +248,7 @@ test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path() {
 main() {
   test_chezmoi_apply_uses_repo_source_in_dry_run
   test_chezmoi_apply_can_mark_chezmoi_as_default_manager
+  test_chezmoi_dry_run_does_not_write_default_manager_marker
   test_chezmoi_apply_passes_profile_to_templates
   test_chezmoi_apply_falls_back_to_mise_install_when_chezmoi_is_not_on_path
   test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path
