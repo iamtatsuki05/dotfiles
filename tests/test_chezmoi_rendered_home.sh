@@ -82,10 +82,12 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   local temp_dir
   local temp_home
   local temp_config
+  local bash_output
 
   temp_dir="$(mktemp -d)"
   temp_home="$temp_dir/home"
   temp_config="$temp_dir/chezmoi.toml"
+  bash_output="$temp_dir/bash-output"
   mkdir -p "$temp_home"
   : > "$temp_config"
 
@@ -121,6 +123,30 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_contains "$temp_home/.config/mise/config.toml" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/mise/config.toml" "__DOTFILES_REPO_ROOT__"
   assert_file "$temp_home/.config/shell/secrets.env"
+
+  if command -v bash >/dev/null 2>&1; then
+    mkdir -p "$temp_home/.local/bin"
+
+    HOME="$temp_home" \
+      XDG_CONFIG_HOME="$temp_home/.config" \
+      USER=dotfiles-test \
+      PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
+      bash --noprofile --norc -c '
+        . "$HOME/.bash_profile"
+        printf "dotfiles_shell_name=%s\n" "$dotfiles_shell_name"
+        printf "DOTFILES_REPO_ROOT=%s\n" "$DOTFILES_REPO_ROOT"
+        case ":$PATH:" in
+          *":$HOME/.local/bin:"*) printf "local_bin_in_path=yes\n" ;;
+          *) printf "local_bin_in_path=no\n" ;;
+        esac
+      ' > "$bash_output"
+
+    assert_contains "$bash_output" "dotfiles_shell_name=bash"
+    assert_contains "$bash_output" "DOTFILES_REPO_ROOT=$REPO_ROOT"
+    assert_contains "$bash_output" "local_bin_in_path=yes"
+  else
+    echo "SKIP: bash is not installed"
+  fi
 
   rm -rf "$temp_dir"
 }

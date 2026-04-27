@@ -110,6 +110,21 @@ assert_output_contains() {
   grep -Fq -- "$expected" "$output_file" || fail "expected output to contain: $expected"
 }
 
+is_test_macos() {
+  [[ "$OSTYPE" == darwin* ]]
+}
+
+skip_unless_macos() {
+  local test_name="$1"
+
+  if is_test_macos; then
+    return 0
+  fi
+
+  echo "SKIP: $test_name requires macOS"
+  return 1
+}
+
 create_fixture_repo() {
   local repo="$1"
 
@@ -483,6 +498,8 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
 }
 
 test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local bin_dir
   local etc_dir
@@ -558,6 +575,8 @@ EOF
 }
 
 test_nix_install_script_archives_existing_home_manager_backups_before_switch() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local bin_dir
   local home_dir
@@ -641,6 +660,8 @@ EOF
 }
 
 test_nix_install_script_handles_dirty_worktree_without_hanging() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local bin_dir
   local log_file
@@ -915,6 +936,8 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
 }
 
 test_main_script_runs_homebrew_before_nix_setup() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local home_dir
   local bin_dir
@@ -1408,6 +1431,7 @@ test_managed_update_script_includes_gui_profile_when_requested() {
   local home_dir
   local bin_dir
   local log_file
+  local expected_nix_install_args
 
   make_temp_dir
 
@@ -1475,11 +1499,17 @@ EOF
     "$bin_dir/nix" \
     "$bin_dir/brew"
 
-  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  if [[ "$OSTYPE" == darwin* ]]; then
+    expected_nix_install_args='nix_install:--profile full --with-gui-apps'
+  else
+    expected_nix_install_args='nix_install:--profile cli --with-gui-apps'
+  fi
+
+  DISPLAY="${DISPLAY:-:99}" HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix --with-gui-apps > "$repo/output.log"
 
   assert_contains "$log_file" 'nix:flake update'
-  assert_contains "$log_file" 'nix_install:--profile full --with-gui-apps'
+  assert_contains "$log_file" "$expected_nix_install_args"
 
   rm -rf "$repo"
 }
