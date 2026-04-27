@@ -36,10 +36,68 @@
       forAllSystems = f:
         lib.genAttrs systems (system: f system);
 
+      packageVersionOverrides = {
+        # BEGIN managed by scripts/manage_nix_package_version_override.sh
+        codex = {
+          owner = "openai";
+          repo = "codex";
+          version = "0.125.0";
+          tag = "rust-v0.125.0";
+          srcHash = "sha256-q175gmBw+edb5+w8TM36yUeFsyIdB1/IwWzbxBbBmoA=";
+          cargoHash = "sha256-fDVlj7zAZnwP9YBaYaSQZXYYWrBm5IEyLT9zoorvzFg=";
+          sourceRoot = "codex-rs";
+        };
+        # END managed by scripts/manage_nix_package_version_override.sh
+      };
+
+      codexOverlay = final: prev:
+        if packageVersionOverrides ? codex then
+          let
+            override = packageVersionOverrides.codex;
+            src = final.fetchFromGitHub {
+              owner = override.owner;
+              repo = override.repo;
+              tag = override.tag;
+              hash = override.srcHash;
+            };
+            sourceRoot = "${src.name}/${override.sourceRoot}";
+          in
+          {
+            codex = prev.codex.overrideAttrs (old: {
+              version = override.version;
+              inherit src sourceRoot;
+              cargoHash = override.cargoHash;
+              cargoBuildFlags = [
+                "--package"
+                "codex-cli"
+              ];
+              cargoCheckFlags = [
+                "--package"
+                "codex-cli"
+              ];
+              postPatch = (old.postPatch or "") + ''
+                substituteInPlace $cargoDepsCopy/*/webrtc-sys-*/build.rs \
+                  --replace-fail "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+
+                substituteInPlace Cargo.toml \
+                  --replace-fail 'lto = "fat"' "" \
+                  --replace-fail 'codegen-units = 1' ""
+              '';
+              meta = old.meta // {
+                changelog = "https://raw.githubusercontent.com/${override.owner}/${override.repo}/refs/tags/${override.tag}/CHANGELOG.md";
+              };
+            });
+          }
+        else
+          { };
+
       mkPkgs = system:
         import nixpkgs {
           inherit system;
           config.allowUnfree = true;
+          overlays = [
+            codexOverlay
+          ];
         };
 
       homeDirectoryFor = system:
@@ -112,6 +170,8 @@
         };
     in
     {
+      overlays.default = codexOverlay;
+
       packages = forAllSystems packageSetFor;
 
       homeConfigurations = {

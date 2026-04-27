@@ -143,6 +143,12 @@ mise run nix-upgrade
 # codex などを含む nixpkgs だけ更新して適用
 mise run nixpkgs-upgrade
 
+# 対応している Nix tool を nixpkgs master の最新版に明示 pin
+mise run nix-pin-latest -- codex
+
+# 明示 pin を外して、lock された nixpkgs input の版に戻す
+mise run nix-unpin -- codex
+
 # mise 管理の tool だけ現在の release line 内で更新
 mise run mise-upgrade
 
@@ -159,6 +165,7 @@ mise run nix-mise-upgrade -- --with-gui-apps
 `mise run nix-mise-upgrade` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。macOS で Homebrew 管理の GUI fallback app が定義されている場合、既定では CLI Nix profile を適用し、GUI fallback app の更新は行いません。GUI fallback app も更新したいときだけ `--with-gui-apps` を明示してください。重いので、通常は `codex` など Nix 管理の tool だけなら `mise run nix-upgrade`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-upgrade`、`node` や `python` など mise 管理の tool だけなら `mise run mise-upgrade` を使ってください。`node@22` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
 この script は記事の `nix flake lock --update-input ...` 方式に寄せており、`nixpkgs` / `home-manager` / `nix-darwin` を個別更新できます。実行中は段階ベースの progress bar を出すので、今どのフェーズか分かります。
 macOS で Homebrew が未導入でも、GUI fallback entry だけが残っている場合は、この task は CLI Nix profile にフォールバックして `codex` などの CLI tool を更新します。
+特定の Nix tool だけを lock された `nixpkgs` より新しく保ちたい場合は、`mise run nix-pin-latest -- TOOL` を使います。これは `flake.nix` 内の managed override block を更新します。現状の自動更新対応は `codex` です。pin を変えた後は `mise run nix-upgrade` で宣言的に反映してください。
 
 [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) または [config/nix/mas-apps.nix](config/nix/mas-apps.nix) に entry がある間は、macOS の fallback formula、cask、tap、VS Code extension、Mac App Store app のために Homebrew が必要です。formula は CLI profile でも適用し、cask、VS Code extension、Mac App Store app は `--with-gui-apps` の時だけ適用します。これらが空で、Nix 適用後に問題なければ Homebrew は明示的に削除できます。これは破壊的操作なので dry-run でコマンドを確認してから実行します。
 

@@ -168,6 +168,16 @@ description = "nix-darwin inputだけ更新してNix構成を適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"
 
+[tasks.nix-pin-latest]
+description = "指定した Nix tool を nixpkgs master の最新版に pin する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/manage_nix_package_version_override.sh pin-latest"
+
+[tasks.nix-unpin]
+description = "指定した Nix tool の明示 pin を外す"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/manage_nix_package_version_override.sh unpin"
+
 [tasks.mise-upgrade]
 description = "miseで管理しているものだけを現在のrelease line内で更新する"
 dir = "__DOTFILES_REPO_ROOT__"

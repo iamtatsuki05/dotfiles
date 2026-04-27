@@ -104,6 +104,10 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-darwin-upgrade]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-pin-latest]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/manage_nix_package_version_override.sh pin-latest"'
+  assert_contains "$MISE_CONFIG" "[tasks.nix-unpin]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/manage_nix_package_version_override.sh unpin"'
   assert_contains "$MISE_CONFIG" "[tasks.mise-upgrade]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-mise-upgrade]"

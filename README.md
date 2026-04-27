@@ -145,6 +145,12 @@ mise run nix-upgrade
 # Update and apply only nixpkgs-backed packages such as codex
 mise run nixpkgs-upgrade
 
+# Explicitly pin a supported Nix tool to the latest version published in nixpkgs master
+mise run nix-pin-latest -- codex
+
+# Remove the explicit pin and go back to the version from the locked nixpkgs input
+mise run nix-unpin -- codex
+
 # Update only mise-managed tools within the current release lines
 mise run mise-upgrade
 
@@ -161,6 +167,7 @@ mise run nix-mise-upgrade -- --with-gui-apps
 `mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. Use `mise run nix-upgrade` when you only need Nix-managed tools such as `codex`, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
 The helper script now also supports input-scoped updates inspired by `nix flake lock --update-input ...`, and it prints a stage-based progress bar so you can see whether it is updating the lockfile, applying Nix, or upgrading `mise` tools.
 If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so CLI tools such as `codex` can still be updated.
+If you need one fast-moving Nix tool to stay newer than your locked `nixpkgs` input, use `mise run nix-pin-latest -- TOOL`. This updates the managed override block in `flake.nix`. Today the auto-update command supports `codex`. After changing a pin, run `mise run nix-upgrade` to apply it declaratively.
 
 If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) or [config/nix/mas-apps.nix](config/nix/mas-apps.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, VS Code extensions, or Mac App Store apps. Formulae are applied even in the CLI profile. Casks, VS Code extensions, and Mac App Store apps are applied only with `--with-gui-apps`. If those files are empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
 
