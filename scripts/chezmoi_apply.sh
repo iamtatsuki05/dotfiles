@@ -113,7 +113,8 @@ parse_args() {
     if [[ -f "$PROFILE_FILE" ]]; then
       DOTFILES_PROFILE="$(sed -n '1p' "$PROFILE_FILE")"
     else
-      DOTFILES_PROFILE="$(dotfiles_default_profile)"
+      dotfiles_default_profile
+      DOTFILES_PROFILE="$REPLY"
     fi
   fi
 

@@ -99,15 +99,25 @@ test_chezmoi_apply_uses_repo_source_in_dry_run() {
   local repo
   local bin_dir
   local log_file
+  local xdg_config_home
+  local expected_profile
   repo="$(mktemp -d)"
   bin_dir="$repo/bin"
   log_file="$repo/chezmoi.log"
+  xdg_config_home="$repo/xdg"
   create_chezmoi_source_repo "$repo"
   create_fake_chezmoi "$bin_dir" "$log_file"
 
-  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --dry-run >/dev/null
+  if [[ "$OSTYPE" == darwin* ]]; then
+    expected_profile="full"
+  else
+    expected_profile="cli"
+  fi
+
+  XDG_CONFIG_HOME="$xdg_config_home" PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --dry-run >/dev/null
 
   assert_contains "$log_file" "-S $repo apply -n -v"
+  assert_contains "$log_file" "DOTFILES_PROFILE=$expected_profile"
 
   rm -rf "$repo"
 }
