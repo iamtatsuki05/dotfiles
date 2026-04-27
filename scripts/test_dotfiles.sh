@@ -86,7 +86,6 @@ run_unit_tests() {
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_migration.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_dotfiles_test_runner.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_nix_migration.sh"
-  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_setup_config.sh"
 }
 
 run_source_state_tests() {

@@ -29,20 +29,6 @@ assert_same_file() {
   cmp "$expected" "$actual" >/dev/null || fail "expected $actual to match $expected"
 }
 
-assert_same_file_or_home_fallback() {
-  local expected="$1"
-  local home_relative_path="$2"
-  local actual="$3"
-
-  assert_file "$actual"
-
-  if [[ -f "$expected" ]] && cmp "$expected" "$actual" >/dev/null; then
-    return
-  fi
-
-  assert_same_file "$HOME/$home_relative_path" "$actual"
-}
-
 assert_contains() {
   local file_path="$1"
   local expected="$2"
@@ -57,18 +43,18 @@ test_chezmoi_root_points_to_home() {
 }
 
 test_copied_source_state_matches_current_sources() {
-  assert_same_file_or_home_fallback "$REPO_ROOT/dotfiles/.zshrc" ".zshrc" "$REPO_ROOT/home/dot_zshrc"
   assert_same_file "$REPO_ROOT/dotfiles/.tmux.conf" "$REPO_ROOT/home/dot_tmux.conf"
   assert_same_file "$REPO_ROOT/config/alacritty/alacritty.toml" "$REPO_ROOT/home/private_dot_config/alacritty/alacritty.toml"
   assert_same_file "$REPO_ROOT/config/ghostty/config" "$REPO_ROOT/home/private_dot_config/ghostty/config"
   assert_same_file "$REPO_ROOT/config/nix/nix.conf" "$REPO_ROOT/home/private_dot_config/nix/nix.conf"
-  assert_same_file "$REPO_ROOT/config/nvim/init.vim" "$REPO_ROOT/home/private_dot_config/nvim/init.vim"
   assert_same_file "$REPO_ROOT/config/shell/secrets.env.example" "$REPO_ROOT/home/private_dot_config/shell/create_private_secrets.env"
   assert_same_file "$REPO_ROOT/config/mise/config.toml" "$REPO_ROOT/home/.chezmoitemplates/mise-config.toml"
   assert_same_file "$REPO_ROOT/config/shell/bashrc.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bashrc"
   assert_same_file "$REPO_ROOT/config/shell/bash_profile.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bash_profile"
   assert_same_file "$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl" "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh"
   assert_not_exists "$REPO_ROOT/home/dot_Brewfile.tmpl"
+  assert_not_exists "$REPO_ROOT/home/dot_zshrc"
+  assert_not_exists "$REPO_ROOT/home/private_dot_config/nvim/init.vim"
   assert_not_exists "$REPO_ROOT/home/.chezmoitemplates/Brewfile"
   assert_not_exists "$REPO_ROOT/home/.chezmoitemplates/Brewfile.cli"
 }

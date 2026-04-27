@@ -33,18 +33,39 @@ zsh scripts/nix_install.sh --cli-only
 zsh scripts/install_homebrew.sh --profile full
 ```
 
-## Chezmoi migration
+## Updating an existing clone
 
-The repository now includes a chezmoi source state under `home/`, with `.chezmoiroot` pointing to that directory. The existing `dotfiles/` and `config/` layout is still kept as the source of truth for the current setup scripts, so migration can be done gradually.
-
-Generate or refresh the chezmoi source state:
+On another machine that already has this repository cloned, update the repository first, then apply chezmoi and Nix explicitly:
 
 ```sh
-zsh scripts/migrate_to_chezmoi.sh --dry-run
-zsh scripts/migrate_to_chezmoi.sh --apply
-# or
-mise run chezmoi-migrate
+cd ~/src/dotfiles
+git pull --ff-only
+
+# Preview and apply home files managed by chezmoi.
+zsh scripts/chezmoi_apply.sh --dry-run
+zsh scripts/chezmoi_apply.sh --mark-default
+
+# Build-check and apply Nix / Home Manager / nix-darwin changes.
+zsh scripts/nix_install.sh --dry-run
+zsh scripts/nix_install.sh
 ```
+
+For Linux hosts, or macOS hosts that should stay CLI-only:
+
+```sh
+zsh scripts/chezmoi_apply.sh --cli-only --dry-run
+zsh scripts/chezmoi_apply.sh --cli-only --mark-default
+zsh scripts/nix_install.sh --cli-only --dry-run
+zsh scripts/nix_install.sh --cli-only
+```
+
+Run `scripts/nix_install.sh` when `flake.nix`, `flake.lock`, or files under `config/nix/` change. Git pull hooks only run `chezmoi apply`, sync AI tool files, and refresh hooks; they do not switch Nix or install `mise` tools.
+
+This matters after the migration to Nix + chezmoi because zsh and Neovim are managed by Home Manager, while terminal configs, bash startup files, `mise` config, and local secret templates are managed by chezmoi.
+
+## Chezmoi home files
+
+The repository includes a chezmoi source state under `home/`, with `.chezmoiroot` pointing to that directory. Home files that should be copied or templated directly, such as terminal configs, bash startup files, `mise` config, and local secret templates, live there. Shell behavior that is better declared by Home Manager, such as zsh and Neovim, is managed in `config/nix/home-manager/`.
 
 Install `chezmoi` with any supported package manager, then preview and apply:
 
@@ -62,7 +83,7 @@ mise run chezmoi-diff
 mise run chezmoi-apply
 ```
 
-`--mark-default` writes `~/.config/dotfiles/manager` with `chezmoi` and stores the selected profile in `~/.config/dotfiles/profile`. After that, the git pull hooks installed by this repo use `chezmoi apply` when `chezmoi` is available, and fall back to the legacy copy flow otherwise.
+`--mark-default` writes `~/.config/dotfiles/manager` with `chezmoi` and stores the selected profile in `~/.config/dotfiles/profile`. Git pull hooks installed by this repo run `chezmoi apply`; there is no legacy dotfile-copy fallback.
 
 ## Testing dotfiles
 
@@ -74,7 +95,7 @@ zsh scripts/test_dotfiles.sh
 mise run test-dotfiles
 ```
 
-The test runner checks zsh syntax, migration helpers, generated chezmoi source state drift, and chezmoi rendering into a temporary home directory. If `chezmoi` is not installed locally, only the rendered-home integration check is skipped.
+The test runner checks zsh syntax, helper scripts, generated chezmoi source state drift, and chezmoi rendering into a temporary home directory. If `chezmoi` is not installed locally, only the rendered-home integration check is skipped.
 
 GitHub Actions runs the same checks on `ubuntu-latest` and `macos-latest`, installs `chezmoi`, and verifies that the source state can be applied to a temporary home on both platforms.
 
@@ -220,7 +241,7 @@ On `full` profiles, macOS uses a nix-darwin launchd agent and Linux uses a Home 
 - `post-rewrite`: runs after `git pull --rebase`
 - `post-checkout`: runs after branch checkout
 
-The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which syncs dotfiles, AI tool files, app configs, and the hooks themselves. nix-darwin / Home Manager switch, Homebrew uninstall, and mise tool install are not run automatically.
+The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which applies the chezmoi source state, syncs AI tool files, and refreshes the hooks themselves. nix-darwin / Home Manager switch, Homebrew uninstall, and mise tool install are not run automatically.
 
 To reinstall hooks manually:
 
@@ -263,9 +284,9 @@ jupytext --set-formats ipynb,py:percent notebook.py
 
 Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).
 
-On first setup, `scripts/setup_config.sh` copies `config/shell/secrets.env.example` to `~/.config/shell/secrets.env`. Fill in the values and restart the shell.
+On first setup, chezmoi creates `~/.config/shell/secrets.env` from `config/shell/secrets.env.example` if it does not exist. Fill in the values and restart the shell.
 
-The same step also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.tmpl` into `~/.bashrc` and `~/.bash_profile`, and renders `config/shell/dotfiles-shell-common.tmpl` into `~/.config/shell/dotfiles-shell-common.sh`. Both `~/.bashrc` and `.zshrc` source that shared file, and `__DOTFILES_REPO_ROOT__` is replaced there for the current clone path.
+chezmoi also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.tmpl` into `~/.bashrc` and `~/.bash_profile`, and renders `config/shell/dotfiles-shell-common.tmpl` into `~/.config/shell/dotfiles-shell-common.sh`. Home Manager's zsh config sources the same shared file when it exists.
 
 ```bash
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."

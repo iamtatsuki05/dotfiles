@@ -37,10 +37,10 @@ EOF
 package_attr() {
   case "$PROFILE" in
     cli)
-      print -r -- "dotfiles-cli-packages"
+      REPLY="dotfiles-cli-packages"
       ;;
     full)
-      print -r -- "dotfiles-full-packages"
+      REPLY="dotfiles-full-packages"
       ;;
     *)
       echo "ERROR: unknown profile: $PROFILE" >&2
@@ -67,7 +67,8 @@ nix_portable() {
 }
 
 flake_package() {
-  print -r -- "path:$REPO_ROOT#$(package_attr)"
+  package_attr
+  REPLY="path:$REPO_ROOT#$REPLY"
 }
 
 run_raw_nix() {
@@ -76,7 +77,8 @@ run_raw_nix() {
 
 run_with_package_set() {
   local package
-  package="$(flake_package)"
+  flake_package
+  package="$REPLY"
   nix_portable nix shell "$package" -c "$@"
 }
 
@@ -89,25 +91,34 @@ write_wrappers() {
   local nixp_wrapper="$NIX_PORTABLE_BIN_DIR/nixp"
   local shell_wrapper="$NIX_PORTABLE_BIN_DIR/dotfiles-nix-shell"
   local run_wrapper="$NIX_PORTABLE_BIN_DIR/dotfiles-nix-run"
+  local wrapper_zsh
+
+  if [[ -x /bin/zsh ]]; then
+    wrapper_zsh="/bin/zsh"
+  elif [[ -x /usr/bin/zsh ]]; then
+    wrapper_zsh="/usr/bin/zsh"
+  else
+    wrapper_zsh="zsh"
+  fi
 
   mkdir -p "$NIX_PORTABLE_BIN_DIR"
 
   cat > "$nixp_wrapper" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-exec zsh ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --nix "\$@"
+exec ${(qqq)wrapper_zsh} ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --nix "\$@"
 EOF
 
   cat > "$shell_wrapper" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-exec zsh ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --shell "\$@"
+exec ${(qqq)wrapper_zsh} ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --shell "\$@"
 EOF
 
   cat > "$run_wrapper" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-exec zsh ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --run "\$@"
+exec ${(qqq)wrapper_zsh} ${(qqq)REPO_ROOT}/scripts/nix_portable_install.sh --run "\$@"
 EOF
 
   chmod +x "$nixp_wrapper" "$shell_wrapper" "$run_wrapper"
@@ -175,10 +186,10 @@ main() {
 
   parse_args "$@"
   install_nix_portable
-  write_wrappers
 
   case "$MODE" in
     install)
+      write_wrappers
       nix_portable nix --version
       echo "nix-portable is ready."
       echo "Use: $NIX_PORTABLE_BIN_DIR/nixp --version"

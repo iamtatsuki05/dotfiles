@@ -9,12 +9,10 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$SCRIPT_DIR"
 readonly SCRIPTS_DIR="$REPO_ROOT/scripts"
-readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
 readonly LIB_DIR="$SCRIPTS_DIR/lib"
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
-source "$LIB_DIR/home_sync.sh"
 
 # -----------------------------------------------------------------------------
 # Logging helpers
@@ -38,15 +36,6 @@ log_skip() {
 # -----------------------------------------------------------------------------
 # Setup steps
 # -----------------------------------------------------------------------------
-copy_dotfiles() {
-  local profile="$1"
-
-  log_step "Copying dotfiles to home directory"
-  dotfiles_sync_home_tree "$DOTFILES_DIR" "$HOME"
-
-  log_success "Dotfiles copied"
-}
-
 install_nix() {
   local profile="$1"
 
@@ -80,12 +69,6 @@ activate_nix_environment() {
   done
 
   log_success "Nix environment activated"
-}
-
-setup_configs() {
-  log_step "Setting up application configs"
-  zsh "$SCRIPTS_DIR/setup_config.sh"
-  log_success "Application configs set up"
 }
 
 setup_git_hooks() {
@@ -122,10 +105,12 @@ sync_agent_files() {
   log_success "Agent prompts and skills synced"
 }
 
-setup_neovim() {
-  log_step "Setting up Neovim"
-  zsh "$SCRIPTS_DIR/setup_nvim.sh"
-  log_success "Neovim setup complete"
+apply_chezmoi() {
+  local profile="$1"
+
+  log_step "Applying chezmoi home files"
+  zsh "$SCRIPTS_DIR/chezmoi_apply.sh" --profile "$profile" --mark-default
+  log_success "chezmoi home files applied"
 }
 
 # -----------------------------------------------------------------------------
@@ -140,15 +125,13 @@ main() {
   echo "Profile: $profile"
   echo
 
-  copy_dotfiles "$profile"
-  sync_agent_files
   install_homebrew_if_needed "$profile"
   install_nix "$profile"
   activate_nix_environment
-  setup_configs
+  apply_chezmoi "$profile"
+  sync_agent_files
   setup_git_hooks "$profile"
   install_mise_tools
-  setup_neovim
 
   echo
   echo "Setup completed successfully!"

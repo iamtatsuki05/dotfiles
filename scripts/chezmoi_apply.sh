@@ -196,8 +196,9 @@ ensure_chezmoi_source_state() {
   cat >&2 <<EOF
 ERROR: chezmoi source state is not generated in $REPO_ROOT.
 
-Run:
-  zsh scripts/migrate_to_chezmoi.sh --apply
+Expected:
+  .chezmoiroot
+  home/
 EOF
   return 1
 }

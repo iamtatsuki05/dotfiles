@@ -62,11 +62,6 @@ alias = "docker-compose-build"
 description = "compose fileを起動するコマンド"
 run = "docker compose up -d --build"
 
-[tasks.chezmoi-migrate]
-description = "既存のdotfiles/configからchezmoi source stateを生成する"
-dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/migrate_to_chezmoi.sh --apply"
-
 [tasks.chezmoi-diff]
 description = "chezmoiで適用される変更をdry-runで確認する"
 dir = "__DOTFILES_REPO_ROOT__"

@@ -29,38 +29,6 @@ nnoremap tn :tabn<CR>
 nnoremap tx :tabclose<CR>
 
 
-"" plugin
-call plug#begin()
-
-"" vim-airline
-Plug 'vim-airline/vim-airline'
-Plug 'vim-airline/vim-airline-themes'
-Plug 'tomasiser/vim-code-dark'
-
-"" fern.vim
-Plug 'lambdalisue/fern.vim'
-" diff
-Plug 'lambdalisue/fern-git-status.vim'
-" icon
-Plug 'lambdalisue/nerdfont.vim'
-Plug 'lambdalisue/fern-renderer-nerdfont.vim'
-Plug 'lambdalisue/glyph-palette.vim'
-
-"" git
-" diff
-Plug 'airblade/vim-gitgutter'
-" git command
-Plug 'tpope/vim-fugitive'
-" GitHub
-Plug 'tpope/vim-rhubarb'
-
-"" fzf
-Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
-Plug 'junegunn/fzf.vim'
-
-call plug#end()
-
-
 "" vim-airline
 let g:airline_theme = 'codedark'
 let g:airline_powerline_fonts = 1
@@ -83,12 +51,6 @@ let g:airline#extensions#tabline#show_close_button = 0
 
 "" ferm.vim
 nnoremap <C-n> :Fern . -reveal=% -drawer -toggle -width=40<CR>
-let g:fern#renderer = 'nerdfont'
-augroup my-glyph-palette
-  autocmd! *
-  autocmd FileType fern call glyph_palette#apply()
-  autocmd FileType nerdtree,startify call glyph_palette#apply()
-augroup END
 
 
 "" git

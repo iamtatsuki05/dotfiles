@@ -31,18 +31,39 @@ zsh scripts/nix_install.sh --cli-only
 zsh scripts/install_homebrew.sh --profile full
 ```
 
-## chezmoi への移行
+## 既存 clone の追尾
 
-このリポジトリには chezmoi の source state として `home/` を追加しています。`.chezmoiroot` は `home` を指します。既存の `dotfiles/` と `config/` は今の setup scripts の source of truth として残しているので、段階的に移行できます。
-
-chezmoi source state を生成・更新します。
+すでにこのリポジトリを clone 済みの別 PC では、まずリポジトリを更新し、その後に chezmoi と Nix を明示的に適用します。
 
 ```sh
-zsh scripts/migrate_to_chezmoi.sh --dry-run
-zsh scripts/migrate_to_chezmoi.sh --apply
-# または
-mise run chezmoi-migrate
+cd ~/src/dotfiles
+git pull --ff-only
+
+# chezmoi 管理のホームファイルを確認して適用
+zsh scripts/chezmoi_apply.sh --dry-run
+zsh scripts/chezmoi_apply.sh --mark-default
+
+# Nix / Home Manager / nix-darwin の変更を確認して適用
+zsh scripts/nix_install.sh --dry-run
+zsh scripts/nix_install.sh
 ```
+
+Linux、または CLI-only にしたい macOS では次を使います。
+
+```sh
+zsh scripts/chezmoi_apply.sh --cli-only --dry-run
+zsh scripts/chezmoi_apply.sh --cli-only --mark-default
+zsh scripts/nix_install.sh --cli-only --dry-run
+zsh scripts/nix_install.sh --cli-only
+```
+
+`flake.nix`、`flake.lock`、`config/nix/` 配下が変わったときは、`scripts/nix_install.sh` を実行してください。Git pull hook は `chezmoi apply`、AI ツール設定の同期、hook の更新だけを行い、Nix の switch や `mise` tool install は実行しません。
+
+Nix + chezmoi への移行後は、zsh と Neovim は Home Manager 管理、ターミナル設定・bash 起動ファイル・`mise` config・ローカル secret 雛形は chezmoi 管理です。そのため、追尾時は `chezmoi_apply.sh` と `nix_install.sh` の両方を流すのが基本です。
+
+## chezmoi のホームファイル
+
+このリポジトリには chezmoi の source state として `home/` を置いています。`.chezmoiroot` は `home` を指します。ターミナル設定、bash 起動ファイル、`mise` config、ローカル secret の雛形など、直接コピーまたはテンプレート展開するホーム配下のファイルをここで管理します。zsh や Neovim など Home Manager で宣言した方が自然なものは `config/nix/home-manager/` で管理します。
 
 `chezmoi` 本体を任意の方法でインストールしてから、適用内容を確認して反映します。
 
@@ -60,7 +81,7 @@ mise run chezmoi-diff
 mise run chezmoi-apply
 ```
 
-`--mark-default` は `~/.config/dotfiles/manager` に `chezmoi` を書き込み、選択した profile を `~/.config/dotfiles/profile` に保存します。その後、このリポジトリの Git pull hook は `chezmoi` が使える場合に `chezmoi apply` を実行し、使えない場合は従来のコピー方式へフォールバックします。
+`--mark-default` は `~/.config/dotfiles/manager` に `chezmoi` を書き込み、選択した profile を `~/.config/dotfiles/profile` に保存します。このリポジトリの Git pull hook は `chezmoi apply` を実行します。従来のコピー方式へのフォールバックはありません。
 
 ## dotfiles のテスト
 
@@ -72,7 +93,7 @@ zsh scripts/test_dotfiles.sh
 mise run test-dotfiles
 ```
 
-この runner は zsh の構文、移行ヘルパー、生成済み chezmoi source state の drift、chezmoi による一時 HOME への展開を確認します。ローカルに `chezmoi` が無い場合は、展開テストだけ skip します。
+この runner は zsh の構文、補助スクリプト、生成済み chezmoi source state の drift、chezmoi による一時 HOME への展開を確認します。ローカルに `chezmoi` が無い場合は、展開テストだけ skip します。
 
 GitHub Actions では `ubuntu-latest` と `macos-latest` の両方で同じ検証を実行します。CI では `chezmoi` もインストールし、両 OS で source state が一時 HOME に適用できることを確認します。
 
@@ -218,7 +239,7 @@ zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 - `post-rewrite`: `git pull --rebase` 後に実行
 - `post-checkout`: branch checkout 後に実行
 
-hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、dotfiles、AI ツール設定、アプリ設定、hook 自体を同期します。nix-darwin / Home Manager の switch、Homebrew の uninstall、mise tool install は自動実行しません。
+hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、chezmoi source state、AI ツール設定、hook 自体を同期します。nix-darwin / Home Manager の switch、Homebrew の uninstall、mise tool install は自動実行しません。
 
 手動で再インストールする場合:
 
@@ -262,9 +283,9 @@ jupytext --set-formats ipynb,py:percent notebook.py
 
 ローカルの秘密情報は `~/.config/shell/secrets.env`（gitignore 済み）で管理します。
 
-初回セットアップ時に `config/shell/secrets.env.example` から自動生成されます。値を入力してシェルを再起動してください。
+初回セットアップ時に chezmoi が `config/shell/secrets.env.example` から自動生成します。値を入力してシェルを再起動してください。
 
-同じ `scripts/setup_config.sh` で `config/shell/bashrc.tmpl` と `config/shell/bash_profile.tmpl` を `~/.bashrc` と `~/.bash_profile` に生成し、`config/shell/dotfiles-shell-common.tmpl` を `~/.config/shell/dotfiles-shell-common.sh` に生成します。`~/.bashrc` と `.zshrc` はこの共通 file を source し、`__DOTFILES_REPO_ROOT__` はそこで現在の clone path に合わせて置換します。
+chezmoi は `config/shell/bashrc.tmpl` と `config/shell/bash_profile.tmpl` を `~/.bashrc` と `~/.bash_profile` に生成し、`config/shell/dotfiles-shell-common.tmpl` を `~/.config/shell/dotfiles-shell-common.sh` に生成します。Home Manager の zsh 設定も、この共通 file が存在する場合は source します。
 
 ```bash
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."

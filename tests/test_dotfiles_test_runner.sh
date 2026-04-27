@@ -49,7 +49,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
-  assert_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
+  assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
   "$TEST_ZSH_BIN" "$TEST_RUNNER" --list > "$output"
   assert_output_contains "$output" "syntax"
@@ -72,6 +72,8 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_not_contains "$MISE_CONFIG" "brew_dump.sh"
   assert_contains "$MISE_CONFIG" "[tasks.nix-migrate-brew]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/migrate_brew_to_nix.sh --apply"'
+  assert_not_contains "$MISE_CONFIG" "[tasks.chezmoi-migrate]"
+  assert_not_contains "$MISE_CONFIG" "migrate_to_chezmoi.sh"
   assert_contains "$MISE_CONFIG" "[tasks.nix-build]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --dry-run"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply]"

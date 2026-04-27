@@ -4,14 +4,11 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-readonly DOTFILES_DIR="$REPO_ROOT/dotfiles"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 readonly PROFILE_FILE="$XDG_CONFIG_HOME/dotfiles/profile"
-readonly MANAGER_FILE="$XDG_CONFIG_HOME/dotfiles/manager"
 
 source "$LIB_DIR/setup_profile.sh"
-source "$LIB_DIR/home_sync.sh"
 
 FROM_HOOK=0
 
@@ -46,39 +43,11 @@ parse_args() {
   dotfiles_parse_profile_args "scripts/apply_updates.sh" "${args[@]}"
 }
 
-copy_dotfiles() {
+apply_chezmoi() {
   local profile="$1"
 
-  log "Syncing dotfiles"
-  dotfiles_sync_home_tree "$DOTFILES_DIR" "$HOME"
-}
-
-current_dotfiles_manager() {
-  if [[ -f "$MANAGER_FILE" ]]; then
-    sed -n '1p' "$MANAGER_FILE"
-    return
-  fi
-
-  echo "legacy"
-}
-
-sync_home_state() {
-  local profile="$1"
-  local manager
-  manager="$(current_dotfiles_manager)"
-
-  if [[ "$manager" == "chezmoi" ]]; then
-    if [[ -f "$REPO_ROOT/.chezmoiroot" ]]; then
-      log "Applying chezmoi source state"
-      if zsh "$SCRIPT_DIR/chezmoi_apply.sh" --profile "$profile"; then
-        return
-      fi
-    fi
-
-    echo "WARNING: chezmoi manager is selected but unavailable; falling back to legacy dotfiles copy" >&2
-  fi
-
-  copy_dotfiles "$profile"
+  log "Applying chezmoi source state"
+  zsh "$SCRIPT_DIR/chezmoi_apply.sh" --profile "$profile"
 }
 
 sync_agent_files() {
@@ -88,11 +57,6 @@ sync_agent_files() {
 
   log "Syncing agent files"
   zsh "$SCRIPT_DIR/setup_agent_files.sh"
-}
-
-sync_configs() {
-  log "Syncing application configs"
-  zsh "$SCRIPT_DIR/setup_config.sh"
 }
 
 refresh_git_hooks() {
@@ -110,9 +74,8 @@ main() {
   local profile="$DOTFILES_PROFILE"
   log "Applying dotfiles updates (profile: $profile)"
 
-  sync_home_state "$profile"
+  apply_chezmoi "$profile"
   sync_agent_files
-  sync_configs
   refresh_git_hooks "$profile"
 
   if [[ "$FROM_HOOK" == "1" ]]; then

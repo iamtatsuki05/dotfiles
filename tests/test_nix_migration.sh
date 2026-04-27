@@ -17,9 +17,7 @@ readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly HOMEBREW_LIB="$REPO_ROOT/scripts/lib/homebrew.sh"
-readonly HOME_SYNC_LIB="$REPO_ROOT/scripts/lib/home_sync.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
-readonly ZSHRC_FILE="$REPO_ROOT/dotfiles/.zshrc"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
 readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
@@ -50,6 +48,28 @@ readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 fail() {
   echo "FAIL: $*" >&2
   exit 1
+}
+
+make_temp_dir() {
+  local candidate
+  local attempts=0
+
+  while (( attempts < 10 )); do
+    candidate="${TMPDIR:-/tmp}/dotfiles-test-$$-$RANDOM-$RANDOM"
+    if mkdir "$candidate" 2>/dev/null; then
+      REPLY="$candidate"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+  done
+
+  fail "failed to create temporary directory"
+}
+
+make_temp_file() {
+  make_temp_dir
+  rmdir "$REPLY"
+  : > "$REPLY"
 }
 
 assert_file() {
@@ -141,7 +161,8 @@ EOF
 
 test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   local repo
-  repo="$(mktemp -d)"
+  make_temp_dir
+  repo="$REPLY"
   create_fixture_repo "$repo"
 
   "$TEST_ZSH_BIN" "$MIGRATION_SCRIPT" \
@@ -184,7 +205,8 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
 test_brewfile_migration_dry_run_does_not_write_outputs() {
   local repo
   local output
-  repo="$(mktemp -d)"
+  make_temp_dir
+  repo="$REPLY"
   output="$repo/dry-run.log"
   create_fixture_repo "$repo"
 
@@ -351,6 +373,10 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" "brew shellenv"
 
   assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'programs.neovim.enable = true'
+  assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'programs.neovim.plugins'
+  assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'vim-code-dark'
+  assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'vim-fern'
+  assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'builtins.readFile ../../nvim/init.vim'
 
   assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'systemd.user.services.dotfiles-auto-update'
   assert_contains "$HOME_MANAGER_AUTO_UPDATE_MODULE" 'systemd.user.timers.dotfiles-auto-update'
@@ -430,7 +456,7 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'aarch64-darwin-full'
   assert_contains "$INSTALL_SCRIPT" 'x86_64-linux-cli'
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
-  assert_contains "$INSTALL_SCRIPT" 'command -v nix-rootless'
+  assert_contains "$INSTALL_SCRIPT" 'resolve_command_from_path "nix-rootless"'
   assert_contains "$INSTALL_SCRIPT" 'zmodload zsh/datetime'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_ARCHIVE_EPOCH'
@@ -465,7 +491,9 @@ test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
   local sudo_local
   local backup_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   bin_dir="$repo/bin"
   etc_dir="$repo/etc/pam.d"
   log_file="$repo/commands.log"
@@ -541,7 +569,9 @@ test_nix_install_script_archives_existing_home_manager_backups_before_switch() {
   local archived_zshrc_backup
   local archived_xdg_backup
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   bin_dir="$repo/bin"
   home_dir="$repo/home"
   config_dir="$repo/xdg"
@@ -616,7 +646,9 @@ test_nix_install_script_handles_dirty_worktree_without_hanging() {
   local log_file
   local output_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   bin_dir="$repo/bin"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
@@ -703,7 +735,8 @@ test_nix_portable_install_script_supports_no_sudo_nix_main_path() {
   local tmp_dir
   local log_file
   local output_file
-  tmp_dir="$(mktemp -d)"
+  make_temp_dir
+  tmp_dir="$REPLY"
   log_file="$tmp_dir/nix-portable.log"
   output_file="$tmp_dir/output.log"
 
@@ -771,7 +804,9 @@ test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
   local log_file
   local output_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   bin_dir="$repo/bin"
   log_file="$repo/cleanup.log"
   output_file="$repo/output.log"
@@ -810,7 +845,7 @@ EOF
 
   chmod +x "$repo/scripts/cleanup_package_caches.sh" "$bin_dir/nix" "$bin_dir/nix-collect-garbage" "$bin_dir/brew"
 
-  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" > "$output_file"
 
   assert_output_contains "$output_file" 'DRY-RUN: package caches were not removed'
@@ -820,7 +855,7 @@ EOF
   assert_output_contains "$output_file" 'brew cleanup --prune=all --scrub'
   assert_not_exists "$log_file"
 
-  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" --apply > "$output_file"
 
   assert_contains "$log_file" 'nix:profile wipe-history --older-than 30d'
@@ -867,14 +902,14 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
   assert_not_contains "$MISE_CONFIG" '[tasks.homebrew-dump]'
   assert_not_contains "$MISE_CONFIG" 'brew_dump.sh'
-  assert_contains "$ZSHRC_FILE" 'dotfiles_cleanup_stale_homebrew_completion'
-  assert_contains "$ZSHRC_FILE" 'dotfiles-shell-common.sh'
-  assert_contains "$ZSHRC_FILE" 'command mise activate zsh'
-  assert_contains "$ZSHRC_FILE" 'zcompdump-$ZSH_VERSION'
-  assert_not_contains "$ZSHRC_FILE" 'HOMEBREW_PREFIX'
-  assert_not_contains "$ZSHRC_FILE" 'brew shellenv'
-  assert_not_contains "$ZSHRC_FILE" 'hm-session-vars.sh'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.enable = true'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'dotfiles-shell-common.sh'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'zcompdump-$ZSH_VERSION'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'HOMEBREW_PREFIX'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'brew shellenv'
   assert_contains "$APPLY_UPDATES_SCRIPT" 'setup_agent_files.sh'
+  assert_contains "$APPLY_UPDATES_SCRIPT" 'chezmoi_apply.sh'
   assert_not_contains "$APPLY_UPDATES_SCRIPT" 'dotfiles/.agent/sync.sh'
   assert_not_contains "$APPLY_UPDATES_SCRIPT" "sync_nix_profile"
 }
@@ -887,7 +922,9 @@ test_main_script_runs_homebrew_before_nix_setup() {
   local install_line
   local nix_line
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   home_dir="$repo/home"
   bin_dir="$repo/bin"
   log_file="$repo/main.log"
@@ -896,7 +933,6 @@ test_main_script_runs_homebrew_before_nix_setup() {
   cp "$MAIN_SCRIPT" "$repo/main.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
-  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -908,28 +944,20 @@ EOF
 set -euo pipefail
 print -r -- "nix_install:\$*" >> "$log_file"
 EOF
-  cat > "$repo/scripts/setup_config.sh" <<EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-print -r -- "setup_config" >> "$log_file"
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
 EOF
   cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "setup_git_hooks:\$*" >> "$log_file"
 EOF
-  cat > "$repo/scripts/setup_nvim.sh" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "setup_nvim" >> "$log_file"
-EOF
   cat > "$repo/scripts/setup_agent_files.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
-EOF
-  cat > "$repo/dotfiles/.zshrc" <<'EOF'
-# test dotfile
 EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
@@ -940,10 +968,9 @@ EOF
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
     "$repo/scripts/nix_install.sh" \
-    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
-    "$repo/scripts/setup_nvim.sh" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -953,11 +980,9 @@ EOF
   assert_contains "$log_file" 'sync_agent'
   assert_contains "$log_file" 'install_homebrew:--profile full'
   assert_contains "$log_file" 'nix_install:--profile full'
-  assert_contains "$log_file" 'setup_config'
+  assert_contains "$log_file" 'chezmoi_apply:--profile full --mark-default'
   assert_contains "$log_file" 'setup_git_hooks:--profile full'
   assert_contains "$log_file" 'mise:install'
-  assert_contains "$log_file" 'setup_nvim'
-  assert_file "$home_dir/.zshrc"
 
   install_line="$(grep -n 'install_homebrew:--profile full' "$log_file" | cut -d: -f1)"
   nix_line="$(grep -n 'nix_install:--profile full' "$log_file" | cut -d: -f1)"
@@ -967,13 +992,15 @@ EOF
   rm -rf "$repo"
 }
 
-test_main_script_skips_homebrew_install_on_linux_cli_setup() {
+test_main_script_uses_cli_profile_when_requested() {
   local repo
   local home_dir
   local bin_dir
   local log_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   home_dir="$repo/home"
   bin_dir="$repo/bin"
   log_file="$repo/main.log"
@@ -982,8 +1009,11 @@ test_main_script_skips_homebrew_install_on_linux_cli_setup() {
   cp "$MAIN_SCRIPT" "$repo/main.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
-  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
-  cp "$INSTALL_HOMEBREW_SCRIPT" "$repo/scripts/install_homebrew.sh"
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
 
   cat > "$bin_dir/uname" <<'EOF'
 #!/usr/bin/env zsh
@@ -1007,28 +1037,20 @@ EOF
 set -euo pipefail
 print -r -- "nix_install:\$*" >> "$log_file"
 EOF
-  cat > "$repo/scripts/setup_config.sh" <<EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-print -r -- "setup_config" >> "$log_file"
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
 EOF
   cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "setup_git_hooks:\$*" >> "$log_file"
 EOF
-  cat > "$repo/scripts/setup_nvim.sh" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "setup_nvim" >> "$log_file"
-EOF
   cat > "$repo/scripts/setup_agent_files.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
-EOF
-  cat > "$repo/dotfiles/.zshrc" <<'EOF'
-# test dotfile
 EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
@@ -1039,51 +1061,46 @@ EOF
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
     "$repo/scripts/nix_install.sh" \
-    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
-    "$repo/scripts/setup_nvim.sh" \
     "$bin_dir/uname" \
     "$bin_dir/curl" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
-    "$TEST_ZSH_BIN" "$repo/main.sh" > "$repo/output.log"
+    "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log"
 
-  assert_output_contains "$repo/output.log" "OS: Linux"
   assert_output_contains "$repo/output.log" "Profile: cli"
-  assert_output_contains "$repo/output.log" "Skipping Homebrew install because this host is not macOS"
   assert_output_contains "$repo/output.log" "Setup completed successfully!"
   assert_contains "$log_file" 'sync_agent'
+  assert_contains "$log_file" 'install_homebrew:--profile cli'
   assert_contains "$log_file" 'nix_install:--profile cli'
-  assert_contains "$log_file" 'setup_config'
+  assert_contains "$log_file" 'chezmoi_apply:--profile cli --mark-default'
   assert_contains "$log_file" 'setup_git_hooks:--profile cli'
   assert_contains "$log_file" 'mise:install'
-  assert_contains "$log_file" 'setup_nvim'
   assert_not_contains "$log_file" 'curl:'
-  assert_file "$home_dir/.zshrc"
 
   rm -rf "$repo"
 }
 
-test_main_script_replaces_existing_symlinked_dotfile() {
+test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles() {
   local repo
   local home_dir
   local bin_dir
   local log_file
-  local linked_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   home_dir="$repo/home"
   bin_dir="$repo/bin"
   log_file="$repo/main.log"
-  linked_file="$repo/existing-zshrc"
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
-  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -1095,28 +1112,20 @@ EOF
 set -euo pipefail
 print -r -- "nix_install:\$*" >> "$log_file"
 EOF
-  cat > "$repo/scripts/setup_config.sh" <<EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-print -r -- "setup_config" >> "$log_file"
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
 EOF
   cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "setup_git_hooks:\$*" >> "$log_file"
 EOF
-  cat > "$repo/scripts/setup_nvim.sh" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "setup_nvim" >> "$log_file"
-EOF
   cat > "$repo/scripts/setup_agent_files.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
-EOF
-  cat > "$repo/dotfiles/.zshrc" <<'EOF'
-# synced dotfile
 EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
@@ -1124,50 +1133,43 @@ set -euo pipefail
 print -r -- "mise:\$*" >> "$log_file"
 EOF
 
-  print -r -- "existing symlink target" > "$linked_file"
-  ln -s "$linked_file" "$home_dir/.zshrc"
-
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
     "$repo/scripts/nix_install.sh" \
-    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
-    "$repo/scripts/setup_nvim.sh" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log"
 
   assert_output_contains "$repo/output.log" "Setup completed successfully!"
-  assert_file "$home_dir/.zshrc"
-  [[ ! -L "$home_dir/.zshrc" ]] || fail "expected $home_dir/.zshrc not to remain a symlink"
-  assert_contains "$home_dir/.zshrc" "# synced dotfile"
-  assert_contains "$linked_file" "existing symlink target"
+  assert_contains "$log_file" 'chezmoi_apply:--profile cli --mark-default'
+  assert_not_contains "$log_file" 'setup_config'
 
   rm -rf "$repo"
 }
 
-test_apply_updates_replaces_existing_symlinked_dotfile() {
+test_apply_updates_applies_chezmoi_and_refreshes_agent_and_hooks() {
   local repo
   local home_dir
   local log_file
-  local linked_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   home_dir="$repo/home"
   log_file="$repo/apply.log"
-  linked_file="$repo/existing-zshrc"
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir"
   cp "$APPLY_UPDATES_SCRIPT" "$repo/scripts/apply_updates.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
-  cp "$HOME_SYNC_LIB" "$repo/scripts/lib/home_sync.sh"
 
-  cat > "$repo/scripts/setup_config.sh" <<EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
-print -r -- "setup_config" >> "$log_file"
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
 EOF
   cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
 #!/usr/bin/env zsh
@@ -1179,15 +1181,9 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
-  cat > "$repo/dotfiles/.zshrc" <<'EOF'
-# synced by apply_updates
-EOF
-
-  print -r -- "existing symlink target" > "$linked_file"
-  ln -s "$linked_file" "$home_dir/.zshrc"
 
   chmod +x \
-    "$repo/scripts/setup_config.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh"
 
@@ -1195,12 +1191,8 @@ EOF
     "$TEST_ZSH_BIN" "$repo/scripts/apply_updates.sh" --cli-only > "$repo/output.log"
 
   assert_output_contains "$repo/output.log" "Dotfiles update complete"
-  assert_file "$home_dir/.zshrc"
-  [[ ! -L "$home_dir/.zshrc" ]] || fail "expected $home_dir/.zshrc not to remain a symlink"
-  assert_contains "$home_dir/.zshrc" "# synced by apply_updates"
-  assert_contains "$linked_file" "existing symlink target"
+  assert_contains "$log_file" 'chezmoi_apply:--profile cli'
   assert_contains "$log_file" 'sync_agent'
-  assert_contains "$log_file" 'setup_config'
   assert_contains "$log_file" 'setup_git_hooks:--profile cli'
 
   rm -rf "$repo"
@@ -1211,7 +1203,8 @@ test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
   local home_dir
   local hook_file
   local xdg_config_home
-  repo="$(mktemp -d)"
+  make_temp_dir
+  repo="$REPLY"
   home_dir="$repo/home"
   hook_file="$repo/.git/hooks/post-checkout"
   xdg_config_home="$repo/xdg"
@@ -1255,7 +1248,9 @@ test_manage_nix_package_version_override_script_updates_codex_pin() {
   local bin_dir
   local output
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   bin_dir="$repo/bin"
   output="$repo/output.log"
 
@@ -1331,7 +1326,9 @@ test_managed_update_script_skips_gui_profile_on_macos_unless_requested() {
   local bin_dir
   local log_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   home_dir="$repo/home"
   bin_dir="$repo/bin"
   log_file="$repo/update.log"
@@ -1396,7 +1393,7 @@ EOF
     "$bin_dir/brew"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
-    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix > "$repo/output.log"
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix > "$repo/output.log" 2>&1
 
   assert_contains "$log_file" 'nix:flake update'
   assert_contains "$log_file" 'nix_install:--profile cli'
@@ -1412,7 +1409,9 @@ test_managed_update_script_includes_gui_profile_when_requested() {
   local bin_dir
   local log_file
 
-  repo="$(mktemp -d)"
+  make_temp_dir
+
+  repo="$REPLY"
   home_dir="$repo/home"
   bin_dir="$repo/bin"
   log_file="$repo/update.log"
@@ -1494,14 +1493,15 @@ test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'mise activate "$dotfiles_shell_name"'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'hm-session-vars.sh'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'shell/secrets.env'
-  assert_contains "$REPO_ROOT/scripts/setup_config.sh" '.bashrc'
-  assert_contains "$REPO_ROOT/scripts/setup_config.sh" '.bash_profile'
-  assert_contains "$REPO_ROOT/scripts/setup_config.sh" 'dotfiles-shell-common.sh'
+  assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
+  assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
+  assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '.chezmoitemplates/dotfiles-shell-common.sh'
 }
 
 test_managed_update_script_updates_mise_and_nix() {
   local output
-  output="$(mktemp)"
+  make_temp_file
+  output="$REPLY"
 
   assert_contains "$MISE_CONFIG" '[tasks.nix-mise-upgrade]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
@@ -1609,9 +1609,9 @@ main() {
   test_install_homebrew_script_supports_required_profiles
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
   test_main_script_runs_homebrew_before_nix_setup
-  test_main_script_skips_homebrew_install_on_linux_cli_setup
-  test_main_script_replaces_existing_symlinked_dotfile
-  test_apply_updates_replaces_existing_symlinked_dotfile
+  test_main_script_uses_cli_profile_when_requested
+  test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles
+  test_apply_updates_applies_chezmoi_and_refreshes_agent_and_hooks
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
   test_codex_updates_without_homebrew_full_profile
   test_manage_nix_package_version_override_script_updates_codex_pin

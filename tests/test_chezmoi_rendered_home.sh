@@ -29,20 +29,6 @@ assert_same_file() {
   cmp "$expected" "$actual" >/dev/null || fail "expected $actual to match $expected"
 }
 
-assert_same_file_or_home_fallback() {
-  local expected="$1"
-  local home_relative_path="$2"
-  local actual="$3"
-
-  assert_file "$actual"
-
-  if [[ -f "$expected" ]] && cmp "$expected" "$actual" >/dev/null; then
-    return
-  fi
-
-  assert_same_file "$HOME/$home_relative_path" "$actual"
-}
-
 assert_contains() {
   local file_path="$1"
   local expected="$2"
@@ -117,19 +103,17 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
     return 0
   fi
 
-  assert_same_file_or_home_fallback "$REPO_ROOT/dotfiles/.zshrc" ".zshrc" "$temp_home/.zshrc"
   assert_file "$temp_home/.bashrc"
   assert_file "$temp_home/.bash_profile"
   assert_file "$temp_home/.config/shell/dotfiles-shell-common.sh"
   assert_same_file "$REPO_ROOT/dotfiles/.tmux.conf" "$temp_home/.tmux.conf"
   assert_not_exists "$temp_home/.Brewfile"
+  assert_not_exists "$temp_home/.zshrc"
   assert_same_file "$REPO_ROOT/config/alacritty/alacritty.toml" "$temp_home/.config/alacritty/alacritty.toml"
   assert_same_file "$REPO_ROOT/config/ghostty/config" "$temp_home/.config/ghostty/config"
   assert_same_file "$REPO_ROOT/config/nix/nix.conf" "$temp_home/.config/nix/nix.conf"
-  assert_same_file "$REPO_ROOT/config/nvim/init.vim" "$temp_home/.config/nvim/init.vim"
+  assert_not_exists "$temp_home/.config/nvim/init.vim"
   assert_contains "$temp_home/.bashrc" 'dotfiles-shell-common.sh'
-  assert_contains "$temp_home/.zshrc" 'dotfiles-shell-common.sh'
-  assert_contains "$temp_home/.zshrc" 'command mise activate zsh'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "__DOTFILES_REPO_ROOT__"
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" '[ "$dotfiles_shell_name" = "bash" ]'
