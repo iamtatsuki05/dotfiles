@@ -34,4 +34,4 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run dotfiles tests
-        run: zsh scripts/test_dotfiles.sh
+        run: /bin/zsh scripts/test_dotfiles.sh

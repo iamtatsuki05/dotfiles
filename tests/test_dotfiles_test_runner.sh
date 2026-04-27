@@ -120,7 +120,7 @@ test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
   assert_contains "$CI_WORKFLOW" "ubuntu-latest"
   assert_contains "$CI_WORKFLOW" "macos-latest"
   assert_contains "$CI_WORKFLOW" "get.chezmoi.io"
-  assert_contains "$CI_WORKFLOW" "zsh scripts/test_dotfiles.sh"
+  assert_contains "$CI_WORKFLOW" "/bin/zsh scripts/test_dotfiles.sh"
 }
 
 main() {
