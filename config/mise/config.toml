@@ -76,7 +76,7 @@ run = "zsh scripts/chezmoi_apply.sh"
 alias = "test-dotfiles"
 description = "dotfilesのshell scriptとchezmoi source stateを検証する"
 dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/test_dotfiles.sh"
+run = "zsh tests/run.sh"
 
 [tasks.nix-migrate-brew]
 description = "現在のHomebrew状態または指定したBrewfileからNix package listと未移行レポートを生成する"

@@ -85,10 +85,10 @@ mise run chezmoi-apply
 
 ## dotfiles のテスト
 
-設定の検証は [scripts/test_dotfiles.sh](scripts/test_dotfiles.sh) にまとめています。
+設定の検証は [tests/run.sh](tests/run.sh) にまとめています。[scripts/test_dotfiles.sh](scripts/test_dotfiles.sh) は互換用 wrapper として残しています。
 
 ```sh
-zsh scripts/test_dotfiles.sh
+zsh tests/run.sh
 # または
 mise run test-dotfiles
 ```

@@ -87,10 +87,10 @@ mise run chezmoi-apply
 
 ## Testing dotfiles
 
-Configuration checks are centralized in [scripts/test_dotfiles.sh](scripts/test_dotfiles.sh).
+Configuration checks are centralized in [tests/run.sh](tests/run.sh). [scripts/test_dotfiles.sh](scripts/test_dotfiles.sh) remains as a compatibility wrapper.
 
 ```sh
-zsh scripts/test_dotfiles.sh
+zsh tests/run.sh
 # or
 mise run test-dotfiles
 ```

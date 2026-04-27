@@ -4,7 +4,8 @@ set -euo pipefail
 
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
-readonly TEST_RUNNER="$REPO_ROOT/scripts/test_dotfiles.sh"
+readonly TEST_RUNNER="$REPO_ROOT/tests/run.sh"
+readonly LEGACY_TEST_RUNNER="$REPO_ROOT/scripts/test_dotfiles.sh"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
@@ -45,10 +46,12 @@ test_test_runner_exists_and_lists_checks() {
   output="$(mktemp)"
 
   assert_file "$TEST_RUNNER"
+  assert_file "$LEGACY_TEST_RUNNER"
   assert_contains "$TEST_RUNNER" "run_syntax_checks"
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
+  assert_contains "$LEGACY_TEST_RUNNER" "tests/run.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
   "$TEST_ZSH_BIN" "$TEST_RUNNER" --list > "$output"
@@ -63,7 +66,7 @@ test_test_runner_exists_and_lists_checks() {
 
 test_mise_task_runs_test_runner_from_repo_root() {
   assert_contains "$MISE_CONFIG" "[tasks.dotfiles-test]"
-  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/test_dotfiles.sh"'
+  assert_contains "$MISE_CONFIG" 'run = "zsh tests/run.sh"'
   assert_contains "$MISE_CONFIG" 'dir = "__DOTFILES_REPO_ROOT__"'
 }
 
@@ -120,7 +123,7 @@ test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
   assert_contains "$CI_WORKFLOW" "ubuntu-latest"
   assert_contains "$CI_WORKFLOW" "macos-latest"
   assert_contains "$CI_WORKFLOW" "get.chezmoi.io"
-  assert_contains "$CI_WORKFLOW" "/bin/zsh scripts/test_dotfiles.sh"
+  assert_contains "$CI_WORKFLOW" "/bin/zsh tests/run.sh"
 }
 
 main() {
