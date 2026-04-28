@@ -1344,6 +1344,8 @@ EOF
 }
 
 test_managed_update_script_skips_gui_profile_on_macos_unless_requested() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local home_dir
   local bin_dir
