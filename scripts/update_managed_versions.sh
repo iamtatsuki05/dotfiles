@@ -638,7 +638,7 @@ update_mise_versions() {
   cleanup_stale_java_install_state
   resolve_mise_command
   export_homebrew_prefix_if_available
-  MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$MISE_BIN" upgrade
+  MISE_GLOBAL_CONFIG_FILE="$MISE_CONFIG_FILE" "$MISE_BIN" upgrade --exclude java
 }
 
 sync_mise_templates() {

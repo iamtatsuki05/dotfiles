@@ -16,6 +16,10 @@ uv = "latest"
 poetry = "latest"
 rust = "latest"
 chezmoi = "latest"
+# ai
+codex = "latest"
+claude-code = "latest"
+gemini-cli = "latest"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"

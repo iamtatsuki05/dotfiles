@@ -137,6 +137,15 @@ gnu-sed	gnused
 mise	dotfiles.mise
 EOF
 
+  cat > "$repo/config/nix/mise-managed-homebrew.tsv" <<'EOF'
+# kind	name	mise tool
+brew	claude-code	claude-code
+brew	codex	codex
+brew	gemini-cli	gemini-cli
+cask	claude-code@latest	claude-code
+cask	codex	codex
+EOF
+
   cat > "$repo/config/nix/cask-to-nix.tsv" <<'EOF'
 # cask	nix	nix scope
 slack	slack	common
@@ -160,9 +169,14 @@ tap "example/tap"
 brew "git"
 brew "gnu-sed"
 brew "mise"
+brew "claude-code"
+brew "codex"
+brew "gemini-cli"
 brew "private-tool"
 cask "slack"
 cask "alacritty"
+cask "claude-code@latest"
+cask "codex"
 cask "ghostty"
 cask "raycast"
 cask "private-app"
@@ -188,19 +202,38 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/package-names.nix" '"git"'
   assert_contains "$repo/config/nix/package-names.nix" '"gnused"'
   assert_contains "$repo/config/nix/package-names.nix" '"dotfiles.mise"'
+  assert_not_contains "$repo/config/nix/package-names.nix" '"gemini-cli"'
+  assert_not_contains "$repo/config/nix/package-names.nix" '"claude-code"'
+  assert_not_contains "$repo/config/nix/package-names.nix" '"codex"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"slack"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"alacritty"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"bitwarden-desktop"'
+  assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"claude-code"'
+  assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"codex"'
   assert_contains "$repo/config/nix/gui-linux-package-names.nix" '"ghostty"'
   assert_contains "$repo/config/nix/gui-macos-package-names.nix" '"raycast"'
   assert_contains "$repo/config/nix/migrated-brew-formulae.txt" "gnu-sed"
+  assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "gemini-cli"
+  assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "claude-code"
+  assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "codex"
   assert_contains "$repo/config/nix/migrated-brew-casks.txt" "slack"
+  assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "claude-code@latest"
+  assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "codex"
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	claude-code	managed-by-mise:claude-code'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	codex	managed-by-mise:codex'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	gemini-cli	managed-by-mise:gemini-cli'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	claude-code@latest	managed-by-mise:claude-code'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	codex	managed-by-mise:codex'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	private-tool'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	private-app'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'vscode	example.extension'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'uv	claude-monitor'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"example/tap"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"private-tool"'
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"gemini-cli"'
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"claude-code"'
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"claude-code@latest"'
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"codex"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"ghostty"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"private-app"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"affinity-photo"'
@@ -250,7 +283,6 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   local cli_attrs=(
     "agent-browser"
     "emacs.pkgs.cask"
-    "gemini-cli"
     "ghq"
     "gws"
     "dotfiles.e2b"
@@ -300,6 +332,10 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     assert_contains "$NIX_PACKAGE_NAMES_FILE" "\"$nix_attr\""
   done
 
+  assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
+  assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
+  assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'
+
   for nix_attr in "${common_gui_attrs[@]}"; do
     assert_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" "\"$nix_attr\""
   done
@@ -320,6 +356,14 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	yoink'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'vscode	adpyke.codesnap'
   assert_contains "$MIGRATED_FORMULAE_FILE" "mise"
+  assert_not_contains "$MIGRATED_FORMULAE_FILE" "gemini-cli"
+  assert_not_contains "$MIGRATED_CASKS_FILE" "claude-code@latest"
+  assert_not_contains "$MIGRATED_CASKS_FILE" "codex"
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	gemini-cli	managed-by-mise:gemini-cli'
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	claude-code@latest	managed-by-mise:claude-code'
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	codex	managed-by-mise:codex'
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	claude-code	managed-by-mise:claude-code'
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	codex	managed-by-mise:codex'
   assert_contains "$MIGRATED_MAS_APPS_FILE" $'Alfred	nix	alfred'
   assert_contains "$MIGRATED_MAS_APPS_FILE" $'Affinity Photo	brew	affinity-photo'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'taps = ['
@@ -1247,8 +1291,16 @@ test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
   rm -rf "$repo"
 }
 
-test_codex_updates_without_homebrew_full_profile() {
-  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
+test_ai_cli_tools_are_managed_by_mise() {
+  assert_contains "$MISE_CONFIG" 'codex = "latest"'
+  assert_contains "$MISE_CONFIG" 'claude-code = "latest"'
+  assert_contains "$MISE_CONFIG" 'gemini-cli = "latest"'
+  assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
+  assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
+  assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"claude-code@latest"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"codex"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"gemini-cli"'
   assert_contains "$FLAKE_FILE" '# BEGIN managed by scripts/manage_nix_package_version_override.sh'
   assert_contains "$FLAKE_FILE" 'packageVersionOverrides ? codex'
   assert_contains "$FLAKE_FILE" 'codex = prev.codex.overrideAttrs'
@@ -1569,7 +1621,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$NIX_PACKAGE_NAMES_FILE" '"openssl.dev"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"pkgconf"'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'MISE_GLOBAL_CONFIG_FILE'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$MISE_BIN" upgrade'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$MISE_BIN" upgrade --exclude java'
   assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix flake lock --update-input'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nixpkgs|home-manager|nix-darwin'
@@ -1645,7 +1697,7 @@ main() {
   test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles
   test_apply_updates_applies_chezmoi_and_refreshes_agent_and_hooks
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
-  test_codex_updates_without_homebrew_full_profile
+  test_ai_cli_tools_are_managed_by_mise
   test_manage_nix_package_version_override_script_updates_codex_pin
   test_managed_update_script_skips_gui_profile_on_macos_unless_requested
   test_managed_update_script_includes_gui_profile_when_requested

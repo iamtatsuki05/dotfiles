@@ -1,0 +1,6 @@
+# kind	name	mise tool
+brew	claude-code	claude-code
+brew	codex	codex
+brew	gemini-cli	gemini-cli
+cask	claude-code@latest	claude-code
+cask	codex	codex

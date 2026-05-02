@@ -5,8 +5,6 @@ alt-tab
 antigravity
 betterdisplay
 blackhole-2ch
-claude-code@latest
-codex
 copilot-cli
 cursor
 cursor-cli

@@ -23,7 +23,6 @@ ffmpeg
 fzf
 gawk
 gcc
-gemini-cli
 gh
 harfbuzz
 pango

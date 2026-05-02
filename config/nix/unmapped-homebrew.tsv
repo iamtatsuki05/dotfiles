@@ -15,7 +15,9 @@ cask	background-music	no-nixpkg-mapping
 cask	battery	no-nixpkg-mapping
 cask	chatgpt-atlas	no-nixpkg-mapping
 cask	claude	no-nixpkg-mapping
+cask	claude-code@latest	managed-by-mise:claude-code
 cask	cleanshot	no-nixpkg-mapping
+cask	codex	managed-by-mise:codex
 cask	codex-app	no-nixpkg-mapping
 cask	codexbar	no-nixpkg-mapping
 cask	corretto	no-nixpkg-mapping
@@ -46,6 +48,9 @@ cask	unity-hub	nix-package-is-linux-only
 cask	vlc	nix-package-is-linux-only
 cask	vnc-viewer	no-nixpkg-mapping
 cask	yoink	no-nixpkg-mapping
+brew	claude-code	managed-by-mise:claude-code
+brew	codex	managed-by-mise:codex
+brew	gemini-cli	managed-by-mise:gemini-cli
 vscode	adpyke.codesnap	managed-outside-nix-package-set
 vscode	ahmadawais.shades-of-purple	managed-outside-nix-package-set
 vscode	alefragnani.bookmarks	managed-outside-nix-package-set

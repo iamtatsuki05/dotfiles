@@ -119,6 +119,22 @@ load_mapping_file() {
   done < "$map_file"
 }
 
+load_mise_managed_homebrew_mapping() {
+  local map_file="$REPO_ROOT/config/nix/mise-managed-homebrew.tsv"
+  local kind
+  local name
+  local mise_tool
+
+  [[ -f "$map_file" ]] || return 0
+
+  while IFS=$'\t' read -r kind name mise_tool _rest; do
+    [[ -n "$kind" ]] || continue
+    [[ "$kind" == \#* ]] && continue
+    [[ -n "$name" && -n "$mise_tool" ]] || continue
+    MISE_TOOL_BY_HOMEBREW_KEY["$kind:$name"]="$mise_tool"
+  done < "$map_file"
+}
+
 load_cask_mapping() {
   local map_file="$REPO_ROOT/config/nix/cask-to-nix.tsv"
   local cask_name
@@ -183,6 +199,7 @@ load_mas_to_cask_mapping() {
 
 load_mappings() {
   load_mapping_file "$REPO_ROOT/config/nix/brew-to-nix.tsv" NIX_BY_BREW
+  load_mise_managed_homebrew_mapping
   load_cask_mapping
   load_mas_to_nix_mapping
   load_mas_to_cask_mapping
@@ -296,6 +313,7 @@ parse_brewfile() {
   local name
   local nix_name
   local nix_scope
+  local mise_tool
 
   if [[ ! -f "$BREWFILE" ]]; then
     echo "ERROR: Brewfile not found: $BREWFILE" >&2
@@ -316,6 +334,12 @@ parse_brewfile() {
       name="${match[2]}"
     else
       append_unmapped "raw" "$line" "unparsed-brewfile-line"
+      continue
+    fi
+
+    mise_tool="${MISE_TOOL_BY_HOMEBREW_KEY["$kind:$name"]:-}"
+    if [[ -n "$mise_tool" ]]; then
+      append_unmapped "$kind" "$name" "managed-by-mise:$mise_tool"
       continue
     fi
 
@@ -499,6 +523,7 @@ print_summary() {
 
 main() {
   typeset -gA NIX_BY_BREW=()
+  typeset -gA MISE_TOOL_BY_HOMEBREW_KEY=()
   typeset -gA NIX_BY_CASK=()
   typeset -gA NIX_SCOPE_BY_CASK=()
   typeset -gA NIX_BY_MAS_NAME=()
