@@ -17,6 +17,7 @@ personality = "pragmatic"
 
 [features]
 external_migration = true
+undo = true
 
 [sandbox_workspace_write]
 network_access = true
