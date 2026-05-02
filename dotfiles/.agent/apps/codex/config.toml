@@ -1,11 +1,11 @@
-model = "gpt-5.4"
+model = "gpt-5.5"
 sandbox_mode = "workspace-write"
 ignore_patterns = [
   "**/.env",
   "**/secrets.env",
   "**/*.env"
 ]
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "high"
 hide_agent_reasoning = true
 network_access = true
 web_search = "live"
@@ -14,6 +14,9 @@ disable_response_storage = true
 rmcp_client = true
 notify = ["bash", "-lc", "afplay /System/Library/Sounds/Ping.aiff"]
 personality = "pragmatic"
+
+[features]
+external_migration = true
 
 [sandbox_workspace_write]
 network_access = true
