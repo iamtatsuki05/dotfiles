@@ -1,0 +1,34 @@
+id: pr-code-review-auth-diff-001
+name: Review Auth Diff
+description: |
+  Checks that pr-code-review accepts an inline diff review task and is oriented
+  toward bugs, risks, and missing tests.
+
+tags:
+  - review
+  - diff
+  - auth
+  - smoke
+
+inputs:
+  prompt: "Review this diff for bugs, security risks, and missing tests. Lead with findings."
+  context:
+    language: TypeScript
+    area: auth
+  files:
+    - path: auth.diff
+
+expected:
+  output_contains:
+    - "diff"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_review_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(review|diff|risk|finding)"

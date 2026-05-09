@@ -1,0 +1,43 @@
+name: api-design-model-eval
+description: |
+  Model-backed quality evaluation for the api-design skill.
+skill: api-design
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: api_contract_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response identify API contract and error-shape issues?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: openapi_or_endpoint_detected
+    config:
+      regex_match:
+        - "(?i)(openapi|endpoint|schema|contract|REST)"
+  - type: text
+    name: errors_or_versioning_explained
+    config:
+      regex_match:
+        - "(?i)(error|status code|pagination|version|response)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/review-user-api.yaml"

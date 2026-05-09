@@ -1,0 +1,45 @@
+name: pr-code-review-model-eval
+description: |
+  Model-backed quality evaluation for the pr-code-review skill. This suite is
+  intentionally not run by waza-eval-all because it requires model credentials
+  and asserts concrete review findings.
+skill: pr-code-review
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: review_finding_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the review identify the concrete regression in the diff?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: authorization_bypass_detected
+    config:
+      regex_match:
+        - "(?i)(authorization|access control|auth).*bypass|return true|ownerId"
+  - type: text
+    name: severity_or_impact_explained
+    config:
+      regex_match:
+        - "(?i)(high|critical|security|unauthorized|any user|all users)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/review-auth-diff.yaml"

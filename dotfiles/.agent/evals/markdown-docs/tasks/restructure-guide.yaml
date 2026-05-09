@@ -1,0 +1,33 @@
+id: markdown-docs-restructure-guide-001
+name: Restructure Markdown Guide
+description: |
+  Checks that the markdown-docs skill accepts a request to restructure a
+  Markdown guide with duplicated headings and weak ordering.
+
+tags:
+  - markdown
+  - restructure
+  - smoke
+
+inputs:
+  prompt: "Improve the Markdown structure of this guide and mention the duplicated headings."
+  context:
+    document_type: guide
+    language: English
+  files:
+    - path: messy-guide.md
+
+expected:
+  output_contains:
+    - "Markdown"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 5
+
+graders:
+  - name: mentions_structure_or_headings
+    type: text
+    config:
+      regex_match:
+        - "(?i)(structure|heading|markdown)"

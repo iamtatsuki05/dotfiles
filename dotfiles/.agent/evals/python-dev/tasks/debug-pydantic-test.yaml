@@ -1,0 +1,29 @@
+id: python-dev-debug-pydantic-test-001
+name: Debug Pydantic Test
+description: |
+  Checks that the skill can reason about a Python validation failure and tests.
+
+tags:
+  - python
+  - pytest
+  - smoke
+
+inputs:
+  prompt: "A pytest fails because a Pydantic model now rejects an optional email field as required. Identify the root cause, the likely fix, and the focused test to add."
+  context:
+    language: Python
+
+expected:
+  output_contains:
+    - "pytest"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_python_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(python|pytest|pydantic|test|fix)"

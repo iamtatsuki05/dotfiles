@@ -1,0 +1,45 @@
+name: security-check-model-eval
+description: |
+  Model-backed quality evaluation for the security-check skill. This suite is
+  intentionally not run by waza-eval-all because it requires model credentials
+  and asserts concrete vulnerability findings.
+skill: security-check
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: vulnerability_finding_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the security review identify the concrete vulnerabilities?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: sql_injection_detected
+    config:
+      regex_match:
+        - "(?i)(sql injection|parameterized|prepared statement|f-string|query)"
+  - type: text
+    name: hardcoded_secret_detected
+    config:
+      regex_match:
+        - "(?i)(hardcoded|secret|api key|credential)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/review-flask-handler.yaml"

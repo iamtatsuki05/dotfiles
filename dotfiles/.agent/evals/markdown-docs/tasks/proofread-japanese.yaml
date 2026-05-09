@@ -1,0 +1,34 @@
+id: markdown-docs-proofread-japanese-001
+name: Proofread Japanese Draft
+description: |
+  Checks that the markdown-docs skill accepts a Japanese proofreading request
+  while preserving command names and file paths.
+
+tags:
+  - markdown
+  - japanese
+  - proofreading
+  - smoke
+
+inputs:
+  prompt: "日本語のMarkdown文章を校正し、`mise run waza-eval` と `README.md` はそのまま残してください。"
+  context:
+    document_type: setup-note
+    language: Japanese
+  files:
+    - path: japanese-draft.md
+
+expected:
+  output_contains:
+    - "Markdown"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 5
+
+graders:
+  - name: preserves_literal_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(markdown|mise run waza-eval|README\\.md)"

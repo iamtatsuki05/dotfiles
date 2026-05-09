@@ -1,0 +1,30 @@
+id: ci-cd-review-node-workflow-001
+name: Review Node Workflow
+description: |
+  Checks that the skill can review a GitHub Actions workflow for reliability
+  and security concerns.
+
+tags:
+  - ci
+  - github-actions
+  - smoke
+
+inputs:
+  prompt: "Review a GitHub Actions Node.js workflow that runs npm install without cache, uploads artifacts from every branch, and grants contents: write to all jobs."
+  context:
+    platform: GitHub Actions
+
+expected:
+  output_contains:
+    - "workflow"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_ci_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(ci|workflow|actions|permissions|cache)"

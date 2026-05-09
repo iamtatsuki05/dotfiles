@@ -1,0 +1,29 @@
+id: prompt-tuner-improve-support-prompt-001
+name: Improve Support Prompt
+description: |
+  Checks that the skill can improve an underspecified support-agent prompt.
+
+tags:
+  - prompt
+  - tuning
+  - smoke
+
+inputs:
+  prompt: "Improve this prompt: 'Answer customer questions well.' Add role, constraints, examples, and evaluation criteria for a support agent."
+  context:
+    artifact: system prompt
+
+expected:
+  output_contains:
+    - "prompt"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_prompt_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(prompt|constraint|example|criteria)"

@@ -1,0 +1,29 @@
+id: superpowers-test-driven-development-bugfix-001
+name: Plan Bugfix TDD
+description: |
+  Checks that the skill can outline the red-green-refactor flow for a bugfix.
+
+tags:
+  - superpowers
+  - tdd
+  - smoke
+
+inputs:
+  prompt: "A parser drops quoted commas in CSV fields. Explain the TDD sequence before implementing the fix, including the first failing test and verification steps."
+  context:
+    change_type: bugfix
+
+expected:
+  output_contains:
+    - "test"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_tdd_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(test|fail|red|green|refactor)"

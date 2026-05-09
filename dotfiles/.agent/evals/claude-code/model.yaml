@@ -1,0 +1,43 @@
+name: claude-code-model-eval
+description: |
+  Model-backed quality evaluation for the claude-code skill.
+skill: claude-code
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: claude_consultation_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response frame a bounded Claude Code consultation?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: claude_cli_detected
+    config:
+      regex_match:
+        - "(?i)(claude|claude code|consult|review)"
+  - type: text
+    name: scope_or_safety_explained
+    config:
+      regex_match:
+        - "(?i)(scope|prompt|read-only|review|result)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/consult-claude-review.yaml"

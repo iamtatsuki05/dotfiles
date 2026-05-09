@@ -1,0 +1,8 @@
+FAILED tests/test_calculator.py::test_add_numeric_strings - TypeError
+
+Traceback (most recent call last):
+  File "tests/test_calculator.py", line 5, in test_add_numeric_strings
+    assert add("2", "3") == 5
+  File "calculator.py", line 2, in add
+    return a + b
+TypeError: expected numeric result, got string concatenation

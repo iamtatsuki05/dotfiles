@@ -1,10 +1,9 @@
-name: markdown-docs-eval
+name: auto-debugger-eval
 description: |
-  Evaluation suite for the markdown-docs skill.
-  Starts with a mock executor smoke test so the repository can validate the
-  Waza wiring without requiring model credentials. The fixtures and prompts are
-  written so they can later be reused with a real model-backed executor.
-skill: markdown-docs
+  Smoke evaluation suite for the auto-debugger skill. The suite focuses on
+  reproducible failure reports and keeps the executor mocked for local and CI
+  wiring checks.
+skill: auto-debugger
 version: "1.0"
 
 config:
@@ -15,10 +14,10 @@ config:
   model: claude-sonnet-4.6
 
 metrics:
-  - name: task_completion
+  - name: debugging_response
     weight: 1.0
     threshold: 0.8
-    description: Did the skill complete the requested Markdown review task?
+    description: Did the skill accept a concrete failing-test debugging task?
 
 graders:
   - type: code

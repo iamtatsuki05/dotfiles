@@ -1,0 +1,30 @@
+id: database-dev-diagnose-slow-query-001
+name: Diagnose Slow Query
+description: |
+  Checks that the skill can reason about slow queries, N+1 access patterns, and
+  indexing strategy.
+
+tags:
+  - database
+  - performance
+  - smoke
+
+inputs:
+  prompt: "A Rails endpoint performs one SELECT per order row and filters by users.email without an index. Explain the likely N+1 problem, what EXPLAIN would show, and a safe migration plan."
+  context:
+    database: PostgreSQL
+
+expected:
+  output_contains:
+    - "query"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_database_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(query|index|N\\+1|EXPLAIN|migration)"

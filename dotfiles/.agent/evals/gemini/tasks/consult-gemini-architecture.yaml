@@ -1,0 +1,29 @@
+id: gemini-consult-architecture-001
+name: Consult Gemini Architecture
+description: |
+  Checks that the skill can prepare a bounded Gemini CLI architecture review.
+
+tags:
+  - gemini
+  - architecture
+  - smoke
+
+inputs:
+  prompt: "Gemini CLI に TypeScript API クライアントの設計レビューを相談したいです。依頼範囲、読み取り専用でよい前提、期待する観点を整理してください。"
+  context:
+    agent: Gemini CLI
+
+expected:
+  output_contains:
+    - "Gemini"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_gemini_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(gemini|review|consult|設計)"

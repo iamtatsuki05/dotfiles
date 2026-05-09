@@ -1,0 +1,30 @@
+id: api-design-review-user-api-001
+name: Review User API
+description: |
+  Checks that the skill can review a REST endpoint design with pagination and
+  error-response concerns.
+
+tags:
+  - api
+  - openapi
+  - smoke
+
+inputs:
+  prompt: "Review a REST API design for GET /users that returns an unpaginated array and inconsistent 400/404 error bodies. Suggest a better OpenAPI-shaped contract."
+  context:
+    endpoint: "GET /users"
+
+expected:
+  output_contains:
+    - "API"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_api_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(api|openapi|endpoint|schema|error)"

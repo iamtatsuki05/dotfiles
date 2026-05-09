@@ -1,0 +1,29 @@
+id: codex-consult-debug-001
+name: Consult Codex Debug
+description: |
+  Checks that the skill can prepare a bounded Codex debugging consultation.
+
+tags:
+  - codex
+  - debug
+  - smoke
+
+inputs:
+  prompt: "Codex に flaky test の原因調査を相談したいです。渡すべきログ、制約、期待する返答形式を整理してください。"
+  context:
+    agent: Codex
+
+expected:
+  output_contains:
+    - "Codex"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_codex_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(codex|debug|test|ログ)"

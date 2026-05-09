@@ -1,0 +1,29 @@
+id: markitdown-convert-pdf-001
+name: Convert PDF To Markdown
+description: |
+  Checks that the skill can describe a MarkItDown conversion workflow.
+
+tags:
+  - markitdown
+  - markdown
+  - smoke
+
+inputs:
+  prompt: "Convert a PDF report to Markdown with MarkItDown and explain how you would verify headings, tables, and image references after conversion."
+  context:
+    source_type: PDF
+
+expected:
+  output_contains:
+    - "Markdown"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_markitdown_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(markitdown|convert|markdown|pdf)"

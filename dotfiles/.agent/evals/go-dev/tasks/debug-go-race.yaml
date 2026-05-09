@@ -1,0 +1,29 @@
+id: go-dev-debug-race-001
+name: Debug Go Race
+description: |
+  Checks that the skill can reason about a Go data race and verification path.
+
+tags:
+  - go
+  - race
+  - smoke
+
+inputs:
+  prompt: "A Go test intermittently fails under `go test -race` because two goroutines write to the same map. Identify the likely root cause, a safe fix, and the verification command."
+  context:
+    language: Go
+
+expected:
+  output_contains:
+    - "Go"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_go_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(go|goroutine|race|test|map)"

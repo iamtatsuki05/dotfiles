@@ -1,0 +1,30 @@
+id: empirical-prompt-tuning-skill-prompt-001
+name: Tune Skill Prompt
+description: |
+  Checks that the skill can plan an empirical improvement loop for a vague
+  agent instruction.
+
+tags:
+  - prompt
+  - empirical
+  - smoke
+
+inputs:
+  prompt: "A skill instruction says only 'be helpful with API reviews' and results are inconsistent. Design an empirical prompt tuning loop with metrics, executor tasks, and stopping criteria."
+  context:
+    artifact: "SKILL.md"
+
+expected:
+  output_contains:
+    - "prompt"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_empirical_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(metric|trial|prompt|iteration|evaluate)"

@@ -1,0 +1,30 @@
+id: retrospective-codify-repeat-mistake-001
+name: Codify Repeat Mistake
+description: |
+  Checks that the skill can turn a repeated workflow mistake into a reusable
+  rule or skill update.
+
+tags:
+  - retrospective
+  - skill
+  - smoke
+
+inputs:
+  prompt: "We repeatedly forgot to run dry-run before applying destructive cleanup. Turn this into a reusable project rule or skill update and include how to verify it."
+  context:
+    issue: repeated destructive-operation mistake
+
+expected:
+  output_contains:
+    - "rule"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_codify_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(rule|skill|lesson|verify|dry-run)"

@@ -1,0 +1,30 @@
+id: terraform-dev-review-s3-plan-001
+name: Review S3 Plan
+description: |
+  Checks that the skill can review Terraform changes for security and state
+  management risks.
+
+tags:
+  - terraform
+  - security
+  - smoke
+
+inputs:
+  prompt: "Review a Terraform plan that creates an S3 bucket with public ACL, no server-side encryption, and a manually imported resource. Identify risks and a safer implementation path."
+  context:
+    provider: AWS
+
+expected:
+  output_contains:
+    - "Terraform"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_terraform_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(terraform|s3|public|encryption|state)"

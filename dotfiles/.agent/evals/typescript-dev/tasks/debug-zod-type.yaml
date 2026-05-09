@@ -1,0 +1,29 @@
+id: typescript-dev-debug-zod-type-001
+name: Debug Zod Type
+description: |
+  Checks that the skill can reason about TypeScript and Zod type drift.
+
+tags:
+  - typescript
+  - zod
+  - smoke
+
+inputs:
+  prompt: "A TypeScript API client now fails because a Zod schema returns `string | undefined` while callers expect `string`. Explain the type root cause, fix options, and tests to add."
+  context:
+    language: TypeScript
+
+expected:
+  output_contains:
+    - "TypeScript"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_typescript_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(typescript|zod|type|test|schema)"

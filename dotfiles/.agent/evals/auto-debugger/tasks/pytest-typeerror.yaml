@@ -1,0 +1,35 @@
+id: auto-debugger-pytest-typeerror-001
+name: Debug Pytest TypeError
+description: |
+  Checks that auto-debugger accepts a failing pytest report with source and
+  traceback fixtures.
+
+tags:
+  - python
+  - pytest
+  - debugging
+  - smoke
+
+inputs:
+  prompt: "Debug this pytest failure and identify the likely root cause before proposing a fix."
+  context:
+    language: Python
+    failure_type: TypeError
+  files:
+    - path: stacktrace.txt
+    - path: calculator.py
+
+expected:
+  output_contains:
+    - "pytest"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_failure_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(pytest|failure|debug)"

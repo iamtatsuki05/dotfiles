@@ -1,0 +1,33 @@
+id: security-check-flask-handler-001
+name: Review Flask Handler
+description: |
+  Checks that security-check accepts a focused vulnerable-code review request.
+
+tags:
+  - security
+  - python
+  - injection
+  - smoke
+
+inputs:
+  prompt: "Security review this Flask handler for SQL injection, secret handling, and access-control risks."
+  context:
+    language: Python
+    framework: Flask
+  files:
+    - path: vulnerable_handler.py
+
+expected:
+  output_contains:
+    - "Security"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_security_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(security|injection|secret|access-control)"

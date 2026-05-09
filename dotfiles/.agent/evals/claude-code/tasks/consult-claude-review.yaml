@@ -1,0 +1,29 @@
+id: claude-code-consult-review-001
+name: Consult Claude Review
+description: |
+  Checks that the skill can prepare a bounded Claude Code consultation.
+
+tags:
+  - claude
+  - review
+  - smoke
+
+inputs:
+  prompt: "Claude Code にこの認証リファクタの設計レビューを依頼したいです。依頼範囲、確認してほしい観点、結果の扱い方を整理してください。"
+  context:
+    agent: Claude Code
+
+expected:
+  output_contains:
+    - "Claude"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_claude_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(claude|review|consult|設計)"

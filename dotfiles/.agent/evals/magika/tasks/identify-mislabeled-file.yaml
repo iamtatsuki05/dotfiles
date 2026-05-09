@@ -1,0 +1,29 @@
+id: magika-identify-mislabeled-file-001
+name: Identify Mislabeled File
+description: |
+  Checks that the skill can plan file-type verification with Magika.
+
+tags:
+  - magika
+  - file-type
+  - smoke
+
+inputs:
+  prompt: "A file named report.pdf may actually be HTML. Use Magika-style file type classification to explain how you would verify the content and report an extension mismatch."
+  context:
+    file_name: report.pdf
+
+expected:
+  output_contains:
+    - "file"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_magika_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(magika|file type|extension|mismatch)"

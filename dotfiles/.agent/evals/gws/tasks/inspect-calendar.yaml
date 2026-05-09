@@ -1,0 +1,29 @@
+id: gws-inspect-calendar-001
+name: Inspect Calendar
+description: |
+  Checks that the skill can plan a safe Google Calendar inspection using gws.
+
+tags:
+  - gws
+  - calendar
+  - smoke
+
+inputs:
+  prompt: "gws CLI で明日のカレンダー予定を確認し、会議名と空き時間を要約したいです。必要なコマンド、読み取り範囲、確認事項を整理してください。"
+  context:
+    app: Google Calendar
+
+expected:
+  output_contains:
+    - "calendar"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_gws_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(gws|calendar|予定|確認)"

@@ -1,0 +1,43 @@
+name: typescript-dev-model-eval
+description: |
+  Model-backed quality evaluation for the typescript-dev skill.
+skill: typescript-dev
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: typescript_debugging_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response identify TypeScript type and validation issues?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: typescript_context_detected
+    config:
+      regex_match:
+        - "(?i)(typescript|type|zod|eslint|vitest)"
+  - type: text
+    name: fix_or_test_explained
+    config:
+      regex_match:
+        - "(?i)(fix|test|schema|inference|type guard)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/debug-zod-type.yaml"

@@ -1,0 +1,29 @@
+id: alphaxiv-paper-lookup-summary-001
+name: Summarize Arxiv Paper
+description: |
+  Checks that the skill can handle a paper-summary request with an arXiv ID.
+
+tags:
+  - paper
+  - arxiv
+  - smoke
+
+inputs:
+  prompt: "alphaxiv で arXiv:1706.03762 を調べて、主張、実装上の要点、限界を日本語で要約してください。"
+  context:
+    paper_id: "1706.03762"
+
+expected:
+  output_contains:
+    - "arXiv"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_paper_lookup_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(arxiv|alphaxiv|paper|要約)"

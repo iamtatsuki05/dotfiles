@@ -1,0 +1,45 @@
+name: auto-debugger-model-eval
+description: |
+  Model-backed quality evaluation for the auto-debugger skill. This suite is
+  intentionally not run by waza-eval-all because it requires model credentials
+  and asserts concrete debugging conclusions.
+skill: auto-debugger
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: debugging_diagnosis_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the debugger identify the concrete root cause?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: string_concatenation_detected
+    config:
+      regex_match:
+        - "(?i)(string concatenation|numeric conversion|convert.*int|TypeError|add\\(\"2\", \"3\"\\))"
+  - type: text
+    name: test_or_fix_path_explained
+    config:
+      regex_match:
+        - "(?i)(test|pytest|fix|root cause)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/pytest-typeerror.yaml"

@@ -1,0 +1,30 @@
+id: superpowers-dispatching-parallel-agents-plan-001
+name: Plan Parallel Investigation
+description: |
+  Checks that the skill can decide which subtasks are safe to delegate in
+  parallel and which remain on the critical path.
+
+tags:
+  - superpowers
+  - parallel
+  - smoke
+
+inputs:
+  prompt: "Three unrelated test files fail in different subsystems. Decide what can be delegated to parallel agents, what should stay local, and what information each agent needs."
+  context:
+    failures: "three independent test files"
+
+expected:
+  output_contains:
+    - "parallel"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_parallel_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(parallel|agent|delegate|independent)"

@@ -1,0 +1,43 @@
+name: database-dev-model-eval
+description: |
+  Model-backed quality evaluation for the database-dev skill.
+skill: database-dev
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: database_diagnosis_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response identify query, index, and transaction risks?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: query_or_index_detected
+    config:
+      regex_match:
+        - "(?i)(query|index|EXPLAIN|N\\+1|join)"
+  - type: text
+    name: transaction_or_migration_explained
+    config:
+      regex_match:
+        - "(?i)(transaction|migration|lock|constraint|schema)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/diagnose-slow-query.yaml"

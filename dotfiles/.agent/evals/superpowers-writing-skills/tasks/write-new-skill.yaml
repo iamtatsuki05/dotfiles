@@ -1,0 +1,30 @@
+id: superpowers-writing-skills-new-skill-001
+name: Write New Skill
+description: |
+  Checks that the skill can describe a test-driven workflow for authoring a
+  reusable skill.
+
+tags:
+  - superpowers
+  - skills
+  - smoke
+
+inputs:
+  prompt: "Create a new skill for API review. Explain the pressure scenario, baseline failure, SKILL.md edits, and verification before deployment."
+  context:
+    artifact: SKILL.md
+
+expected:
+  output_contains:
+    - "skill"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_skill_authoring_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(skill|SKILL.md|baseline|verify|test)"

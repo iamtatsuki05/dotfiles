@@ -1,10 +1,9 @@
-name: markdown-docs-eval
+name: pr-code-review-eval
 description: |
-  Evaluation suite for the markdown-docs skill.
-  Starts with a mock executor smoke test so the repository can validate the
-  Waza wiring without requiring model credentials. The fixtures and prompts are
-  written so they can later be reused with a real model-backed executor.
-skill: markdown-docs
+  Smoke evaluation suite for the pr-code-review skill. Fixtures contain a small
+  diff with an obvious regression so future model-backed graders can assert
+  concrete review findings.
+skill: pr-code-review
 version: "1.0"
 
 config:
@@ -15,10 +14,10 @@ config:
   model: claude-sonnet-4.6
 
 metrics:
-  - name: task_completion
+  - name: review_response
     weight: 1.0
     threshold: 0.8
-    description: Did the skill complete the requested Markdown review task?
+    description: Did the skill accept a PR review request with diff context?
 
 graders:
   - type: code
