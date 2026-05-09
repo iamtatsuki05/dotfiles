@@ -97,6 +97,26 @@ description = "Wazaで全agent skill評価をmock executorで実行する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/waza_eval_all.sh"
 
+[tasks.waza-eval-model]
+description = "Wazaで実モデルを使う高精度agent skill評価を実行する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_model.sh"
+
+[tasks.waza-eval-codex]
+description = "Wazaのmodel eval taskをCodex CLIで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh codex"
+
+[tasks.waza-eval-claude]
+description = "Wazaのmodel eval taskをClaude Codeで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh claude"
+
+[tasks.waza-eval-gemini]
+description = "Wazaのmodel eval taskをGemini CLIで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh gemini"
+
 [tasks.waza-dashboard]
 description = "Wazaの評価結果ダッシュボードを起動する"
 dir = "__DOTFILES_REPO_ROOT__"

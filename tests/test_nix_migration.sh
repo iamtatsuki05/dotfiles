@@ -23,9 +23,15 @@ readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
 readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly WAZA_AGENT_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/eval.yaml"
+readonly WAZA_MARKDOWN_DOCS_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/model.yaml"
 readonly WAZA_AUTO_DEBUGGER_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/auto-debugger/eval.yaml"
+readonly WAZA_AUTO_DEBUGGER_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/auto-debugger/model.yaml"
 readonly WAZA_PR_CODE_REVIEW_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code-review/eval.yaml"
+readonly WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code-review/model.yaml"
 readonly WAZA_SECURITY_CHECK_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/eval.yaml"
+readonly WAZA_SECURITY_CHECK_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/model.yaml"
+readonly WAZA_MODEL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_model.sh"
+readonly WAZA_CLI_AGENT_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_cli_agent.sh"
 readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
 readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
 readonly HOME_MANAGER_ZSH_MODULE="$REPO_ROOT/config/nix/home-manager/zsh.nix"
@@ -396,13 +402,123 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$MISE_CONFIG" '[tasks.waza-check]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-all]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-model]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-codex]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-claude]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-gemini]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
   assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'markdown-docs-eval'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'executor: mock'
   assert_contains "$WAZA_AUTO_DEBUGGER_EVAL_FILE" 'auto-debugger-eval'
+  assert_contains "$WAZA_MARKDOWN_DOCS_MODEL_EVAL_FILE" 'duplicated_headings_detected'
+  assert_contains "$WAZA_AUTO_DEBUGGER_MODEL_EVAL_FILE" 'string_concatenation_detected'
   assert_contains "$WAZA_PR_CODE_REVIEW_EVAL_FILE" 'pr-code-review-eval'
   assert_contains "$WAZA_SECURITY_CHECK_EVAL_FILE" 'security-check-eval'
+  assert_contains "$WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE" 'executor: copilot-sdk'
+  assert_contains "$WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE" 'authorization_bypass_detected'
+  assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'executor: copilot-sdk'
+  assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'sql_injection_detected'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'Waza model-backed evals require model credentials'
+  assert_executable "$WAZA_CLI_AGENT_EVAL_SCRIPT"
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'CLI agent evals require explicit --allow'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'codex exec -C'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'claude -p'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'gemini -p'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" '.waza-results/cli-agents'
+}
+
+test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
+  local output
+  make_temp_file
+  output="$REPLY"
+
+  if "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" codex >"$output" 2>&1; then
+    fail "expected cli agent eval without --allow to fail"
+  fi
+  assert_output_contains "$output" "CLI agent evals require explicit --allow"
+  assert_output_contains "$output" "zsh scripts/waza_eval_cli_agent.sh codex --allow"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" codex --dry-run >"$output"
+  assert_output_contains "$output" "DRY-RUN codex"
+  assert_output_contains "$output" "dotfiles/.agent/evals/markdown-docs/model.yaml"
+  assert_output_contains "$output" "tasks/restructure-guide.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" claude --dry-run --suite dotfiles/.agent/evals/security-check/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN claude"
+  assert_output_contains "$output" "dotfiles/.agent/evals/security-check/model.yaml"
+  assert_output_contains "$output" "tasks/review-flask-handler.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" gemini --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN gemini"
+  assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
+  assert_output_contains "$output" "tasks/pytest-typeerror.yaml"
+
+  rm -f "$output"
+}
+
+test_waza_cli_agent_eval_script_preserves_cli_failure_status() {
+  local fake_bin
+  local output_dir
+  local output
+  local cli_status
+  make_temp_dir
+  fake_bin="$REPLY"
+  make_temp_dir
+  output_dir="$REPLY"
+  make_temp_file
+  output="$REPLY"
+
+  cat > "$fake_bin/codex" <<'EOF'
+#!/usr/bin/env zsh
+exit 23
+EOF
+  chmod +x "$fake_bin/codex"
+
+  set +e
+  PATH="$fake_bin:$PATH" "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" codex \
+    --allow \
+    --suite dotfiles/.agent/evals/markdown-docs/model.yaml \
+    --output-dir "$output_dir" >"$output" 2>&1
+  cli_status=$?
+  set -e
+
+  [[ "$cli_status" -ne 0 ]] || fail "expected cli agent eval to fail when codex exits non-zero"
+  assert_contains "$output_dir/codex/markdown-docs-model-eval/markdown-docs-restructure-guide-001/summary.txt" "CLI failed with status 23"
+
+  rm -rf "$fake_bin" "$output_dir"
+  rm -f "$output"
+}
+
+test_waza_cli_agent_eval_script_grades_successful_cli_output() {
+  local fake_bin
+  local output_dir
+  local output
+  make_temp_dir
+  fake_bin="$REPLY"
+  make_temp_dir
+  output_dir="$REPLY"
+  make_temp_file
+  output="$REPLY"
+
+  cat > "$fake_bin/codex" <<'EOF'
+#!/usr/bin/env zsh
+echo "This Markdown review identifies duplicate headings and explains structure, order, usage, troubleshooting, and heading cleanup with enough concrete detail to exceed the length threshold."
+EOF
+  chmod +x "$fake_bin/codex"
+
+  PATH="$fake_bin:$PATH" "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" codex \
+    --allow \
+    --suite dotfiles/.agent/evals/markdown-docs/model.yaml \
+    --output-dir "$output_dir" >"$output" 2>&1
+
+  assert_contains "$output_dir/codex/markdown-docs-model-eval/markdown-docs-restructure-guide-001/summary.txt" "PASS regex_match: (?i)(duplicate|duplicated|repeated).*heading|two.*setup|setup.*twice"
+  assert_contains "$output_dir/codex/markdown-docs-model-eval/markdown-docs-restructure-guide-001/summary.txt" "PASS regex_not_match: (?i)fatal error|crashed|exception occurred"
+  assert_not_contains "$output_dir/codex/markdown-docs-model-eval/markdown-docs-restructure-guide-001/summary.txt" "type: text"
+  assert_not_contains "$output_dir/codex/markdown-docs-model-eval/markdown-docs-restructure-guide-001/summary.txt" "FAIL"
+
+  rm -rf "$fake_bin" "$output_dir"
+  rm -f "$output"
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
@@ -1704,6 +1820,9 @@ main() {
   test_brewfile_migration_dry_run_does_not_write_outputs
   test_repository_migration_moves_available_formulae_and_gui_apps_to_nix
   test_waza_is_integrated_for_agent_skill_evaluations
+  test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run
+  test_waza_cli_agent_eval_script_preserves_cli_failure_status
+  test_waza_cli_agent_eval_script_grades_successful_cli_output
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
