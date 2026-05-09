@@ -52,6 +52,7 @@
   "llvm"
   "dotfiles.mactop"
   "dotfiles.magika-cli"
+  "dotfiles.waza"
   "marp-cli"
   "mecab"
   "dotfiles.mise"

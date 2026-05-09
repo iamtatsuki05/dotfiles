@@ -262,6 +262,18 @@ zsh dotfiles/.agent/sync.sh
 
 `dotfiles/.agent/hooks/` のフックスクリプトは `~/.claude/hooks/`・`~/.codex/hooks/`・`~/.gemini/hooks/` にシンボリックリンクされます。
 
+### Waza による skill 評価
+
+Waza は Nix の CLI package set に `dotfiles.waza` として含めています。プロジェクト設定は `.waza.yaml`、skill は `dotfiles/.agent/skills/`、評価 suite は `dotfiles/.agent/evals/` に置きます。
+
+```bash
+mise run waza-check
+mise run waza-eval
+mise run waza-dashboard
+```
+
+最初の `markdown-docs` 評価は Waza の `mock` executor を使うため、モデル認証なしでリポジトリ側の配線を確認できます。実モデルでの回帰評価が必要な skill は `dotfiles/.agent/evals/<skill>/` に追加してください。
+
 ### Jupyter Notebook（jupytext）
 
 トークン消費を抑えるため、AI ツールは `.py` ファイルのみを編集する構成にしています。ファイル編集のたびにフックで `jupytext --sync` が自動実行され、ペアリングされた `.ipynb` に反映されます。

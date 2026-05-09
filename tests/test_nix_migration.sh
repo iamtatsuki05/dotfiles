@@ -22,6 +22,7 @@ readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
 readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
+readonly WAZA_AGENT_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/eval.yaml"
 readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
 readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
 readonly HOME_MANAGER_ZSH_MODULE="$REPO_ROOT/config/nix/home-manager/zsh.nix"
@@ -34,6 +35,7 @@ readonly DARWIN_DEFAULTS_MODULE="$REPO_ROOT/config/nix/darwin/defaults.nix"
 readonly DARWIN_HOMEBREW_MODULE="$REPO_ROOT/config/nix/darwin/homebrew.nix"
 readonly DARWIN_AUTO_UPDATE_MODULE="$REPO_ROOT/config/nix/darwin/auto-update.nix"
 readonly NIX_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/package-names.nix"
+readonly DOTFILES_PACKAGES_FILE="$REPO_ROOT/config/nix/dotfiles-packages.nix"
 readonly NIX_GUI_COMMON_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-common-package-names.nix"
 readonly NIX_GUI_MACOS_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-macos-package-names.nix"
 readonly NIX_GUI_LINUX_PACKAGE_NAMES_FILE="$REPO_ROOT/config/nix/gui-linux-package-names.nix"
@@ -380,6 +382,20 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$MAS_APPS_FILE" '"Xcode" = 497799835;'
   assert_not_contains "$MAS_APPS_FILE" '"Alfred"'
   assert_not_contains "$MAS_APPS_FILE" '"Bitwarden"'
+}
+
+test_waza_is_integrated_for_agent_skill_evaluations() {
+  assert_contains "$NIX_PACKAGE_NAMES_FILE" '"dotfiles.waza"'
+  assert_contains "$DOTFILES_PACKAGES_FILE" 'pname = "waza"'
+  assert_contains "$DOTFILES_PACKAGES_FILE" 'https://github.com/microsoft/waza/releases/download'
+  assert_contains "$DOTFILES_PACKAGES_FILE" 'mainProgram = "waza"'
+  assert_contains "$FLAKE_FILE" 'waza = dotfilesPackages.waza'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-check]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
+  assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
+  assert_contains "$WAZA_AGENT_EVAL_FILE" 'markdown-docs-eval'
+  assert_contains "$WAZA_AGENT_EVAL_FILE" 'executor: mock'
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
@@ -1680,6 +1696,7 @@ main() {
   test_brewfile_migration_writes_nix_lists_and_unmapped_report
   test_brewfile_migration_dry_run_does_not_write_outputs
   test_repository_migration_moves_available_formulae_and_gui_apps_to_nix
+  test_waza_is_integrated_for_agent_skill_evaluations
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager

@@ -82,6 +82,64 @@ in
     };
   });
 
+  waza =
+    let
+      version = "0.31.0";
+      asset =
+        if stdenv.hostPlatform.isDarwin && stdenv.hostPlatform.isAarch64 then
+          {
+            name = "waza-darwin-arm64";
+            hash = "sha256-gMMK9rUdePY5UMhGhFvFJeeHixzfaJV7r91Jh0/6FfE=";
+          }
+        else if stdenv.hostPlatform.isDarwin && stdenv.hostPlatform.isx86_64 then
+          {
+            name = "waza-darwin-amd64";
+            hash = "sha256-1bixv2g1gULHOBeXgbRKhecJ5KHOzPNKt8E+ykQn3S4=";
+          }
+        else if stdenv.hostPlatform.isLinux && stdenv.hostPlatform.isAarch64 then
+          {
+            name = "waza-linux-arm64";
+            hash = "sha256-oooOfWSh1IK9PMdAX42phZv83o279skUT/BRpcSFlfE=";
+          }
+        else if stdenv.hostPlatform.isLinux && stdenv.hostPlatform.isx86_64 then
+          {
+            name = "waza-linux-amd64";
+            hash = "sha256-vD2wYJcE0WPpDPexF/MbIUgsATciAGaiCHFNwxKV594=";
+          }
+        else
+          throw "unsupported platform for waza: ${stdenv.hostPlatform.system}";
+    in
+    pkgs.stdenvNoCC.mkDerivation {
+      pname = "waza";
+      inherit version;
+
+      src = pkgs.fetchurl {
+        url = "https://github.com/microsoft/waza/releases/download/v${version}/${asset.name}";
+        inherit (asset) hash;
+      };
+
+      dontUnpack = true;
+
+      installPhase = ''
+        runHook preInstall
+        install -Dm755 "$src" "$out/bin/waza"
+        runHook postInstall
+      '';
+
+      meta = {
+        description = "CLI and framework for evaluating AI agent skills";
+        homepage = "https://github.com/microsoft/waza";
+        license = lib.licenses.mit;
+        mainProgram = "waza";
+        platforms = [
+          "aarch64-darwin"
+          "x86_64-darwin"
+          "aarch64-linux"
+          "x86_64-linux"
+        ];
+      };
+    };
+
   mise =
     (pkgs.mise.override {
       direnv = pkgs.direnv.overrideAttrs (_: {

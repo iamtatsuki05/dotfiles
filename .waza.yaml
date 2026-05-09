@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/config.schema.json
+
+paths:
+  skills: dotfiles/.agent/skills/
+  evals: dotfiles/.agent/evals/
+  results: .waza-results/
+defaults:
+  engine: mock
+  model: claude-sonnet-4.6
+  timeout: 300
+  parallel: false
+  workers: 4
+  verbose: false
+cache:
+  enabled: true
+  dir: .waza-cache
+server:
+  port: 3000
+  resultsDir: .waza-results/
+tokens:
+  warningThreshold: 500
+  fallbackLimit: 2000

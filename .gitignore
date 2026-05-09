@@ -1,6 +1,8 @@
 .DS_Store
 .tmp
 .venv
+.waza-cache/
+.waza-results/
 result
 result-*
 dotfiles/.agent/changes/

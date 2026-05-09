@@ -82,6 +82,21 @@ description = "dotfilesのshell scriptとchezmoi source stateを検証する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh tests/run.sh"
 
+[tasks.waza-check]
+description = "Wazaでmarkdown-docs skillの提出前チェックを実行する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "cd dotfiles/.agent && WAZA_NO_UPDATE_CHECK=1 nix run path:../..#waza -- check skills/markdown-docs"
+
+[tasks.waza-eval]
+description = "Wazaでagent skill評価をmock executorで実行する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- run dotfiles/.agent/evals/markdown-docs/eval.yaml --context-dir dotfiles/.agent/evals/markdown-docs/fixtures --output-dir .waza-results -v"
+
+[tasks.waza-dashboard]
+description = "Wazaの評価結果ダッシュボードを起動する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- serve --results-dir .waza-results"
+
 [tasks.nix-migrate-brew]
 description = "現在のHomebrew状態または指定したBrewfileからNix package listと未移行レポートを生成する"
 dir = "__DOTFILES_REPO_ROOT__"

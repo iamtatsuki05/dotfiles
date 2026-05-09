@@ -264,6 +264,18 @@ zsh dotfiles/.agent/sync.sh
 
 Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, and `~/.gemini/hooks/`.
 
+### Waza skill evaluations
+
+Waza is included in the Nix CLI package set as `dotfiles.waza`. Its project config is `.waza.yaml`, with skills under `dotfiles/.agent/skills/` and eval suites under `dotfiles/.agent/evals/`.
+
+```bash
+mise run waza-check
+mise run waza-eval
+mise run waza-dashboard
+```
+
+The initial `markdown-docs` eval uses Waza's `mock` executor, so it validates the repository wiring without requiring model credentials. Add real model-backed evals under `dotfiles/.agent/evals/<skill>/` when a skill needs behavioral regression coverage.
+
 ### Jupyter Notebook (jupytext)
 
 To reduce token consumption, AI tools are configured to edit `.py` files only. `jupytext --sync` runs automatically after each file edit via hooks, keeping the paired `.ipynb` up to date.

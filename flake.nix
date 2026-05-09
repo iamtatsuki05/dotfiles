@@ -149,6 +149,7 @@
         let
           pkgs = mkPkgs system;
           cliPackages = import ./config/nix/packages.nix { inherit pkgs; };
+          dotfilesPackages = import ./config/nix/dotfiles-packages.nix { inherit pkgs; };
           guiPackages = import ./config/nix/gui-packages.nix { inherit pkgs; };
         in
         {
@@ -165,6 +166,7 @@
           dotfiles-packages = self.packages.${system}.dotfiles-cli-packages;
           default = self.packages.${system}.dotfiles-cli-packages;
           home-manager = home-manager.packages.${system}.home-manager;
+          waza = dotfilesPackages.waza;
         } // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-rebuild = nix-darwin.packages.${system}.darwin-rebuild;
         };
