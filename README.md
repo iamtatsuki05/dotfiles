@@ -280,7 +280,7 @@ mise run waza-eval-gemini -- --allow
 mise run waza-dashboard
 ```
 
-The default eval suites use Waza's `mock` executor, so they validate repository wiring without requiring model credentials. Current smoke coverage starts with `markdown-docs`, `auto-debugger`, `pr-code-review`, and `security-check`. Model-backed quality suites live in `dotfiles/.agent/evals/<skill>/model.yaml` and require the explicit `--allow` flag because they use model credentials and may consume paid quota.
+The default eval suites use Waza's `mock` executor, so they validate repository wiring without requiring model credentials. Each regular skill under `dotfiles/.agent/skills/<skill>/SKILL.md` and each meta skill under `skills/superpowers/` has `dotfiles/.agent/evals/<skill>/eval.yaml` and `model.yaml`. Model-backed quality suites live in `dotfiles/.agent/evals/<skill>/model.yaml` and require the explicit `--allow` flag because they use model credentials and may consume paid quota.
 
 To run the same model eval tasks through the local Codex CLI, Claude Code, or Gemini CLI instead of Waza's native executor, use `waza-eval-codex`, `waza-eval-claude`, or `waza-eval-gemini`. These tasks copy fixtures into a temporary workspace, invoke the CLI, and save stdout, stderr, prompts, and lightweight grader summaries under `.waza-results/cli-agents/`. Use `--dry-run` to inspect the target suites without invoking an AI CLI.
 

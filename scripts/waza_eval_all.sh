@@ -18,13 +18,17 @@ main() {
 
   local eval_file
   local eval_dir
+  local context_dir
+  local -a waza_args
   for eval_file in "${eval_files[@]}"; do
     eval_dir="${eval_file:h}"
+    context_dir="$eval_dir/fixtures"
+    waza_args=(run "$eval_file" --output-dir .waza-results -v)
+    if [[ -d "$context_dir" ]]; then
+      waza_args+=(--context-dir "$context_dir")
+    fi
     echo "===> Running Waza eval: $eval_file"
-    WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- run "$eval_file" \
-      --context-dir "$eval_dir/fixtures" \
-      --output-dir .waza-results \
-      -v
+    WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- "${waza_args[@]}"
   done
 }
 

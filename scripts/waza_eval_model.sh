@@ -49,22 +49,26 @@ EOF
   cd "$REPO_ROOT"
 
   local -a eval_files
-  eval_files=(
-    dotfiles/.agent/evals/auto-debugger/model.yaml
-    dotfiles/.agent/evals/markdown-docs/model.yaml
-    dotfiles/.agent/evals/pr-code-review/model.yaml
-    dotfiles/.agent/evals/security-check/model.yaml
-  )
+  eval_files=(dotfiles/.agent/evals/*/model.yaml(N))
+
+  if (( ${#eval_files[@]} == 0 )); then
+    echo "ERROR: no model-backed Waza eval suites found under dotfiles/.agent/evals" >&2
+    return 1
+  fi
 
   local eval_file
   local eval_dir
+  local context_dir
+  local -a waza_args
   for eval_file in "${eval_files[@]}"; do
     eval_dir="${eval_file:h}"
+    context_dir="$eval_dir/fixtures"
+    waza_args=(run "$eval_file" --output-dir .waza-results -v)
+    if [[ -d "$context_dir" ]]; then
+      waza_args+=(--context-dir "$context_dir")
+    fi
     echo "===> Running model-backed Waza eval: $eval_file"
-    WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- run "$eval_file" \
-      --context-dir "$eval_dir/fixtures" \
-      --output-dir .waza-results \
-      -v
+    WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- "${waza_args[@]}"
   done
 }
 

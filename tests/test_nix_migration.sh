@@ -30,8 +30,10 @@ readonly WAZA_PR_CODE_REVIEW_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code
 readonly WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code-review/model.yaml"
 readonly WAZA_SECURITY_CHECK_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/eval.yaml"
 readonly WAZA_SECURITY_CHECK_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/model.yaml"
+readonly WAZA_ALL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_all.sh"
 readonly WAZA_MODEL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_model.sh"
 readonly WAZA_CLI_AGENT_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_cli_agent.sh"
+readonly WAZA_EVAL_ROOT="$REPO_ROOT/dotfiles/.agent/evals"
 readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
 readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
 readonly HOME_MANAGER_ZSH_MODULE="$REPO_ROOT/config/nix/home-manager/zsh.nix"
@@ -420,6 +422,8 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'executor: copilot-sdk'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'sql_injection_detected'
   assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'Waza model-backed evals require model credentials'
+  assert_contains "$WAZA_ALL_EVAL_SCRIPT" 'if [[ -d "$context_dir" ]]'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'if [[ -d "$context_dir" ]]'
   assert_executable "$WAZA_CLI_AGENT_EVAL_SCRIPT"
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'CLI agent evals require explicit --allow'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'codex exec -C'
@@ -519,6 +523,77 @@ EOF
 
   rm -rf "$fake_bin" "$output_dir"
   rm -f "$output"
+}
+
+test_waza_eval_suites_cover_all_regular_agent_skills() {
+  local -a skills
+  local -A superpower_eval_dirs
+  local skill
+  local eval_dir
+  local eval_file
+  local model_file
+  local task_files
+
+  skills=(
+    agent-job-scheduler
+    alphaxiv-paper-lookup
+    api-design
+    auto-debugger
+    ci-cd
+    claude-code
+    codex
+    database-dev
+    empirical-prompt-tuning
+    gemini
+    go-dev
+    gws
+    magika
+    markdown-docs
+    markitdown
+    pr-code-review
+    prompt-tuner
+    python-dev
+    retrospective-codify
+    security-check
+    terraform-dev
+    typescript-dev
+  )
+
+  for skill in "${skills[@]}"; do
+    eval_file="$WAZA_EVAL_ROOT/$skill/eval.yaml"
+    model_file="$WAZA_EVAL_ROOT/$skill/model.yaml"
+    assert_file "$REPO_ROOT/dotfiles/.agent/skills/$skill/SKILL.md"
+    assert_contains "$eval_file" "name: $skill-eval"
+    assert_contains "$eval_file" "skill: $skill"
+    assert_contains "$eval_file" "executor: mock"
+    assert_contains "$eval_file" 'tasks/*.yaml'
+    assert_contains "$model_file" "name: $skill-model-eval"
+    assert_contains "$model_file" "skill: $skill"
+    assert_contains "$model_file" "executor: copilot-sdk"
+    assert_contains "$model_file" "regex_match:"
+    task_files=("$WAZA_EVAL_ROOT/$skill"/tasks/*.yaml(N))
+    (( ${#task_files[@]} > 0 )) || fail "expected at least one task yaml for Waza eval skill: $skill"
+  done
+
+  superpower_eval_dirs=(
+    superpowers-dispatching-parallel-agents "superpowers:dispatching-parallel-agents"
+    superpowers-test-driven-development "superpowers:test-driven-development"
+    superpowers-writing-skills "superpowers:writing-skills"
+  )
+
+  for eval_dir skill in "${(@kv)superpower_eval_dirs}"; do
+    eval_file="$WAZA_EVAL_ROOT/$eval_dir/eval.yaml"
+    model_file="$WAZA_EVAL_ROOT/$eval_dir/model.yaml"
+    assert_file "$REPO_ROOT/dotfiles/.agent/skills/superpowers/${eval_dir#superpowers-}/SKILL.md"
+    assert_contains "$eval_file" "name: $eval_dir-eval"
+    assert_contains "$eval_file" "skill: \"$skill\""
+    assert_contains "$eval_file" "executor: mock"
+    assert_contains "$model_file" "name: $eval_dir-model-eval"
+    assert_contains "$model_file" "skill: \"$skill\""
+    assert_contains "$model_file" "executor: copilot-sdk"
+    task_files=("$WAZA_EVAL_ROOT/$eval_dir"/tasks/*.yaml(N))
+    (( ${#task_files[@]} > 0 )) || fail "expected at least one task yaml for Waza eval skill: $skill"
+  done
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
@@ -1823,6 +1898,7 @@ main() {
   test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run
   test_waza_cli_agent_eval_script_preserves_cli_failure_status
   test_waza_cli_agent_eval_script_grades_successful_cli_output
+  test_waza_eval_suites_cover_all_regular_agent_skills
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager

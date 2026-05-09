@@ -278,7 +278,7 @@ mise run waza-eval-gemini -- --allow
 mise run waza-dashboard
 ```
 
-既定の評価 suite は Waza の `mock` executor を使うため、モデル認証なしでリポジトリ側の配線を確認できます。現時点では `markdown-docs`、`auto-debugger`、`pr-code-review`、`security-check` の smoke eval を置いています。実モデルで具体的な品質を見る suite は `dotfiles/.agent/evals/<skill>/model.yaml` に置き、モデル認証と課金枠を使う可能性があるため `--allow` を明示したときだけ実行します。
+既定の評価 suite は Waza の `mock` executor を使うため、モデル認証なしでリポジトリ側の配線を確認できます。`dotfiles/.agent/skills/<skill>/SKILL.md` 直下の通常スキルと `skills/superpowers/` 配下のメタスキルには、それぞれ `dotfiles/.agent/evals/<skill>/eval.yaml` と `model.yaml` を置いています。実モデルで具体的な品質を見る suite は `dotfiles/.agent/evals/<skill>/model.yaml` に置き、モデル認証と課金枠を使う可能性があるため `--allow` を明示したときだけ実行します。
 
 Waza 本体の標準 executor ではなく、手元の Codex CLI / Claude Code / Gemini CLI に同じ model eval task を流したい場合は `waza-eval-codex`、`waza-eval-claude`、`waza-eval-gemini` を使います。これらは fixture を一時ディレクトリにコピーして CLI を実行し、stdout / stderr / prompt / 簡易 grader 結果を `.waza-results/cli-agents/` に保存します。実行前の対象確認だけなら `--dry-run` を使えます。
 
