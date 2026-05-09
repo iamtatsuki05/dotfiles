@@ -92,6 +92,11 @@ description = "Wazaでagent skill評価をmock executorで実行する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- run dotfiles/.agent/evals/markdown-docs/eval.yaml --context-dir dotfiles/.agent/evals/markdown-docs/fixtures --output-dir .waza-results -v"
 
+[tasks.waza-eval-all]
+description = "Wazaで全agent skill評価をmock executorで実行する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_all.sh"
+
 [tasks.waza-dashboard]
 description = "Wazaの評価結果ダッシュボードを起動する"
 dir = "__DOTFILES_REPO_ROOT__"

@@ -271,10 +271,11 @@ Waza is included in the Nix CLI package set as `dotfiles.waza`. Its project conf
 ```bash
 mise run waza-check
 mise run waza-eval
+mise run waza-eval-all
 mise run waza-dashboard
 ```
 
-The initial `markdown-docs` eval uses Waza's `mock` executor, so it validates the repository wiring without requiring model credentials. Add real model-backed evals under `dotfiles/.agent/evals/<skill>/` when a skill needs behavioral regression coverage.
+The initial eval suites use Waza's `mock` executor, so they validate repository wiring without requiring model credentials. Current smoke coverage starts with `markdown-docs`, `auto-debugger`, `pr-code-review`, and `security-check`. Add real model-backed evals under `dotfiles/.agent/evals/<skill>/` when a skill needs behavioral regression coverage.
 
 ### Jupyter Notebook (jupytext)
 

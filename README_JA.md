@@ -269,10 +269,11 @@ Waza は Nix の CLI package set に `dotfiles.waza` として含めています
 ```bash
 mise run waza-check
 mise run waza-eval
+mise run waza-eval-all
 mise run waza-dashboard
 ```
 
-最初の `markdown-docs` 評価は Waza の `mock` executor を使うため、モデル認証なしでリポジトリ側の配線を確認できます。実モデルでの回帰評価が必要な skill は `dotfiles/.agent/evals/<skill>/` に追加してください。
+初期評価 suite は Waza の `mock` executor を使うため、モデル認証なしでリポジトリ側の配線を確認できます。現時点では `markdown-docs`、`auto-debugger`、`pr-code-review`、`security-check` の smoke eval を置いています。実モデルでの回帰評価が必要な skill は `dotfiles/.agent/evals/<skill>/` に追加してください。
 
 ### Jupyter Notebook（jupytext）
 

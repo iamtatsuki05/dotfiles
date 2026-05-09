@@ -23,6 +23,9 @@ readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
 readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly WAZA_AGENT_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/eval.yaml"
+readonly WAZA_AUTO_DEBUGGER_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/auto-debugger/eval.yaml"
+readonly WAZA_PR_CODE_REVIEW_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code-review/eval.yaml"
+readonly WAZA_SECURITY_CHECK_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/eval.yaml"
 readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
 readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
 readonly HOME_MANAGER_ZSH_MODULE="$REPO_ROOT/config/nix/home-manager/zsh.nix"
@@ -392,10 +395,14 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$FLAKE_FILE" 'waza = dotfilesPackages.waza'
   assert_contains "$MISE_CONFIG" '[tasks.waza-check]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-all]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
   assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'markdown-docs-eval'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'executor: mock'
+  assert_contains "$WAZA_AUTO_DEBUGGER_EVAL_FILE" 'auto-debugger-eval'
+  assert_contains "$WAZA_PR_CODE_REVIEW_EVAL_FILE" 'pr-code-review-eval'
+  assert_contains "$WAZA_SECURITY_CHECK_EVAL_FILE" 'security-check-eval'
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
