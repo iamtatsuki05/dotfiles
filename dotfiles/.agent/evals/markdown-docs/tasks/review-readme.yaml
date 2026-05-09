@@ -1,0 +1,32 @@
+id: markdown-docs-review-readme-001
+name: Review README Structure
+description: |
+  Checks that the markdown-docs skill can handle a README review request.
+
+tags:
+  - markdown
+  - review
+  - smoke
+
+inputs:
+  prompt: "Review this README and point out structural Markdown issues."
+  context:
+    document_type: README
+    language: English
+  files:
+    - path: sample-readme.md
+
+expected:
+  output_contains:
+    - "README"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 5
+
+graders:
+  - name: mentions_markdown_or_readme
+    type: text
+    config:
+      regex_match:
+        - "(?i)(markdown|readme)"

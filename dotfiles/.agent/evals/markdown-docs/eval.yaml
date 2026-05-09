@@ -1,0 +1,35 @@
+name: markdown-docs-eval
+description: |
+  Evaluation suite for the markdown-docs skill.
+  Starts with a mock executor smoke test so the repository can validate the
+  Waza wiring without requiring model credentials.
+skill: markdown-docs
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: mock
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: task_completion
+    weight: 1.0
+    threshold: 0.8
+    description: Did the skill complete the requested Markdown review task?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 10"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/*.yaml"
