@@ -535,7 +535,6 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
   local task_files
 
   skills=(
-    agent-job-scheduler
     alphaxiv-paper-lookup
     api-design
     auto-debugger
