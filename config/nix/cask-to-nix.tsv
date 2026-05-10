@@ -1,6 +1,5 @@
 # Homebrew cask	Nixpkgs attribute	Nix scope
 # Nix scope: common, macos, or linux.
-1password	_1password-gui	common
 1password-cli	_1password-cli	common
 alacritty	alacritty	common
 alt-tab	alt-tab-macos	macos

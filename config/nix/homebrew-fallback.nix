@@ -15,6 +15,7 @@
   ];
 
   casks = [
+    "1password"
     "affinity"
     "affinity-designer"
     "affinity-photo"

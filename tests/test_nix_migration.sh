@@ -334,7 +334,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "wireshark-cli"
   )
   local common_gui_attrs=(
-    "_1password-gui"
+    "_1password-cli"
     "alacritty"
     "discord"
     "google-chrome"
@@ -358,7 +358,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "vlc"
   )
   local migrated_casks=(
-    "1password"
+    "1password-cli"
     "alacritty"
     "discord"
     "google-chrome"

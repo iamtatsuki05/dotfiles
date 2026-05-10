@@ -1,5 +1,4 @@
 [
-  "_1password-gui"
   "_1password-cli"
   "alacritty"
   "antigravity"
