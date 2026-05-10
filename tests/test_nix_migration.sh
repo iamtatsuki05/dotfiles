@@ -18,6 +18,7 @@ readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly HOMEBREW_LIB="$REPO_ROOT/scripts/lib/homebrew.sh"
 readonly HOMEBREW_FALLBACK_LIB="$REPO_ROOT/scripts/lib/homebrew_fallback.sh"
 readonly RUNTIME_LIB="$REPO_ROOT/scripts/lib/runtime.sh"
+readonly COMMAND_LIB="$REPO_ROOT/scripts/lib/command.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
@@ -91,6 +92,7 @@ copy_script_libs() {
 
   mkdir -p "$repo/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
   cp "$HOMEBREW_FALLBACK_LIB" "$repo/scripts/lib/homebrew_fallback.sh"
   cp "$RUNTIME_LIB" "$repo/scripts/lib/runtime.sh"
@@ -1228,6 +1230,8 @@ test_remove_homebrew_script_is_explicit_and_dry_run_first() {
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'taps|brews|casks|vscode'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'mas_apps_has_entries'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Refusing to remove Homebrew'
+  assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'source "$LIB_DIR/command.sh"'
+  assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'dotfiles_print_raw_command_block'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Homebrew uninstall command'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh'
   assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
@@ -1253,6 +1257,9 @@ test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/cleanup_package_caches.sh"'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--older-than Nd'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--apply'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'source "$LIB_DIR/command.sh"'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'dotfiles_run_or_print'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'dotfiles_print_command'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix profile wipe-history'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--profile "$profile"'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix store gc'

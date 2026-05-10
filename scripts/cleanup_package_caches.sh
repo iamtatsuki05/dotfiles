@@ -7,6 +7,7 @@ readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly DEFAULT_OLDER_THAN="30d"
 
+source "$LIB_DIR/command.sh"
 source "$LIB_DIR/homebrew.sh"
 
 APPLY=0
@@ -104,21 +105,6 @@ warn() {
   echo "===> $*" >&2
 }
 
-print_command() {
-  printf '  '
-  printf '%q ' "$@"
-  printf '\n'
-}
-
-run_or_print() {
-  if (( APPLY )); then
-    "$@"
-    return 0
-  fi
-
-  print_command "$@"
-}
-
 run_nix_cleanup() {
   local -A seen_profiles
   local -a profile_candidates
@@ -160,14 +146,14 @@ run_nix_cleanup() {
 
   if (( ${#profiles[@]} )); then
     for profile in "${profiles[@]}"; do
-      run_or_print nix profile wipe-history --profile "$profile" --older-than "$OLDER_THAN"
+      dotfiles_run_or_print "$APPLY" nix profile wipe-history --profile "$profile" --older-than "$OLDER_THAN"
     done
   else
     warn "Skipping Nix profile history cleanup because no user profile was found"
   fi
 
-  run_or_print nix store gc
-  run_or_print nix store optimise
+  dotfiles_run_or_print "$APPLY" nix store gc
+  dotfiles_run_or_print "$APPLY" nix store optimise
 }
 
 run_homebrew_cleanup() {
@@ -186,7 +172,7 @@ run_homebrew_cleanup() {
   brew_path="$(dotfiles_find_homebrew)"
 
   log "Homebrew cleanup"
-  run_or_print "$brew_path" cleanup --prune=all --scrub
+  dotfiles_run_or_print "$APPLY" "$brew_path" cleanup --prune=all --scrub
 }
 
 run_mise_cleanup() {
@@ -207,8 +193,8 @@ run_mise_cleanup() {
     return 0
   fi
 
-  print_command env "MISE_GLOBAL_CONFIG_FILE=$REPO_ROOT/config/mise/config.toml" mise prune --dry-run --tools
-  print_command mise cache prune --dry-run
+  dotfiles_print_command env "MISE_GLOBAL_CONFIG_FILE=$REPO_ROOT/config/mise/config.toml" mise prune --dry-run --tools
+  dotfiles_print_command mise cache prune --dry-run
 }
 
 main() {

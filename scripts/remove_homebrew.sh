@@ -4,8 +4,11 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
 readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
+
+source "$LIB_DIR/command.sh"
 
 APPLY=0
 CONFIRM_NIX_READY=0
@@ -70,15 +73,14 @@ mas_apps_has_entries() {
   grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
 }
 
-print_command() {
-  cat <<'EOF'
-Homebrew uninstall command:
-  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"
-EOF
+print_homebrew_uninstall_command() {
+  dotfiles_print_raw_command_block \
+    "Homebrew uninstall command:" \
+    'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"'
 }
 
 remove_homebrew() {
-  print_command
+  print_homebrew_uninstall_command
 
   if (( ! APPLY )); then
     echo "DRY-RUN: Homebrew was not removed"
