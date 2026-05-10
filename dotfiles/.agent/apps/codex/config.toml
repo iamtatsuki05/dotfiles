@@ -2,8 +2,24 @@ model = "gpt-5.5"
 sandbox_mode = "workspace-write"
 ignore_patterns = [
   "**/.env",
+  "**/.env.*",
   "**/secrets.env",
-  "**/*.env"
+  "**/credentials.json",
+  "**/secrets.json",
+  "**/*.key",
+  "**/*.pem",
+  "**/id_rsa",
+  "**/id_ed25519",
+  "config/shell/secrets.env",
+  ".tmp/",
+  ".waza-cache/",
+  ".waza-results/",
+  ".venv/",
+  "__pycache__/",
+  "node_modules/",
+  "result",
+  "result-*",
+  "dotfiles/.agent/changes/"
 ]
 model_reasoning_effort = "medium"
 hide_agent_reasoning = true
