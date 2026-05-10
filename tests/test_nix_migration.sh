@@ -1824,6 +1824,8 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'go = "1.25"'
   assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
   assert_contains "$MISE_CONFIG" 'python = "3.13"'
+  assert_contains "$MISE_CONFIG" '[tools."http:devin"]'
+  assert_contains "$MISE_CONFIG" 'version_list_url = "https://static.devin.ai/cli/current/manifest.json"'
   assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'
   assert_contains "$MISE_CONFIG" 'redis = "8.2"'

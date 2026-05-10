@@ -72,6 +72,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/claude" \
     "$repo/dotfiles/.agent/apps/codex" \
     "$repo/dotfiles/.agent/apps/cursor" \
+    "$repo/dotfiles/.agent/apps/devin" \
     "$repo/dotfiles/.agent/apps/gemini" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills"
@@ -98,6 +99,9 @@ sandbox_mode = "workspace-write"
 
 [sandbox_workspace_write]
 network_access = true
+EOF
+  cat > "$repo/dotfiles/.agent/apps/devin/config.json" <<'EOF'
+{"auto_update":false,"hooks":{"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/jupytext_sync.sh"}]}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/gemini/settings.json" <<'EOF'
 {"general":{"sessionRetention":{"enabled":false}}}
@@ -132,6 +136,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
   assert_symlink_target "$home_dir/.claude/CLAUDE.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$xdg_config_home/devin/config.json" "$repo/dotfiles/.agent/apps/devin/config.json"
+  assert_symlink_target "$xdg_config_home/devin/skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$xdg_config_home/devin/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.gemini/settings.json" "$repo/dotfiles/.agent/apps/gemini/settings.json"
   assert_symlink_target "$home_dir/.gemini/ignore" "$repo/dotfiles/.agent/apps/gemini/ignore"
   assert_symlink_target "$home_dir/.cursor/mcp.json" "$repo/dotfiles/.agent/apps/cursor/mcp.json"

@@ -1,0 +1,77 @@
+{
+  "agent": {
+    "model": "adaptive",
+    "show_history_on_continue": true
+  },
+  "auto_update": false,
+  "notify": "smart",
+  "show_path": true,
+  "unicode_mode": "auto",
+  "permissions": {
+    "allow": [
+      "mcp__playwright__browser_resize",
+      "mcp__playwright__browser_evaluate",
+      "mcp__playwright__browser_run_code",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_tabs",
+      "mcp__playwright__browser_fill_form",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_press_key"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "mcpServers": {
+    "deepwiki": {
+      "url": "https://mcp.deepwiki.com/mcp",
+      "transport": "http"
+    },
+    "devin": {
+      "url": "https://mcp.devin.ai/mcp",
+      "transport": "http",
+      "headers": {
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
+      }
+    },
+    "gemini-cli": {
+      "command": "bunx",
+      "args": [
+        "mcp-gemini-cli",
+        "--allow-npx"
+      ],
+      "env": {}
+    },
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http"
+    },
+    "playwright": {
+      "command": "bunx",
+      "args": [
+        "@playwright/mcp@latest"
+      ],
+      "env": {}
+    }
+  },
+  "read_config_from": {
+    "claude": true,
+    "cursor": true,
+    "windsurf": true,
+    "opencode": true,
+    "vscode": true,
+    "zed": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.config/devin/hooks/jupytext_sync.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

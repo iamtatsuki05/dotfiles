@@ -122,6 +122,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_contains "$temp_home/.bash_profile" '. "$HOME/.bashrc"'
   assert_contains "$temp_home/.config/mise/config.toml" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/mise/config.toml" "__DOTFILES_REPO_ROOT__"
+  assert_contains "$temp_home/.config/mise/config.toml" '{{ version }}'
   assert_file "$temp_home/.config/shell/secrets.env"
 
   if command -v bash >/dev/null 2>&1; then

@@ -179,7 +179,7 @@ mise run nix-mise-upgrade -- --shell bash
 mise run nix-mise-upgrade -- --with-gui-apps
 ```
 
-`mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. Use `mise run nix-upgrade` when you only need Nix-managed tools, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. AI CLI tools such as `codex`, `claude-code`, and `gemini-cli` are managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
+`mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. Use `mise run nix-upgrade` when you only need Nix-managed tools, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. AI CLI tools such as `codex`, `claude-code`, `gemini-cli`, and `devin` are managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
 The helper script now also supports input-scoped updates inspired by `nix flake lock --update-input ...`, and it prints a stage-based progress bar so you can see whether it is updating the lockfile, applying Nix, or upgrading `mise` tools.
 If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so Nix-managed CLI tools can still be updated.
 
@@ -260,9 +260,10 @@ zsh dotfiles/.agent/sync.sh
 | `dotfiles/.agent/apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `dotfiles/.agent/apps/codex/config.toml` | `~/.codex/config.toml` |
 | `dotfiles/.agent/apps/codex/hooks.json` | `~/.codex/hooks.json` |
+| `dotfiles/.agent/apps/devin/config.json` | `~/.config/devin/config.json` |
 | `dotfiles/.agent/apps/gemini/settings.json` | `~/.gemini/settings.json` |
 
-Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, and `~/.gemini/hooks/`.
+Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.config/devin/hooks/`, and `~/.gemini/hooks/`.
 
 ### Waza skill evaluations
 

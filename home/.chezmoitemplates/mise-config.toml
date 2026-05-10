@@ -33,6 +33,12 @@ aws-cli = "latest"
 aws-vault = "latest"
 gcloud = "latest"
 
+[tools."http:devin"]
+version = "latest"
+url = 'https://static.devin.ai/cli/__MISE_OPEN__ version __MISE_CLOSE__/devin-__MISE_OPEN__ version __MISE_CLOSE__-__MISE_OPEN__ arch(x64="x86_64", arm64="aarch64") __MISE_CLOSE__-__MISE_OPEN__ os(macos="apple-darwin", linux="unknown-linux") __MISE_CLOSE__.tar.gz'
+version_list_url = "https://static.devin.ai/cli/current/manifest.json"
+bin = "devin"
+
 [env]
 HOMEBREW_BUNDLE_DUMP_NO_GO = "1"
 

@@ -642,7 +642,7 @@ update_mise_versions() {
 }
 
 sync_mise_templates() {
-  cp "$MISE_CONFIG_FILE" "$MISE_TEMPLATE_FILE"
+  perl -0pe 's/\{\{/__MISE_OPEN__/g; s/\}\}/__MISE_CLOSE__/g' "$MISE_CONFIG_FILE" > "$MISE_TEMPLATE_FILE"
 }
 
 sync_home_mise_config() {

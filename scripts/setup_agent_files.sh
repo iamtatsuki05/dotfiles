@@ -90,6 +90,7 @@ ensure_dir() {
 sync_shared_files() {
   ensure_dir ~/.codex
   ensure_dir ~/.claude
+  ensure_dir "${XDG_CONFIG_HOME:-$HOME/.config}/devin"
   ensure_dir ~/.gemini
   ensure_dir ~/.cursor
 
@@ -100,6 +101,7 @@ sync_shared_files() {
 
   link_symlink "$AGENT_DIR/skills" ~/.codex/skills
   link_symlink "$AGENT_DIR/skills" ~/.claude/skills
+  link_symlink "$AGENT_DIR/skills" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/skills"
   link_symlink "$AGENT_DIR/skills" ~/.gemini/skills
   link_symlink "$AGENT_DIR/skills" ~/.cursor/skills
 }
@@ -109,7 +111,7 @@ sync_hooks() {
   local hook_file
   local hook_name
 
-  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks; do
+  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks"; do
     ensure_dir "$hooks_dir"
     for hook_file in "$AGENT_DIR/hooks"/*; do
       [ -f "$hook_file" ] || continue
@@ -125,6 +127,7 @@ sync_tool_configs() {
   link_symlink "$APPS_DIR/claude/.mcp.json" ~/.claude/.mcp.json
   link_symlink "$APPS_DIR/codex/config.toml" ~/.codex/config.toml
   link_symlink "$APPS_DIR/codex/hooks.json" ~/.codex/hooks.json
+  link_symlink "$APPS_DIR/devin/config.json" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/config.json"
   link_symlink "$APPS_DIR/gemini/settings.json" ~/.gemini/settings.json
   link_symlink "$APPS_DIR/gemini/ignore" ~/.gemini/ignore
   link_symlink "$APPS_DIR/cursor/mcp.json" ~/.cursor/mcp.json
