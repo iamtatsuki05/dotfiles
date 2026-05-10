@@ -1229,6 +1229,9 @@ test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix store gc'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix store optimise'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'brew cleanup --prune=all --scrub'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--include-mise'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'mise prune'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'mise cache prune'
 
   mkdir -p "$repo/scripts/lib" "$bin_dir" "$repo/home/.local/state/nix/profiles"
   touch "$repo/home/.local/state/nix/profiles/profile" "$repo/home/.nix-profile"
@@ -1248,8 +1251,13 @@ if [[ "\${1:-}" == "--prefix" ]]; then
   print -r -- "/opt/homebrew"
 fi
 EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*:MISE_GLOBAL_CONFIG_FILE=\${MISE_GLOBAL_CONFIG_FILE:-}" >> "$log_file"
+EOF
 
-  chmod +x "$repo/scripts/cleanup_package_caches.sh" "$bin_dir/nix" "$bin_dir/brew"
+  chmod +x "$repo/scripts/cleanup_package_caches.sh" "$bin_dir/nix" "$bin_dir/brew" "$bin_dir/mise"
 
   HOME="$repo/home" HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" > "$output_file"
@@ -1260,16 +1268,26 @@ EOF
   assert_output_contains "$output_file" 'nix store gc'
   assert_output_contains "$output_file" 'nix store optimise'
   assert_output_contains "$output_file" 'brew cleanup --prune=all --scrub'
+  grep -Fq -- 'mise prune' "$output_file" && fail "expected mise cleanup to be opt-in"
   assert_not_exists "$log_file"
 
   HOME="$repo/home" HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
-    "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" --apply > "$output_file"
+    "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" --include-mise > "$output_file"
+
+  assert_output_contains "$output_file" "env MISE_GLOBAL_CONFIG_FILE=$repo/config/mise/config.toml mise prune --dry-run --tools"
+  assert_output_contains "$output_file" 'mise cache prune --dry-run'
+  assert_not_exists "$log_file"
+
+  HOME="$repo/home" HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" --apply --include-mise > "$output_file"
 
   assert_contains "$log_file" "nix:profile wipe-history --profile $repo/home/.local/state/nix/profiles/profile --older-than 30d"
   assert_contains "$log_file" "nix:profile wipe-history --profile $repo/home/.nix-profile --older-than 30d"
   assert_contains "$log_file" 'nix:store gc'
   assert_contains "$log_file" 'nix:store optimise'
   assert_contains "$log_file" 'brew:cleanup --prune=all --scrub'
+  assert_contains "$log_file" "mise:prune --yes --tools:MISE_GLOBAL_CONFIG_FILE=$repo/config/mise/config.toml"
+  assert_contains "$log_file" 'mise:cache prune --yes:MISE_GLOBAL_CONFIG_FILE='
 
   rm -rf "$repo"
 }

@@ -35,6 +35,7 @@ service_tier = "fast"
 [features]
 fast_mode = true
 external_migration = true
+hooks = true
 undo = true
 goals = true
 memories = true

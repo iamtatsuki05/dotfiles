@@ -112,6 +112,9 @@ EOF
 model = "gpt-5.4"
 sandbox_mode = "workspace-write"
 
+[features]
+hooks = true
+
 [sandbox_workspace_write]
 network_access = true
 EOF
@@ -226,7 +229,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.codex/config.toml" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_symlink_target "$home_dir/.codex/hooks.json" "$repo/dotfiles/.agent/apps/codex/hooks.json"
   assert_not_contains "$home_dir/.codex/config.toml" '[history]'
-  assert_not_contains "$home_dir/.codex/config.toml" '[features]'
+  assert_contains "$home_dir/.codex/config.toml" '[features]'
+  assert_contains "$home_dir/.codex/config.toml" 'hooks = true'
   assert_not_contains "$home_dir/.codex/config.toml" '[memories]'
   assert_not_contains "$home_dir/.codex/config.toml" 'persistence = "save-all"'
   assert_not_contains "$home_dir/.codex/config.toml" 'codex_hooks = true'
@@ -329,6 +333,7 @@ EOF
 
   assert_symlink_target "$codex_config" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_contains "$codex_config" 'sandbox_mode = "workspace-write"'
+  assert_contains "$codex_config" 'hooks = true'
   assert_not_contains "$codex_config" '[history]'
   assert_not_contains "$codex_config" 'persistence = "save-all"'
   assert_not_contains "$codex_config" 'history.max_bytes = 1024'
