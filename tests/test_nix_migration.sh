@@ -157,6 +157,7 @@ brew	codex	codex
 brew	gemini-cli	gemini-cli
 cask	claude-code@latest	claude-code
 cask	codex	codex
+cask	cursor-cli	cursor-agent
 EOF
 
   cat > "$repo/config/nix/cask-to-nix.tsv" <<'EOF'
@@ -190,6 +191,7 @@ cask "slack"
 cask "alacritty"
 cask "claude-code@latest"
 cask "codex"
+cask "cursor-cli"
 cask "ghostty"
 cask "raycast"
 cask "private-app"
@@ -222,6 +224,7 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"alacritty"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"bitwarden-desktop"'
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"copilot-cli"'
+  assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"cursor-cli"'
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"claude-code"'
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"codex"'
   assert_contains "$repo/config/nix/gui-linux-package-names.nix" '"ghostty"'
@@ -233,11 +236,13 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/migrated-brew-casks.txt" "slack"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "claude-code@latest"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "codex"
+  assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "cursor-cli"
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	claude-code	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	codex	managed-by-mise:codex'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	gemini-cli	managed-by-mise:gemini-cli'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	codex	managed-by-mise:codex'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	cursor-cli	managed-by-mise:cursor-agent'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	private-tool'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	private-app'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'vscode	example.extension'
@@ -1828,6 +1833,8 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'python = "3.13"'
   assert_contains "$MISE_CONFIG" '[tools."http:devin"]'
   assert_contains "$MISE_CONFIG" 'version_list_url = "https://static.devin.ai/cli/current/manifest.json"'
+  assert_contains "$MISE_CONFIG" '[tools."http:cursor-agent"]'
+  assert_contains "$MISE_CONFIG" 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'

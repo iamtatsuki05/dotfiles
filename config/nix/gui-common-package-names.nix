@@ -5,7 +5,6 @@
   "antigravity"
   "bitwarden-desktop"
   "code-cursor"
-  "cursor-cli"
   "discord"
   "git-credential-manager"
   "google-chrome"

@@ -1,0 +1,22 @@
+# Secrets and credentials
+**/.env
+**/.env.*
+**/secrets.env
+**/credentials.json
+**/secrets.json
+**/*.key
+**/*.pem
+**/id_rsa
+**/id_ed25519
+config/shell/secrets.env
+
+# Local caches and generated outputs
+.tmp/
+.waza-cache/
+.waza-results/
+.venv/
+__pycache__/
+node_modules/
+result
+result-*
+dotfiles/.agent/changes/

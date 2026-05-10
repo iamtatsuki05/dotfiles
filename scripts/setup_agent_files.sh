@@ -135,6 +135,7 @@ sync_tool_configs() {
   link_symlink "$APPS_DIR/devin/config.json" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/config.json"
   link_symlink "$APPS_DIR/gemini/settings.json" ~/.gemini/settings.json
   link_symlink "$APPS_DIR/gemini/ignore" ~/.gemini/ignore
+  link_symlink "$APPS_DIR/cursor/cli-config.json" ~/.cursor/cli-config.json
   link_symlink "$APPS_DIR/cursor/mcp.json" ~/.cursor/mcp.json
 }
 

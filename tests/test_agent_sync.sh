@@ -117,6 +117,9 @@ EOF
   cat > "$repo/dotfiles/.agent/apps/cursor/mcp.json" <<'EOF'
 {"mcpServers":{"gemini-cli":{"command":"bunx","args":["mcp-gemini-cli","--allow-npx"]}}}
 EOF
+  cat > "$repo/dotfiles/.agent/apps/cursor/cli-config.json" <<'EOF'
+{"version":1,"editor":{"vimMode":false},"permissions":{"allow":[],"deny":[]}}
+EOF
 }
 
 test_agent_sync_links_managed_files_and_generates_runtime_state() {
@@ -160,7 +163,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$xdg_config_home/devin/config.json" '"playwright"'
   assert_symlink_target "$home_dir/.gemini/settings.json" "$repo/dotfiles/.agent/apps/gemini/settings.json"
   assert_symlink_target "$home_dir/.gemini/ignore" "$repo/dotfiles/.agent/apps/gemini/ignore"
+  assert_symlink_target "$home_dir/.cursor/cli-config.json" "$repo/dotfiles/.agent/apps/cursor/cli-config.json"
   assert_symlink_target "$home_dir/.cursor/mcp.json" "$repo/dotfiles/.agent/apps/cursor/mcp.json"
+  assert_contains "$home_dir/.cursor/cli-config.json" '"permissions"'
   assert_symlink_target "$home_dir/.codex/config.toml" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_symlink_target "$home_dir/.codex/hooks.json" "$repo/dotfiles/.agent/apps/codex/hooks.json"
   assert_not_contains "$home_dir/.codex/config.toml" '[history]'

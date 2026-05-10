@@ -40,6 +40,11 @@ url = 'https://static.devin.ai/cli/__MISE_OPEN__ version __MISE_CLOSE__/devin-__
 version_list_url = "https://static.devin.ai/cli/current/manifest.json"
 bin = "devin"
 
+[tools."http:cursor-agent"]
+version = "2026.05.09-0afadcc"
+url = 'https://downloads.cursor.com/lab/__MISE_OPEN__ version __MISE_CLOSE__/__MISE_OPEN__ os(macos="darwin", linux="linux") __MISE_CLOSE__/__MISE_OPEN__ arch(x64="x64", arm64="arm64") __MISE_CLOSE__/agent-cli-package.tar.gz'
+bin = "cursor-agent"
+
 [env]
 HOMEBREW_BUNDLE_DUMP_NO_GO = "1"
 

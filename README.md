@@ -179,7 +179,7 @@ mise run nix-mise-upgrade -- --shell bash
 mise run nix-mise-upgrade -- --with-gui-apps
 ```
 
-`mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. Use `mise run nix-upgrade` when you only need Nix-managed tools, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. AI CLI tools such as `codex`, `claude-code`, `copilot`, `gemini-cli`, and `devin` are managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
+`mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. Use `mise run nix-upgrade` when you only need Nix-managed tools, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. AI CLI tools such as `codex`, `claude-code`, `copilot`, `cursor-agent`, `gemini-cli`, and `devin` are managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
 The helper script now also supports input-scoped updates inspired by `nix flake lock --update-input ...`, and it prints a stage-based progress bar so you can see whether it is updating the lockfile, applying Nix, or upgrading `mise` tools.
 If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so Nix-managed CLI tools can still be updated.
 
@@ -242,9 +242,10 @@ To reinstall hooks manually:
 zsh scripts/setup_git_hooks.sh
 ```
 
-## AI tool configuration (Claude Code / Codex / Gemini CLI)
+## AI tool configuration (Claude Code / Codex / Cursor Agent / Gemini CLI)
 
 The source of truth for AI agent files lives under `dotfiles/.agent/`. Edit settings in `dotfiles/.agent/apps/`, the shared prompt in `dotfiles/.agent/AGENTS.md`, hooks in `dotfiles/.agent/hooks/`, and skills in `dotfiles/.agent/skills/`.
+Cursor-specific project exclusions are managed in `dotfiles/.agent/apps/cursor/.cursorignore`; the repository root `.cursorignore` points to it.
 
 To push `.agent` changes to your local tool homes immediately, run:
 
@@ -262,6 +263,8 @@ zsh dotfiles/.agent/sync.sh
 | `dotfiles/.agent/apps/copilot/mcp-config.json` | `~/.copilot/mcp-config.json` |
 | `dotfiles/.agent/apps/codex/config.toml` | `~/.codex/config.toml` |
 | `dotfiles/.agent/apps/codex/hooks.json` | `~/.codex/hooks.json` |
+| `dotfiles/.agent/apps/cursor/cli-config.json` | `~/.cursor/cli-config.json` |
+| `dotfiles/.agent/apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
 | `dotfiles/.agent/apps/devin/config.json` | `~/.config/devin/config.json` |
 | `dotfiles/.agent/apps/gemini/settings.json` | `~/.gemini/settings.json` |
 

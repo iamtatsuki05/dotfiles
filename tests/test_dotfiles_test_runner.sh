@@ -221,6 +221,8 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" "[tasks.nix-mise-upgrade]"
   assert_contains "$MISE_CONFIG" '[tools."http:devin"]'
   assert_contains "$MISE_CONFIG" 'version_list_url = "https://static.devin.ai/cli/current/manifest.json"'
+  assert_contains "$MISE_CONFIG" '[tools."http:cursor-agent"]'
+  assert_contains "$MISE_CONFIG" 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
 }

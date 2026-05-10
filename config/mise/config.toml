@@ -40,6 +40,11 @@ url = 'https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-{{ arch(x64
 version_list_url = "https://static.devin.ai/cli/current/manifest.json"
 bin = "devin"
 
+[tools."http:cursor-agent"]
+version = "2026.05.09-0afadcc"
+url = 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
+bin = "cursor-agent"
+
 [env]
 HOMEBREW_BUNDLE_DUMP_NO_GO = "1"
 
