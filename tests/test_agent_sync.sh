@@ -166,7 +166,10 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
 
   create_agent_fixture_repo "$repo"
   mkdir -p "$xdg_config_home/shell"
-  print -r -- 'export DEVIN_API_KEY=test-key' > "$xdg_config_home/shell/secrets.env"
+  {
+    print -r -- 'export DEVIN_API_KEY=test-key'
+    print -r -- 'export OPENCODE_API_KEY=opencode-test-key'
+  } > "$xdg_config_home/shell/secrets.env"
 
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
@@ -235,6 +238,11 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.gemini/.env" 'DEVIN_API_KEY=test-key'
   assert_file "$home_dir/.hermes/.env"
   assert_contains "$home_dir/.hermes/.env" 'DEVIN_API_KEY=test-key'
+  assert_contains "$home_dir/.hermes/.env" 'OPENCODE_API_KEY=opencode-test-key'
+  assert_contains "$home_dir/.hermes/.env" 'OPENCODE_GO_API_KEY=opencode-test-key'
+  assert_file "$home_dir/.openclaw/.env"
+  assert_contains "$home_dir/.openclaw/.env" 'DEVIN_API_KEY=test-key'
+  assert_contains "$home_dir/.openclaw/.env" 'OPENCODE_API_KEY=opencode-test-key'
 
   rm -rf "$repo" "$home_dir"
 }

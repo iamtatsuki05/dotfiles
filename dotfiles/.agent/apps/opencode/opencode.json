@@ -4,6 +4,14 @@
   "instructions": [
     "~/.config/opencode/AGENTS.md"
   ],
+  "model": "opencode-go/kimi-k2.6",
+  "provider": {
+    "opencode-go": {
+      "options": {
+        "apiKey": "{env:OPENCODE_API_KEY}"
+      }
+    }
+  },
   "permission": {
     "*": "allow",
     "bash": "ask",

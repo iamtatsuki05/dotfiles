@@ -2,6 +2,9 @@
   "agents": {
     "defaults": {
       "workspace": "~/.openclaw/workspace",
+      "model": {
+        "primary": "opencode-go/kimi-k2.6"
+      },
       "skipBootstrap": true,
       "contextInjection": "always",
       "sandbox": {

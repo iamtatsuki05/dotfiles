@@ -176,17 +176,24 @@ write_env_file_from_secrets() {
   : > "$tmp"
 
   local var
+  local source_var
+  local target_var
   for var in "$@"; do
+    source_var="${var%%:*}"
+    target_var="${var##*:}"
     local line=""
     local secret_line
     while IFS= read -r secret_line; do
       case "$secret_line" in
-        (${var}=*|export\ ${var}=*)
+        (${source_var}=*|export\ ${source_var}=*)
           line="${secret_line#export }"
           ;;
       esac
     done < "$SECRETS_FILE"
     if [[ -n "$line" ]]; then
+      if [[ "$source_var" != "$target_var" ]]; then
+        line="${target_var}=${line#*=}"
+      fi
       print -r -- "$line" >> "$tmp"
     fi
   done
@@ -202,7 +209,8 @@ write_env_file_from_secrets() {
 
 sync_agent_env_files() {
   write_env_file_from_secrets "$HOME/.gemini/.env" DEVIN_API_KEY
-  write_env_file_from_secrets "$HOME/.hermes/.env" DEVIN_API_KEY
+  write_env_file_from_secrets "$HOME/.hermes/.env" DEVIN_API_KEY OPENCODE_API_KEY OPENCODE_API_KEY:OPENCODE_GO_API_KEY
+  write_env_file_from_secrets "$HOME/.openclaw/.env" DEVIN_API_KEY OPENCODE_API_KEY
 }
 
 sync_hermes_mcp_dependency() {
