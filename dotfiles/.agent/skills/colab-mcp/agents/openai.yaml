@@ -1,0 +1,4 @@
+interface:
+  display_name: "Colab MCP"
+  short_description: "Use official Google Colab MCP safely"
+  default_prompt: "Use $colab-mcp to set up and troubleshoot official Google Colab MCP for my local AI agent."

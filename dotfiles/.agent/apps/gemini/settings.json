@@ -35,6 +35,14 @@
       ],
       "env": {}
     },
+    "colab-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "git+https://github.com/googlecolab/colab-mcp"
+      ],
+      "env": {}
+    },
     "notion": {
       "type": "http",
       "url": "https://mcp.notion.com/mcp"

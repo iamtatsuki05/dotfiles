@@ -1,0 +1,32 @@
+id: colab-mcp-setup-agent-config-001
+name: Setup Agent Config
+description: |
+  Checks that the skill can guide a user through adding Google's official
+  colab-mcp server to an MCP-compatible local AI agent.
+
+tags:
+  - colab-mcp
+  - mcp
+  - setup
+  - smoke
+
+inputs:
+  prompt: "公式の googlecolab/colab-mcp を Claude Code と Gemini CLI で使えるようにしたいです。MCP 設定例、必要な前提、起動後に確認すべきことを整理してください。"
+  context:
+    target: Local MCP-compatible AI agents
+    package_manager: uv
+
+expected:
+  output_contains:
+    - "colab-mcp"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_official_setup_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(colab-mcp|googlecolab|uvx|mcpServers|Gemini|Claude)"

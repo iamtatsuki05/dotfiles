@@ -59,6 +59,11 @@
       "command": ["bunx", "mcp-gemini-cli", "--allow-npx"],
       "enabled": true
     },
+    "colab-mcp": {
+      "type": "local",
+      "command": ["uvx", "git+https://github.com/googlecolab/colab-mcp"],
+      "enabled": true
+    },
     "notion": {
       "type": "remote",
       "url": "https://mcp.notion.com/mcp",

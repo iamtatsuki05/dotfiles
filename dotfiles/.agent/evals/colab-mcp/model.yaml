@@ -1,0 +1,57 @@
+name: colab-mcp-model-eval
+description: |
+  Model-backed quality evaluation for the colab-mcp skill.
+  This suite is intentionally not run by waza_eval_all.sh because it requires
+  model credentials and may use paid quota.
+skill: colab-mcp
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: colab_mcp_guidance_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response provide correct setup, connection, and safety guidance for official colab-mcp?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: official_colab_mcp_detected
+    config:
+      regex_match:
+        - "(?i)(googlecolab/colab-mcp|colab-mcp|Google Colab)"
+  - type: text
+    name: uvx_setup_detected
+    config:
+      regex_match:
+        - "(?i)(uvx|git\\+https://github\\.com/googlecolab/colab-mcp|mcpServers)"
+  - type: text
+    name: dynamic_tools_or_connection_detected
+    config:
+      regex_match:
+        - "(?i)(open_colab_browser_connection|tools/list_changed|notifications/tools/list_changed|tool list|ブラウザ|接続)"
+  - type: text
+    name: safety_or_scope_detected
+    config:
+      regex_match:
+        - "(?i)(確認|安全|token|Drive|GPU|TPU|課金|permission|scope|secret)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/setup-agent-config.yaml"
+  - "tasks/troubleshoot-only-open-tool.yaml"
+  - "tasks/plan-safe-notebook-run.yaml"

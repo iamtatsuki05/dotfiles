@@ -40,6 +40,10 @@ mcp_servers:
     args:
       - "mcp-gemini-cli"
       - "--allow-npx"
+  colab-mcp:
+    command: "uvx"
+    args:
+      - "git+https://github.com/googlecolab/colab-mcp"
   notion:
     url: "https://mcp.notion.com/mcp"
   playwright:

@@ -1,0 +1,32 @@
+id: colab-mcp-troubleshoot-open-tool-001
+name: Troubleshoot Only Open Tool
+description: |
+  Checks that the skill explains why only open_colab_browser_connection is
+  visible before a Colab browser session connects.
+
+tags:
+  - colab-mcp
+  - troubleshooting
+  - dynamic-tools
+  - smoke
+
+inputs:
+  prompt: "colab-mcp を追加しましたが、Agent 側では open_colab_browser_connection しか見えません。これは失敗ですか？何を確認すればよいですか？"
+  context:
+    visible_tool: open_colab_browser_connection
+    runtime: Google Colab in browser
+
+expected:
+  output_contains:
+    - "open_colab_browser_connection"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_dynamic_tool_refresh
+    type: text
+    config:
+      regex_match:
+        - "(?i)(open_colab_browser_connection|tools/list_changed|tool list|接続|Colab)"
