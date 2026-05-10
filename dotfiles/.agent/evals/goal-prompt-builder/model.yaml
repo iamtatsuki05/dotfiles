@@ -1,0 +1,40 @@
+name: goal-prompt-builder-model-eval
+description: |
+  Model-backed quality evaluation for the goal-prompt-builder skill.
+skill: goal-prompt-builder
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: goal_prompt_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response preserve language, omit the official URL from generated prompts, and handle unsuitable goals safely?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: mentions_goal_or_refusal_context
+    config:
+      regex_match:
+        - "(?i)(/goal|goal 化|not create a goal|do not create a goal|reject|refuse)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/japanese-migration-goal.yaml"
+  - "tasks/english-prompt-optimization-goal.yaml"
+  - "tasks/reject-unsuitable-goal.yaml"

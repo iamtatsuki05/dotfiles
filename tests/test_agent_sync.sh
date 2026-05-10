@@ -101,7 +101,7 @@ sandbox_mode = "workspace-write"
 network_access = true
 EOF
   cat > "$repo/dotfiles/.agent/apps/devin/config.json" <<'EOF'
-{"auto_update":false,"hooks":{"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/jupytext_sync.sh"}]}]}}
+{"auto_update":false,"mcpServers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"],"env":{}}},"hooks":{"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/jupytext_sync.sh"}]}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/gemini/settings.json" <<'EOF'
 {"general":{"sessionRetention":{"enabled":false}}}
@@ -139,6 +139,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$xdg_config_home/devin/config.json" "$repo/dotfiles/.agent/apps/devin/config.json"
   assert_symlink_target "$xdg_config_home/devin/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$xdg_config_home/devin/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_contains "$xdg_config_home/devin/config.json" '"mcpServers"'
+  assert_contains "$xdg_config_home/devin/config.json" '"playwright"'
   assert_symlink_target "$home_dir/.gemini/settings.json" "$repo/dotfiles/.agent/apps/gemini/settings.json"
   assert_symlink_target "$home_dir/.gemini/ignore" "$repo/dotfiles/.agent/apps/gemini/ignore"
   assert_symlink_target "$home_dir/.cursor/mcp.json" "$repo/dotfiles/.agent/apps/cursor/mcp.json"

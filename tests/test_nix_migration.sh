@@ -545,6 +545,7 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     empirical-prompt-tuning
     gemini
     go-dev
+    goal-prompt-builder
     gws
     magika
     markdown-docs

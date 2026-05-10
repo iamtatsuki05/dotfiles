@@ -1,0 +1,4 @@
+interface:
+  display_name: "Goal Prompt Builder"
+  short_description: "Draft durable Codex /goal prompts"
+  default_prompt: "Use $goal-prompt-builder to turn this objective into a durable /goal prompt."

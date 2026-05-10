@@ -1,0 +1,46 @@
+id: goal-prompt-builder-english-prompt-optimization-001
+name: English Prompt Optimization Goal
+description: |
+  Checks that the skill preserves English when creating a prompt optimization
+  /goal prompt, includes eval-driven stopping criteria, and does not copy the
+  official guide URL into the generated prompt.
+
+tags:
+  - goal
+  - english
+  - prompt-optimization
+  - no-official-url-in-output
+
+inputs:
+  prompt: "Create a Codex /goal prompt to optimize prompts under prompts/support until `uv run pytest evals/support` reaches at least 92% pass rate. If needed, consult the official guide from the skill while drafting, but do not include that guide URL in the generated goal prompt. Use sections for Read first, Scope, Work loop, Stop when, and Pause and ask. It should inspect failures after each run and avoid changing the grader."
+  context:
+    language: English
+    task_type: prompt-optimization
+    target_score: "92% pass rate"
+    eval_command: "uv run pytest evals/support"
+
+expected:
+  output_contains:
+    - "/goal"
+    - "uv run pytest evals/support"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 4
+
+graders:
+  - name: outputs_english_goal_prompt
+    type: text
+    config:
+      regex_match:
+        - "/goal"
+        - "(?i)(read first|scope|work loop|stop when|pause and ask)"
+        - "uv run pytest evals/support"
+        - "92%"
+      regex_not_match:
+        - "https://developers\\.openai\\.com/codex/use-cases/follow-goals"
+  - name: protects_eval_integrity
+    type: text
+    config:
+      regex_match:
+        - "(?i)(do not change|avoid changing|must not change).*(grader|evaluation)"

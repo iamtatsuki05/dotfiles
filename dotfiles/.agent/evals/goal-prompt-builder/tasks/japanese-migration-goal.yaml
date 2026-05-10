@@ -1,0 +1,47 @@
+id: goal-prompt-builder-japanese-migration-001
+name: Japanese Migration Goal
+description: |
+  Checks that the skill turns a Japanese migration request into a Japanese
+  Codex /goal prompt with a verifiable stopping condition, without copying the
+  official guide URL into the generated prompt.
+
+tags:
+  - goal
+  - japanese
+  - migration
+  - language-preservation
+
+inputs:
+  prompt: "Codex の /goal 用プロンプトを日本語で作って。React Router v6 から TanStack Router に移行したい。対象は src/routes と tests/routes。全画面の表示は変えず、bun run test と bunx playwright test が通るまで進める想定。最初に読む、作業範囲、停止条件、確認が必要な条件を含めて。公式ガイドは必要なら skill の参照先として確認してよいが、生成する goal prompt には URL を入れないで。"
+  context:
+    language: Japanese
+    task_type: migration
+    expected_validation:
+      - "bun run test"
+      - "bunx playwright test"
+
+expected:
+  output_contains:
+    - "/goal"
+    - "bun run test"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 4
+
+graders:
+  - name: outputs_japanese_goal_prompt
+    type: text
+    config:
+      regex_match:
+        - "/goal"
+        - "(移行|停止条件|作業範囲|最初に読む|確認が必要)"
+        - "bun run test"
+        - "bunx playwright test"
+      regex_not_match:
+        - "https://developers\\.openai\\.com/codex/use-cases/follow-goals"
+  - name: avoids_english_only_template
+    type: text
+    config:
+      regex_not_match:
+        - "Read first:\\s*\\n"
