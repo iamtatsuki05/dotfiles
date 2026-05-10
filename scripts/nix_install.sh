@@ -14,7 +14,10 @@ readonly DARWIN_SUDO_LOCAL_PATH="${DOTFILES_DARWIN_SUDO_LOCAL_PATH:-/etc/pam.d/s
 readonly DARWIN_SUDO_LOCAL_BACKUP_PATH="${DARWIN_SUDO_LOCAL_PATH}.${HOME_MANAGER_BACKUP_EXTENSION}"
 readonly HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="${DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH:-$EPOCHSECONDS}"
 
+source "$SCRIPT_DIR/lib/setup_profile.sh"
 source "$SCRIPT_DIR/lib/homebrew.sh"
+source "$SCRIPT_DIR/lib/homebrew_fallback.sh"
+source "$SCRIPT_DIR/lib/runtime.sh"
 
 DRY_RUN=0
 PROFILE=""
@@ -108,38 +111,8 @@ parse_args() {
   esac
 }
 
-is_macos() {
-  [[ "$OSTYPE" == darwin* ]]
-}
-
-resolve_command_from_path() {
-  local command_name="$1"
-  local candidate_dir
-  local candidate
-  local path_rest="$PATH"
-
-  while :; do
-    if [[ "$path_rest" == *:* ]]; then
-      candidate_dir="${path_rest%%:*}"
-      path_rest="${path_rest#*:}"
-    else
-      candidate_dir="$path_rest"
-      path_rest=""
-    fi
-    [[ -n "$candidate_dir" ]] || continue
-    candidate="${candidate_dir%/}/$command_name"
-    if [[ -x "$candidate" && ! -d "$candidate" ]]; then
-      REPLY="$candidate"
-      return 0
-    fi
-    [[ -n "$path_rest" ]] || break
-  done
-
-  return 1
-}
-
 default_profile() {
-  if is_macos; then
+  if dotfiles_is_macos; then
     REPLY="full"
   else
     REPLY="cli"
@@ -149,7 +122,7 @@ default_profile() {
 system_attr() {
   local os_name machine
 
-  if is_macos; then
+  if dotfiles_is_macos; then
     os_name="Darwin"
   else
     os_name="Linux"
@@ -177,7 +150,7 @@ system_attr() {
 }
 
 is_gui_environment() {
-  if is_macos; then
+  if dotfiles_is_macos; then
     return 0
   fi
 
@@ -198,11 +171,11 @@ selected_profile() {
 }
 
 nix_command() {
-  if resolve_command_from_path "nix"; then
+  if dotfiles_resolve_command_from_path "nix"; then
     return
   fi
 
-  if resolve_command_from_path "nix-rootless"; then
+  if dotfiles_resolve_command_from_path "nix-rootless"; then
     return
   fi
 
@@ -215,58 +188,17 @@ homebrew_command_exists() {
   dotfiles_has_homebrew
 }
 
-list_setting_has_entries() {
-  local file_path="$1"
-  local setting_name="$2"
-
-  [[ -f "$file_path" ]] || return 1
-  awk -v target="$setting_name" '
-    BEGIN { in_section = 0 }
-    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
-    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
-    in_section && /^[[:space:]]*"[^"]+"/ { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$file_path"
-}
-
-homebrew_fallback_has_cli_entries() {
-  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "brews"
-}
-
-mas_apps_has_entries() {
-  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
-  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
-}
-
-homebrew_fallback_has_gui_entries() {
-  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "casks" \
-    || list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode" \
-    || mas_apps_has_entries
-}
-
-profile_requires_homebrew() {
-  local profile_name="$1"
-
-  is_macos || return 1
-
-  if homebrew_fallback_has_cli_entries; then
-    return 0
-  fi
-
-  [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries
-}
-
 ensure_homebrew_available_for_profile() {
   local profile_name="$1"
 
-  if ! profile_requires_homebrew "$profile_name" || homebrew_command_exists; then
+  if ! dotfiles_profile_requires_homebrew "$profile_name" || homebrew_command_exists; then
     return 0
   fi
 
   echo "ERROR: Homebrew is required for this Nix profile but brew is not installed." >&2
   echo "Run zsh scripts/install_homebrew.sh --profile $profile_name, then rerun this script." >&2
 
-  if homebrew_fallback_has_cli_entries; then
+  if dotfiles_homebrew_fallback_has_cli_entries; then
     echo "config/nix/homebrew-fallback.nix still has brew entries, so even the CLI profile depends on Homebrew." >&2
   else
     echo "Only Homebrew-managed GUI fallback apps remain. Use --cli-only to continue without those GUI updates." >&2
@@ -319,7 +251,7 @@ archive_existing_home_manager_backups() {
 }
 
 backup_existing_darwin_sudo_local() {
-  if ! is_macos || (( DRY_RUN )); then
+  if ! dotfiles_is_macos || (( DRY_RUN )); then
     return 0
   fi
 
@@ -336,33 +268,6 @@ backup_existing_darwin_sudo_local() {
   sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"
 }
 
-temporary_directory_root() {
-  if is_macos; then
-    REPLY="/private/tmp"
-  else
-    REPLY="${TMPDIR:-/tmp}"
-  fi
-}
-
-create_unique_temp_directory() {
-  local temp_root="$1"
-  local prefix="$2"
-  local suffix_index=0
-  local candidate
-
-  while ((suffix_index < 1024)); do
-    candidate="$temp_root/${prefix}.$$.$suffix_index"
-    if mkdir "$candidate" 2>/dev/null; then
-      REPLY="$candidate"
-      return 0
-    fi
-    suffix_index=$((suffix_index + 1))
-  done
-
-  echo "ERROR: failed to create a temporary directory in $temp_root for $prefix" >&2
-  return 1
-}
-
 has_untracked_nix_sources() {
   local temp_root
   local temp_dir
@@ -370,9 +275,9 @@ has_untracked_nix_sources() {
   local untracked_entry
 
   git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-  temporary_directory_root
+  dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  create_unique_temp_directory "$temp_root" "dotfiles-untracked" || return 1
+  dotfiles_create_unique_temp_directory "$temp_root" "dotfiles-untracked" || return 1
   temp_dir="$REPLY"
   untracked_file="$temp_dir/list"
 
@@ -392,9 +297,9 @@ prepare_flake_path() {
     return
   fi
 
-  temporary_directory_root
+  dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  create_unique_temp_directory "$temp_root" "dotfiles-flake" || return 1
+  dotfiles_create_unique_temp_directory "$temp_root" "dotfiles-flake" || return 1
   NIX_FLAKE_WORKTREE="$REPLY"
   if command -v rsync >/dev/null 2>&1; then
     rsync -a \
@@ -509,7 +414,7 @@ main() {
   echo "Flake output: $attr"
   echo "Flake path: $flake_path"
 
-  if is_macos; then
+  if dotfiles_is_macos; then
     archive_existing_home_manager_backups
     backup_existing_darwin_sudo_local
     run_darwin_rebuild "$attr" "$nix_bin" "$flake_path"

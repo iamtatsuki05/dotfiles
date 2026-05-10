@@ -14,6 +14,8 @@ TEMP_PKG_CONFIG_SHIM_DIR=""
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
+source "$LIB_DIR/homebrew_fallback.sh"
+source "$LIB_DIR/runtime.sh"
 
 SELECTED_SHELL="zsh"
 INSTALL_GUI_APPS=0
@@ -123,34 +125,8 @@ finish_progress() {
     "$bar" "$TOTAL_STEPS" "$TOTAL_STEPS"
 }
 
-resolve_command_from_path() {
-  local command_name="$1"
-  local candidate_dir
-  local candidate
-  local path_rest="$PATH"
-
-  while :; do
-    if [[ "$path_rest" == *:* ]]; then
-      candidate_dir="${path_rest%%:*}"
-      path_rest="${path_rest#*:}"
-    else
-      candidate_dir="$path_rest"
-      path_rest=""
-    fi
-    [[ -n "$candidate_dir" ]] || continue
-    candidate="${candidate_dir%/}/$command_name"
-    if [[ -x "$candidate" && ! -d "$candidate" ]]; then
-      REPLY="$candidate"
-      return 0
-    fi
-    [[ -n "$path_rest" ]] || break
-  done
-
-  return 1
-}
-
 resolve_mise_command() {
-  if resolve_command_from_path "mise"; then
+  if dotfiles_resolve_command_from_path "mise"; then
     MISE_BIN="$REPLY"
     return 0
   fi
@@ -160,55 +136,12 @@ resolve_mise_command() {
 }
 
 resolve_nix_command() {
-  if resolve_command_from_path "nix"; then
+  if dotfiles_resolve_command_from_path "nix"; then
     NIX_BIN="$REPLY"
     return 0
   fi
 
   echo "ERROR: nix is not installed or not found in PATH" >&2
-  return 1
-}
-
-temporary_directory_root() {
-  REPLY="${TMPDIR:-/tmp}"
-}
-
-create_unique_temp_directory() {
-  local temp_root="$1"
-  local prefix="$2"
-  local suffix_index=0
-  local candidate
-
-  while ((suffix_index < 1024)); do
-    candidate="$temp_root/${prefix}.$$.$suffix_index"
-    if mkdir "$candidate" 2>/dev/null; then
-      REPLY="$candidate"
-      return 0
-    fi
-    suffix_index=$((suffix_index + 1))
-  done
-
-  echo "ERROR: failed to create a temporary directory in $temp_root for $prefix" >&2
-  return 1
-}
-
-create_unique_temp_file() {
-  local temp_root="$1"
-  local prefix="$2"
-  local suffix_index=0
-  local candidate
-
-  while ((suffix_index < 1024)); do
-    candidate="$temp_root/${prefix}.$$.$suffix_index"
-    if [[ ! -e "$candidate" ]]; then
-      : > "$candidate"
-      REPLY="$candidate"
-      return 0
-    fi
-    suffix_index=$((suffix_index + 1))
-  done
-
-  echo "ERROR: failed to create a temporary file in $temp_root for $prefix" >&2
   return 1
 }
 
@@ -234,9 +167,9 @@ prepend_paths_from_active_nix_profile() {
   [[ -e "$nix_profile_path" ]] || return 0
 
   resolve_nix_command
-  temporary_directory_root
+  dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  create_unique_temp_file "$temp_root" "dotfiles-nix-profile-list" || return 1
+  dotfiles_create_unique_temp_file "$temp_root" "dotfiles-nix-profile-list" || return 1
   profile_list_file="$REPLY"
 
   "$NIX_BIN" profile list --profile "$nix_profile_path" > "$profile_list_file"
@@ -265,9 +198,9 @@ prepend_paths_from_repo_package_attr() {
   local package_out_path=""
 
   resolve_nix_command
-  temporary_directory_root
+  dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  create_unique_temp_file "$temp_root" "dotfiles-nix-package-out" || return 1
+  dotfiles_create_unique_temp_file "$temp_root" "dotfiles-nix-package-out" || return 1
   package_out_file="$REPLY"
 
   if ! "$NIX_BIN" eval --raw "$REPO_ROOT#$package_attr.outPath" > "$package_out_file" 2>/dev/null; then
@@ -304,9 +237,9 @@ resolve_macos_sdk_root() {
   local sdk_root_file
 
   dotfiles_is_macos || return 1
-  temporary_directory_root
+  dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  create_unique_temp_file "$temp_root" "dotfiles-sdk-root" || return 1
+  dotfiles_create_unique_temp_file "$temp_root" "dotfiles-sdk-root" || return 1
   sdk_root_file="$REPLY"
 
   if ! /usr/bin/xcrun --sdk macosx --show-sdk-path > "$sdk_root_file" 2>/dev/null; then
@@ -343,47 +276,6 @@ run_repo_script() {
 
 homebrew_command_exists() {
   dotfiles_has_homebrew
-}
-
-list_setting_has_entries() {
-  local file_path="$1"
-  local setting_name="$2"
-
-  [[ -f "$file_path" ]] || return 1
-  awk -v target="$setting_name" '
-    BEGIN { in_section = 0 }
-    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
-    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
-    in_section && /^[[:space:]]*"[^"]+"/ { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$file_path"
-}
-
-homebrew_fallback_has_cli_entries() {
-  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "brews"
-}
-
-mas_apps_has_entries() {
-  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
-  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
-}
-
-homebrew_fallback_has_gui_entries() {
-  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "casks" \
-    || list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode" \
-    || mas_apps_has_entries
-}
-
-homebrew_is_required_for_profile() {
-  local profile_name="$1"
-
-  dotfiles_is_macos || return 1
-
-  if homebrew_fallback_has_cli_entries; then
-    return 0
-  fi
-
-  [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries
 }
 
 prepend_path_if_dir() {
@@ -454,19 +346,19 @@ resolve_nix_apply_profile() {
   if dotfiles_is_macos \
     && [[ "$profile_name" == "full" ]] \
     && [[ "$INSTALL_GUI_APPS" != "1" ]] \
-    && homebrew_fallback_has_gui_entries
+    && dotfiles_homebrew_fallback_has_gui_entries
   then
     warn "Managed update defaults to the CLI Nix profile on macOS when Homebrew-managed GUI fallback apps are configured. Pass --with-gui-apps to update them too."
     REPLY="cli"
     return 0
   fi
 
-  if ! dotfiles_is_macos || homebrew_command_exists || ! homebrew_is_required_for_profile "$profile_name"; then
+  if ! dotfiles_is_macos || homebrew_command_exists || ! dotfiles_profile_requires_homebrew "$profile_name"; then
     REPLY="$profile_name"
     return 0
   fi
 
-  if homebrew_fallback_has_cli_entries; then
+  if dotfiles_homebrew_fallback_has_cli_entries; then
     echo "ERROR: Homebrew is not installed, and config/nix/homebrew-fallback.nix still has brew entries required even for the CLI profile." >&2
     echo "Install Homebrew first, or migrate those fallback brews out of config/nix/homebrew-fallback.nix." >&2
     return 1
@@ -477,7 +369,7 @@ resolve_nix_apply_profile() {
     return 1
   fi
 
-  if [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries; then
+  if [[ "$profile_name" == "full" ]] && dotfiles_homebrew_fallback_has_gui_entries; then
     warn "Homebrew is not installed; falling back to the CLI Nix profile for this managed update. Homebrew-managed GUI fallback apps will not be updated."
     REPLY="cli"
     return 0
@@ -517,8 +409,8 @@ activate_nix_environment() {
   configure_macos_build_toolchain
 
   if ! command -v pkg-config >/dev/null 2>&1 && command -v pkgconf >/dev/null 2>&1; then
-    temporary_directory_root
-    create_unique_temp_directory "$REPLY" "dotfiles-pkg-config" || return 1
+    dotfiles_temporary_directory_root
+    dotfiles_create_unique_temp_directory "$REPLY" "dotfiles-pkg-config" || return 1
     TEMP_PKG_CONFIG_SHIM_DIR="$REPLY"
     ln -sf "$commands[pkgconf]" "$TEMP_PKG_CONFIG_SHIM_DIR/pkg-config"
     prepend_path_if_dir "$TEMP_PKG_CONFIG_SHIM_DIR"
@@ -652,7 +544,7 @@ sync_home_mise_config() {
   local line
 
   mkdir -p "$target_dir"
-  create_unique_temp_file "$target_dir" ".mise-config" || return 1
+  dotfiles_create_unique_temp_file "$target_dir" ".mise-config" || return 1
   tmp="$REPLY"
 
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -670,9 +562,9 @@ cleanup_stale_java_install_state() {
 
   [[ -d "$java_root" ]] || return 0
 
-  temporary_directory_root
+  dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  create_unique_temp_file "$temp_root" "dotfiles-java-contents" || return 1
+  dotfiles_create_unique_temp_file "$temp_root" "dotfiles-java-contents" || return 1
   contents_list_file="$REPLY"
   find "$java_root" -mindepth 2 -maxdepth 2 -type d -name Contents 2>/dev/null > "$contents_list_file"
 

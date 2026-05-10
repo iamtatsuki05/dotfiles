@@ -11,6 +11,7 @@ readonly HOMEBREW_INSTALL_URL="https://raw.githubusercontent.com/Homebrew/instal
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
+source "$LIB_DIR/homebrew_fallback.sh"
 
 DRY_RUN=0
 
@@ -28,47 +29,6 @@ EOF
 
 log() {
   echo "===> $*"
-}
-
-list_setting_has_entries() {
-  local file_path="$1"
-  local setting_name="$2"
-
-  [[ -f "$file_path" ]] || return 1
-  awk -v target="$setting_name" '
-    BEGIN { in_section = 0 }
-    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
-    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
-    in_section && /^[[:space:]]*"[^"]+"/ { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$file_path"
-}
-
-homebrew_fallback_has_cli_entries() {
-  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "brews"
-}
-
-mas_apps_has_entries() {
-  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
-  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
-}
-
-homebrew_fallback_has_gui_entries() {
-  list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "casks" \
-    || list_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode" \
-    || mas_apps_has_entries
-}
-
-profile_requires_homebrew() {
-  local profile_name="$1"
-
-  dotfiles_is_macos || return 1
-
-  if homebrew_fallback_has_cli_entries; then
-    return 0
-  fi
-
-  [[ "$profile_name" == "full" ]] && homebrew_fallback_has_gui_entries
 }
 
 parse_args() {
@@ -119,7 +79,7 @@ install_homebrew() {
     return 0
   fi
 
-  if ! profile_requires_homebrew "$DOTFILES_PROFILE"; then
+  if ! dotfiles_profile_requires_homebrew "$DOTFILES_PROFILE"; then
     log "Skipping Homebrew install because the selected profile does not require it"
     return 0
   fi

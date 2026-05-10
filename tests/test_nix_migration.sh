@@ -16,6 +16,8 @@ readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
 readonly HOMEBREW_LIB="$REPO_ROOT/scripts/lib/homebrew.sh"
+readonly HOMEBREW_FALLBACK_LIB="$REPO_ROOT/scripts/lib/homebrew_fallback.sh"
+readonly RUNTIME_LIB="$REPO_ROOT/scripts/lib/runtime.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
@@ -82,6 +84,16 @@ make_temp_file() {
   make_temp_dir
   rmdir "$REPLY"
   : > "$REPLY"
+}
+
+copy_script_libs() {
+  local repo="$1"
+
+  mkdir -p "$repo/scripts/lib"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  cp "$HOMEBREW_FALLBACK_LIB" "$repo/scripts/lib/homebrew_fallback.sh"
+  cp "$RUNTIME_LIB" "$repo/scripts/lib/runtime.sh"
 }
 
 assert_file() {
@@ -774,7 +786,8 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'aarch64-darwin-full'
   assert_contains "$INSTALL_SCRIPT" 'x86_64-linux-cli'
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
-  assert_contains "$INSTALL_SCRIPT" 'resolve_command_from_path "nix-rootless"'
+  assert_contains "$INSTALL_SCRIPT" 'source "$SCRIPT_DIR/lib/runtime.sh"'
+  assert_contains "$INSTALL_SCRIPT" 'dotfiles_resolve_command_from_path "nix-rootless"'
   assert_contains "$INSTALL_SCRIPT" 'zmodload zsh/datetime'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_ARCHIVE_EPOCH'
@@ -785,9 +798,8 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"'
   assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake'
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
-  assert_contains "$INSTALL_SCRIPT" 'create_unique_temp_directory'
-  assert_contains "$INSTALL_SCRIPT" 'resolve_command_from_path'
-  assert_contains "$INSTALL_SCRIPT" 'path_rest="$PATH"'
+  assert_contains "$INSTALL_SCRIPT" 'dotfiles_create_unique_temp_directory'
+  assert_contains "$INSTALL_SCRIPT" 'dotfiles_resolve_command_from_path'
   assert_contains "$INSTALL_SCRIPT" 'sudo env HOME=/var/root'
   assert_contains "$INSTALL_SCRIPT" 'scripts/remove_homebrew.sh'
   assert_contains "$INSTALL_SCRIPT" 'Run zsh scripts/install_homebrew.sh --profile $profile_name'
@@ -823,7 +835,7 @@ test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
 
   mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$bin_dir/uname" <<'EOF'
 #!/usr/bin/env zsh
@@ -906,7 +918,7 @@ test_nix_install_script_archives_existing_home_manager_backups_before_switch() {
 
   mkdir -p "$repo/scripts/lib" "$bin_dir" "$home_dir" "$config_dir/mise"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$bin_dir/uname" <<'EOF'
 #!/usr/bin/env zsh
@@ -979,7 +991,7 @@ test_nix_install_script_handles_dirty_worktree_without_hanging() {
 
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
   cat > "$repo/flake.nix" <<'EOF'
 { }
 EOF
@@ -1148,7 +1160,7 @@ test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
   mkdir -p "$repo/scripts/lib" "$bin_dir" "$repo/home/.local/state/nix/profiles"
   touch "$repo/home/.local/state/nix/profiles/profile" "$repo/home/.nix-profile"
   cp "$CLEANUP_PACKAGE_CACHES_SCRIPT" "$repo/scripts/cleanup_package_caches.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$bin_dir/nix" <<EOF
 #!/usr/bin/env zsh
@@ -1191,7 +1203,8 @@ EOF
 
 test_install_homebrew_script_supports_required_profiles() {
   assert_contains "$INSTALL_HOMEBREW_SCRIPT" '--dry-run'
-  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'profile_requires_homebrew'
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'source "$LIB_DIR/homebrew_fallback.sh"'
+  assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'dotfiles_profile_requires_homebrew'
   assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'raw.githubusercontent.com/Homebrew/install/HEAD/install.sh'
   assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'dotfiles_prepend_homebrew_to_path'
   assert_contains "$INSTALL_HOMEBREW_SCRIPT" 'Skipping Homebrew install because the selected profile does not require it'
@@ -1202,6 +1215,13 @@ test_install_homebrew_script_supports_required_profiles() {
   assert_not_contains "$HOMEBREW_LIB" '$(dirname "$brew_path")'
   assert_contains "$HOMEBREW_LIB" 'path_rest="$PATH"'
   assert_not_contains "$HOMEBREW_LIB" 'for candidate_dir in $PATH'
+  assert_contains "$HOMEBREW_FALLBACK_LIB" 'dotfiles_homebrew_fallback_has_cli_entries'
+  assert_contains "$HOMEBREW_FALLBACK_LIB" 'dotfiles_homebrew_fallback_has_gui_entries'
+  assert_contains "$HOMEBREW_FALLBACK_LIB" 'dotfiles_profile_requires_homebrew'
+  assert_contains "$HOMEBREW_FALLBACK_LIB" 'dotfiles_list_nix_setting_has_entries'
+  assert_contains "$RUNTIME_LIB" 'dotfiles_resolve_command_from_path'
+  assert_contains "$RUNTIME_LIB" 'dotfiles_create_unique_temp_directory'
+  assert_contains "$RUNTIME_LIB" 'dotfiles_create_unique_temp_file'
   assert_not_contains "$REPO_ROOT/scripts/lib/setup_profile.sh" '$(dotfiles_default_profile)'
   assert_not_contains "$REPO_ROOT/scripts/lib/setup_profile.sh" '$(uname -s)'
 }
@@ -1256,8 +1276,7 @@ test_main_script_runs_homebrew_before_nix_setup() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
-  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -1332,8 +1351,7 @@ test_main_script_uses_cli_profile_when_requested() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
-  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
@@ -1424,8 +1442,7 @@ test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
-  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -1570,7 +1587,7 @@ test_ai_cli_tools_are_managed_by_mise() {
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_nix_apply_profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'falling back to the CLI Nix profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'warn "Homebrew is not installed; falling back to the CLI Nix profile'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'homebrew_fallback_has_cli_entries'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'dotfiles_homebrew_fallback_has_cli_entries'
 }
 
 test_managed_update_script_skips_gui_profile_on_macos_unless_requested() {
@@ -1590,8 +1607,7 @@ test_managed_update_script_skips_gui_profile_on_macos_unless_requested() {
 
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
   cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
-  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
 {
@@ -1674,8 +1690,7 @@ test_managed_update_script_includes_gui_profile_when_requested() {
 
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
   cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
-  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
-  cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
+  copy_script_libs "$repo"
 
   cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
 {
@@ -1806,6 +1821,8 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$NIX_PACKAGE_NAMES_FILE" '"openssl.dev"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"pkgconf"'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'MISE_GLOBAL_CONFIG_FILE'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'source "$LIB_DIR/homebrew_fallback.sh"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'source "$LIB_DIR/runtime.sh"'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '"$MISE_BIN" upgrade --exclude java'
   assert_not_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'mise upgrade --bump'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'nix flake lock --update-input'
@@ -1823,10 +1840,9 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'activate_nix_environment'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'cleanup_stale_java_install_state'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" '${contents_path:h:t}'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'create_unique_temp_directory'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'create_unique_temp_file'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_command_from_path'
-  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'path_rest="$PATH"'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'dotfiles_create_unique_temp_directory'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'dotfiles_create_unique_temp_file'
+  assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'dotfiles_resolve_command_from_path'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_mise_command'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'resolve_nix_command'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'prepend_paths_from_repo_package_envs'
