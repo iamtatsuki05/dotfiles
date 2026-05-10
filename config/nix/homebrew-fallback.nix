@@ -207,7 +207,6 @@
     "xirider.livecode"
     "yoavbls.pretty-ts-errors"
     "yzhang.markdown-all-in-one"
-    "zanza00.random-theme-switcher"
     "zwyx.autoclosetabs"
   ];
 
