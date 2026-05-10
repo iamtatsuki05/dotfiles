@@ -30,6 +30,13 @@ assert_contains() {
   grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
 }
 
+assert_not_contains() {
+  local file_path="$1"
+  local unexpected="$2"
+
+  ! grep -Fq -- "$unexpected" "$file_path" || fail "expected $file_path not to contain: $unexpected"
+}
+
 assert_agent_documented() {
   local agent="$1"
 
@@ -67,8 +74,10 @@ test_waza_cli_agent_code_supports_matrix_agents() {
   done
   assert_contains "$WAZA_CLI_AGENT_SCRIPT" "npm:openclaw"
   assert_contains "$WAZA_CLI_AGENT_SCRIPT" "openclaw agent"
-  assert_contains "$MISE_CONFIG" "[tasks.waza-eval-openclaw]"
-  assert_contains "$MISE_TEMPLATE" "[tasks.waza-eval-openclaw]"
+  assert_contains "$MISE_CONFIG" "[tasks.waza-eval-model]"
+  assert_contains "$MISE_TEMPLATE" "[tasks.waza-eval-model]"
+  assert_not_contains "$MISE_CONFIG" "[tasks.waza-eval-openclaw]"
+  assert_not_contains "$MISE_TEMPLATE" "[tasks.waza-eval-openclaw]"
 }
 
 test_agent_job_scheduler_code_supports_matrix_agents() {

@@ -244,7 +244,7 @@ Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin
 
 ```bash
 zsh dotfiles/.agent/sync.sh
-mise run waza-eval-cli-agents -- --dry-run
+mise run waza-eval-model -- --agent all --dry-run
 ```
 
 See [dotfiles/.agent/README.md](dotfiles/.agent/README.md) for the file map, sync behavior, ignore rules, hooks, and Waza evaluation commands.

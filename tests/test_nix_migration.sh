@@ -430,16 +430,16 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-all]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-model]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-codex]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-claude]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-gemini]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-copilot]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-devin]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-cursor]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-opencode]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-hermes]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-openclaw]'
-  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-cli-agents]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-codex]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-claude]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-gemini]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-copilot]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-devin]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-cursor]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-opencode]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-hermes]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-openclaw]'
+  assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-cli-agents]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
   assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'markdown-docs-eval'
@@ -453,9 +453,13 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE" 'authorization_bypass_detected'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'executor: copilot-sdk'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'sql_injection_detected'
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'Waza model-backed evals require model credentials'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'DEFAULT_AGENT="codex"'
+  assert_executable "$WAZA_MODEL_EVAL_SCRIPT"
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" '--agent AGENT'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" '--model AGENT'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'zsh scripts/waza_eval_model.sh --allow'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'waza_eval_cli_agent.sh" "$agent"'
   assert_contains "$WAZA_ALL_EVAL_SCRIPT" 'if [[ -d "$context_dir" ]]'
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'if [[ -d "$context_dir" ]]'
   assert_executable "$WAZA_CLI_AGENT_EVAL_SCRIPT"
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'CLI agent evals require explicit --allow'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'codex exec -C'
@@ -481,6 +485,28 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   fi
   assert_output_contains "$output" "CLI agent evals require explicit --allow"
   assert_output_contains "$output" "zsh scripts/waza_eval_cli_agent.sh codex --allow"
+
+  if "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" >"$output" 2>&1; then
+    fail "expected model eval without --allow or --dry-run to fail"
+  fi
+  assert_output_contains "$output" "Waza model evals require explicit --allow"
+  assert_output_contains "$output" "zsh scripts/waza_eval_model.sh --allow"
+
+  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN codex"
+  assert_output_contains "$output" "dotfiles/.agent/evals/markdown-docs/model.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --agent claude --dry-run --suite dotfiles/.agent/evals/security-check/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN claude"
+  assert_output_contains "$output" "dotfiles/.agent/evals/security-check/model.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --model gemini --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN gemini"
+  assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --agent all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN codex"
+  assert_output_contains "$output" "DRY-RUN openclaw"
 
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" codex --dry-run >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
