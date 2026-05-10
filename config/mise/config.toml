@@ -53,186 +53,186 @@ HOMEBREW_BUNDLE_DUMP_NO_GO = "1"
 
 [tasks.python-format]
 alias = "ruff-format"
-description = "ruffを使ってコードformatを実行"
+description = "Pythonをruffでformat/fix"
 run = "uv run ruff check . --fix;uv run ruff format ."
 
 [tasks.python-lint]
 alias = "tox"
-description = "toxを実行"
+description = "Python test/lintをtoxで実行"
 run = "uv run tox"
 
 [tasks.tensorboard]
 alias = "tensorboard"
-description = "tensorboardを起動"
+description = "TensorBoardを起動"
 run = "tensorboard --port 6006 --logdir ./ --host 0.0.0.0"
 
 [tasks.jupyterlab]
 alias = "jupyter"
-description = "jupyterlabを起動"
+description = "JupyterLabを起動"
 run = "jupyter lab --port=8888 --ip=0.0.0.0 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
 
 [tasks.go-build]
 alias = "go-build"
-description = "goでbuildするコマンド"
+description = "Goをlinux/amd64向けにbuild"
 run = "GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build"
 
 [tasks.docker-compose]
 alias = "docker-compose-build"
-description = "compose fileを起動するコマンド"
+description = "Docker Composeをbuildして起動"
 run = "docker compose up -d --build"
 
 [tasks.chezmoi-diff]
-description = "chezmoiで適用される変更をdry-runで確認する"
+description = "chezmoi適用差分を確認"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/chezmoi_apply.sh --dry-run"
 
 [tasks.chezmoi-apply]
-description = "chezmoi source stateをホームディレクトリに適用する"
+description = "chezmoi source stateを適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/chezmoi_apply.sh"
 
 [tasks.dotfiles-test]
 alias = "test-dotfiles"
-description = "dotfilesのshell scriptとchezmoi source stateを検証する"
+description = "dotfilesの全体テストを実行"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh tests/run.sh"
 
 [tasks.agent-sync]
-description = "agent別の設定・hooks・skills・Hermes MCP依存を同期する"
+description = "AI agent設定/hooks/skillsを同期"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_agent_files.sh"
 
 [tasks.waza-check]
-description = "Wazaでmarkdown-docs skillの提出前チェックを実行する"
+description = "Wazaでmarkdown-docs skillをcheck"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "cd dotfiles/.agent && WAZA_NO_UPDATE_CHECK=1 nix run path:../..#waza -- check skills/markdown-docs"
 
 [tasks.waza-eval]
-description = "Wazaでagent skill評価をmock executorで実行する"
+description = "Waza mock evalを1 suite実行"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- run dotfiles/.agent/evals/markdown-docs/eval.yaml --context-dir dotfiles/.agent/evals/markdown-docs/fixtures --output-dir .waza-results -v"
 
 [tasks.waza-eval-all]
-description = "Wazaで全agent skill評価をmock executorで実行する"
+description = "Waza mock evalを全suite実行"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/waza_eval_all.sh"
 
 [tasks.waza-eval-model]
-description = "Wazaのmodel eval taskを選択したCLI agentで実行する。既定はCodex"
+description = "Waza model evalをCLI agentで実行"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/waza_eval_model.sh"
 
 [tasks.waza-dashboard]
-description = "Wazaの評価結果ダッシュボードを起動する"
+description = "Waza結果dashboardを起動"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- serve --results-dir .waza-results"
 
 [tasks.agent-skill-update]
-description = "外部upstream skillをAgent review後に更新する"
+description = "外部upstream skillをreview更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "python3 scripts/agent_skill_upstreams.py update"
 
 [tasks.nix-migrate-brew]
-description = "現在のHomebrew状態または指定したBrewfileからNix package listと未移行レポートを生成する"
+description = "Homebrew状態をNix管理へ移行"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/migrate_brew_to_nix.sh --apply"
 
 [tasks.nix-build]
-description = "CLI only profileのNix構成をswitchせずにbuildする"
+description = "Nix CLI profileをdry-run build"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_install.sh --cli-only --dry-run"
 
 [tasks.nix-apply]
-description = "CLI only profileのNix構成を現在のOSへ適用する"
+description = "Nix CLI profileを適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_install.sh --cli-only"
 
 [tasks.nix-apply-with-gui-apps]
-description = "GUIが使える環境でNix構成とGUI appsを適用する"
+description = "Nix profileとGUI appsを適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_install.sh --with-gui-apps"
 
 [tasks.nix-portable-install]
-description = "sudoなしLinux向けにnix-portableを導入する"
+description = "sudoなしLinuxへnix-portable導入"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_portable_install.sh"
 
 [tasks.nix-portable-shell]
-description = "nix-portableでdotfilesのCLI package setを使うshellを起動する"
+description = "nix-portable shellを起動"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_portable_install.sh --shell"
 
 [tasks.nix-remove-homebrew]
-description = "Nix適用後にHomebrewを明示的に削除する"
+description = "Nix移行後にHomebrewを削除"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"
 
 [tasks.package-cleanup]
 alias = "nix-brew-cleanup"
-description = "NixとHomebrewの不要なcacheや古いgenerationを掃除する。mise cleanupは--include-miseで明示する"
+description = "Nix/Homebrew cacheを掃除"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/cleanup_package_caches.sh"
 
 [tasks.lock-update]
 alias = "nix-lock-update"
-description = "flake.lockだけを更新する"
+description = "flake.lockを更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock"
 
 [tasks.lock-update-nixpkgs]
 alias = "nixpkgs-lock-update"
-description = "flake.lockのnixpkgs inputだけを更新する"
+description = "flake.lockのnixpkgsだけ更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nixpkgs"
 
 [tasks.lock-update-home-manager]
 alias = "home-manager-lock-update"
-description = "flake.lockのhome-manager inputだけを更新する"
+description = "flake.lockのhome-managerだけ更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock --nix-input home-manager"
 
 [tasks.lock-update-nix-darwin]
 alias = "nix-darwin-lock-update"
-description = "flake.lockのnix-darwin inputだけを更新する"
+description = "flake.lockのnix-darwinだけ更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nix-darwin"
 
 [tasks.nix-update]
 alias = "nix-upgrade"
-description = "Nixで管理しているものだけを最新化して適用する"
+description = "Nix管理toolを更新して適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix"
 
 [tasks.nixpkgs-update]
 alias = "nixpkgs-upgrade"
-description = "nixpkgs inputだけ更新してNix構成を適用する"
+description = "nixpkgs更新後にNix適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nixpkgs"
 
 [tasks.home-manager-update]
 alias = "home-manager-upgrade"
-description = "home-manager inputだけ更新してNix構成を適用する"
+description = "home-manager更新後にNix適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"
 
 [tasks.nix-darwin-update]
 alias = "nix-darwin-upgrade"
-description = "nix-darwin inputだけ更新してNix構成を適用する"
+description = "nix-darwin更新後にNix適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"
 
 [tasks.mise-update]
 alias = "mise-upgrade"
-description = "miseで管理しているものだけを現在のrelease line内で更新する"
+description = "mise管理toolを更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only mise"
 
 [tasks.package-update]
 alias = "nix-mise-upgrade"
-description = "miseとNixで管理しているものを最新化して適用する"
+description = "Nix/mise管理toolをまとめて更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh"
 
 [tasks.git-head-commit-reset]
-description = "git commitの直近1件を取り消す"
+description = "直近commitをsoft reset"
 run = "git reset --soft HEAD^"
