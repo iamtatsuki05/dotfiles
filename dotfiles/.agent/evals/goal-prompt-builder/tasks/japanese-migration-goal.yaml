@@ -34,12 +34,13 @@ graders:
     type: text
     config:
       regex_match:
-        - "/goal"
+        - "^(\\s*/goal\\b|Mock response for:.* /goal)"
         - "(移行|停止条件|作業範囲|最初に読む|確認が必要)"
         - "bun run test"
         - "bunx playwright test"
       regex_not_match:
         - "https://developers\\.openai\\.com/codex/use-cases/follow-goals"
+        - "##\\s*Goal Prompt"
   - name: avoids_english_only_template
     type: text
     config:

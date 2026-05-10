@@ -33,12 +33,13 @@ graders:
     type: text
     config:
       regex_match:
-        - "/goal"
+        - "^(\\s*/goal\\b|Mock response for:.* /goal)"
         - "(?i)(read first|scope|work loop|stop when|pause and ask)"
         - "uv run pytest evals/support"
         - "92%"
       regex_not_match:
         - "https://developers\\.openai\\.com/codex/use-cases/follow-goals"
+        - "##\\s*Goal Prompt"
   - name: protects_eval_integrity
     type: text
     config:

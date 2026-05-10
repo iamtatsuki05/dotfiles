@@ -32,9 +32,10 @@ description: "Use when the user asks to create, rewrite, evaluate, or tighten a 
    - 依頼が危険操作、本番変更、課金発生、秘密情報、法的/契約判断、アクセス権限変更を Codex に委ねる内容なら拒否し、ユーザー確認や別の安全な進め方を示す。
 
 3. **プロンプトを作る**
-   - 先頭は必ず `/goal` にする。
+   - 成功時の最終出力は、説明、前置き、Markdown 見出し、コードフェンスを付けず、必ず `/goal` から始める。
    - 「何を完了するか」と「いつ止まるか」を 1 文目で明確にする。
    - その後に、参照先、作業範囲、制約、checkpoint、検証コマンド、進捗ログ、停止/確認条件を続ける。
+   - 不足情報や仮定がある場合も、別見出しの Notes を作らず、goal prompt 内の「前提」または「確認が必要な条件」に短く含める。
    - テストや確認コマンドが不明な場合は、まず既存の README、package scripts、CI、Makefile、task runner を調べてから選ぶよう指示する。
    - 公式 URL は goal prompt 内に入れない。公式ガイドは、プロンプト作成中に `/goal` の仕様や推奨形式が気になった場合の確認先としてだけ使う。
 
@@ -46,10 +47,7 @@ description: "Use when the user asks to create, rewrite, evaluate, or tighten a 
 
 ## 出力形式
 
-goal に向く場合は次の 2 ブロックだけを返す。見出しやラベルはユーザー入力の主言語に合わせる。
-
-````markdown
-## Goal Prompt
+goal に向く場合は、次のように `/goal` から始まる prompt 本文だけを返す。見出し、説明、コードフェンス、`## Goal Prompt`、別枠の notes は付けない。ラベルはユーザー入力の主言語に合わせる。
 
 ```text
 /goal Complete <objective> without stopping until <verifiable end state>.
@@ -73,10 +71,6 @@ Stop when:
 Pause and ask me before:
 - <production/permission/billing/destructive/ambiguous decisions>
 ```
-
-## Notes
-- <不足情報、仮定、または goal に向かない理由がある場合だけ>
-````
 
 goal に向かない場合は `/goal` を含めず、次の形で拒否する。
 
