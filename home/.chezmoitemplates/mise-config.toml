@@ -131,6 +131,36 @@ description = "Wazaのmodel eval taskをGemini CLIで実行し、簡易graderで
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/waza_eval_cli_agent.sh gemini"
 
+[tasks.waza-eval-copilot]
+description = "Wazaのmodel eval taskをGitHub Copilot CLIで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh copilot"
+
+[tasks.waza-eval-devin]
+description = "Wazaのmodel eval taskをDevin CLIで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh devin"
+
+[tasks.waza-eval-cursor]
+description = "Wazaのmodel eval taskをCursor Agentで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh cursor"
+
+[tasks.waza-eval-opencode]
+description = "Wazaのmodel eval taskをopencodeで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh opencode"
+
+[tasks.waza-eval-hermes]
+description = "Wazaのmodel eval taskをHermes Agentで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh hermes"
+
+[tasks.waza-eval-cli-agents]
+description = "Wazaのmodel eval taskを全CLI agentで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh all"
+
 [tasks.waza-dashboard]
 description = "Wazaの評価結果ダッシュボードを起動する"
 dir = "__DOTFILES_REPO_ROOT__"

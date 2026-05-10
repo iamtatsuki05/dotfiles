@@ -9,7 +9,16 @@ readonly DEFAULT_OUTPUT_DIR=".waza-results/cli-agents"
 usage() {
   cat <<EOF
 Usage:
-  zsh scripts/waza_eval_cli_agent.sh codex|claude|gemini [--allow] [--dry-run] [--suite PATH]...
+  zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
+
+Agents:
+  codex, claude, gemini, copilot, devin, cursor, opencode, hermes, all
+
+Aliases:
+  claude-code -> claude
+  gemini-cli -> gemini
+  cursor-agent -> cursor
+  hermes-agent -> hermes
 
 Options:
   --allow       Run CLI-backed evals. These require CLI credentials and may use paid quota.
@@ -23,6 +32,31 @@ Options:
                 Keep each temporary fixture workspace for debugging.
   -h, --help    Show this help.
 EOF
+}
+
+canonical_agent() {
+  local agent="$1"
+  case "$agent" in
+    codex) print -- codex ;;
+    claude|claude-code) print -- claude ;;
+    gemini|gemini-cli) print -- gemini ;;
+    copilot) print -- copilot ;;
+    devin) print -- devin ;;
+    cursor|cursor-agent) print -- cursor ;;
+    opencode) print -- opencode ;;
+    hermes|hermes-agent) print -- hermes ;;
+    all) print -- all ;;
+    *) return 1 ;;
+  esac
+}
+
+agents_for() {
+  local agent="$1"
+  if [[ "$agent" == "all" ]]; then
+    print -l codex claude gemini copilot devin cursor opencode hermes
+  else
+    print -- "$agent"
+  fi
 }
 
 fail() {
@@ -196,6 +230,20 @@ build_prompt() {
   } > "$prompt_file"
 }
 
+run_direct_or_mise() {
+  local mise_tool="$1"
+  local bin="$2"
+  shift 2
+
+  if command -v "$bin" >/dev/null 2>&1; then
+    "$bin" "$@"
+    return
+  fi
+
+  command -v mise >/dev/null 2>&1 || fail "$bin CLI is not on PATH and mise is not available"
+  MISE_CONFIG_FILE="${MISE_CONFIG_FILE:-$REPO_ROOT/config/mise/config.toml}" mise exec "$mise_tool" -- "$bin" "$@"
+}
+
 run_cli_agent() {
   local agent="$1"
   local workspace="$2"
@@ -207,16 +255,47 @@ run_cli_agent() {
   prompt="$(< "$prompt_file")"
   case "$agent" in
     codex)
-      command -v codex >/dev/null || fail "codex CLI is not on PATH"
-      codex exec -C "$workspace" "$prompt" >"$stdout_file" 2>"$stderr_file"
+      run_direct_or_mise codex codex exec -C "$workspace" "$prompt" >"$stdout_file" 2>"$stderr_file"
       ;;
     claude)
-      command -v claude >/dev/null || fail "claude CLI is not on PATH"
-      (cd "$workspace" && claude -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+      (cd "$workspace" && run_direct_or_mise claude-code claude -p "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     gemini)
-      command -v gemini >/dev/null || fail "gemini CLI is not on PATH"
-      (cd "$workspace" && gemini -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+      (cd "$workspace" && run_direct_or_mise gemini-cli gemini -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
+    copilot)
+      run_direct_or_mise "npm:@github/copilot" copilot \
+        -C "$workspace" \
+        --allow-all \
+        --no-remote \
+        --output-format text \
+        -p "$prompt" >"$stdout_file" 2>"$stderr_file"
+      ;;
+    devin)
+      (cd "$workspace" && run_direct_or_mise http:devin devin \
+        --permission-mode dangerous \
+        --respect-workspace-trust true \
+        -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
+    cursor)
+      run_direct_or_mise http:cursor-agent cursor-agent \
+        --workspace "$workspace" \
+        --print \
+        --force \
+        --trust \
+        "$prompt" >"$stdout_file" 2>"$stderr_file"
+      ;;
+    opencode)
+      run_direct_or_mise opencode opencode run \
+        --dir "$workspace" \
+        --dangerously-skip-permissions \
+        "$prompt" >"$stdout_file" 2>"$stderr_file"
+      ;;
+    hermes)
+      (cd "$workspace" && HERMES_ACCEPT_HOOKS=1 run_direct_or_mise "pipx:git+https://github.com/NousResearch/hermes-agent.git" hermes \
+        --accept-hooks \
+        --yolo \
+        -z "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     *)
       fail "unsupported agent: $agent"
@@ -297,17 +376,19 @@ main() {
     return 1
   fi
 
-  local agent="$1"
+  local requested_agent="$1"
   shift
-  case "$agent" in
-    codex|claude|gemini) ;;
+  local agent
+  case "$requested_agent" in
     -h|--help)
       usage
       return 0
       ;;
     *)
-      usage >&2
-      return 1
+      agent="$(canonical_agent "$requested_agent")" || {
+        usage >&2
+        return 1
+      }
       ;;
   esac
 
@@ -361,7 +442,7 @@ main() {
 
   if (( ! dry_run && ! allow )); then
     cat >&2 <<EOF
-CLI agent evals require explicit --allow because Codex / Claude Code / Gemini CLI credentials may use paid quota and can modify their temporary workspaces.
+CLI agent evals require explicit --allow because local AI CLI credentials may use paid quota and can modify their temporary workspaces.
 Re-run with:
   zsh scripts/waza_eval_cli_agent.sh $agent --allow
 EOF
@@ -370,22 +451,26 @@ EOF
 
   local suite_file
   local task_ref
+  local active_agent
   local failed=0
-  for suite_file in "${suites[@]}"; do
-    [[ -f "$suite_file" ]] || fail "suite file not found: $suite_file"
-    local -a task_refs
-    task_refs=("${(@f)$(task_refs_for_suite "$suite_file")}")
-    if (( ${#task_refs[@]} == 0 )); then
-      fail "suite has no tasks: $(repo_relative "$suite_file")"
-    fi
 
-    for task_ref in "${task_refs[@]}"; do
-      [[ -n "$task_ref" ]] || continue
-      if (( dry_run )); then
-        echo "DRY-RUN $agent $(repo_relative "$suite_file") $task_ref"
-      elif ! run_task "$agent" "$suite_file" "$task_ref" "$output_dir" "$keep_workspace"; then
-        failed=1
+  for active_agent in "${(@f)$(agents_for "$agent")}"; do
+    for suite_file in "${suites[@]}"; do
+      [[ -f "$suite_file" ]] || fail "suite file not found: $suite_file"
+      local -a task_refs
+      task_refs=("${(@f)$(task_refs_for_suite "$suite_file")}")
+      if (( ${#task_refs[@]} == 0 )); then
+        fail "suite has no tasks: $(repo_relative "$suite_file")"
       fi
+
+      for task_ref in "${task_refs[@]}"; do
+        [[ -n "$task_ref" ]] || continue
+        if (( dry_run )); then
+          echo "DRY-RUN $active_agent $(repo_relative "$suite_file") $task_ref"
+        elif ! run_task "$active_agent" "$suite_file" "$task_ref" "$output_dir" "$keep_workspace"; then
+          failed=1
+        fi
+      done
     done
   done
 

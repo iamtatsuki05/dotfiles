@@ -422,6 +422,12 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-codex]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-claude]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-gemini]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-copilot]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-devin]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-cursor]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-opencode]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-hermes]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-cli-agents]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
   assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'markdown-docs-eval'
@@ -443,6 +449,12 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'codex exec -C'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'claude -p'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'gemini -p'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'copilot'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'devin'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'cursor-agent'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'opencode run'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'hermes'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'run_direct_or_mise'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" '.waza-results/cli-agents'
 }
 
@@ -471,6 +483,26 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   assert_output_contains "$output" "DRY-RUN gemini"
   assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
   assert_output_contains "$output" "tasks/pytest-typeerror.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" copilot --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN copilot"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" devin --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN devin"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" cursor-agent --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN cursor"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" opencode --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN opencode"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" hermes-agent --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN hermes"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN codex"
+  assert_output_contains "$output" "DRY-RUN copilot"
+  assert_output_contains "$output" "DRY-RUN hermes"
 
   rm -f "$output"
 }
