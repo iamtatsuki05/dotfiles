@@ -240,74 +240,18 @@ hook は [scripts/apply_updates.sh](scripts/apply_updates.sh) を呼び、chezmo
 zsh scripts/setup_git_hooks.sh
 ```
 
-## AI ツール設定（Claude Code / Codex / Cursor Agent / Gemini CLI）
+## AI agent 設定
 
-AI agent 関連の source of truth は `dotfiles/.agent/` にまとめています。設定ファイルは `dotfiles/.agent/apps/`、system prompt は `dotfiles/.agent/AGENTS.md`、hooks は `dotfiles/.agent/hooks/`、skills は `dotfiles/.agent/skills/` を編集してください。
-Cursor 固有の project 除外設定は `dotfiles/.agent/apps/cursor/.cursorignore` で管理し、リポジトリルートの `.cursorignore` はそこへの symlink にします。Copilot CLI は `respectGitignore` で `.gitignore` を見るため、Copilot 向け除外は `.gitignore` に寄せます。Devin は `respect_gitignore` と secret 系 path の明示 deny で制御します。
+AI agent 関連ファイルは [dotfiles/.agent](dotfiles/.agent) にまとめています。共通 prompt は `dotfiles/.agent/AGENTS.md` で管理し、リポジトリルートには `AGENTS.md` symlink を置きません。
 
-変更をすぐに手元へ反映したい場合は、次を実行します。
+管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode` です。インストールは `mise`、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。
 
 ```bash
 zsh dotfiles/.agent/sync.sh
-```
-
-`dotfiles/.agent/sync.sh` は薄い wrapper で、実装本体は `scripts/setup_agent_files.sh` にあります。`dotfiles/.agent/apps/` 以下を各 agent の source of truth として扱い、対応する tool home へシンボリックリンクします。
-
-| リポジトリのパス | 反映先 |
-|---|---|
-| `dotfiles/.agent/AGENTS.md` | `~/.codex/AGENTS.md`、`~/.claude/CLAUDE.md`、`~/.copilot/copilot-instructions.md`、`~/.gemini/GEMINI.md`、`~/.cursor/AGENT.md`、`~/.config/opencode/AGENTS.md`、`~/.hermes/AGENTS.md` |
-| `dotfiles/.agent/apps/claude/settings.json` | `~/.claude/settings.json` |
-| `dotfiles/.agent/apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
-| `dotfiles/.agent/apps/copilot/settings.json` | `~/.copilot/settings.json` |
-| `dotfiles/.agent/apps/copilot/mcp-config.json` | `~/.copilot/mcp-config.json` |
-| `dotfiles/.agent/apps/codex/config.toml` | `~/.codex/config.toml` |
-| `dotfiles/.agent/apps/codex/hooks.json` | `~/.codex/hooks.json` |
-| `dotfiles/.agent/apps/cursor/cli-config.json` | `~/.cursor/cli-config.json` |
-| `dotfiles/.agent/apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
-| `dotfiles/.agent/apps/devin/config.json` | `~/.config/devin/config.json` |
-| `dotfiles/.agent/apps/gemini/settings.json` | `~/.gemini/settings.json` |
-| `dotfiles/.agent/apps/hermes-agent/config.yaml` | `~/.hermes/config.yaml` |
-| `dotfiles/.agent/apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
-| `dotfiles/.agent/apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
-
-`dotfiles/.agent/hooks/` のフックスクリプトは `~/.claude/hooks/`・`~/.codex/hooks/`・`~/.copilot/hooks/`・`~/.config/devin/hooks/`・`~/.gemini/hooks/`・`~/.config/opencode/hooks/`・`~/.hermes/agent-hooks/` にシンボリックリンクされます。
-Agent 固有の env file が必要なものは `~/.config/shell/secrets.env` から生成します。現在は `DEVIN_API_KEY` を `~/.gemini/.env` と `~/.hermes/.env` に書き出します。
-
-### Waza による skill 評価
-
-Waza は Nix の CLI package set に `dotfiles.waza` として含めています。プロジェクト設定は `.waza.yaml`、skill は `dotfiles/.agent/skills/`、評価 suite は `dotfiles/.agent/evals/` に置きます。
-
-```bash
-mise run waza-check
-mise run waza-eval
-mise run waza-eval-all
-mise run waza-eval-model -- --allow
-mise run waza-eval-codex -- --dry-run
-mise run waza-eval-codex -- --allow
-mise run waza-eval-claude -- --allow
-mise run waza-eval-gemini -- --allow
-mise run waza-eval-copilot -- --allow
-mise run waza-eval-devin -- --allow
-mise run waza-eval-cursor -- --allow
-mise run waza-eval-opencode -- --allow
-mise run waza-eval-hermes -- --allow
 mise run waza-eval-cli-agents -- --dry-run
-mise run waza-dashboard
 ```
 
-既定の評価 suite は Waza の `mock` executor を使うため、モデル認証なしでリポジトリ側の配線を確認できます。`dotfiles/.agent/skills/<skill>/SKILL.md` 直下の通常スキルと `skills/superpowers/` 配下のメタスキルには、それぞれ `dotfiles/.agent/evals/<skill>/eval.yaml` と `model.yaml` を置いています。実モデルで具体的な品質を見る suite は `dotfiles/.agent/evals/<skill>/model.yaml` に置き、モデル認証と課金枠を使う可能性があるため `--allow` を明示したときだけ実行します。
-
-Waza 本体の標準 executor ではなく、手元の CLI agent に同じ model eval task を流したい場合は `waza-eval-codex`、`waza-eval-claude`、`waza-eval-gemini`、`waza-eval-copilot`、`waza-eval-devin`、`waza-eval-cursor`、`waza-eval-opencode`、`waza-eval-hermes`、全件実行用の `waza-eval-cli-agents` を使います。これらは fixture を一時ディレクトリにコピーして CLI を実行し、stdout / stderr / prompt / 簡易 grader 結果を `.waza-results/cli-agents/` に保存します。実行前の対象確認だけなら `--dry-run` を使えます。
-
-### Jupyter Notebook（jupytext）
-
-トークン消費を抑えるため、AI ツールは `.py` ファイルのみを編集する構成にしています。ファイル編集のたびにフックで `jupytext --sync` が自動実行され、ペアリングされた `.ipynb` に反映されます。
-
-新規ノートブックをペアリングする場合:
-
-```bash
-jupytext --set-formats ipynb,py:percent notebook.py
-```
+ファイル対応表、同期内容、ignore、hooks、Waza 評価コマンドは [dotfiles/.agent/README_JA.md](dotfiles/.agent/README_JA.md) を参照してください。
 
 ## API キーの管理
 
@@ -321,4 +265,7 @@ chezmoi は `config/shell/bashrc.tmpl` と `config/shell/bash_profile.tmpl` を 
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 export OPENAI_API_KEY=""
 export ANTHROPIC_API_KEY=""
+export GEMINI_API_KEY=""
+export GITHUB_TOKEN=""
+export DEVIN_API_KEY=""
 ```

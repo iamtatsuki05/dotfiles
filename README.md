@@ -242,73 +242,18 @@ To reinstall hooks manually:
 zsh scripts/setup_git_hooks.sh
 ```
 
-## AI tool configuration (Claude Code / Codex / Cursor Agent / Gemini CLI)
+## AI agent configuration
 
-The source of truth for AI agent files lives under `dotfiles/.agent/`. Edit settings in `dotfiles/.agent/apps/`, the shared prompt in `dotfiles/.agent/AGENTS.md`, hooks in `dotfiles/.agent/hooks/`, and skills in `dotfiles/.agent/skills/`.
-Cursor-specific project exclusions are managed in `dotfiles/.agent/apps/cursor/.cursorignore`; the repository root `.cursorignore` points to it. Copilot CLI is configured with `respectGitignore`, so project exclusions for Copilot come from `.gitignore`. Devin is configured with `respect_gitignore` plus explicit permission denies for secret-like paths.
+AI agent files live under [dotfiles/.agent](dotfiles/.agent). The shared prompt is `dotfiles/.agent/AGENTS.md`; the repository root intentionally does not contain an `AGENTS.md` symlink.
 
-To push `.agent` changes to your local tool homes immediately, run:
+Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, and `opencode`. They are installed by `mise`, while per-agent settings, MCP files, hooks, skills, and Waza eval suites are tracked under `dotfiles/.agent/`.
 
 ```bash
 zsh dotfiles/.agent/sync.sh
-```
-
-`dotfiles/.agent/sync.sh` is a thin wrapper; the implementation lives in `scripts/setup_agent_files.sh`. Each agent config under `dotfiles/.agent/apps/` is treated as the source of truth and symlinked into the corresponding tool home.
-
-| Repository path | Applied to |
-|---|---|
-| `dotfiles/.agent/AGENTS.md` | `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md`, `~/.copilot/copilot-instructions.md`, `~/.gemini/GEMINI.md`, `~/.cursor/AGENT.md`, `~/.config/opencode/AGENTS.md`, `~/.hermes/AGENTS.md` |
-| `dotfiles/.agent/apps/claude/settings.json` | `~/.claude/settings.json` |
-| `dotfiles/.agent/apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
-| `dotfiles/.agent/apps/copilot/settings.json` | `~/.copilot/settings.json` |
-| `dotfiles/.agent/apps/copilot/mcp-config.json` | `~/.copilot/mcp-config.json` |
-| `dotfiles/.agent/apps/codex/config.toml` | `~/.codex/config.toml` |
-| `dotfiles/.agent/apps/codex/hooks.json` | `~/.codex/hooks.json` |
-| `dotfiles/.agent/apps/cursor/cli-config.json` | `~/.cursor/cli-config.json` |
-| `dotfiles/.agent/apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
-| `dotfiles/.agent/apps/devin/config.json` | `~/.config/devin/config.json` |
-| `dotfiles/.agent/apps/gemini/settings.json` | `~/.gemini/settings.json` |
-| `dotfiles/.agent/apps/hermes-agent/config.yaml` | `~/.hermes/config.yaml` |
-| `dotfiles/.agent/apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
-| `dotfiles/.agent/apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
-
-Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
-Agent-specific env files that are required by tools are generated from `~/.config/shell/secrets.env`; currently this writes `DEVIN_API_KEY` to `~/.gemini/.env` and `~/.hermes/.env`.
-
-### Waza skill evaluations
-
-Waza is included in the Nix CLI package set as `dotfiles.waza`. Its project config is `.waza.yaml`, with skills under `dotfiles/.agent/skills/` and eval suites under `dotfiles/.agent/evals/`.
-
-```bash
-mise run waza-check
-mise run waza-eval
-mise run waza-eval-all
-mise run waza-eval-model -- --allow
-mise run waza-eval-codex -- --dry-run
-mise run waza-eval-codex -- --allow
-mise run waza-eval-claude -- --allow
-mise run waza-eval-gemini -- --allow
-mise run waza-eval-copilot -- --allow
-mise run waza-eval-devin -- --allow
-mise run waza-eval-cursor -- --allow
-mise run waza-eval-opencode -- --allow
-mise run waza-eval-hermes -- --allow
 mise run waza-eval-cli-agents -- --dry-run
-mise run waza-dashboard
 ```
 
-The default eval suites use Waza's `mock` executor, so they validate repository wiring without requiring model credentials. Each regular skill under `dotfiles/.agent/skills/<skill>/SKILL.md` and each meta skill under `skills/superpowers/` has `dotfiles/.agent/evals/<skill>/eval.yaml` and `model.yaml`. Model-backed quality suites live in `dotfiles/.agent/evals/<skill>/model.yaml` and require the explicit `--allow` flag because they use model credentials and may consume paid quota.
-
-To run the same model eval tasks through local CLI agents instead of Waza's native executor, use `waza-eval-codex`, `waza-eval-claude`, `waza-eval-gemini`, `waza-eval-copilot`, `waza-eval-devin`, `waza-eval-cursor`, `waza-eval-opencode`, `waza-eval-hermes`, or `waza-eval-cli-agents` for all of them. These tasks copy fixtures into a temporary workspace, invoke the CLI, and save stdout, stderr, prompts, and lightweight grader summaries under `.waza-results/cli-agents/`. Use `--dry-run` to inspect the target suites without invoking an AI CLI.
-
-### Jupyter Notebook (jupytext)
-
-To reduce token consumption, AI tools are configured to edit `.py` files only. `jupytext --sync` runs automatically after each file edit via hooks, keeping the paired `.ipynb` up to date.
-
-To pair a new notebook:
-```bash
-jupytext --set-formats ipynb,py:percent notebook.py
-```
+See [dotfiles/.agent/README.md](dotfiles/.agent/README.md) for the file map, sync behavior, ignore rules, hooks, and Waza evaluation commands.
 
 ## API keys and secrets
 
@@ -322,4 +267,7 @@ chezmoi also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.t
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 export OPENAI_API_KEY=""
 export ANTHROPIC_API_KEY=""
+export GEMINI_API_KEY=""
+export GITHUB_TOKEN=""
+export DEVIN_API_KEY=""
 ```
