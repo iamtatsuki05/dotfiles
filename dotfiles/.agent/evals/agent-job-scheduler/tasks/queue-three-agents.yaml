@@ -1,0 +1,47 @@
+id: agent-job-scheduler-queue-three-agents-001
+name: Queue Three Agents Safely
+description: |
+  Checks that the skill can plan a safe smoke run for Codex, Gemini, and Claude
+  through agent-job-scheduler without directly invoking the AI CLIs.
+
+tags:
+  - scheduler
+  - queue
+  - smoke
+
+inputs:
+  prompt: "agent-job-scheduler で codex、gemini、claude に同じ read-only prompt を積んで動作確認したいです。安全な手順、確認コマンド、成功条件を整理してください。"
+  context:
+    runtime_root: /tmp/agent-job-scheduler-smoke
+    workdir: /tmp/agent-job-scheduler-work
+    agents:
+      - codex
+      - gemini
+      - claude
+  files:
+    - path: status-ready.txt
+
+expected:
+  output_contains:
+    - "agent-job-scheduler"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_queue_status_run
+    type: text
+    config:
+      regex_match:
+        - "(?i)(enqueue|queue).*status|status.*run-once|run-once"
+  - name: mentions_three_agents
+    type: text
+    config:
+      regex_match:
+        - "(?i)(codex).*gemini.*claude|claude.*gemini.*codex"
+  - name: mentions_safe_workspace
+    type: text
+    config:
+      regex_match:
+        - "(?i)(runtime-root|workdir|allow-workdir|allowlist|temporary|/tmp)"

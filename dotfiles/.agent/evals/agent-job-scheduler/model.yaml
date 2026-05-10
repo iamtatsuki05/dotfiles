@@ -1,0 +1,51 @@
+name: agent-job-scheduler-model-eval
+description: |
+  Model-backed quality evaluation for the agent-job-scheduler skill. This suite
+  checks that an agent plans safe queue operations, status checks, retries, and
+  runtime isolation before executing scheduled AI CLI jobs.
+skill: agent-job-scheduler
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: scheduler_operational_safety
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response use the scheduler workflow safely and completely?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: queue_status_run_flow
+    config:
+      regex_match:
+        - "(?i)(enqueue|queue).*status|status.*(run-once|run_once)|run-once"
+  - type: text
+    name: safe_runtime_and_workdir
+    config:
+      regex_match:
+        - "(?i)(runtime-root|allow-workdir|workdir|allowlist|/tmp|temporary)"
+  - type: text
+    name: failure_recovery_covered
+    config:
+      regex_match:
+        - "(?i)(show|retry|failed|failure|last_error|result_path|transcript)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/queue-three-agents.yaml"
+  - "tasks/recover-failed-gemini.yaml"

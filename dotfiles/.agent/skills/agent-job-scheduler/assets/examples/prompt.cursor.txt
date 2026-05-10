@@ -1,0 +1,2 @@
+Find the failing or incomplete behavior described by the user.
+Make the smallest safe fix in the target worktree and report the changed files and test results.

@@ -1,0 +1,2 @@
+Implement the requested repository configuration update.
+Keep the change scoped, avoid reverting unrelated edits, and report the resulting diff and verification.

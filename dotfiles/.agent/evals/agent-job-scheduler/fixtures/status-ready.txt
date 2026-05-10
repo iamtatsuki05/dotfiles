@@ -1,0 +1,23 @@
+runtime_root: /tmp/agent-job-scheduler-smoke
+jobs:
+  cancelled: 0
+  failed: 0
+  queued: 3
+  retry_waiting: 0
+  running: 0
+  succeeded: 0
+  due_now: 3
+  runnable_now: 3
+cooldowns:
+  claude: ready
+  codex: ready
+  copilot: ready
+  cursor: ready
+  devin: ready
+  gemini: ready
+  hermes: ready
+  opencode: ready
+next_jobs:
+  80a7a6036e484456ac112d0e1d4b5c24 agent=codex scheduled_at=2026-05-10T18:51:58+09:00 workdir=/private/tmp/agent-job-scheduler-work
+  d756b84bc7064502992f5f3f44a8df95 agent=gemini scheduled_at=2026-05-10T18:51:58+09:00 workdir=/private/tmp/agent-job-scheduler-work
+  213a35d22c2045e6a43ea270e08defa5 agent=claude scheduled_at=2026-05-10T18:53:24+09:00 workdir=/private/tmp/agent-job-scheduler-work

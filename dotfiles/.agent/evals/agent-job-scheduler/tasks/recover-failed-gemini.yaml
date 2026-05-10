@@ -1,0 +1,43 @@
+id: agent-job-scheduler-recover-failed-gemini-001
+name: Recover Failed Gemini Job
+description: |
+  Checks that the skill handles a failed scheduler job by inspecting artifacts
+  before retrying rather than blindly re-running everything.
+
+tags:
+  - scheduler
+  - retry
+  - failure
+
+inputs:
+  prompt: "agent-job-scheduler の status で gemini だけ failed になりました。原因確認と retry の進め方を整理してください。"
+  context:
+    failed_agent: gemini
+    job_id: d756b84bc7064502992f5f3f44a8df95
+  files:
+    - path: failed-gemini-show.json
+
+expected:
+  output_contains:
+    - "gemini"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: inspects_failure_before_retry
+    type: text
+    config:
+      regex_match:
+        - "(?i)(show|result_path|transcript|last_error).*retry|retry.*(show|result_path|transcript|last_error)"
+  - name: mentions_targeted_retry
+    type: text
+    config:
+      regex_match:
+        - "(?i)(retry).*d756b84bc7064502992f5f3f44a8df95|d756b84bc7064502992f5f3f44a8df95.*retry"
+  - name: avoids_blind_rerun
+    type: text
+    config:
+      regex_not_match:
+        - "(?i)re-run all|rerun all|全部.*再実行"

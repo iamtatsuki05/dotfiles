@@ -1,0 +1,2 @@
+Inspect the current repository state and identify the smallest safe change for the requested task.
+Apply the change if it is clearly scoped, then summarize the files changed and verification performed.

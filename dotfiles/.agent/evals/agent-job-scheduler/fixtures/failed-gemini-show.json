@@ -1,0 +1,12 @@
+{
+  "job_id": "d756b84bc7064502992f5f3f44a8df95",
+  "status": "failed",
+  "agent": "gemini",
+  "workdir": "/private/tmp/agent-job-scheduler-work",
+  "run_count": "1",
+  "next_retry_at": "",
+  "last_error": "Gemini CLI is not running in a trusted directory. To proceed, either use --skip-trust, set the GEMINI_CLI_TRUST_WORKSPACE=true environment variable, or trust this directory in interactive mode.",
+  "result_path": "/tmp/agent-job-scheduler-smoke/runs/d756b84bc7064502992f5f3f44a8df95/20260510T185419000000+0900/result.txt",
+  "transcript_path": "/tmp/agent-job-scheduler-smoke/runs/d756b84bc7064502992f5f3f44a8df95/20260510T185419000000+0900/transcript.txt",
+  "prompt_preview": "README.md を読んで、内容を1文で要約してください。ファイルは変更しないでください。"
+}

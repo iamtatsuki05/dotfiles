@@ -1,0 +1,26 @@
+[project]
+name = "agent-job-scheduler"
+version = "0.1.0"
+description = "Local job scheduler for repo-managed AI agent CLIs"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "fire>=0.7.1",
+  "pydantic>=2.11.4",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4.2",
+]
+
+[project.scripts]
+agent-job-scheduler = "agent_job_scheduler.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,2 @@
+Review the current implementation against the requested behavior.
+Apply safe changes only, then summarize the decision, changed files, and validation results.
