@@ -21,6 +21,7 @@ codex = "latest"
 claude-code = "latest"
 gemini-cli = "latest"
 opencode = "latest"
+"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"
 "npm:@github/copilot" = "latest"
 # infra
 docker-cli = "latest"

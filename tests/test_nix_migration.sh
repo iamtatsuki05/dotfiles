@@ -155,6 +155,7 @@ EOF
 brew	claude-code	claude-code
 brew	codex	codex
 brew	gemini-cli	gemini-cli
+brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	opencode	opencode
 cask	claude-code@latest	claude-code
 cask	codex	codex
@@ -187,6 +188,7 @@ brew "mise"
 brew "claude-code"
 brew "codex"
 brew "gemini-cli"
+brew "hermes-agent"
 brew "opencode"
 brew "private-tool"
 cask "slack"
@@ -222,6 +224,7 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_not_contains "$repo/config/nix/package-names.nix" '"gemini-cli"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"claude-code"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"codex"'
+  assert_not_contains "$repo/config/nix/package-names.nix" '"hermes-agent"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"opencode"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"slack"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"alacritty"'
@@ -243,6 +246,7 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	claude-code	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	codex	managed-by-mise:codex'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	gemini-cli	managed-by-mise:gemini-cli'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	hermes-agent	managed-by-mise:pipx:git+https://github.com/NousResearch/hermes-agent.git'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	opencode	managed-by-mise:opencode'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	codex	managed-by-mise:codex'
@@ -1840,6 +1844,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" '[tools."http:cursor-agent"]'
   assert_contains "$MISE_CONFIG" 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
   assert_contains "$MISE_CONFIG" 'opencode = "latest"'
+  assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'

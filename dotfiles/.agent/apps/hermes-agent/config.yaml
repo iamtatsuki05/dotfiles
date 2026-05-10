@@ -1,0 +1,48 @@
+# Hermes Agent user configuration.
+# Secrets belong in ~/.hermes/.env or the normal shell secret store, not here.
+
+terminal:
+  backend: local
+  cwd: "."
+  timeout: 180
+  env_passthrough:
+    - DEVIN_API_KEY
+
+hooks_auto_accept: true
+hooks:
+  pre_tool_call:
+    - matcher: "read_file|write_file|patch|terminal"
+      command: "~/.hermes/agent-hooks/secret-protection.sh"
+      timeout: 5
+  post_tool_call:
+    - matcher: "write_file|patch"
+      command: "~/.hermes/agent-hooks/jupytext_sync.sh"
+      timeout: 30
+
+tool_output:
+  max_bytes: 50000
+  max_lines: 2000
+  max_line_length: 2000
+
+mcp_servers:
+  codex:
+    command: "codex"
+    args:
+      - "mcp-server"
+  deepwiki:
+    url: "https://mcp.deepwiki.com/mcp"
+  devin:
+    url: "https://mcp.devin.ai/mcp"
+    headers:
+      Authorization: "Bearer ${DEVIN_API_KEY}"
+  gemini-cli:
+    command: "bunx"
+    args:
+      - "mcp-gemini-cli"
+      - "--allow-npx"
+  notion:
+    url: "https://mcp.notion.com/mcp"
+  playwright:
+    command: "bunx"
+    args:
+      - "@playwright/mcp@latest"
