@@ -200,12 +200,54 @@ sync_agent_env_files() {
   write_env_file_from_secrets "$HOME/.hermes/.env" DEVIN_API_KEY
 }
 
+sync_hermes_mcp_dependency() {
+  local hermes_bin
+  local hermes_install_dir
+  local hermes_python
+
+  if ! command -v hermes >/dev/null 2>&1; then
+    return 0
+  fi
+
+  hermes_bin="$(command -v hermes)"
+  hermes_install_dir="${hermes_bin:h:h}"
+  case "$hermes_install_dir" in
+    "$HOME/.local/share/mise/installs/pipx-git-https-github-com-nous-research-hermes-agent-git"/*)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  hermes_python="$hermes_install_dir/hermes-agent/bin/python"
+  if [[ ! -x "$hermes_python" ]]; then
+    return 0
+  fi
+
+  if "$hermes_python" - <<'PY' >/dev/null 2>&1
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
+PY
+  then
+    return 0
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "warning: Hermes MCP dependency is missing, but uv is not available to install it" >&2
+    return 0
+  fi
+
+  uv pip install --python "$hermes_python" 'mcp>=1.24,<2'
+}
+
 main() {
   parse_args "$@"
   sync_shared_files
   sync_hooks
   sync_tool_configs
   sync_agent_env_files
+  sync_hermes_mcp_dependency
 }
 
 main "$@"

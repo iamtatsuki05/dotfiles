@@ -174,6 +174,8 @@ test_mise_task_runs_test_runner_from_repo_root() {
   assert_contains "$MISE_CONFIG" "[tasks.dotfiles-test]"
   assert_contains "$MISE_CONFIG" 'run = "zsh tests/run.sh"'
   assert_contains "$MISE_CONFIG" 'dir = "__DOTFILES_REPO_ROOT__"'
+  assert_contains "$MISE_CONFIG" "[tasks.agent-sync]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/setup_agent_files.sh"'
 }
 
 test_mise_tasks_include_nix_migration_flow() {

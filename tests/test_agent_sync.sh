@@ -230,6 +230,53 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   rm -rf "$repo" "$home_dir"
 }
 
+test_agent_sync_installs_missing_hermes_mcp_dependency() {
+  local repo
+  local home_dir
+  local xdg_config_home
+  local fake_bin
+  local hermes_install
+  local uv_log
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  xdg_config_home="$home_dir/.config"
+  fake_bin="$home_dir/fake-bin"
+  hermes_install="$home_dir/.local/share/mise/installs/pipx-git-https-github-com-nous-research-hermes-agent-git/v2026.4.30"
+  uv_log="$home_dir/uv.log"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$xdg_config_home/shell" "$fake_bin" "$hermes_install/bin" "$hermes_install/hermes-agent/bin"
+
+  cat > "$hermes_install/bin/hermes" <<'EOF'
+#!/usr/bin/env zsh
+exit 0
+EOF
+  chmod +x "$hermes_install/bin/hermes"
+
+  cat > "$hermes_install/hermes-agent/bin/python" <<'EOF'
+#!/usr/bin/env zsh
+exit 1
+EOF
+  chmod +x "$hermes_install/hermes-agent/bin/python"
+
+  cat > "$fake_bin/uv" <<EOF
+#!/usr/bin/env zsh
+print -r -- "\$*" > "$uv_log"
+exit 0
+EOF
+  chmod +x "$fake_bin/uv"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
+
+  assert_file "$uv_log"
+  assert_contains "$uv_log" "pip install --python $hermes_install/hermes-agent/bin/python mcp>=1.24,<2"
+
+  rm -rf "$repo" "$home_dir"
+}
+
 test_agent_sync_replaces_existing_codex_config_with_managed_symlink() {
   local repo
   local home_dir
@@ -283,6 +330,7 @@ test_agent_sync_wrapper_delegates_to_setup_script() {
 
 main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
+  test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
   test_agent_sync_wrapper_delegates_to_setup_script
   echo "agent sync tests passed"

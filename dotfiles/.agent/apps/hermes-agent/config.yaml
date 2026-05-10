@@ -46,6 +46,7 @@ mcp_servers:
       - "git+https://github.com/googlecolab/colab-mcp"
   notion:
     url: "https://mcp.notion.com/mcp"
+    auth: "oauth"
   playwright:
     command: "bunx"
     args:

@@ -96,6 +96,11 @@ description = "dotfilesのshell scriptとchezmoi source stateを検証する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh tests/run.sh"
 
+[tasks.agent-sync]
+description = "agent別の設定・hooks・skills・Hermes MCP依存を同期する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/setup_agent_files.sh"
+
 [tasks.waza-check]
 description = "Wazaでmarkdown-docs skillの提出前チェックを実行する"
 dir = "__DOTFILES_REPO_ROOT__"
