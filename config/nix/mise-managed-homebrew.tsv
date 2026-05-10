@@ -2,6 +2,7 @@
 brew	claude-code	claude-code
 brew	codex	codex
 brew	gemini-cli	gemini-cli
+brew	opencode	opencode
 cask	claude-code@latest	claude-code
 cask	codex	codex
 cask	cursor-cli	cursor-agent

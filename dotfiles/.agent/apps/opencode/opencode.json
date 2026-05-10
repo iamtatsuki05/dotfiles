@@ -1,0 +1,73 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "instructions": [
+    "~/.config/opencode/AGENTS.md"
+  ],
+  "permission": {
+    "*": "allow",
+    "bash": "ask",
+    "webfetch": "allow",
+    "read": {
+      "*": "allow",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/secrets.env": "deny",
+      "config/shell/secrets.env": "deny",
+      "**/credentials.json": "deny",
+      "**/secrets.json": "deny",
+      "**/*.key": "deny",
+      "**/*.pem": "deny",
+      "**/id_rsa": "deny",
+      "**/id_ed25519": "deny"
+    },
+    "edit": {
+      "*": "allow",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/secrets.env": "deny",
+      "config/shell/secrets.env": "deny",
+      "**/credentials.json": "deny",
+      "**/secrets.json": "deny",
+      "**/*.key": "deny",
+      "**/*.pem": "deny",
+      "**/id_rsa": "deny",
+      "**/id_ed25519": "deny"
+    }
+  },
+  "mcp": {
+    "codex": {
+      "type": "local",
+      "command": ["codex", "mcp-server"],
+      "enabled": true
+    },
+    "deepwiki": {
+      "type": "remote",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "enabled": true
+    },
+    "devin": {
+      "type": "remote",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer {env:DEVIN_API_KEY}"
+      },
+      "enabled": true
+    },
+    "gemini-cli": {
+      "type": "local",
+      "command": ["bunx", "mcp-gemini-cli", "--allow-npx"],
+      "enabled": true
+    },
+    "notion": {
+      "type": "remote",
+      "url": "https://mcp.notion.com/mcp",
+      "enabled": true
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["bunx", "@playwright/mcp@latest"],
+      "enabled": true
+    }
+  }
+}
