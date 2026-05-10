@@ -1,0 +1,36 @@
+{
+  "autoUpdate": false,
+  "disableAllHooks": false,
+  "effortLevel": "xhigh",
+  "experimental": true,
+  "model": "auto",
+  "respectGitignore": true,
+  "allowedUrls": [
+    "github.com",
+    "*.github.com",
+    "docs.github.com",
+    "api.github.com",
+    "*.githubusercontent.com",
+    "mcp.deepwiki.com",
+    "mcp.devin.ai",
+    "mcp.notion.com"
+  ],
+  "deniedUrls": [],
+  "footer": {
+    "showAgent": true,
+    "showBranch": true,
+    "showContextWindow": true,
+    "showDirectory": true,
+    "showModelEffort": true,
+    "showQuota": true
+  },
+  "hooks": {
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "zsh \"$HOME/.copilot/hooks/jupytext_sync.sh\"",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

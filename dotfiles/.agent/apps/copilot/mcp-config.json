@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "tools": ["*"]
+    },
+    "devin": {
+      "type": "http",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
+      },
+      "tools": ["*"]
+    },
+    "gemini-cli": {
+      "type": "local",
+      "command": "bunx",
+      "args": ["mcp-gemini-cli", "--allow-npx"],
+      "env": {},
+      "tools": ["*"]
+    },
+    "notion": {
+      "type": "http",
+      "url": "https://mcp.notion.com/mcp",
+      "tools": ["*"]
+    },
+    "playwright": {
+      "type": "local",
+      "command": "bunx",
+      "args": ["@playwright/mcp@latest"],
+      "env": {},
+      "tools": ["*"]
+    }
+  }
+}

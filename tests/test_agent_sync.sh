@@ -70,6 +70,7 @@ create_agent_fixture_repo() {
   mkdir -p \
     "$repo/scripts" \
     "$repo/dotfiles/.agent/apps/claude" \
+    "$repo/dotfiles/.agent/apps/copilot" \
     "$repo/dotfiles/.agent/apps/codex" \
     "$repo/dotfiles/.agent/apps/cursor" \
     "$repo/dotfiles/.agent/apps/devin" \
@@ -89,6 +90,12 @@ create_agent_fixture_repo() {
 EOF
   cat > "$repo/dotfiles/.agent/apps/claude/.mcp.json" <<'EOF'
 {"mcpServers":{"codex":{"command":"codex","args":["mcp-server"]}}}
+EOF
+  cat > "$repo/dotfiles/.agent/apps/copilot/mcp-config.json" <<'EOF'
+{"mcpServers":{"playwright":{"type":"local","command":"bunx","args":["@playwright/mcp@latest"],"env":{},"tools":["*"]}}}
+EOF
+  cat > "$repo/dotfiles/.agent/apps/copilot/settings.json" <<'EOF'
+{"autoUpdate":false,"respectGitignore":true,"allowedUrls":["github.com"],"hooks":{"postToolUse":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/jupytext_sync.sh\""}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/codex/hooks.json" <<'EOF'
 {"hooks":{"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/jupytext_sync.sh"}]}]}}
@@ -136,6 +143,16 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
   assert_symlink_target "$home_dir/.claude/CLAUDE.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.copilot/copilot-instructions.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.copilot/skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.copilot/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.copilot/settings.json" "$repo/dotfiles/.agent/apps/copilot/settings.json"
+  assert_symlink_target "$home_dir/.copilot/mcp-config.json" "$repo/dotfiles/.agent/apps/copilot/mcp-config.json"
+  assert_contains "$home_dir/.copilot/settings.json" '"respectGitignore"'
+  assert_contains "$home_dir/.copilot/settings.json" '"allowedUrls"'
+  assert_contains "$home_dir/.copilot/settings.json" '"postToolUse"'
+  assert_contains "$home_dir/.copilot/mcp-config.json" '"mcpServers"'
+  assert_contains "$home_dir/.copilot/mcp-config.json" '"playwright"'
   assert_symlink_target "$xdg_config_home/devin/config.json" "$repo/dotfiles/.agent/apps/devin/config.json"
   assert_symlink_target "$xdg_config_home/devin/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$xdg_config_home/devin/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"

@@ -20,6 +20,7 @@ chezmoi = "latest"
 codex = "latest"
 claude-code = "latest"
 gemini-cli = "latest"
+"npm:@github/copilot" = "latest"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"

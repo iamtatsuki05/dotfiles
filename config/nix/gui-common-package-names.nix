@@ -4,7 +4,6 @@
   "alacritty"
   "antigravity"
   "bitwarden-desktop"
-  "copilot-cli"
   "code-cursor"
   "cursor-cli"
   "discord"

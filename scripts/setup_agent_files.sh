@@ -90,17 +90,20 @@ ensure_dir() {
 sync_shared_files() {
   ensure_dir ~/.codex
   ensure_dir ~/.claude
+  ensure_dir ~/.copilot
   ensure_dir "${XDG_CONFIG_HOME:-$HOME/.config}/devin"
   ensure_dir ~/.gemini
   ensure_dir ~/.cursor
 
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.codex/AGENTS.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.claude/CLAUDE.md
+  link_symlink "$AGENT_DIR/AGENTS.md" ~/.copilot/copilot-instructions.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.gemini/GEMINI.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.cursor/AGENT.md
 
   link_symlink "$AGENT_DIR/skills" ~/.codex/skills
   link_symlink "$AGENT_DIR/skills" ~/.claude/skills
+  link_symlink "$AGENT_DIR/skills" ~/.copilot/skills
   link_symlink "$AGENT_DIR/skills" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/skills"
   link_symlink "$AGENT_DIR/skills" ~/.gemini/skills
   link_symlink "$AGENT_DIR/skills" ~/.cursor/skills
@@ -111,7 +114,7 @@ sync_hooks() {
   local hook_file
   local hook_name
 
-  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks"; do
+  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks ~/.copilot/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks"; do
     ensure_dir "$hooks_dir"
     for hook_file in "$AGENT_DIR/hooks"/*; do
       [ -f "$hook_file" ] || continue
@@ -125,6 +128,8 @@ sync_hooks() {
 sync_tool_configs() {
   link_symlink "$APPS_DIR/claude/settings.json" ~/.claude/settings.json
   link_symlink "$APPS_DIR/claude/.mcp.json" ~/.claude/.mcp.json
+  link_symlink "$APPS_DIR/copilot/settings.json" ~/.copilot/settings.json
+  link_symlink "$APPS_DIR/copilot/mcp-config.json" ~/.copilot/mcp-config.json
   link_symlink "$APPS_DIR/codex/config.toml" ~/.codex/config.toml
   link_symlink "$APPS_DIR/codex/hooks.json" ~/.codex/hooks.json
   link_symlink "$APPS_DIR/devin/config.json" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/config.json"
