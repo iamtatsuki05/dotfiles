@@ -82,6 +82,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/gemini" \
     "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks" \
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
+    "$repo/dotfiles/.agent/apps/openclaw" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills"
 
@@ -148,6 +149,9 @@ mcp_servers:
 EOF
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
   chmod +x "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
+  cat > "$repo/dotfiles/.agent/apps/openclaw/openclaw.json" <<'EOF'
+{"agents":{"defaults":{"workspace":"~/.openclaw/workspace","skipBootstrap":true}},"tools":{"profile":"coding"},"mcp":{"servers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"]}}}}
+EOF
 }
 
 test_agent_sync_links_managed_files_and_generates_runtime_state() {
@@ -211,6 +215,11 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.hermes/agent-hooks/secret-protection.sh" "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
   assert_contains "$home_dir/.hermes/config.yaml" 'mcp_servers:'
   assert_contains "$home_dir/.hermes/config.yaml" 'hooks_auto_accept: true'
+  assert_symlink_target "$home_dir/.openclaw/openclaw.json" "$repo/dotfiles/.agent/apps/openclaw/openclaw.json"
+  assert_symlink_target "$home_dir/.openclaw/workspace/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.openclaw/workspace/skills" "$repo/dotfiles/.agent/skills"
+  assert_contains "$home_dir/.openclaw/openclaw.json" '"workspace"'
+  assert_contains "$home_dir/.openclaw/openclaw.json" '"mcp"'
   assert_symlink_target "$home_dir/.codex/config.toml" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_symlink_target "$home_dir/.codex/hooks.json" "$repo/dotfiles/.agent/apps/codex/hooks.json"
   assert_not_contains "$home_dir/.codex/config.toml" '[history]'

@@ -16,6 +16,7 @@ class Agent(StrEnum):
     GEMINI = "gemini"
     HERMES = "hermes"
     OPENCODE = "opencode"
+    OPENCLAW = "openclaw"
 
 
 class JobStatus(StrEnum):

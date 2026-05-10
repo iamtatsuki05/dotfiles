@@ -32,6 +32,7 @@ REVIEW_AGENTS = (
     "gemini-cli",
     "hermes",
     "opencode",
+    "openclaw",
 )
 MISE_TOOLS_BY_REVIEW_AGENT = {
     "codex": "codex",
@@ -42,6 +43,7 @@ MISE_TOOLS_BY_REVIEW_AGENT = {
     "gemini-cli": "gemini-cli",
     "hermes": "pipx:git+https://github.com/NousResearch/hermes-agent.git",
     "opencode": "opencode",
+    "openclaw": "npm:openclaw",
 }
 
 
@@ -461,6 +463,23 @@ def run_review_agent(
             ["hermes", "--accept-hooks", "--yolo", "-z", prompt],
             REPO_ROOT,
             hermes_env,
+        )
+    elif review_agent == "openclaw":
+        output = run_direct_or_mise(
+            review_agent,
+            [
+                "openclaw",
+                "agent",
+                "--local",
+                "--session-id",
+                "agent-skill-upstream-review",
+                "--message",
+                prompt,
+                "--timeout",
+                "600",
+            ],
+            REPO_ROOT,
+            env,
         )
     else:
         raise UpstreamError(f"unsupported review agent: {review_agent}")

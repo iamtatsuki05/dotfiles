@@ -83,11 +83,11 @@ test_security_prompt_accepts_registered_review_agent() {
   output="$(
     python3 "$SCRIPT" security-prompt \
       --id superpowers \
-      --review-agent gemini-cli \
+      --review-agent openclaw \
       --commit cccccccccccccccccccccccccccccccccccccccc
   )"
 
-  assert_contains_text "$output" "レビュー担当 Agent: gemini-cli"
+  assert_contains_text "$output" "レビュー担当 Agent: openclaw"
   assert_contains_text "$output" "Skill ID: superpowers"
 }
 
@@ -190,7 +190,7 @@ test_apply_update_accepts_specific_commit() {
     python3 "$SCRIPT" apply-update \
       --id empirical-prompt-tuning \
       --commit 2222222222222222222222222222222222222222 \
-      --review-agent opencode \
+      --review-agent openclaw \
       --review-report "$review_report" \
       --security-reviewed \
       --dry-run
@@ -198,7 +198,7 @@ test_apply_update_accepts_specific_commit() {
 
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
   assert_contains_text "$output" "candidate=2222222222222222222222222222222222222222"
-  assert_contains_text "$output" "review_agent=opencode"
+  assert_contains_text "$output" "review_agent=openclaw"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -f "$review_report"

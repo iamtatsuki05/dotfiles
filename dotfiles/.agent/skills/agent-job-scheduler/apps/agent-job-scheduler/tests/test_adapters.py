@@ -88,6 +88,17 @@ def test_default_agent_commands_match_cli_contracts(tmp_path: Path) -> None:
         "prompt",
     )
     assert hermes_spec.env == {"HERMES_ACCEPT_HOOKS": "1"}
+    assert registry.build(_job(agent=Agent.OPENCLAW, workdir=tmp_path)).argv == (
+        "openclaw",
+        "agent",
+        "--local",
+        "--session-id",
+        "agent-job-scheduler-openclaw-job",
+        "--message",
+        "prompt",
+        "--timeout",
+        "600",
+    )
 
 
 def _job(*, agent: Agent, workdir: Path, prompt: str = "prompt") -> JobRecord:

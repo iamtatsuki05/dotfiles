@@ -17,6 +17,7 @@ cooldowns:
   gemini: ready
   hermes: ready
   opencode: ready
+  openclaw: ready
 next_jobs:
   80a7a6036e484456ac112d0e1d4b5c24 agent=codex scheduled_at=2026-05-10T18:51:58+09:00 workdir=/private/tmp/agent-job-scheduler-work
   d756b84bc7064502992f5f3f44a8df95 agent=gemini scheduled_at=2026-05-10T18:51:58+09:00 workdir=/private/tmp/agent-job-scheduler-work

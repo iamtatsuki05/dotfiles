@@ -4,6 +4,8 @@ English version: [README.md](README.md)
 
 このディレクトリは、ローカル AI CLI agent 関連ファイルの source of truth です。
 
+Agent CLI を内部で呼び出すコードやツールの対応状況は [AGENT_SUPPORT.md](AGENT_SUPPORT.md) にまとめています。対応 Agent を追加・削除する場合は、この matrix も更新してください。
+
 管理対象:
 
 - `codex`
@@ -14,6 +16,7 @@ English version: [README.md](README.md)
 - `gemini-cli`
 - `hermes`
 - `opencode`
+- `openclaw`
 
 CLI 本体は `mise` で導入します。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
 
@@ -48,6 +51,7 @@ zsh dotfiles/.agent/sync.sh
 | `AGENTS.md` | `~/.cursor/AGENT.md` |
 | `AGENTS.md` | `~/.config/opencode/AGENTS.md` |
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
+| `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -62,8 +66,9 @@ zsh dotfiles/.agent/sync.sh
 | `apps/hermes-agent/config.yaml` | `~/.hermes/config.yaml` |
 | `apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
+| `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 
-`skills/` は各対応 agent の home に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
+`skills/` は各対応 agent の home に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
 
 Hermes では `apps/hermes-agent/agent-hooks/` のファイルも `~/.hermes/agent-hooks/` に symlink します。
 
@@ -74,7 +79,7 @@ project-level の除外は agent の機能に合わせて分けています。
 - Cursor は repo root の `.cursorignore` を使います。実体は `apps/cursor/.cursorignore` です。
 - Copilot は `respectGitignore` により `.gitignore` を使います。
 - Devin は `respect_gitignore` と `apps/devin/config.json` の permission deny を使います。
-- Codex、Claude、Gemini、opencode、Hermes はそれぞれ app config 側で ignore または permission rule を持ちます。
+- Codex、Claude、Gemini、opencode、Hermes はそれぞれ app config 側で ignore または permission rule を持ちます。OpenClaw は workspace、skills、`mcp.servers` を共通設定に寄せています。ファイル単位の secret deny は、既存の共通 shell hook と OpenClaw の hook/policy 面が直接互換ではないため、現時点では移植していません。
 
 secret はこのディレクトリには置かず、`~/.config/shell/secrets.env` に置きます。`sync.sh` は現在 `DEVIN_API_KEY` を次のファイルへ書き出します。
 
@@ -144,7 +149,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent gemini-cli
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
+review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode`、`openclaw` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
 
 手動 review 用に、低レベルコマンドも残しています。
 

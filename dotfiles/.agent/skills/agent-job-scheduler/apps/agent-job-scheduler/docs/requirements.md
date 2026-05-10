@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
+Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode、OpenClaw に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
 
 ## 2. 前提
 
@@ -33,7 +33,7 @@ Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Herm
   - `workdir`
   - `agent`
 - `workdir` は絶対パスで保存すること
-- `agent` は `claude`、`codex`、`copilot`、`cursor`、`devin`、`gemini`、`hermes`、`opencode` を受け付けること
+- `agent` は `claude`、`codex`、`copilot`、`cursor`、`devin`、`gemini`、`hermes`、`opencode`、`openclaw` を受け付けること
 
 ### 4.2 ジョブ台帳
 
@@ -187,6 +187,16 @@ opencode run --dir "$workdir" --dangerously-skip-permissions "$prompt"
 
 ```bash
 HERMES_ACCEPT_HOOKS=1 hermes --accept-hooks --yolo -z "$prompt"
+```
+
+#### OpenClaw
+
+- 非対話モードは `openclaw agent --local`
+- セッションは `--session-id "agent-job-scheduler-<job_id>"` で分離する
+- OpenClaw の workspace は config 側で決まるため、対象 `workdir` は prompt と process cwd の両方で渡す
+
+```bash
+openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$prompt" --timeout 600
 ```
 
 ### 4.7 レートリミット処理

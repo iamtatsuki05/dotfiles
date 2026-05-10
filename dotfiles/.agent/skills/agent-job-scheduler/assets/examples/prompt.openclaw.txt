@@ -1,0 +1,6 @@
+Use OpenClaw locally to inspect the target workspace.
+
+Requirements:
+- Work only in the requested workdir.
+- Do not read or write secret files.
+- Summarize the concrete changes or findings.

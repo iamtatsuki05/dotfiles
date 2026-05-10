@@ -1,0 +1,67 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace",
+      "skipBootstrap": true,
+      "contextInjection": "always",
+      "sandbox": {
+        "mode": "off"
+      }
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "elevated": {
+      "enabled": false
+    }
+  },
+  "skills": {
+    "load": {
+      "watch": true
+    }
+  },
+  "mcp": {
+    "servers": {
+      "codex": {
+        "command": "codex",
+        "args": [
+          "mcp-server"
+        ]
+      },
+      "deepwiki": {
+        "url": "https://mcp.deepwiki.com/mcp",
+        "transport": "streamable-http"
+      },
+      "devin": {
+        "url": "https://mcp.devin.ai/mcp",
+        "transport": "streamable-http",
+        "headers": {
+          "Authorization": "Bearer ${DEVIN_API_KEY}"
+        }
+      },
+      "gemini-cli": {
+        "command": "bunx",
+        "args": [
+          "mcp-gemini-cli",
+          "--allow-npx"
+        ]
+      },
+      "colab-mcp": {
+        "command": "uvx",
+        "args": [
+          "git+https://github.com/googlecolab/colab-mcp"
+        ]
+      },
+      "notion": {
+        "url": "https://mcp.notion.com/mcp",
+        "transport": "streamable-http"
+      },
+      "playwright": {
+        "command": "bunx",
+        "args": [
+          "@playwright/mcp@latest"
+        ]
+      }
+    }
+  }
+}

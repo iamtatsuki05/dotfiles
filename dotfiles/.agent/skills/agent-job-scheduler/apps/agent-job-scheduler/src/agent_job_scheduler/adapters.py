@@ -31,6 +31,7 @@ def default_builders() -> dict[Agent, CommandBuilder]:
         Agent.GEMINI: build_gemini_command,
         Agent.HERMES: build_hermes_command,
         Agent.OPENCODE: build_opencode_command,
+        Agent.OPENCLAW: build_openclaw_command,
     }
 
 
@@ -136,3 +137,18 @@ def build_hermes_command(job: JobRecord) -> CommandSpec:
         display_command=shlex.join(argv),
         env={"HERMES_ACCEPT_HOOKS": "1"},
     )
+
+
+def build_openclaw_command(job: JobRecord) -> CommandSpec:
+    argv = (
+        "openclaw",
+        "agent",
+        "--local",
+        "--session-id",
+        f"agent-job-scheduler-{job.job_id}",
+        "--message",
+        job.prompt,
+        "--timeout",
+        "600",
+    )
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))

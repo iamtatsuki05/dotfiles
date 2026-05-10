@@ -4,6 +4,8 @@ Japanese version: [README_JA.md](README_JA.md)
 
 This directory is the source of truth for local AI CLI agents.
 
+Internal tools that call Agent CLIs are tracked in [AGENT_SUPPORT.md](AGENT_SUPPORT.md). Update that matrix whenever adding or removing a supported Agent.
+
 Managed agents:
 
 - `codex`
@@ -14,6 +16,7 @@ Managed agents:
 - `gemini-cli`
 - `hermes`
 - `opencode`
+- `openclaw`
 
 The tools themselves are installed by `mise`. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
 
@@ -48,6 +51,7 @@ zsh dotfiles/.agent/sync.sh
 | `AGENTS.md` | `~/.cursor/AGENT.md` |
 | `AGENTS.md` | `~/.config/opencode/AGENTS.md` |
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
+| `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -62,8 +66,9 @@ zsh dotfiles/.agent/sync.sh
 | `apps/hermes-agent/config.yaml` | `~/.hermes/config.yaml` |
 | `apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
+| `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 
-`skills/` is linked to each supported agent home. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
+`skills/` is linked to each supported agent home. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
 
 Hermes also links files from `apps/hermes-agent/agent-hooks/` into `~/.hermes/agent-hooks/`.
 
@@ -74,7 +79,7 @@ Project-level exclusions are split by agent capability:
 - Cursor uses the repository root `.cursorignore`, which points to `apps/cursor/.cursorignore`.
 - Copilot uses `.gitignore` through `respectGitignore`.
 - Devin uses `respect_gitignore` plus explicit permission denies in `apps/devin/config.json`.
-- Codex, Claude, Gemini, opencode, and Hermes have their own ignore or permission rules in their app configs.
+- Codex, Claude, Gemini, opencode, and Hermes have their own ignore or permission rules in their app configs. OpenClaw is currently managed for workspace, skills, and `mcp.servers`; file-level secret deny rules are not mirrored yet because its hook/policy surface is not directly compatible with the existing shared shell hook.
 
 Secrets belong in `~/.config/shell/secrets.env`, not in this directory. `sync.sh` currently writes `DEVIN_API_KEY` into:
 
@@ -144,7 +149,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent gemini-cli
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, and `opencode`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, `opencode`, and `openclaw`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
 
 For manual review workflows, lower-level commands are still available:
 

@@ -12,7 +12,7 @@ Usage:
   zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
 
 Agents:
-  codex, claude, gemini, copilot, devin, cursor, opencode, hermes, all
+  codex, claude, gemini, copilot, devin, cursor, opencode, hermes, openclaw, all
 
 Aliases:
   claude-code -> claude
@@ -45,6 +45,7 @@ canonical_agent() {
     cursor|cursor-agent) print -- cursor ;;
     opencode) print -- opencode ;;
     hermes|hermes-agent) print -- hermes ;;
+    openclaw) print -- openclaw ;;
     all) print -- all ;;
     *) return 1 ;;
   esac
@@ -53,7 +54,7 @@ canonical_agent() {
 agents_for() {
   local agent="$1"
   if [[ "$agent" == "all" ]]; then
-    print -l codex claude gemini copilot devin cursor opencode hermes
+    print -l codex claude gemini copilot devin cursor opencode hermes openclaw
   else
     print -- "$agent"
   fi
@@ -296,6 +297,13 @@ run_cli_agent() {
         --accept-hooks \
         --yolo \
         -z "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
+    openclaw)
+      (cd "$workspace" && run_direct_or_mise "npm:openclaw" openclaw agent \
+        --local \
+        --session-id "waza-cli-agent-${workspace:t}" \
+        --message "$prompt" \
+        --timeout 600) >"$stdout_file" 2>"$stderr_file"
       ;;
     *)
       fail "unsupported agent: $agent"

@@ -10,7 +10,7 @@ description: "Use when the user wants to queue, inspect, retry, cancel, or run l
 ## 使う場面
 
 - 今すぐ対話実行せず、後で Agent に処理させたい
-- Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode のジョブをキュー管理したい
+- Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode、OpenClaw のジョブをキュー管理したい
 - レートリミット中の Agent を避けて実行状況を見たい
 - ジョブの enqueue、status、run-once を行いたい
 - launchd で周期実行させたい

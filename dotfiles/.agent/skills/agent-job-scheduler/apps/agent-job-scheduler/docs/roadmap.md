@@ -55,6 +55,7 @@
 - `gemini` adapter を実装する
 - `hermes` adapter を実装する
 - `opencode` adapter を実装する
+- `openclaw` adapter を実装する
 - `workdir`、prompt、モデル指定、結果保存を共通化する
 - stdout、stderr、終了コードの収集を統一する
 

@@ -96,6 +96,8 @@ sync_shared_files() {
   ensure_dir ~/.cursor
   ensure_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   ensure_dir ~/.hermes
+  ensure_dir ~/.openclaw
+  ensure_dir ~/.openclaw/workspace
 
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.codex/AGENTS.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.claude/CLAUDE.md
@@ -104,6 +106,7 @@ sync_shared_files() {
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.cursor/AGENT.md
   link_symlink "$AGENT_DIR/AGENTS.md" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/AGENTS.md"
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.hermes/AGENTS.md
+  link_symlink "$AGENT_DIR/AGENTS.md" ~/.openclaw/workspace/AGENTS.md
 
   link_symlink "$AGENT_DIR/skills" ~/.codex/skills
   link_symlink "$AGENT_DIR/skills" ~/.claude/skills
@@ -113,6 +116,7 @@ sync_shared_files() {
   link_symlink "$AGENT_DIR/skills" ~/.cursor/skills
   link_symlink "$AGENT_DIR/skills" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills"
   link_symlink "$AGENT_DIR/skills" ~/.hermes/skills
+  link_symlink "$AGENT_DIR/skills" ~/.openclaw/workspace/skills
 }
 
 sync_hooks() {
@@ -154,6 +158,7 @@ sync_tool_configs() {
   link_symlink "$APPS_DIR/opencode/opencode.json" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
   link_symlink "$APPS_DIR/opencode/plugins" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins"
   link_symlink "$APPS_DIR/hermes-agent/config.yaml" ~/.hermes/config.yaml
+  link_symlink "$APPS_DIR/openclaw/openclaw.json" ~/.openclaw/openclaw.json
 }
 
 write_env_file_from_secrets() {

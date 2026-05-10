@@ -83,6 +83,7 @@ run_syntax_checks() {
 run_unit_tests() {
   log_step "Running shell unit tests"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_sync.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_support_matrix.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_skill_upstreams.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_migration.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_dotfiles_test_runner.sh"

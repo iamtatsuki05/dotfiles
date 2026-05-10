@@ -5,7 +5,7 @@ install_before = "7d"
 [tools]
 # lang
 bun = "latest"
-node = "20"
+node = "22"
 go = "1.25"
 golangci-lint = "latest"
 task = "latest"
@@ -23,6 +23,7 @@ gemini-cli = "latest"
 opencode = "latest"
 "pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"
 "npm:@github/copilot" = "latest"
+"npm:openclaw" = "latest"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"
@@ -96,6 +97,11 @@ description = "dotfilesのshell scriptとchezmoi source stateを検証する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh tests/run.sh"
 
+[tasks.agent-sync]
+description = "agent別の設定・hooks・skills・Hermes MCP依存を同期する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/setup_agent_files.sh"
+
 [tasks.waza-check]
 description = "Wazaでmarkdown-docs skillの提出前チェックを実行する"
 dir = "__DOTFILES_REPO_ROOT__"
@@ -155,6 +161,11 @@ run = "zsh scripts/waza_eval_cli_agent.sh opencode"
 description = "Wazaのmodel eval taskをHermes Agentで実行し、簡易graderで検証する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/waza_eval_cli_agent.sh hermes"
+
+[tasks.waza-eval-openclaw]
+description = "Wazaのmodel eval taskをOpenClawで実行し、簡易graderで検証する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/waza_eval_cli_agent.sh openclaw"
 
 [tasks.waza-eval-cli-agents]
 description = "Wazaのmodel eval taskを全CLI agentで実行し、簡易graderで検証する"

@@ -1,6 +1,6 @@
 # Agent Job Scheduler
 
-Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
+Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode、OpenClaw を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
 
 現在は、runtime 初期化、CSV 台帳、prompt sidecar、atomic write、`enqueue`、`run-once`、`status`、`show`、`retry`、`cancel`、`requeue`、`active-runs`、allowlist、stale recovery、`launchd` 連携まで入った実用初版です。
 
@@ -135,6 +135,18 @@ opencode run --dir "$workdir" --dangerously-skip-permissions "$prompt"
 
 ```bash
 HERMES_ACCEPT_HOOKS=1 hermes --accept-hooks --yolo -z "$prompt"
+```
+
+### OpenClaw
+
+- 非対話実行は `openclaw agent --local --message "$prompt"`
+- セッション衝突を避けるため `--session-id "agent-job-scheduler-<job_id>"` を指定する
+- OpenClaw の実ツール実行 workspace は OpenClaw config 側の `agents.defaults.workspace` に依存するため、prompt 内で対象 `workdir` を明示する
+
+想定コマンド:
+
+```bash
+openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$prompt" --timeout 600
 ```
 
 ## 実行モデルの初期方針

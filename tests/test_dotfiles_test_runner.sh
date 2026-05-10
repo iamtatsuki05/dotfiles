@@ -80,6 +80,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/main.sh" "main"
   write_fixture_zsh_script "$repo/scripts/helper.sh" "helper"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
+  write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"
   write_fixture_zsh_script "$repo/tests/test_agent_skill_upstreams.sh" "unit:skill-upstreams"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_migration.sh" "unit:chezmoi"
   write_fixture_zsh_script "$repo/tests/test_dotfiles_test_runner.sh" "unit:runner"
@@ -99,6 +100,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
+  assert_contains "$TEST_RUNNER" "tests/test_agent_support_matrix.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_skill_upstreams.sh"
   assert_contains "$LEGACY_TEST_RUNNER" "tests/run.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
@@ -159,6 +161,7 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$repo/tests/run.sh" --skip-chezmoi > "$output"
 
   assert_output_contains "$output" "unit:agent"
+  assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"
   assert_output_contains "$output" "unit:nix"
   assert_output_contains "$output" "source-state"
@@ -229,6 +232,7 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'opencode = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
+  assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
 }
 

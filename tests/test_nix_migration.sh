@@ -438,6 +438,7 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-cursor]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-opencode]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-hermes]'
+  assert_contains "$MISE_CONFIG" '[tasks.waza-eval-openclaw]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-eval-cli-agents]'
   assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
   assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
@@ -465,6 +466,7 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'cursor-agent'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'opencode run'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'hermes'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'openclaw agent'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'run_direct_or_mise'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" '.waza-results/cli-agents'
 }
@@ -510,10 +512,14 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" hermes-agent --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN hermes"
 
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" openclaw --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN openclaw"
+
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
   assert_output_contains "$output" "DRY-RUN copilot"
   assert_output_contains "$output" "DRY-RUN hermes"
+  assert_output_contains "$output" "DRY-RUN openclaw"
 
   rm -f "$output"
 }
@@ -1867,7 +1873,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"'
   assert_contains "$MISE_CONFIG" '[tasks.mise-upgrade]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
-  assert_contains "$MISE_CONFIG" 'node = "20"'
+  assert_contains "$MISE_CONFIG" 'node = "22"'
   assert_contains "$MISE_CONFIG" 'go = "1.25"'
   assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
   assert_contains "$MISE_CONFIG" 'python = "3.13"'
@@ -1878,6 +1884,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'opencode = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
+  assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'
   assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'
   assert_contains "$MISE_CONFIG" 'redis = "8.2"'
