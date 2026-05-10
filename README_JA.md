@@ -255,6 +255,7 @@ zsh dotfiles/.agent/sync.sh
 
 | リポジトリのパス | 反映先 |
 |---|---|
+| `dotfiles/.agent/AGENTS.md` | `~/.codex/AGENTS.md`、`~/.claude/CLAUDE.md`、`~/.copilot/copilot-instructions.md`、`~/.gemini/GEMINI.md`、`~/.cursor/AGENT.md`、`~/.config/opencode/AGENTS.md`、`~/.hermes/AGENTS.md` |
 | `dotfiles/.agent/apps/claude/settings.json` | `~/.claude/settings.json` |
 | `dotfiles/.agent/apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `dotfiles/.agent/apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -270,6 +271,7 @@ zsh dotfiles/.agent/sync.sh
 | `dotfiles/.agent/apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 
 `dotfiles/.agent/hooks/` のフックスクリプトは `~/.claude/hooks/`・`~/.codex/hooks/`・`~/.copilot/hooks/`・`~/.config/devin/hooks/`・`~/.gemini/hooks/`・`~/.config/opencode/hooks/`・`~/.hermes/agent-hooks/` にシンボリックリンクされます。
+Agent 固有の env file が必要なものは `~/.config/shell/secrets.env` から生成します。現在は `DEVIN_API_KEY` を `~/.gemini/.env` と `~/.hermes/.env` に書き出します。
 
 ### Waza による skill 評価
 

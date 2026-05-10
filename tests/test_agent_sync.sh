@@ -19,6 +19,11 @@ assert_file() {
   [[ -f "$file_path" ]] || fail "expected file: $file_path"
 }
 
+assert_not_exists() {
+  local target_path="$1"
+  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
+}
+
 assert_contains() {
   local file_path="$1"
   local expected="$2"
@@ -166,6 +171,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
   assert_symlink_target "$home_dir/.claude/settings.json" "$repo/dotfiles/.agent/apps/claude/settings.json"
+  assert_not_exists "$repo/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
   assert_symlink_target "$home_dir/.claude/CLAUDE.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
@@ -218,6 +224,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_not_contains "$home_dir/.codex/config.toml" 'max_unused_days = 365'
   assert_file "$home_dir/.gemini/.env"
   assert_contains "$home_dir/.gemini/.env" 'DEVIN_API_KEY=test-key'
+  assert_file "$home_dir/.hermes/.env"
+  assert_contains "$home_dir/.hermes/.env" 'DEVIN_API_KEY=test-key'
 
   rm -rf "$repo" "$home_dir"
 }

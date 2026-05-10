@@ -257,6 +257,7 @@ zsh dotfiles/.agent/sync.sh
 
 | Repository path | Applied to |
 |---|---|
+| `dotfiles/.agent/AGENTS.md` | `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md`, `~/.copilot/copilot-instructions.md`, `~/.gemini/GEMINI.md`, `~/.cursor/AGENT.md`, `~/.config/opencode/AGENTS.md`, `~/.hermes/AGENTS.md` |
 | `dotfiles/.agent/apps/claude/settings.json` | `~/.claude/settings.json` |
 | `dotfiles/.agent/apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `dotfiles/.agent/apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -272,6 +273,7 @@ zsh dotfiles/.agent/sync.sh
 | `dotfiles/.agent/apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 
 Hook scripts in `dotfiles/.agent/hooks/` are symlinked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
+Agent-specific env files that are required by tools are generated from `~/.config/shell/secrets.env`; currently this writes `DEVIN_API_KEY` to `~/.gemini/.env` and `~/.hermes/.env`.
 
 ### Waza skill evaluations
 

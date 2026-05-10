@@ -156,23 +156,22 @@ sync_tool_configs() {
   link_symlink "$APPS_DIR/hermes-agent/config.yaml" ~/.hermes/config.yaml
 }
 
-sync_gemini_env() {
-  local gemini_env_file="$HOME/.gemini/.env"
-
+write_env_file_from_secrets() {
+  local env_file="$1"
+  shift
   if [[ ! -f "$SECRETS_FILE" ]]; then
     return 0
   fi
 
-  ensure_dir "${gemini_env_file:h}"
+  ensure_dir "${env_file:h}"
 
-  local vars=("DEVIN_API_KEY")
   local tmp
-  tmp="${gemini_env_file}.tmp.$$"
+  tmp="${env_file}.tmp.$$"
   rm -f "$tmp"
   : > "$tmp"
 
   local var
-  for var in "${vars[@]}"; do
+  for var in "$@"; do
     local line=""
     local secret_line
     while IFS= read -r secret_line; do
@@ -192,8 +191,13 @@ sync_gemini_env() {
     return 0
   fi
 
-  mv "$tmp" "$gemini_env_file"
-  chmod 600 "$gemini_env_file"
+  mv "$tmp" "$env_file"
+  chmod 600 "$env_file"
+}
+
+sync_agent_env_files() {
+  write_env_file_from_secrets "$HOME/.gemini/.env" DEVIN_API_KEY
+  write_env_file_from_secrets "$HOME/.hermes/.env" DEVIN_API_KEY
 }
 
 main() {
@@ -201,7 +205,7 @@ main() {
   sync_shared_files
   sync_hooks
   sync_tool_configs
-  sync_gemini_env
+  sync_agent_env_files
 }
 
 main "$@"

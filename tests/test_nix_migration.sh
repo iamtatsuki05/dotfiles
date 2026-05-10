@@ -12,7 +12,6 @@ readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
 readonly CLEANUP_PACKAGE_CACHES_SCRIPT="$REPO_ROOT/scripts/cleanup_package_caches.sh"
 readonly INSTALL_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/install_homebrew.sh"
 readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
-readonly MANAGE_NIX_PACKAGE_OVERRIDE_SCRIPT="$REPO_ROOT/scripts/manage_nix_package_version_override.sh"
 readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
 readonly MAIN_SCRIPT="$REPO_ROOT/main.sh"
@@ -1560,12 +1559,9 @@ test_ai_cli_tools_are_managed_by_mise() {
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"claude-code@latest"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"codex"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"gemini-cli"'
-  assert_contains "$FLAKE_FILE" '# BEGIN managed by scripts/manage_nix_package_version_override.sh'
-  assert_contains "$FLAKE_FILE" 'packageVersionOverrides ? codex'
-  assert_contains "$FLAKE_FILE" 'codex = prev.codex.overrideAttrs'
-  assert_contains "$FLAKE_FILE" 'version = "0.125.0";'
-  assert_contains "$FLAKE_FILE" 'repo = "codex";'
-  assert_contains "$FLAKE_FILE" 'overlays = ['
+  assert_not_contains "$FLAKE_FILE" 'packageVersionOverrides'
+  assert_not_contains "$FLAKE_FILE" 'codex = prev.codex.overrideAttrs'
+  assert_not_contains "$FLAKE_FILE" 'codexOverlay'
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"codex"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"microsoft-office"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"onedrive"'
@@ -1575,83 +1571,6 @@ test_ai_cli_tools_are_managed_by_mise() {
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'falling back to the CLI Nix profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'warn "Homebrew is not installed; falling back to the CLI Nix profile'
   assert_contains "$UPDATE_MANAGED_VERSIONS_SCRIPT" 'homebrew_fallback_has_cli_entries'
-}
-
-test_manage_nix_package_version_override_script_updates_codex_pin() {
-  local repo
-  local bin_dir
-  local output
-
-  make_temp_dir
-
-  repo="$REPLY"
-  bin_dir="$repo/bin"
-  output="$repo/output.log"
-
-  mkdir -p "$repo/scripts" "$bin_dir"
-  cp "$MANAGE_NIX_PACKAGE_OVERRIDE_SCRIPT" "$repo/scripts/manage_nix_package_version_override.sh"
-  cat > "$repo/flake.nix" <<'EOF'
-{
-  outputs = _:
-    let
-      packageVersionOverrides = {
-        # BEGIN managed by scripts/manage_nix_package_version_override.sh
-        codex = {
-          owner = "openai";
-          repo = "codex";
-          version = "0.125.0";
-          tag = "rust-v0.125.0";
-          srcHash = "sha256-old-src-hash";
-          cargoHash = "sha256-old-cargo-hash";
-          sourceRoot = "codex-rs";
-        };
-        # END managed by scripts/manage_nix_package_version_override.sh
-      };
-    in
-    packageVersionOverrides;
-}
-EOF
-
-  cat > "$bin_dir/curl" <<'EOF'
-#!/bin/zsh
-cat <<'PKG'
-rustPlatform.buildRustPackage (finalAttrs: {
-  pname = "codex";
-  version = "0.130.0";
-  src = fetchFromGitHub {
-    owner = "openai";
-    repo = "codex";
-    tag = "rust-v${finalAttrs.version}";
-    hash = "sha256-src-hash";
-  };
-  sourceRoot = "${finalAttrs.src.name}/codex-rs";
-  cargoHash = "sha256-cargo-hash";
-})
-PKG
-EOF
-  chmod +x "$bin_dir/curl"
-
-  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" \
-    "$repo/scripts/manage_nix_package_version_override.sh" \
-    --repo-root "$repo" \
-    pin-latest codex > "$output"
-
-  assert_output_contains "$output" 'Pinned codex to 0.130.0'
-  assert_contains "$repo/flake.nix" 'version = "0.130.0";'
-  assert_contains "$repo/flake.nix" 'tag = "rust-v0.130.0";'
-  assert_contains "$repo/flake.nix" 'srcHash = "sha256-src-hash";'
-  assert_contains "$repo/flake.nix" 'cargoHash = "sha256-cargo-hash";'
-
-  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" \
-    "$repo/scripts/manage_nix_package_version_override.sh" \
-    --repo-root "$repo" \
-    unpin codex >> "$output"
-
-  assert_output_contains "$output" 'Removed explicit latest pin for codex'
-  assert_not_contains "$repo/flake.nix" 'version = "0.130.0";'
-  assert_not_contains "$repo/flake.nix" 'sha256-src-hash'
-
-  rm -rf "$repo"
 }
 
 test_managed_update_script_skips_gui_profile_on_macos_unless_requested() {
@@ -1969,7 +1888,6 @@ main() {
   test_apply_updates_applies_chezmoi_and_refreshes_agent_and_hooks
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
   test_ai_cli_tools_are_managed_by_mise
-  test_manage_nix_package_version_override_script_updates_codex_pin
   test_managed_update_script_skips_gui_profile_on_macos_unless_requested
   test_managed_update_script_includes_gui_profile_when_requested
   test_bash_templates_support_dynamic_shell_setup
