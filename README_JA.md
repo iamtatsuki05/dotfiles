@@ -243,7 +243,7 @@ zsh scripts/setup_git_hooks.sh
 ## AI ツール設定（Claude Code / Codex / Cursor Agent / Gemini CLI）
 
 AI agent 関連の source of truth は `dotfiles/.agent/` にまとめています。設定ファイルは `dotfiles/.agent/apps/`、system prompt は `dotfiles/.agent/AGENTS.md`、hooks は `dotfiles/.agent/hooks/`、skills は `dotfiles/.agent/skills/` を編集してください。
-Cursor 固有の project 除外設定は `dotfiles/.agent/apps/cursor/.cursorignore` で管理し、リポジトリルートの `.cursorignore` はそこへの symlink にします。
+Cursor 固有の project 除外設定は `dotfiles/.agent/apps/cursor/.cursorignore` で管理し、リポジトリルートの `.cursorignore` はそこへの symlink にします。Copilot CLI は `respectGitignore` で `.gitignore` を見るため、Copilot 向け除外は `.gitignore` に寄せます。Devin は `respect_gitignore` と secret 系 path の明示 deny で制御します。
 
 変更をすぐに手元へ反映したい場合は、次を実行します。
 

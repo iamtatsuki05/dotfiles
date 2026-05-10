@@ -7,6 +7,8 @@
   "notify": "smart",
   "show_path": true,
   "unicode_mode": "auto",
+  "include_gitignored_files": false,
+  "respect_gitignore": true,
   "permissions": {
     "allow": [
       "mcp__playwright__browser_resize",
@@ -18,7 +20,28 @@
       "mcp__playwright__browser_click",
       "mcp__playwright__browser_press_key"
     ],
-    "deny": [],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/secrets.env)",
+      "Read(config/shell/secrets.env)",
+      "Read(**/credentials.json)",
+      "Read(**/secrets.json)",
+      "Read(**/*.key)",
+      "Read(**/*.pem)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Write(**/.env)",
+      "Write(**/.env.*)",
+      "Write(**/secrets.env)",
+      "Write(config/shell/secrets.env)",
+      "Write(**/credentials.json)",
+      "Write(**/secrets.json)",
+      "Write(**/*.key)",
+      "Write(**/*.pem)",
+      "Write(**/id_rsa)",
+      "Write(**/id_ed25519)"
+    ],
     "ask": []
   },
   "mcpServers": {

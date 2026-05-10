@@ -245,7 +245,7 @@ zsh scripts/setup_git_hooks.sh
 ## AI tool configuration (Claude Code / Codex / Cursor Agent / Gemini CLI)
 
 The source of truth for AI agent files lives under `dotfiles/.agent/`. Edit settings in `dotfiles/.agent/apps/`, the shared prompt in `dotfiles/.agent/AGENTS.md`, hooks in `dotfiles/.agent/hooks/`, and skills in `dotfiles/.agent/skills/`.
-Cursor-specific project exclusions are managed in `dotfiles/.agent/apps/cursor/.cursorignore`; the repository root `.cursorignore` points to it.
+Cursor-specific project exclusions are managed in `dotfiles/.agent/apps/cursor/.cursorignore`; the repository root `.cursorignore` points to it. Copilot CLI is configured with `respectGitignore`, so project exclusions for Copilot come from `.gitignore`. Devin is configured with `respect_gitignore` plus explicit permission denies for secret-like paths.
 
 To push `.agent` changes to your local tool homes immediately, run:
 
