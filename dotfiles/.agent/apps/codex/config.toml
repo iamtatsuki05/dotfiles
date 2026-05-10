@@ -30,8 +30,10 @@ disable_response_storage = true
 rmcp_client = true
 notify = ["bash", "-lc", "afplay /System/Library/Sounds/Ping.aiff"]
 personality = "pragmatic"
+service_tier = "fast"
 
 [features]
+fast_mode = true
 external_migration = true
 undo = true
 goals = true
