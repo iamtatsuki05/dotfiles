@@ -122,3 +122,46 @@ mise run waza-eval-hermes -- --allow
 ```
 
 Use `--dry-run` to inspect suites without invoking an AI CLI. Results are written under `.waza-results/`.
+
+## External Skill Upstreams
+
+Vendored third-party skills are tracked in `skills/upstreams.json`. The manifest records the upstream GitHub repository, branch, pinned commit, local paths, and local tree hash.
+
+Common commands:
+
+```bash
+python3 scripts/agent_skill_upstreams.py check
+python3 scripts/agent_skill_upstreams.py updates
+python3 scripts/agent_skill_upstreams.py update
+mise run agent-skill-update
+```
+
+`update` defaults to every registered upstream at the latest branch head. It generates a review prompt, runs the selected Agent, writes review reports under `changes/skill-upstream-reviews/`, and applies the update only when every report says `update recommendation: approve` without Critical or High findings.
+
+```bash
+python3 scripts/agent_skill_upstreams.py update --dry-run
+python3 scripts/agent_skill_upstreams.py update --review-agent gemini-cli
+python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
+```
+
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, and `opencode`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+
+For manual review workflows, lower-level commands are still available:
+
+```bash
+python3 scripts/agent_skill_upstreams.py security-prompt \
+  --id superpowers \
+  --review-agent codex \
+  --commit <40-char-sha>
+```
+
+```bash
+python3 scripts/agent_skill_upstreams.py apply-update \
+  --id superpowers \
+  --commit <40-char-sha> \
+  --review-agent codex \
+  --review-report dotfiles/.agent/changes/<review-report>.md \
+  --security-reviewed
+```
+
+The update command refreshes the vendored files, pinned commit, local tree hash, and security review metadata in the manifest.

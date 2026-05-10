@@ -166,6 +166,11 @@ description = "Wazaの評価結果ダッシュボードを起動する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "WAZA_NO_UPDATE_CHECK=1 nix run path:.#waza -- serve --results-dir .waza-results"
 
+[tasks.agent-skill-update]
+description = "外部upstream skillをAgent review後に更新する"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "python3 scripts/agent_skill_upstreams.py update"
+
 [tasks.nix-migrate-brew]
 description = "現在のHomebrew状態または指定したBrewfileからNix package listと未移行レポートを生成する"
 dir = "__DOTFILES_REPO_ROOT__"

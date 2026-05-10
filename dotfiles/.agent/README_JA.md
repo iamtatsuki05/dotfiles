@@ -122,3 +122,46 @@ mise run waza-eval-hermes -- --allow
 ```
 
 AI CLI を起動せず対象 suite だけ確認する場合は `--dry-run` を使います。結果は `.waza-results/` に出力します。
+
+## 外部 skill upstream
+
+他人の skill を vendoring している場合は `skills/upstreams.json` で管理します。この manifest には upstream の GitHub repository、branch、固定 commit、local path、local tree hash を記録します。
+
+よく使うコマンド:
+
+```bash
+python3 scripts/agent_skill_upstreams.py check
+python3 scripts/agent_skill_upstreams.py updates
+python3 scripts/agent_skill_upstreams.py update
+mise run agent-skill-update
+```
+
+`update` は、デフォルトで登録済み upstream すべての最新 branch head を対象にします。review prompt を生成して選択した Agent を実行し、review report を `changes/skill-upstream-reviews/` に保存します。全 report が Critical / High finding なしで `update recommendation: approve` の場合だけ更新を適用します。
+
+```bash
+python3 scripts/agent_skill_upstreams.py update --dry-run
+python3 scripts/agent_skill_upstreams.py update --review-agent gemini-cli
+python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
+```
+
+review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
+
+手動 review 用に、低レベルコマンドも残しています。
+
+```bash
+python3 scripts/agent_skill_upstreams.py security-prompt \
+  --id superpowers \
+  --review-agent codex \
+  --commit <40-char-sha>
+```
+
+```bash
+python3 scripts/agent_skill_upstreams.py apply-update \
+  --id superpowers \
+  --commit <40-char-sha> \
+  --review-agent codex \
+  --review-report dotfiles/.agent/changes/<review-report>.md \
+  --security-reviewed
+```
+
+更新コマンドは vendored files、固定 commit、local tree hash、security review metadata を manifest に反映します。

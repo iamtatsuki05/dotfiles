@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "managed_by": "scripts/agent_skill_upstreams.py",
+  "skills": [
+    {
+      "id": "superpowers",
+      "description": "External Superpowers skills vendored into the shared agent skill tree.",
+      "repository": "https://github.com/obra/superpowers.git",
+      "branch": "main",
+      "pinned_commit": "f2cbfbefebbfef77321e4c9abc9e949826bea9d7",
+      "local_tree_sha256": "cc48cf1c6e44234e7cc7105eb6eb5f129d1e8e06f146d0f94b4320d9c9e33321",
+      "mappings": [
+        {
+          "source_path": "skills/dispatching-parallel-agents",
+          "local_path": "dotfiles/.agent/skills/superpowers/dispatching-parallel-agents"
+        },
+        {
+          "source_path": "skills/test-driven-development",
+          "local_path": "dotfiles/.agent/skills/superpowers/test-driven-development"
+        },
+        {
+          "source_path": "skills/writing-skills",
+          "local_path": "dotfiles/.agent/skills/superpowers/writing-skills"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "f2cbfbefebbfef77321e4c9abc9e949826bea9d7",
+        "last_reviewed_at": "2026-05-10T14:18:12+00:00",
+        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260510T141626Z/superpowers.md"
+      },
+      "provenance_note": "既存取り込み後に manifest を追加したため、pinned_commit は取り込み時期に近い upstream commit の記録であり、byte-identical とは限らない。"
+    },
+    {
+      "id": "empirical-prompt-tuning",
+      "description": "External empirical prompt tuning skill kept in Japanese as local SKILL.md.",
+      "repository": "https://github.com/mizchi/skills.git",
+      "branch": "main",
+      "pinned_commit": "1e40906d470624f60cfbff7895ba5c7e68893a00",
+      "local_tree_sha256": "c6d82f85d4957d41d05ac2f286fbba0e8cdb4dd8596fbb4d21530ee355391356",
+      "mappings": [
+        {
+          "source_path": "empirical-prompt-tuning/SKILL-ja.md",
+          "local_path": "dotfiles/.agent/skills/empirical-prompt-tuning/SKILL.md"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "1e40906d470624f60cfbff7895ba5c7e68893a00",
+        "last_reviewed_at": "2026-05-10T14:18:14+00:00",
+        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260510T141626Z/empirical-prompt-tuning.md"
+      },
+      "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning"
+    }
+  ]
+}

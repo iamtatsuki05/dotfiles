@@ -64,6 +64,7 @@ test_templates_keep_repo_root_behavior() {
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" 'replace "__MISE_OPEN__" "{{"'
   assert_contains "$REPO_ROOT/home/.chezmoitemplates/mise-config.toml" '__MISE_OPEN__ version __MISE_CLOSE__'
+  assert_contains "$REPO_ROOT/home/.chezmoitemplates/mise-config.toml" '[tasks.agent-skill-update]'
   assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
   assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
   assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '__DOTFILES_REPO_ROOT__'
