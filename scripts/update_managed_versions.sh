@@ -278,6 +278,86 @@ homebrew_command_exists() {
   dotfiles_has_homebrew
 }
 
+homebrew_fallback_entries() {
+  local setting_name="$1"
+
+  [[ -f "$HOMEBREW_FALLBACK_CONFIG" ]] || return 0
+  awk -v target="$setting_name" '
+    BEGIN { in_section = 0 }
+    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
+    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
+    in_section {
+      line = $0
+      sub(/#.*/, "", line)
+      while (match(line, /"([^"\\]|\\.)*"/)) {
+        value = substr(line, RSTART + 1, RLENGTH - 2)
+        gsub(/\\"/, "\"", value)
+        print value
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$HOMEBREW_FALLBACK_CONFIG"
+}
+
+homebrew_fallback_entry_list() {
+  local setting_name="$1"
+  local entries
+
+  entries="$(homebrew_fallback_entries "$setting_name")"
+  if [[ -n "$entries" ]]; then
+    REPLY="$entries"
+  else
+    REPLY=""
+  fi
+}
+
+should_update_homebrew_fallback_packages() {
+  dotfiles_is_macos || return 1
+
+  if dotfiles_homebrew_fallback_has_cli_entries; then
+    return 0
+  fi
+
+  [[ "$INSTALL_GUI_APPS" == "1" ]] && dotfiles_homebrew_fallback_has_gui_entries
+}
+
+update_homebrew_fallback_packages() {
+  local brew_path
+  local brew_entries=""
+  local cask_entries=""
+  local -a brews
+  local -a casks
+
+  should_update_homebrew_fallback_packages || return 0
+
+  if ! dotfiles_find_homebrew >/dev/null 2>&1; then
+    echo "ERROR: Homebrew fallback packages are configured, but brew is not installed or not found in PATH." >&2
+    return 1
+  fi
+  brew_path="$REPLY"
+
+  homebrew_fallback_entry_list "brews"
+  brew_entries="$REPLY"
+  if [[ "$INSTALL_GUI_APPS" == "1" ]]; then
+    homebrew_fallback_entry_list "casks"
+    cask_entries="$REPLY"
+  fi
+
+  [[ -n "$brew_entries$cask_entries" ]] || return 0
+
+  "$brew_path" update
+
+  if [[ -n "$brew_entries" ]]; then
+    brews=("${(@f)brew_entries}")
+    "$brew_path" upgrade "${brews[@]}"
+  fi
+
+  if [[ -n "$cask_entries" ]]; then
+    casks=("${(@f)cask_entries}")
+    "$brew_path" upgrade --cask "${casks[@]}"
+  fi
+}
+
 prepend_path_if_dir() {
   local dir="$1"
 
@@ -625,12 +705,14 @@ initialize_progress() {
       ;;
     nix)
       TOTAL_STEPS=2
+      should_update_homebrew_fallback_packages && TOTAL_STEPS=$((TOTAL_STEPS + 1))
       ;;
     mise)
       TOTAL_STEPS=3
       ;;
     all)
       TOTAL_STEPS=5
+      should_update_homebrew_fallback_packages && TOTAL_STEPS=$((TOTAL_STEPS + 1))
       ;;
   esac
 }
@@ -659,6 +741,10 @@ main() {
       update_nix_lockfile
       start_step "Applying updated Nix configuration"
       apply_nix_configuration
+      if should_update_homebrew_fallback_packages; then
+        start_step "Updating Homebrew fallback packages"
+        update_homebrew_fallback_packages
+      fi
       ;;
     mise)
       run_mise_update_flow
@@ -668,6 +754,10 @@ main() {
       update_nix_lockfile
       start_step "Applying updated Nix configuration"
       apply_nix_configuration
+      if should_update_homebrew_fallback_packages; then
+        start_step "Updating Homebrew fallback packages"
+        update_homebrew_fallback_packages
+      fi
       run_mise_update_flow
       ;;
   esac

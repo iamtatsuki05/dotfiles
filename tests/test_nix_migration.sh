@@ -1825,11 +1825,88 @@ EOF
     expected_nix_install_args='nix_install:--profile cli --with-gui-apps'
   fi
 
-  DISPLAY="${DISPLAY:-:99}" HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  DISPLAY="${DISPLAY:-:99}" HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix --with-gui-apps > "$repo/output.log"
 
   assert_contains "$log_file" 'nix:flake update'
   assert_contains "$log_file" "$expected_nix_install_args"
+
+  rm -rf "$repo"
+}
+
+test_managed_update_script_upgrades_declared_homebrew_fallbacks_when_gui_requested() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/update.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  copy_script_libs "$repo"
+
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+    "lyraphase/pcloud"
+  ];
+
+  brews = [
+    "example-tool"
+  ];
+
+  casks = [
+    "anki"
+    "lyraphase/pcloud/pcloud-drive"
+  ];
+
+  vscode = [
+  ];
+
+  unsupportedUvPackages = [
+  ];
+}
+EOF
+  cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
+{ }
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/brew" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "brew:\$*" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/update_managed_versions.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$bin_dir/nix" \
+    "$bin_dir/brew"
+
+  HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" --only nix --with-gui-apps > "$repo/output.log"
+
+  assert_contains "$log_file" 'nix_install:--profile full --with-gui-apps'
+  assert_contains "$log_file" 'brew:update'
+  assert_contains "$log_file" 'brew:upgrade example-tool'
+  assert_contains "$log_file" 'brew:upgrade --cask anki lyraphase/pcloud/pcloud-drive'
 
   rm -rf "$repo"
 }
@@ -1981,6 +2058,7 @@ main() {
   test_ai_cli_tools_are_managed_by_mise
   test_managed_update_script_skips_gui_profile_on_macos_unless_requested
   test_managed_update_script_includes_gui_profile_when_requested
+  test_managed_update_script_upgrades_declared_homebrew_fallbacks_when_gui_requested
   test_bash_templates_support_dynamic_shell_setup
   test_managed_update_script_updates_mise_and_nix
   echo "nix migration tests passed"
