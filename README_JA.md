@@ -145,31 +145,31 @@ dotfiles-nix-run git --version
 
 ```bash
 # flake.lock だけ更新
-mise run nix-lock-update
+mise run lock-update
 
 # flake.lock の nixpkgs だけ更新
-mise run nixpkgs-lock-update
+mise run lock-update-nixpkgs
 
 # Nix 管理の tool だけ更新して適用
-mise run nix-upgrade
+mise run nix-update
 
 # nixpkgs を更新して Nix package set を適用
-mise run nixpkgs-upgrade
+mise run nixpkgs-update
 
 # mise 管理の tool だけ現在の release line 内で更新
-mise run mise-upgrade
+mise run mise-update
 
 # 全部まとめて更新
-mise run nix-mise-upgrade
+mise run package-update
 
 # helper script を bash で動かしたい場合
-mise run nix-mise-upgrade -- --shell bash
+mise run package-update -- --shell bash
 
 # Homebrew 管理の GUI fallback app も更新したい場合
-mise run nix-mise-upgrade -- --with-gui-apps
+mise run package-update -- --with-gui-apps
 ```
 
-`mise run nix-mise-upgrade` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。macOS で Homebrew 管理の GUI fallback app が定義されている場合、既定では CLI Nix profile を適用し、GUI fallback app の更新は行いません。GUI fallback app も更新したいときだけ `--with-gui-apps` を明示してください。`--with-gui-apps` 付きでは `brew update` も実行し、[config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) に宣言された Homebrew formula / cask を upgrade します。重いので、通常は Nix 管理の tool だけなら `mise run nix-upgrade`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-upgrade`、`mise` 管理の tool だけなら `mise run mise-upgrade` を使ってください。`codex`、`claude-code`、`copilot`、`cursor-agent`、`gemini-cli`、`hermes`、`opencode`、`devin` などの AI CLI は `mise` 管理です。`node@22` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
+`mise run package-update` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。macOS で Homebrew 管理の GUI fallback app が定義されている場合、既定では CLI Nix profile を適用し、GUI fallback app の更新は行いません。GUI fallback app も更新したいときだけ `--with-gui-apps` を明示してください。`--with-gui-apps` 付きでは `brew update` も実行し、[config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) に宣言された Homebrew formula / cask を upgrade します。重いので、通常は Nix 管理の tool だけなら `mise run nix-update`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-update`、`mise` 管理の tool だけなら `mise run mise-update` を使ってください。旧名の `nix-mise-upgrade`、`nix-upgrade`、`nixpkgs-upgrade`、`mise-upgrade` などは alias として残しています。`codex`、`claude-code`、`copilot`、`cursor-agent`、`gemini-cli`、`hermes`、`opencode`、`devin` などの AI CLI は `mise` 管理です。`node@22` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
 この script は記事の `nix flake lock --update-input ...` 方式に寄せており、`nixpkgs` / `home-manager` / `nix-darwin` を個別更新できます。実行中は段階ベースの progress bar を出すので、今どのフェーズか分かります。
 macOS で Homebrew が未導入でも、GUI fallback entry だけが残っている場合は、この task は CLI Nix profile にフォールバックして Nix 管理の CLI tool を更新します。
 
@@ -195,11 +195,13 @@ zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready
 古い Nix generation や Homebrew cache をまとめて掃除したい場合:
 
 ```sh
-mise run nix-brew-cleanup
-mise run nix-brew-cleanup -- --apply
+mise run package-cleanup
+mise run package-cleanup -- --apply
+mise run package-cleanup -- --include-mise
+mise run package-cleanup -- --include-mise --apply
 ```
 
-この task は `nix profile wipe-history --profile <user-profile> --older-than 30d`、`nix store gc`、`nix store optimise`、`brew cleanup --prune=all --scrub` を順に実行します。既定は dry-run です。古い generation を消すと rollback の履歴が減るためです。
+この task は `nix profile wipe-history --profile <user-profile> --older-than 30d`、`nix store gc`、`nix store optimise`、`brew cleanup --prune=all --scrub` を順に実行します。既定は dry-run です。古い generation を消すと rollback の履歴が減るためです。`--include-mise` を付けた場合だけ、未使用の mise tool version を消す `mise prune --tools` と stale cache を消す `mise cache prune` も実行します。旧名の `mise run nix-brew-cleanup` も alias として残しています。
 
 ## 他の Homebrew マシンからの移行
 

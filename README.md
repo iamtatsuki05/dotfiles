@@ -147,31 +147,31 @@ Pick the lightest update path that matches what you need:
 
 ```bash
 # Update only flake.lock
-mise run nix-lock-update
+mise run lock-update
 
 # Update only the nixpkgs input in flake.lock
-mise run nixpkgs-lock-update
+mise run lock-update-nixpkgs
 
 # Update and apply only Nix-managed tools
-mise run nix-upgrade
+mise run nix-update
 
 # Update and apply the Nix package set after refreshing nixpkgs
-mise run nixpkgs-upgrade
+mise run nixpkgs-update
 
 # Update only mise-managed tools within the current release lines
-mise run mise-upgrade
+mise run mise-update
 
 # Update everything
-mise run nix-mise-upgrade
+mise run package-update
 
 # Use bash for the helper scripts instead of zsh
-mise run nix-mise-upgrade -- --shell bash
+mise run package-update -- --shell bash
 
 # Include Homebrew-managed GUI fallback apps in the update
-mise run nix-mise-upgrade -- --with-gui-apps
+mise run package-update -- --with-gui-apps
 ```
 
-`mise run nix-mise-upgrade` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. With `--with-gui-apps`, the task also runs `brew update` and upgrades the Homebrew formulae and casks declared in [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix). Use `mise run nix-upgrade` when you only need Nix-managed tools, `mise run nixpkgs-upgrade` when you only want to refresh the `nixpkgs` input, and `mise run mise-upgrade` when you only need tools managed by `mise`. AI CLI tools such as `codex`, `claude-code`, `copilot`, `cursor-agent`, `gemini-cli`, `hermes`, `opencode`, and `devin` are managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
+`mise run package-update` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, and then runs `mise upgrade`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. With `--with-gui-apps`, the task also runs `brew update` and upgrades the Homebrew formulae and casks declared in [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix). Use `mise run nix-update` when you only need Nix-managed tools, `mise run nixpkgs-update` when you only want to refresh the `nixpkgs` input, and `mise run mise-update` when you only need tools managed by `mise`. Old names such as `nix-mise-upgrade`, `nix-upgrade`, `nixpkgs-upgrade`, and `mise-upgrade` remain available as aliases. AI CLI tools such as `codex`, `claude-code`, `copilot`, `cursor-agent`, `gemini-cli`, `hermes`, `opencode`, and `devin` are managed by `mise`. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
 The helper script now also supports input-scoped updates inspired by `nix flake lock --update-input ...`, and it prints a stage-based progress bar so you can see whether it is updating the lockfile, applying Nix, or upgrading `mise` tools.
 If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so Nix-managed CLI tools can still be updated.
 
@@ -197,11 +197,13 @@ zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready
 To reclaim space from old Nix generations and Homebrew caches:
 
 ```sh
-mise run nix-brew-cleanup
-mise run nix-brew-cleanup -- --apply
+mise run package-cleanup
+mise run package-cleanup -- --apply
+mise run package-cleanup -- --include-mise
+mise run package-cleanup -- --include-mise --apply
 ```
 
-The task runs `nix profile wipe-history --profile <user-profile> --older-than 30d`, `nix store gc`, `nix store optimise`, and `brew cleanup --prune=all --scrub`. The default is a dry-run because deleting old generations reduces rollback history.
+The task runs `nix profile wipe-history --profile <user-profile> --older-than 30d`, `nix store gc`, `nix store optimise`, and `brew cleanup --prune=all --scrub`. The default is a dry-run because deleting old generations reduces rollback history. Pass `--include-mise` to also run `mise prune --tools` for unused tool versions and `mise cache prune` for stale cache files. The old `mise run nix-brew-cleanup` name remains available as an alias.
 
 ## Migrating Another Homebrew Machine
 

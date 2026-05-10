@@ -13,6 +13,8 @@ APPLY=0
 OLDER_THAN="$DEFAULT_OLDER_THAN"
 SKIP_NIX=0
 SKIP_HOMEBREW=0
+INCLUDE_MISE=0
+SKIP_MISE=0
 
 usage() {
   cat <<EOF
@@ -25,6 +27,8 @@ Options:
   --older-than Nd      Delete Nix profile generations older than Nd. Default: $DEFAULT_OLDER_THAN.
   --skip-nix           Skip Nix cleanup.
   --skip-homebrew      Skip Homebrew cleanup.
+  --include-mise       Also prune unused mise tool versions and stale mise cache files.
+  --skip-mise          Skip mise cleanup. This is the default unless --include-mise is set.
   -h, --help           Show this help.
 
 Default cleanup:
@@ -32,6 +36,10 @@ Default cleanup:
   2. nix store gc
   3. nix store optimise
   4. brew cleanup --prune=all --scrub
+
+Optional mise cleanup with --include-mise:
+  5. mise prune --tools
+  6. mise cache prune
 EOF
 }
 
@@ -60,6 +68,14 @@ parse_args() {
         ;;
       --skip-homebrew)
         SKIP_HOMEBREW=1
+        ;;
+      --include-mise)
+        INCLUDE_MISE=1
+        SKIP_MISE=0
+        ;;
+      --skip-mise)
+        SKIP_MISE=1
+        INCLUDE_MISE=0
         ;;
       -h|--help)
         usage
@@ -173,11 +189,34 @@ run_homebrew_cleanup() {
   run_or_print "$brew_path" cleanup --prune=all --scrub
 }
 
+run_mise_cleanup() {
+  if (( SKIP_MISE || ! INCLUDE_MISE )); then
+    log "Skipping mise cleanup"
+    return 0
+  fi
+
+  if ! command -v mise >/dev/null 2>&1; then
+    warn "Skipping mise cleanup because mise is not installed"
+    return 0
+  fi
+
+  log "mise cleanup"
+  if (( APPLY )); then
+    MISE_GLOBAL_CONFIG_FILE="$REPO_ROOT/config/mise/config.toml" mise prune --yes --tools
+    mise cache prune --yes
+    return 0
+  fi
+
+  print_command env "MISE_GLOBAL_CONFIG_FILE=$REPO_ROOT/config/mise/config.toml" mise prune --dry-run --tools
+  print_command mise cache prune --dry-run
+}
+
 main() {
   parse_args "$@"
 
   run_nix_cleanup
   run_homebrew_cleanup
+  run_mise_cleanup
 
   if (( APPLY )); then
     echo "Package cache cleanup complete"

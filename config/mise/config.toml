@@ -197,11 +197,6 @@ description = "CLI only profileのNix構成を現在のOSへ適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/nix_install.sh --cli-only"
 
-[tasks.nix-apply-cli]
-description = "CLI only profileでNix構成を適用する"
-dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/nix_install.sh --cli-only"
-
 [tasks.nix-apply-with-gui-apps]
 description = "GUIが使える環境でNix構成とGUI appsを適用する"
 dir = "__DOTFILES_REPO_ROOT__"
@@ -222,62 +217,72 @@ description = "Nix適用後にHomebrewを明示的に削除する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"
 
-[tasks.nix-brew-cleanup]
-description = "NixとHomebrewの不要なcacheや古いgenerationを掃除する"
+[tasks.package-cleanup]
+alias = "nix-brew-cleanup"
+description = "NixとHomebrewの不要なcacheや古いgenerationを掃除する。mise cleanupは--include-miseで明示する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/cleanup_package_caches.sh"
 
-[tasks.nix-lock-update]
+[tasks.lock-update]
+alias = "nix-lock-update"
 description = "flake.lockだけを更新する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock"
 
-[tasks.nixpkgs-lock-update]
+[tasks.lock-update-nixpkgs]
+alias = "nixpkgs-lock-update"
 description = "flake.lockのnixpkgs inputだけを更新する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nixpkgs"
 
-[tasks.home-manager-lock-update]
+[tasks.lock-update-home-manager]
+alias = "home-manager-lock-update"
 description = "flake.lockのhome-manager inputだけを更新する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock --nix-input home-manager"
 
-[tasks.nix-darwin-lock-update]
+[tasks.lock-update-nix-darwin]
+alias = "nix-darwin-lock-update"
 description = "flake.lockのnix-darwin inputだけを更新する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nix-darwin"
 
-[tasks.nix-upgrade]
+[tasks.nix-update]
+alias = "nix-upgrade"
 description = "Nixで管理しているものだけを最新化して適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix"
 
-[tasks.nixpkgs-upgrade]
+[tasks.nixpkgs-update]
+alias = "nixpkgs-upgrade"
 description = "nixpkgs inputだけ更新してNix構成を適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nixpkgs"
 
-[tasks.home-manager-upgrade]
+[tasks.home-manager-update]
+alias = "home-manager-upgrade"
 description = "home-manager inputだけ更新してNix構成を適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"
 
-[tasks.nix-darwin-upgrade]
+[tasks.nix-darwin-update]
+alias = "nix-darwin-upgrade"
 description = "nix-darwin inputだけ更新してNix構成を適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"
 
-[tasks.mise-upgrade]
+[tasks.mise-update]
+alias = "mise-upgrade"
 description = "miseで管理しているものだけを現在のrelease line内で更新する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only mise"
 
-[tasks.nix-mise-upgrade]
+[tasks.package-update]
+alias = "nix-mise-upgrade"
 description = "miseとNixで管理しているものを最新化して適用する"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh"
 
 [tasks.git-head-commit-reset]
-alias = "git-head-commit-rest"
 description = "git commitの直近1件を取り消す"
 run = "git reset --soft HEAD^"

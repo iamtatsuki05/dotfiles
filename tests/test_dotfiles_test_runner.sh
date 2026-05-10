@@ -192,8 +192,7 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only --dry-run"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-apply-cli]"
-  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
+  assert_not_contains "$MISE_CONFIG" "[tasks.nix-apply-cli]"
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply-with-gui-apps]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --with-gui-apps"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-portable-install]"
@@ -202,29 +201,41 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_portable_install.sh --shell"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-remove-homebrew]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-brew-cleanup]"
+  assert_contains "$MISE_CONFIG" "[tasks.package-cleanup]"
+  assert_contains "$MISE_CONFIG" 'alias = "nix-brew-cleanup"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/cleanup_package_caches.sh"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-lock-update]"
+  assert_contains "$MISE_CONFIG" "[tasks.lock-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "nix-lock-update"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock"'
-  assert_contains "$MISE_CONFIG" "[tasks.nixpkgs-lock-update]"
+  assert_contains "$MISE_CONFIG" "[tasks.lock-update-nixpkgs]"
+  assert_contains "$MISE_CONFIG" 'alias = "nixpkgs-lock-update"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nixpkgs"'
-  assert_contains "$MISE_CONFIG" "[tasks.home-manager-lock-update]"
+  assert_contains "$MISE_CONFIG" "[tasks.lock-update-home-manager]"
+  assert_contains "$MISE_CONFIG" 'alias = "home-manager-lock-update"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input home-manager"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-darwin-lock-update]"
+  assert_contains "$MISE_CONFIG" "[tasks.lock-update-nix-darwin]"
+  assert_contains "$MISE_CONFIG" 'alias = "nix-darwin-lock-update"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only lock --nix-input nix-darwin"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-upgrade]"
+  assert_contains "$MISE_CONFIG" "[tasks.nix-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "nix-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix"'
-  assert_contains "$MISE_CONFIG" "[tasks.nixpkgs-upgrade]"
+  assert_contains "$MISE_CONFIG" "[tasks.nixpkgs-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "nixpkgs-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nixpkgs"'
-  assert_contains "$MISE_CONFIG" "[tasks.home-manager-upgrade]"
+  assert_contains "$MISE_CONFIG" "[tasks.home-manager-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "home-manager-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input home-manager"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-darwin-upgrade]"
+  assert_contains "$MISE_CONFIG" "[tasks.nix-darwin-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "nix-darwin-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"'
   assert_not_contains "$MISE_CONFIG" "[tasks.nix-pin-latest]"
   assert_not_contains "$MISE_CONFIG" "scripts/manage_nix_package_version_override.sh"
-  assert_contains "$MISE_CONFIG" "[tasks.mise-upgrade]"
+  assert_contains "$MISE_CONFIG" "[tasks.mise-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "mise-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
-  assert_contains "$MISE_CONFIG" "[tasks.nix-mise-upgrade]"
+  assert_contains "$MISE_CONFIG" "[tasks.package-update]"
+  assert_contains "$MISE_CONFIG" 'alias = "nix-mise-upgrade"'
+  assert_not_contains "$MISE_CONFIG" 'git-head-commit-rest'
   assert_contains "$MISE_CONFIG" '[tools."http:devin"]'
   assert_contains "$MISE_CONFIG" 'version_list_url = "https://static.devin.ai/cli/current/manifest.json"'
   assert_contains "$MISE_CONFIG" '[tools."http:cursor-agent"]'
