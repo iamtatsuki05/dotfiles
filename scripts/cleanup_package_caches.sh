@@ -28,8 +28,8 @@ Options:
   -h, --help           Show this help.
 
 Default cleanup:
-  1. nix profile wipe-history --older-than Nd
-  2. nix-collect-garbage --delete-older-than Nd
+  1. nix profile wipe-history --profile <user-profile> --older-than Nd
+  2. nix store gc
   3. nix store optimise
   4. brew cleanup --prune=all --scrub
 EOF
@@ -104,6 +104,11 @@ run_or_print() {
 }
 
 run_nix_cleanup() {
+  local -A seen_profiles
+  local -a profile_candidates
+  local -a profiles
+  local profile
+
   if (( SKIP_NIX )); then
     log "Skipping Nix cleanup"
     return 0
@@ -115,8 +120,37 @@ run_nix_cleanup() {
   fi
 
   log "Nix cleanup"
-  run_or_print nix profile wipe-history --older-than "$OLDER_THAN"
-  run_or_print nix-collect-garbage --delete-older-than "$OLDER_THAN"
+  profile_candidates=()
+  if [[ -n "${NIX_PROFILE:-}" ]]; then
+    profile_candidates+=("$NIX_PROFILE")
+  fi
+  profile_candidates+=(
+    "$HOME/.local/state/nix/profiles/profile"
+    "$HOME/.nix-profile"
+  )
+
+  profiles=()
+  for profile in "${profile_candidates[@]}"; do
+    if [[ -z "$profile" || ( ! -e "$profile" && ! -L "$profile" ) ]]; then
+      continue
+    fi
+    if [[ -n "${seen_profiles[$profile]:-}" ]]; then
+      continue
+    fi
+
+    seen_profiles[$profile]=1
+    profiles+=("$profile")
+  done
+
+  if (( ${#profiles[@]} )); then
+    for profile in "${profiles[@]}"; do
+      run_or_print nix profile wipe-history --profile "$profile" --older-than "$OLDER_THAN"
+    done
+  else
+    warn "Skipping Nix profile history cleanup because no user profile was found"
+  fi
+
+  run_or_print nix store gc
   run_or_print nix store optimise
 }
 

@@ -1109,11 +1109,13 @@ test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--older-than Nd'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--apply'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix profile wipe-history'
-  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix-collect-garbage --delete-older-than'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" '--profile "$profile"'
+  assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix store gc'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'nix store optimise'
   assert_contains "$CLEANUP_PACKAGE_CACHES_SCRIPT" 'brew cleanup --prune=all --scrub'
 
-  mkdir -p "$repo/scripts/lib" "$bin_dir"
+  mkdir -p "$repo/scripts/lib" "$bin_dir" "$repo/home/.local/state/nix/profiles"
+  touch "$repo/home/.local/state/nix/profiles/profile" "$repo/home/.nix-profile"
   cp "$CLEANUP_PACKAGE_CACHES_SCRIPT" "$repo/scripts/cleanup_package_caches.sh"
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
 
@@ -1121,11 +1123,6 @@ test_cleanup_package_caches_script_supports_safe_nix_and_homebrew_cleanup() {
 #!/usr/bin/env zsh
 set -euo pipefail
 print -r -- "nix:\$*" >> "$log_file"
-EOF
-  cat > "$bin_dir/nix-collect-garbage" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "nix-collect-garbage:\$*" >> "$log_file"
 EOF
   cat > "$bin_dir/brew" <<EOF
 #!/usr/bin/env zsh
@@ -1136,23 +1133,25 @@ if [[ "\${1:-}" == "--prefix" ]]; then
 fi
 EOF
 
-  chmod +x "$repo/scripts/cleanup_package_caches.sh" "$bin_dir/nix" "$bin_dir/nix-collect-garbage" "$bin_dir/brew"
+  chmod +x "$repo/scripts/cleanup_package_caches.sh" "$bin_dir/nix" "$bin_dir/brew"
 
-  HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  HOME="$repo/home" HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" > "$output_file"
 
   assert_output_contains "$output_file" 'DRY-RUN: package caches were not removed'
-  assert_output_contains "$output_file" 'nix profile wipe-history --older-than 30d'
-  assert_output_contains "$output_file" 'nix-collect-garbage --delete-older-than 30d'
+  assert_output_contains "$output_file" "nix profile wipe-history --profile $repo/home/.local/state/nix/profiles/profile --older-than 30d"
+  assert_output_contains "$output_file" "nix profile wipe-history --profile $repo/home/.nix-profile --older-than 30d"
+  assert_output_contains "$output_file" 'nix store gc'
   assert_output_contains "$output_file" 'nix store optimise'
   assert_output_contains "$output_file" 'brew cleanup --prune=all --scrub'
   assert_not_exists "$log_file"
 
-  HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  HOME="$repo/home" HOMEBREW_PREFIX= PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/cleanup_package_caches.sh" --apply > "$output_file"
 
-  assert_contains "$log_file" 'nix:profile wipe-history --older-than 30d'
-  assert_contains "$log_file" 'nix-collect-garbage:--delete-older-than 30d'
+  assert_contains "$log_file" "nix:profile wipe-history --profile $repo/home/.local/state/nix/profiles/profile --older-than 30d"
+  assert_contains "$log_file" "nix:profile wipe-history --profile $repo/home/.nix-profile --older-than 30d"
+  assert_contains "$log_file" 'nix:store gc'
   assert_contains "$log_file" 'nix:store optimise'
   assert_contains "$log_file" 'brew:cleanup --prune=all --scrub'
 

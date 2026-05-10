@@ -207,7 +207,7 @@ mise run nix-brew-cleanup
 mise run nix-brew-cleanup -- --apply
 ```
 
-この task は `nix profile wipe-history --older-than 30d`、`nix-collect-garbage --delete-older-than 30d`、`nix store optimise`、`brew cleanup --prune=all --scrub` を順に実行します。既定は dry-run です。古い generation を消すと rollback の履歴が減るためです。
+この task は `nix profile wipe-history --profile <user-profile> --older-than 30d`、`nix store gc`、`nix store optimise`、`brew cleanup --prune=all --scrub` を順に実行します。既定は dry-run です。古い generation を消すと rollback の履歴が減るためです。
 
 ## 他の Homebrew マシンからの移行
 
