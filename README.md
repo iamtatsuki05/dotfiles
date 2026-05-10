@@ -45,18 +45,15 @@ git pull --ff-only
 zsh scripts/chezmoi_apply.sh --dry-run
 zsh scripts/chezmoi_apply.sh --mark-default
 
-# Build-check and apply Nix / Home Manager / nix-darwin changes.
-zsh scripts/nix_install.sh --dry-run
-zsh scripts/nix_install.sh
-```
-
-For Linux hosts, or macOS hosts that should stay CLI-only:
-
-```sh
-zsh scripts/chezmoi_apply.sh --cli-only --dry-run
-zsh scripts/chezmoi_apply.sh --cli-only --mark-default
+# Build-check and apply the CLI Nix / Home Manager / nix-darwin profile.
 zsh scripts/nix_install.sh --cli-only --dry-run
 zsh scripts/nix_install.sh --cli-only
+```
+
+For macOS or Linux desktop hosts where Nix should also update GUI apps:
+
+```sh
+zsh scripts/nix_install.sh --with-gui-apps
 ```
 
 Run `scripts/nix_install.sh` when `flake.nix`, `flake.lock`, or files under `config/nix/` change. Git pull hooks only run `chezmoi apply`, sync AI tool files, and refresh hooks; they do not switch Nix or install `mise` tools.
@@ -115,22 +112,17 @@ zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 # or
 mise run nix-migrate-brew
 
-# Build the selected Nix configuration without switching
-zsh scripts/nix_install.sh --dry-run
+# Build the CLI Nix configuration without switching
+zsh scripts/nix_install.sh --cli-only --dry-run
 # or
 mise run nix-build
 
-# Apply with nix-darwin on macOS or Home Manager on Linux
-zsh scripts/nix_install.sh
+# Apply the CLI profile with nix-darwin on macOS or Home Manager on Linux
+zsh scripts/nix_install.sh --cli-only
 # or
 mise run nix-apply
 
-# Apply CLI packages only
-zsh scripts/nix_install.sh --cli-only
-# or
-mise run nix-apply-cli
-
-# Install GUI apps too on hosts that support GUI apps, including Ubuntu desktop
+# Install GUI apps too
 zsh scripts/nix_install.sh --with-gui-apps
 # or
 mise run nix-apply-with-gui-apps

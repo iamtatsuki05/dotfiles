@@ -33,7 +33,7 @@ Usage:
   zsh scripts/nix_install.sh --cli-only
 
 Options:
-  --profile full|cli       Select setup profile. macOS defaults to full; Linux defaults to cli.
+  --profile full|cli       Select setup profile. Defaults to cli.
   --cli-only               Alias for --profile cli.
   --with-gui-apps          Include GUI apps. On Linux, DISPLAY or WAYLAND_DISPLAY is required.
   --dry-run                Build the selected configuration without switching.
@@ -112,11 +112,7 @@ parse_args() {
 }
 
 default_profile() {
-  if dotfiles_is_macos; then
-    REPLY="full"
-  else
-    REPLY="cli"
-  fi
+  REPLY="cli"
 }
 
 system_attr() {

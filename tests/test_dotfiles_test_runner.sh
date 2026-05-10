@@ -181,9 +181,9 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_not_contains "$MISE_CONFIG" "[tasks.chezmoi-migrate]"
   assert_not_contains "$MISE_CONFIG" "migrate_to_chezmoi.sh"
   assert_contains "$MISE_CONFIG" "[tasks.nix-build]"
-  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --dry-run"'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only --dry-run"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply]"
-  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh"'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply-cli]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_contains "$MISE_CONFIG" "[tasks.nix-apply-with-gui-apps]"

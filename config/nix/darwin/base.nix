@@ -27,7 +27,7 @@ in
       git
       zsh
     ])
-    ++ lib.optionals enableGuiApps guiPackages;
+    ++ lib.optionals (enableGuiApps && !pkgs.stdenv.hostPlatform.isDarwin) guiPackages;
 
   users.users.${username}.home = homeDirectory;
 

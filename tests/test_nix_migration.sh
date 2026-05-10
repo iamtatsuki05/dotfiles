@@ -727,7 +727,7 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_BASE_MODULE" 'nix.enable = false'
   assert_contains "$DARWIN_BASE_MODULE" 'enableGuiApps'
   assert_contains "$DARWIN_BASE_MODULE" 'import ../gui-packages.nix'
-  assert_contains "$DARWIN_BASE_MODULE" 'lib.optionals enableGuiApps guiPackages'
+  assert_contains "$DARWIN_BASE_MODULE" 'enableGuiApps && !pkgs.stdenv.hostPlatform.isDarwin'
   assert_contains "$DARWIN_BASE_MODULE" 'users.users.${username}.home'
   assert_not_contains "$DARWIN_BASE_MODULE" 'nix.settings'
   assert_not_contains "$DARWIN_BASE_MODULE" 'nix.optimise'
@@ -776,6 +776,7 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
 
 test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" '--profile full|cli'
+  assert_contains "$INSTALL_SCRIPT" 'Select setup profile. Defaults to cli.'
   assert_contains "$INSTALL_SCRIPT" '--cli-only'
   assert_contains "$INSTALL_SCRIPT" '--with-gui-apps'
   assert_contains "$INSTALL_SCRIPT" '--uninstall-homebrew'
@@ -810,6 +811,72 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_not_contains "$INSTALL_SCRIPT" '$(nix_args)'
   assert_not_contains "$INSTALL_SCRIPT" 'brew bundle'
   assert_not_contains "$INSTALL_SCRIPT" 'fallback.Brewfile'
+}
+
+test_nix_install_script_defaults_to_cli_profile_on_macos() {
+  local repo
+  local bin_dir
+  local log_file
+  local output_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  bin_dir="$repo/bin"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{ taps = [ ]; brews = [ ]; casks = [ ]; vscode = [ ]; }
+EOF
+  cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
+{ }
+EOF
+
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/uname" "$bin_dir/darwin-rebuild" "$bin_dir/nix" "$bin_dir/sudo"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" > "$output_file"
+
+  assert_output_contains "$output_file" 'Nix profile: cli'
+  assert_output_contains "$output_file" 'Flake output: aarch64-darwin-cli'
+  assert_contains "$log_file" 'darwin-rebuild:switch --flake'
+  assert_not_contains "$output_file" 'aarch64-darwin-full'
+
+  rm -rf "$repo"
 }
 
 test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
@@ -1233,7 +1300,7 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
   assert_contains "$MAIN_SCRIPT" '--profile "$profile"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply]'
-  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh"'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply-cli]'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply-with-gui-apps]'
@@ -1889,6 +1956,7 @@ main() {
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
+  test_nix_install_script_defaults_to_cli_profile_on_macos
   test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch
   test_nix_install_script_archives_existing_home_manager_backups_before_switch
   test_nix_install_script_handles_dirty_worktree_without_hanging

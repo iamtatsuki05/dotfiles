@@ -172,14 +172,14 @@ dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/migrate_brew_to_nix.sh --apply"
 
 [tasks.nix-build]
-description = "Nix構成をswitchせずにbuildする"
+description = "CLI only profileのNix構成をswitchせずにbuildする"
 dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/nix_install.sh --dry-run"
+run = "zsh scripts/nix_install.sh --cli-only --dry-run"
 
 [tasks.nix-apply]
-description = "Nix構成を現在のOSへ適用する"
+description = "CLI only profileのNix構成を現在のOSへ適用する"
 dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/nix_install.sh"
+run = "zsh scripts/nix_install.sh --cli-only"
 
 [tasks.nix-apply-cli]
 description = "CLI only profileでNix構成を適用する"

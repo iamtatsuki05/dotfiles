@@ -43,18 +43,15 @@ git pull --ff-only
 zsh scripts/chezmoi_apply.sh --dry-run
 zsh scripts/chezmoi_apply.sh --mark-default
 
-# Nix / Home Manager / nix-darwin の変更を確認して適用
-zsh scripts/nix_install.sh --dry-run
-zsh scripts/nix_install.sh
-```
-
-Linux、または CLI-only にしたい macOS では次を使います。
-
-```sh
-zsh scripts/chezmoi_apply.sh --cli-only --dry-run
-zsh scripts/chezmoi_apply.sh --cli-only --mark-default
+# Nix / Home Manager / nix-darwin の CLI 構成を確認して適用
 zsh scripts/nix_install.sh --cli-only --dry-run
 zsh scripts/nix_install.sh --cli-only
+```
+
+GUI app も Nix で更新したい macOS / Linux desktop では次を明示します。
+
+```sh
+zsh scripts/nix_install.sh --with-gui-apps
 ```
 
 `flake.nix`、`flake.lock`、`config/nix/` 配下が変わったときは、`scripts/nix_install.sh` を実行してください。Git pull hook は `chezmoi apply`、AI ツール設定の同期、hook の更新だけを行い、Nix の switch や `mise` tool install は実行しません。
@@ -113,22 +110,17 @@ zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
 # または
 mise run nix-migrate-brew
 
-# Nix 構成の build dry-run
-zsh scripts/nix_install.sh --dry-run
+# CLI 構成の build dry-run
+zsh scripts/nix_install.sh --cli-only --dry-run
 # または
 mise run nix-build
 
-# macOS では nix-darwin、Linux では Home Manager で適用
-zsh scripts/nix_install.sh
+# CLI 構成を macOS では nix-darwin、Linux では Home Manager で適用
+zsh scripts/nix_install.sh --cli-only
 # または
 mise run nix-apply
 
-# CLI だけを適用
-zsh scripts/nix_install.sh --cli-only
-# または
-mise run nix-apply-cli
-
-# Ubuntu など GUI が使える Linux でも Slack 等の GUI app を入れる
+# GUI app も入れる
 zsh scripts/nix_install.sh --with-gui-apps
 # または
 mise run nix-apply-with-gui-apps
