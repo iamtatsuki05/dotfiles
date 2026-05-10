@@ -18,3 +18,5 @@ dotfiles/.agent/changes/
 **/id_rsa
 **/id_ed25519
 config/shell/secrets.env
+.agent
+.vscode
