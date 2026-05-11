@@ -19,4 +19,12 @@ dotfiles/.agent/changes/
 **/id_ed25519
 config/shell/secrets.env
 .agent
+!dotfiles/.agent/
+dotfiles/.agent/*
+!dotfiles/.agent/pets/
+dotfiles/.agent/pets/*
+!dotfiles/.agent/pets/*/
+!dotfiles/.agent/pets/*/pet.json
+!dotfiles/.agent/pets/*/spritesheet.webp
+dotfiles/.agent/changes/
 .vscode

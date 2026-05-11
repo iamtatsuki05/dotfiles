@@ -84,7 +84,8 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
     "$repo/dotfiles/.agent/apps/openclaw" \
     "$repo/dotfiles/.agent/hooks" \
-    "$repo/dotfiles/.agent/skills"
+    "$repo/dotfiles/.agent/skills" \
+    "$repo/dotfiles/.agent/pets"
 
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
@@ -231,6 +232,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_not_contains "$home_dir/.codex/config.toml" '[history]'
   assert_contains "$home_dir/.codex/config.toml" '[features]'
   assert_contains "$home_dir/.codex/config.toml" 'hooks = true'
+  assert_symlink_target "$home_dir/.codex/pets" "$repo/dotfiles/.agent/pets"
   assert_not_contains "$home_dir/.codex/config.toml" '[memories]'
   assert_not_contains "$home_dir/.codex/config.toml" 'persistence = "save-all"'
   assert_not_contains "$home_dir/.codex/config.toml" 'codex_hooks = true'

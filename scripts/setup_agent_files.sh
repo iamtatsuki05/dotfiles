@@ -117,6 +117,8 @@ sync_shared_files() {
   link_symlink "$AGENT_DIR/skills" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills"
   link_symlink "$AGENT_DIR/skills" ~/.hermes/skills
   link_symlink "$AGENT_DIR/skills" ~/.openclaw/workspace/skills
+
+  link_symlink "$AGENT_DIR/pets" ~/.codex/pets
 }
 
 sync_hooks() {
