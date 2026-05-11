@@ -70,6 +70,7 @@
     "sourcetree"
     "steam"
     "steermouse"
+    "superset"
     "superwhisper"
     "textsniper"
     "tunnelblick"

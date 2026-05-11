@@ -42,6 +42,7 @@ cask	qtspim	nix-package-is-linux-only
 cask	sensei	no-nixpkg-mapping
 cask	sourcetree	no-nixpkg-mapping
 cask	steermouse	no-nixpkg-mapping
+cask	superset	no-nixpkg-mapping
 cask	superwhisper	no-nixpkg-mapping
 cask	textsniper	no-nixpkg-mapping
 cask	tunnelblick	no-nixpkg-mapping
