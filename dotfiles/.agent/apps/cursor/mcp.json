@@ -27,6 +27,9 @@
       "headers": {
         "Authorization": "Bearer ${env:DEVIN_API_KEY}"
       }
+    },
+    "figma": {
+      "url": "https://mcp.figma.com/mcp"
     }
   }
 }

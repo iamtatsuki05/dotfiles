@@ -53,6 +53,10 @@ url = "https://mcp.devin.ai/mcp"
 bearer_token_env_var = "DEVIN_API_KEY"
 startup_timeout_sec = 60
 
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+startup_timeout_sec = 60
+
 [mcp_servers.gemini-cli]
 command = "bunx"
 args = ["mcp-gemini-cli", "--allow-npx"]
@@ -112,7 +116,7 @@ enabled = true
 [plugins."presentations@openai-primary-runtime"]
 enabled = true
 
-[plugins."browser-use@openai-bundled"]
+[plugins."browser@openai-bundled"]
 enabled = true
 
 [plugins."chrome@openai-bundled"]

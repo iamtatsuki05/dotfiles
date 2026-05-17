@@ -65,6 +65,10 @@
       "headers": {
         "Authorization": "Bearer ${DEVIN_API_KEY}"
       }
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
     }
   },
   "hooks": {
