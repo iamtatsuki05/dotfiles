@@ -1,6 +1,6 @@
 #!/bin/bash
 # PostToolUse / AfterTool フックで .py ファイルの jupytext 同期を行う。
-# Claude Code / Gemini CLI / Codex CLI で共通利用。
+# 対応 Agent の file-edit / post-tool hook で共通利用。
 # .ipynb はbase64画像を含んで肥大化しやすいため、各AIエージェントには .py だけを操作させる構成にしている。
 
 input=$(cat)

@@ -238,7 +238,7 @@ zsh scripts/setup_git_hooks.sh
 
 AI agent 関連ファイルは [dotfiles/.agent](dotfiles/.agent) にまとめています。共通 prompt は `dotfiles/.agent/AGENTS.md` で管理し、リポジトリルートには `AGENTS.md` symlink を置きません。
 
-管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode` です。インストールは `mise`、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。
+管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode`、`openclaw` です。インストールは `mise`、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。
 
 ```bash
 zsh dotfiles/.agent/sync.sh

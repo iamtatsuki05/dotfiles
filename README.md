@@ -240,7 +240,7 @@ zsh scripts/setup_git_hooks.sh
 
 AI agent files live under [dotfiles/.agent](dotfiles/.agent). The shared prompt is `dotfiles/.agent/AGENTS.md`; the repository root intentionally does not contain an `AGENTS.md` symlink.
 
-Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, and `opencode`. They are installed by `mise`, while per-agent settings, MCP files, hooks, skills, and Waza eval suites are tracked under `dotfiles/.agent/`.
+Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, `opencode`, and `openclaw`. They are installed by `mise`, while per-agent settings, MCP files, hooks, skills, and Waza eval suites are tracked under `dotfiles/.agent/`.
 
 ```bash
 zsh dotfiles/.agent/sync.sh

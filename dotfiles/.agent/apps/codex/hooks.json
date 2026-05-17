@@ -1,9 +1,36 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/agent_context_reminder.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/agent_context_reminder.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": ".*",
-        "hooks": [{"type": "command", "command": "~/.codex/hooks/jupytext_sync.sh"}]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/jupytext_sync.sh"
+          }
+        ]
       }
     ]
   }

@@ -25,6 +25,20 @@
     "showQuota": true
   },
   "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\"",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\"",
+        "timeoutSec": 10
+      }
+    ],
     "postToolUse": [
       {
         "type": "command",

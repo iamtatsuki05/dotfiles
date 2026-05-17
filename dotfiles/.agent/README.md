@@ -24,7 +24,7 @@ The tools themselves are installed by `mise`. The files here manage prompts, per
 
 - `AGENTS.md`: shared prompt copied into each supported tool home. The repository root intentionally does not contain an `AGENTS.md` symlink.
 - `apps/`: per-agent config files.
-- `hooks/`: shared hook scripts, currently `jupytext_sync.sh`.
+- `hooks/`: shared hook scripts such as `jupytext_sync.sh` and `agent_context_reminder.sh`.
 - `skills/`: shared skills used by Codex-compatible agents and Waza.
 - `evals/`: Waza eval suites for skills.
 - `sync.sh`: wrapper around `scripts/setup_agent_files.sh`.
@@ -59,6 +59,7 @@ zsh dotfiles/.agent/sync.sh
 | `apps/codex/config.toml` | `~/.codex/config.toml` |
 | `apps/codex/hooks.json` | `~/.codex/hooks.json` |
 | `apps/cursor/cli-config.json` | `~/.cursor/cli-config.json` |
+| `apps/cursor/hooks.json` | `~/.cursor/hooks.json` |
 | `apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
 | `apps/devin/config.json` | `~/.config/devin/config.json` |
 | `apps/gemini/settings.json` | `~/.gemini/settings.json` |
@@ -68,9 +69,11 @@ zsh dotfiles/.agent/sync.sh
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 
-`skills/` is linked to each supported agent home. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
+`skills/` is linked to each supported agent home. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
 
 Hermes also links files from `apps/hermes-agent/agent-hooks/` into `~/.hermes/agent-hooks/`.
+
+`agent_context_reminder.sh` injects the same repository reminder into supported session or prompt hook phases for Claude Code, Codex, Copilot, Cursor, Devin, Gemini CLI, and Hermes. opencode loads the shared hook through a plugin for compaction context, because it exposes plugin events rather than Claude-style prompt hooks. OpenClaw enables its bundled `bootstrap-extra-files` internal hook to load the shared `AGENTS.md` from the managed workspace.
 
 ## Ignore And Secrets
 
@@ -79,7 +82,7 @@ Project-level exclusions are split by agent capability:
 - Cursor uses the repository root `.cursorignore`, which points to `apps/cursor/.cursorignore`.
 - Copilot uses `.gitignore` through `respectGitignore`.
 - Devin uses `respect_gitignore` plus explicit permission denies in `apps/devin/config.json`.
-- Codex, Claude, Gemini, opencode, and Hermes have their own ignore or permission rules in their app configs. OpenClaw is currently managed for workspace, skills, and `mcp.servers`; file-level secret deny rules are not mirrored yet because its hook/policy surface is not directly compatible with the existing shared shell hook.
+- Codex, Claude, Gemini, opencode, Cursor, Devin, and Hermes have their own ignore or permission rules in their app configs. OpenClaw is currently managed for workspace, skills, bootstrap hooks, and `mcp.servers`; file-level secret deny rules are not mirrored yet because its hook/policy surface is not directly compatible with the existing shared shell hook.
 
 Secrets belong in `~/.config/shell/secrets.env`, not in this directory. `sync.sh` currently writes `DEVIN_API_KEY` into:
 

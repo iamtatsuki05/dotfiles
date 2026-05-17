@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "zsh \"$HOME/.cursor/hooks/jupytext_sync.sh\""
+      }
+    ]
+  }
+}

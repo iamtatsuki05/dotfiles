@@ -72,6 +72,26 @@
     }
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.gemini/hooks/agent_context_reminder.sh"
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.gemini/hooks/agent_context_reminder.sh"
+          }
+        ]
+      }
+    ],
     "AfterTool": [
       {
         "matcher": ".*",

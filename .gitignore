@@ -21,6 +21,16 @@ config/shell/secrets.env
 .agent
 !dotfiles/.agent/
 dotfiles/.agent/*
+!dotfiles/.agent/apps/
+!dotfiles/.agent/apps/cursor/
+!dotfiles/.agent/apps/cursor/hooks.json
+!dotfiles/.agent/apps/opencode/
+!dotfiles/.agent/apps/opencode/plugins/
+!dotfiles/.agent/apps/opencode/plugins/agent-context-reminder.js
+!dotfiles/.agent/hooks/
+dotfiles/.agent/hooks/*
+!dotfiles/.agent/hooks/jupytext_sync.sh
+!dotfiles/.agent/hooks/agent_context_reminder.sh
 !dotfiles/.agent/pets/
 dotfiles/.agent/pets/*
 !dotfiles/.agent/pets/*/

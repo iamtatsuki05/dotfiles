@@ -126,7 +126,7 @@ sync_hooks() {
   local hook_file
   local hook_name
 
-  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks ~/.copilot/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/hooks" ~/.hermes/agent-hooks; do
+  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks ~/.copilot/hooks ~/.cursor/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/hooks" ~/.hermes/agent-hooks; do
     ensure_dir "$hooks_dir"
     for hook_file in "$AGENT_DIR/hooks"/*; do
       [ -f "$hook_file" ] || continue
@@ -156,6 +156,7 @@ sync_tool_configs() {
   link_symlink "$APPS_DIR/gemini/settings.json" ~/.gemini/settings.json
   link_symlink "$APPS_DIR/gemini/ignore" ~/.gemini/ignore
   link_symlink "$APPS_DIR/cursor/cli-config.json" ~/.cursor/cli-config.json
+  link_symlink "$APPS_DIR/cursor/hooks.json" ~/.cursor/hooks.json
   link_symlink "$APPS_DIR/cursor/mcp.json" ~/.cursor/mcp.json
   link_symlink "$APPS_DIR/opencode/opencode.json" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
   link_symlink "$APPS_DIR/opencode/plugins" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins"

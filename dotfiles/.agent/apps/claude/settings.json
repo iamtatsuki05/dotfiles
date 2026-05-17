@@ -88,6 +88,51 @@
   },
   "model": "opus[1m]",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent_context_reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent_context_reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent_context_reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent_context_reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
@@ -95,6 +140,17 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/jupytext_sync.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "あなたは Agent system の停止判定レビュー担当です。メインの Agent が停止してよい状態かを判定してください。Hook 入力: $ARGUMENTS\n\nJSON だけを返してください: {\"ok\": true} または {\"ok\": false, \"reason\": \"...\"}。\n\n原則として停止を許可してください。純粋な説明、計画回答、ユーザーへの質問、指摘ありのコードレビュー、またはユーザーが編集を依頼していないケースはブロックしないでください。\n\nブロックするのは、最後の応答がコード/設定/ドキュメント作業の完了を明確に主張しているのに検証状況と残リスクの両方を欠いている場合、または必須作業が残っていると書きながら停止しようとしている場合だけです。無限ループを避けるため、stop_hook_active が true の場合は重大な未解決安全問題がない限り許可してください。\n\nブロックする場合、reason は最終回答前に Agent が行うべきことを示す短い日本語の実行指示にしてください。例: git diff を確認する、関連テストを実行する、.agent/changes/CHANGES.md を更新する、未検証事項を報告する。",
+            "timeout": 30
           }
         ]
       }

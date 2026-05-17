@@ -23,6 +23,19 @@
       "watch": true
     }
   },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "bootstrap-extra-files": {
+          "enabled": true,
+          "paths": [
+            "AGENTS.md"
+          ]
+        }
+      }
+    }
+  },
   "mcp": {
     "servers": {
       "codex": {
