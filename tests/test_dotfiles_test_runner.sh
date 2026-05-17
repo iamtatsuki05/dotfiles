@@ -230,6 +230,7 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only nix --nix-input nix-darwin"'
   assert_not_contains "$MISE_CONFIG" "[tasks.nix-pin-latest]"
   assert_not_contains "$MISE_CONFIG" "scripts/manage_nix_package_version_override.sh"
+  assert_not_contains "$MISE_CONFIG" "install_before"
   assert_contains "$MISE_CONFIG" "[tasks.mise-update]"
   assert_contains "$MISE_CONFIG" 'alias = "mise-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
@@ -241,6 +242,7 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" '[tools."http:cursor-agent"]'
   assert_contains "$MISE_CONFIG" 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
   assert_contains "$MISE_CONFIG" 'opencode = "latest"'
+  assert_contains "$MISE_CONFIG" '"pipx:markitdown" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'
