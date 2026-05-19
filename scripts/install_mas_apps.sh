@@ -96,41 +96,63 @@ mas_apps_tsv() {
 }
 
 mas_id_is_installed() {
-  local mas_cmd="$1"
+  local installed_ids_file="$1"
   local app_id="$2"
 
-  ${(z)mas_cmd} list 2>/dev/null | awk -v id="$app_id" '$1 == id { found = 1 } END { exit found ? 0 : 1 }'
+  awk -v id="$app_id" '$1 == id { found = 1 } END { exit found ? 0 : 1 }' "$installed_ids_file"
+}
+
+progress_label() {
+  local current="$1"
+  local total="$2"
+
+  printf '[%*d/%d]' "${#total}" "$current" "$total"
 }
 
 install_mas_app() {
   local mas_cmd="$1"
-  local app_name="$2"
-  local app_id="$3"
+  local installed_ids_file="$2"
+  local current="$3"
+  local total="$4"
+  local app_name="$5"
+  local app_id="$6"
   local output_file
+  local prefix
 
-  if mas_id_is_installed "$mas_cmd" "$app_id"; then
-    echo "Using $app_name"
+  prefix="$(progress_label "$current" "$total")"
+  if mas_id_is_installed "$installed_ids_file" "$app_id"; then
+    echo "$prefix Using $app_name ($app_id)"
+    REPLY="used"
     return 0
   fi
 
-  echo "Installing $app_name"
+  echo "$prefix Installing $app_name ($app_id)"
   output_file="$(mktemp "${TMPDIR:-/tmp}/dotfiles-mas-install.XXXXXX")"
   if ${(z)mas_cmd} install "$app_id" > "$output_file" 2>&1; then
+    echo "$prefix Installed $app_name"
     rm -f "$output_file"
+    REPLY="installed"
     return 0
   fi
 
-  warn "Installing $app_name ($app_id) failed; continuing."
+  warn "$prefix Installing $app_name ($app_id) failed; continuing."
   sed 's/^/  /' "$output_file" >&2
   rm -f "$output_file"
+  REPLY="failed"
   return 0
 }
 
 install_mas_apps() {
   local mas_cmd
   local apps_file
+  local installed_ids_file
   local app_name
   local app_id
+  local total_apps
+  local current_app=0
+  local used_count=0
+  local installed_count=0
+  local failed_count=0
 
   if ! dotfiles_is_macos; then
     log "Skipping Mac App Store apps because this host is not macOS"
@@ -161,14 +183,34 @@ install_mas_apps() {
     return 0
   fi
 
-  log "Installing Mac App Store apps best-effort"
+  installed_ids_file="$(mktemp "${TMPDIR:-/tmp}/dotfiles-mas-installed.XXXXXX")"
+  if ! ${(z)mas_cmd} list > "$installed_ids_file" 2>/dev/null; then
+    warn "failed to read installed Mac App Store apps; attempting installs anyway"
+    : > "$installed_ids_file"
+  fi
+
+  total_apps="$(wc -l < "$apps_file" | tr -d '[:space:]')"
+  log "Installing Mac App Store apps best-effort ($total_apps apps)"
   while IFS=$'\t' read -r app_name app_id || [[ -n "$app_name$app_id" ]]; do
     [[ -n "$app_name" && -n "$app_id" ]] || continue
-    install_mas_app "$mas_cmd" "$app_name" "$app_id"
+    current_app=$((current_app + 1))
+    install_mas_app "$mas_cmd" "$installed_ids_file" "$current_app" "$total_apps" "$app_name" "$app_id"
+    case "$REPLY" in
+      used)
+        used_count=$((used_count + 1))
+        ;;
+      installed)
+        installed_count=$((installed_count + 1))
+        ;;
+      failed)
+        failed_count=$((failed_count + 1))
+        ;;
+    esac
   done < "$apps_file"
 
   rm -f "$apps_file"
-  log "Mac App Store app step complete"
+  rm -f "$installed_ids_file"
+  log "Mac App Store app step complete: used=$used_count installed=$installed_count failed=$failed_count"
 }
 
 main() {

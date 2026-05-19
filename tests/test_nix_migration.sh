@@ -2057,11 +2057,13 @@ EOF
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     "$TEST_ZSH_BIN" "$repo/scripts/install_mas_apps.sh" --profile full > "$output_file" 2>&1
 
-  assert_output_contains "$output_file" "Using AlreadyInstalled"
-  assert_output_contains "$output_file" "Installing BrokenDownload"
-  assert_output_contains "$output_file" "Installing BrokenDownload (333) failed; continuing."
-  assert_output_contains "$output_file" "Installing NewApp"
-  assert_output_contains "$output_file" "Mac App Store app step complete"
+  assert_output_contains "$output_file" "Installing Mac App Store apps best-effort (3 apps)"
+  assert_output_contains "$output_file" "[1/3] Using AlreadyInstalled (111)"
+  assert_output_contains "$output_file" "[2/3] Installing BrokenDownload (333)"
+  assert_output_contains "$output_file" "[2/3] Installing BrokenDownload (333) failed; continuing."
+  assert_output_contains "$output_file" "[3/3] Installing NewApp (222)"
+  assert_output_contains "$output_file" "[3/3] Installed NewApp"
+  assert_output_contains "$output_file" "Mac App Store app step complete: used=1 installed=1 failed=1"
   assert_contains "$log_file" 'mas:list'
   assert_contains "$log_file" 'mas:install 333'
   assert_contains "$log_file" 'mas:install 222'

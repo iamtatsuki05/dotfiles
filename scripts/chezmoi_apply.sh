@@ -218,9 +218,9 @@ mark_default_manager() {
 
 apply_chezmoi() {
   if (( DRY_RUN )); then
-    run_chezmoi -S "$REPO_ROOT" apply -n -v
+    run_chezmoi -S "$REPO_ROOT" apply -n -v --no-tty
   else
-    run_chezmoi -S "$REPO_ROOT" apply --force -v
+    run_chezmoi -S "$REPO_ROOT" apply --force -v --no-tty
   fi
 }
 

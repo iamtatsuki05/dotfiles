@@ -121,7 +121,7 @@ test_chezmoi_apply_uses_repo_source_in_dry_run() {
 
   XDG_CONFIG_HOME="$xdg_config_home" PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --dry-run >/dev/null
 
-  assert_contains "$log_file" "-S $repo apply -n -v"
+  assert_contains "$log_file" "-S $repo apply -n -v --no-tty"
   assert_contains "$log_file" "DOTFILES_PROFILE=$expected_profile"
 
   rm -rf "$repo"
@@ -148,7 +148,7 @@ test_chezmoi_apply_can_mark_chezmoi_as_default_manager() {
     --cli-only \
     --mark-default >/dev/null
 
-  assert_contains "$log_file" "-S $repo apply --force -v"
+  assert_contains "$log_file" "-S $repo apply --force -v --no-tty"
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
   assert_file_content "$manager_file" "chezmoi"
@@ -179,7 +179,7 @@ test_chezmoi_dry_run_does_not_write_default_manager_marker() {
     --dry-run \
     --mark-default >/dev/null
 
-  assert_contains "$log_file" "-S $repo apply -n -v"
+  assert_contains "$log_file" "-S $repo apply -n -v --no-tty"
   assert_not_exists "$manager_file"
   assert_not_exists "$profile_file"
 
@@ -221,7 +221,7 @@ test_chezmoi_apply_falls_back_to_mise_install_when_chezmoi_is_not_on_path() {
 
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
-  assert_contains "$log_file" "CHEZMOI:-S $repo apply -n -v"
+  assert_contains "$log_file" "CHEZMOI:-S $repo apply -n -v --no-tty"
 
   rm -rf "$repo"
 }
@@ -240,7 +240,7 @@ test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path() {
 
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
-  assert_contains "$log_file" "HOME_CHEZMOI:-S $repo apply -n -v"
+  assert_contains "$log_file" "HOME_CHEZMOI:-S $repo apply -n -v --no-tty"
 
   rm -rf "$repo" "$home_dir"
 }
