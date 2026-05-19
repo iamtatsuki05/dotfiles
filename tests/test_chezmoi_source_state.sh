@@ -47,6 +47,7 @@ test_copied_source_state_matches_current_sources() {
   assert_same_file "$REPO_ROOT/config/alacritty/alacritty.toml" "$REPO_ROOT/home/private_dot_config/alacritty/alacritty.toml"
   assert_same_file "$REPO_ROOT/config/ghostty/config" "$REPO_ROOT/home/private_dot_config/ghostty/config"
   assert_same_file "$REPO_ROOT/config/nix/nix.conf" "$REPO_ROOT/home/private_dot_config/nix/nix.conf"
+  assert_same_file "$REPO_ROOT/config/zellij/config.kdl" "$REPO_ROOT/home/private_dot_config/zellij/config.kdl"
   assert_same_file "$REPO_ROOT/config/shell/secrets.env.example" "$REPO_ROOT/home/private_dot_config/shell/create_private_secrets.env"
   assert_same_file "$REPO_ROOT/config/shell/bashrc.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bashrc"
   assert_same_file "$REPO_ROOT/config/shell/bash_profile.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bash_profile"
@@ -56,6 +57,9 @@ test_copied_source_state_matches_current_sources() {
   assert_not_exists "$REPO_ROOT/home/private_dot_config/nvim/init.vim"
   assert_not_exists "$REPO_ROOT/home/.chezmoitemplates/Brewfile"
   assert_not_exists "$REPO_ROOT/home/.chezmoitemplates/Brewfile.cli"
+  assert_contains "$REPO_ROOT/config/zellij/config.kdl" "session_serialization true"
+  assert_contains "$REPO_ROOT/config/zellij/config.kdl" "serialize_pane_viewport true"
+  assert_contains "$REPO_ROOT/config/zellij/config.kdl" "serialization_interval 10"
 }
 
 test_templates_keep_repo_root_behavior() {

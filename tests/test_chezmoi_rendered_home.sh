@@ -114,6 +114,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_same_file "$REPO_ROOT/config/alacritty/alacritty.toml" "$temp_home/.config/alacritty/alacritty.toml"
   assert_same_file "$REPO_ROOT/config/ghostty/config" "$temp_home/.config/ghostty/config"
   assert_same_file "$REPO_ROOT/config/nix/nix.conf" "$temp_home/.config/nix/nix.conf"
+  assert_same_file "$REPO_ROOT/config/zellij/config.kdl" "$temp_home/.config/zellij/config.kdl"
   assert_not_exists "$temp_home/.config/nvim/init.vim"
   assert_contains "$temp_home/.bashrc" 'dotfiles-shell-common.sh'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "$REPO_ROOT"
