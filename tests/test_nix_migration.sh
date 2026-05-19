@@ -848,6 +848,8 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
 }
 
 test_nix_install_script_defaults_to_cli_profile_on_macos() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local bin_dir
   local log_file
