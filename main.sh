@@ -10,6 +10,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$SCRIPT_DIR"
 readonly SCRIPTS_DIR="$REPO_ROOT/scripts"
 readonly LIB_DIR="$SCRIPTS_DIR/lib"
+readonly NIX_INSTALL_URL="https://nixos.org/nix/install"
+readonly NIX_INSTALL_SHELL="${DOTFILES_NIX_INSTALL_SHELL:-/bin/sh}"
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
@@ -44,6 +46,48 @@ install_nix() {
   log_success "Nix setup complete"
 }
 
+nix_command_exists() {
+  command -v nix >/dev/null 2>&1
+}
+
+install_nix_daemon_if_needed() {
+  local installer
+
+  activate_nix_environment
+  if nix_command_exists; then
+    log_skip "Nix is already installed"
+    return 0
+  fi
+
+  if ! dotfiles_is_macos; then
+    log_error "nix is not installed or not found in PATH"
+    echo "On Linux, install Nix first or use: zsh scripts/nix_portable_install.sh" >&2
+    return 1
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    log_error "curl is required to install Nix"
+    return 1
+  fi
+
+  log_step "Installing Nix daemon"
+  installer="$(mktemp "${TMPDIR:-/tmp}/dotfiles-nix-install.XXXXXX")"
+  (
+    trap 'rm -f "$installer"' EXIT
+    curl --fail --proto '=https' --tlsv1.2 -L "$NIX_INSTALL_URL" -o "$installer"
+    "$NIX_INSTALL_SHELL" "$installer" --daemon
+  )
+
+  activate_nix_environment
+  if ! nix_command_exists; then
+    log_error "Nix installation completed but nix is still not found in PATH"
+    echo "Restart the terminal or source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh, then rerun zsh main.sh." >&2
+    return 1
+  fi
+
+  log_success "Nix installed"
+}
+
 install_homebrew_if_needed() {
   local profile="$1"
 
@@ -56,7 +100,10 @@ install_homebrew_if_needed() {
 activate_nix_environment() {
   log_step "Activating Nix environment for this setup run"
 
-  export PATH="/run/current-system/sw/bin:/etc/profiles/per-user/$USER/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+  local nix_profile_paths="${DOTFILES_NIX_PROFILE_PATHS-/run/current-system/sw/bin:/etc/profiles/per-user/$USER/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin}"
+  if [[ -n "$nix_profile_paths" ]]; then
+    export PATH="$nix_profile_paths:$PATH"
+  fi
 
   local hm_vars
   for hm_vars in \
@@ -126,6 +173,7 @@ main() {
   echo
 
   install_homebrew_if_needed "$profile"
+  install_nix_daemon_if_needed
   install_nix "$profile"
   activate_nix_environment
   apply_chezmoi "$profile"

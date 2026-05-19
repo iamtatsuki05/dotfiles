@@ -1436,6 +1436,11 @@ EOF
 set -euo pipefail
 print -r -- "mise:\$*" >> "$log_file"
 EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
@@ -1443,6 +1448,7 @@ EOF
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
+    "$bin_dir/nix" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -1528,6 +1534,11 @@ EOF
 set -euo pipefail
 print -r -- "mise:\$*" >> "$log_file"
 EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
@@ -1537,6 +1548,7 @@ EOF
     "$repo/scripts/setup_git_hooks.sh" \
     "$bin_dir/uname" \
     "$bin_dir/curl" \
+    "$bin_dir/nix" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -1551,6 +1563,180 @@ EOF
   assert_contains "$log_file" 'setup_git_hooks:--profile cli'
   assert_contains "$log_file" 'mise:install'
   assert_not_contains "$log_file" 'curl:'
+
+  rm -rf "$repo"
+}
+
+test_main_script_bootstraps_nix_on_macos_when_missing() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  copy_script_libs "$repo"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/curl" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "curl:\$*" >> "$log_file"
+local output=""
+while (( \$# )); do
+  if [[ "\$1" == "-o" ]]; then
+    shift
+    output="\$1"
+  fi
+  shift || true
+done
+[[ -n "\$output" ]] || exit 1
+print -r -- "# fake nix installer" > "\$output"
+EOF
+  cat > "$bin_dir/sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sh:\$*" >> "$log_file"
+mkdir -p "\$HOME/.nix-profile/bin"
+cat > "\$HOME/.nix-profile/bin/nix" <<'INNER'
+#!/usr/bin/env zsh
+set -euo pipefail
+exit 0
+INNER
+chmod +x "\$HOME/.nix-profile/bin/nix"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$bin_dir/curl" \
+    "$bin_dir/mise" \
+    "$bin_dir/sh"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_NIX_PROFILE_PATHS="$home_dir/.nix-profile/bin" \
+    DOTFILES_NIX_INSTALL_SHELL="$bin_dir/sh" \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --profile full > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Installing Nix daemon"
+  assert_output_contains "$repo/output.log" "Nix installed"
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_contains "$log_file" 'install_homebrew:--profile full'
+  assert_contains "$log_file" "curl:--fail --proto =https --tlsv1.2 -L https://nixos.org/nix/install -o "
+  assert_contains "$log_file" 'sh:'
+  assert_contains "$log_file" '--daemon'
+  assert_contains "$log_file" 'nix_install:--profile full'
+  assert_contains "$log_file" 'mise:install'
+
+  rm -rf "$repo"
+}
+
+test_main_script_reports_nix_portable_when_nix_missing_on_linux() {
+  if is_test_macos; then
+    echo "SKIP: $funcstack[1] requires Linux"
+    return 0
+  fi
+
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  copy_script_libs "$repo"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/setup_git_hooks.sh"
+
+  if HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_NIX_PROFILE_PATHS="" \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log" 2>&1; then
+    fail "expected main.sh to fail when nix is missing on Linux"
+  fi
+
+  assert_output_contains "$repo/output.log" "nix is not installed or not found in PATH"
+  assert_output_contains "$repo/output.log" "zsh scripts/nix_portable_install.sh"
+  assert_contains "$log_file" 'install_homebrew:--profile cli'
+  assert_not_contains "$log_file" 'nix_install:'
 
   rm -rf "$repo"
 }
@@ -1602,6 +1788,11 @@ EOF
 set -euo pipefail
 print -r -- "mise:\$*" >> "$log_file"
 EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
@@ -1609,6 +1800,7 @@ EOF
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
+    "$bin_dir/nix" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -2120,6 +2312,8 @@ main() {
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
   test_main_script_runs_homebrew_before_nix_setup
   test_main_script_uses_cli_profile_when_requested
+  test_main_script_bootstraps_nix_on_macos_when_missing
+  test_main_script_reports_nix_portable_when_nix_missing_on_linux
   test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles
   test_apply_updates_applies_chezmoi_and_refreshes_agent_and_hooks
   test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang
