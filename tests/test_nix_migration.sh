@@ -828,9 +828,12 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_ARCHIVE_EPOCH'
   assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_SUDO_LOCAL_PATH'
   assert_contains "$INSTALL_SCRIPT" 'DARWIN_SUDO_LOCAL_BACKUP_PATH'
+  assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_ETC_SHELL_RC_PATHS'
   assert_contains "$INSTALL_SCRIPT" 'archive_existing_home_manager_backups'
   assert_contains "$INSTALL_SCRIPT" 'backup_existing_darwin_sudo_local'
+  assert_contains "$INSTALL_SCRIPT" 'backup_existing_darwin_etc_shell_rc_files'
   assert_contains "$INSTALL_SCRIPT" 'sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"'
+  assert_contains "$INSTALL_SCRIPT" 'before nix-darwin manages shell startup files'
   assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake'
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
   assert_contains "$INSTALL_SCRIPT" 'dotfiles_create_unique_temp_directory'
@@ -988,6 +991,83 @@ EOF
   assert_contains "$log_file" 'darwin-rebuild:switch --flake'
   assert_file "$backup_file"
   assert_not_exists "$sudo_local"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local bin_dir
+  local etc_dir
+  local log_file
+  local output_file
+  local bashrc
+  local zshrc
+
+  make_temp_dir
+
+  repo="$REPLY"
+  bin_dir="$repo/bin"
+  etc_dir="$repo/etc"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+  bashrc="$etc_dir/bashrc"
+  zshrc="$etc_dir/zshrc"
+
+  mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+
+  print -r -- "# legacy bashrc" > "$bashrc"
+  print -r -- "# legacy zshrc" > "$zshrc"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$bashrc:$zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
+
+  assert_output_contains "$output_file" "Backing up existing $bashrc to $bashrc.before-nix-darwin before nix-darwin manages shell startup files."
+  assert_output_contains "$output_file" "Backing up existing $zshrc to $zshrc.before-nix-darwin before nix-darwin manages shell startup files."
+  assert_contains "$log_file" "sudo:mv $bashrc $bashrc.before-nix-darwin"
+  assert_contains "$log_file" "sudo:mv $zshrc $zshrc.before-nix-darwin"
+  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake'
+  assert_file "$bashrc.before-nix-darwin"
+  assert_file "$zshrc.before-nix-darwin"
+  assert_not_exists "$bashrc"
+  assert_not_exists "$zshrc"
 
   rm -rf "$repo"
 }
@@ -2303,6 +2383,7 @@ main() {
   test_nix_install_script_switches_nix_darwin_or_home_manager
   test_nix_install_script_defaults_to_cli_profile_on_macos
   test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch
+  test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch
   test_nix_install_script_archives_existing_home_manager_backups_before_switch
   test_nix_install_script_handles_dirty_worktree_without_hanging
   test_rootless_nix_install_script_supports_no_sudo_linux

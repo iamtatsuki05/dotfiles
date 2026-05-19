@@ -12,6 +12,7 @@ readonly -a NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command fl
 readonly HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"
 readonly DARWIN_SUDO_LOCAL_PATH="${DOTFILES_DARWIN_SUDO_LOCAL_PATH:-/etc/pam.d/sudo_local}"
 readonly DARWIN_SUDO_LOCAL_BACKUP_PATH="${DARWIN_SUDO_LOCAL_PATH}.${HOME_MANAGER_BACKUP_EXTENSION}"
+readonly DARWIN_ETC_SHELL_RC_PATHS="${DOTFILES_DARWIN_ETC_SHELL_RC_PATHS:-/etc/bashrc:/etc/zshrc}"
 readonly HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="${DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH:-$EPOCHSECONDS}"
 
 source "$SCRIPT_DIR/lib/setup_profile.sh"
@@ -264,6 +265,33 @@ backup_existing_darwin_sudo_local() {
   sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"
 }
 
+backup_existing_darwin_etc_shell_rc_files() {
+  if ! dotfiles_is_macos || (( DRY_RUN )); then
+    return 0
+  fi
+
+  local -a rc_paths
+  local rc_path
+  local backup_path
+
+  rc_paths=("${(@ps/:/)DARWIN_ETC_SHELL_RC_PATHS}")
+  for rc_path in "${rc_paths[@]}"; do
+    [[ -n "$rc_path" ]] || continue
+    [[ -e "$rc_path" ]] || continue
+    [[ -L "$rc_path" ]] && continue
+
+    backup_path="${rc_path}.${HOME_MANAGER_BACKUP_EXTENSION}"
+    if [[ -e "$backup_path" ]]; then
+      echo "ERROR: $rc_path is blocking nix-darwin activation, but $backup_path already exists." >&2
+      echo "Please review both files, then rerun this script." >&2
+      return 1
+    fi
+
+    echo "Backing up existing $rc_path to $backup_path before nix-darwin manages shell startup files."
+    sudo mv "$rc_path" "$backup_path"
+  done
+}
+
 has_untracked_nix_sources() {
   local temp_root
   local temp_dir
@@ -413,6 +441,7 @@ main() {
   if dotfiles_is_macos; then
     archive_existing_home_manager_backups
     backup_existing_darwin_sudo_local
+    backup_existing_darwin_etc_shell_rc_files
     run_darwin_rebuild "$attr" "$nix_bin" "$flake_path"
   else
     archive_existing_home_manager_backups
