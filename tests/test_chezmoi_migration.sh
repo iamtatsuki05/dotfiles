@@ -148,7 +148,7 @@ test_chezmoi_apply_can_mark_chezmoi_as_default_manager() {
     --cli-only \
     --mark-default >/dev/null
 
-  assert_contains "$log_file" "-S $repo apply -v"
+  assert_contains "$log_file" "-S $repo apply --force -v"
   assert_contains "$log_file" "DOTFILES_PROFILE=cli"
   assert_contains "$log_file" "DOTFILES_REPO_ROOT=$repo"
   assert_file_content "$manager_file" "chezmoi"

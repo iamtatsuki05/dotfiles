@@ -220,7 +220,7 @@ apply_chezmoi() {
   if (( DRY_RUN )); then
     run_chezmoi -S "$REPO_ROOT" apply -n -v
   else
-    run_chezmoi -S "$REPO_ROOT" apply -v
+    run_chezmoi -S "$REPO_ROOT" apply --force -v
   fi
 }
 
