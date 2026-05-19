@@ -1666,6 +1666,7 @@ EOF
   assert_contains "$log_file" "curl:--fail --proto =https --tlsv1.2 -L https://nixos.org/nix/install -o "
   assert_contains "$log_file" 'sh:'
   assert_contains "$log_file" '--daemon'
+  assert_contains "$log_file" '--yes'
   assert_contains "$log_file" 'nix_install:--profile full'
   assert_contains "$log_file" 'mise:install'
 

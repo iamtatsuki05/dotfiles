@@ -75,7 +75,7 @@ install_nix_daemon_if_needed() {
   (
     trap 'rm -f "$installer"' EXIT
     curl --fail --proto '=https' --tlsv1.2 -L "$NIX_INSTALL_URL" -o "$installer"
-    "$NIX_INSTALL_SHELL" "$installer" --daemon
+    "$NIX_INSTALL_SHELL" "$installer" --daemon --yes
   )
 
   activate_nix_environment
