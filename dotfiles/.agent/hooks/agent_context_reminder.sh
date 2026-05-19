@@ -74,8 +74,21 @@ def find_upwards(start, name):
         current = parent
 
 
+def find_agent_dir(start):
+    current = os.path.abspath(os.path.expanduser(start))
+    while True:
+        for relative_path in (".agent", os.path.join("dotfiles", ".agent")):
+            candidate = os.path.join(current, relative_path)
+            if os.path.isdir(candidate):
+                return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
 git_dir = find_upwards(cwd, ".git")
-agent_dir = find_upwards(cwd, ".agent")
+agent_dir = find_agent_dir(cwd)
 
 lines = [
     "リポジトリ hook リマインダー:",

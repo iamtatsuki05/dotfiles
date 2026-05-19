@@ -432,12 +432,47 @@ assert ".agent/changes/CHANGES.md" in payload["additional_context"]
 '
 }
 
+test_agent_context_reminder_detects_managed_dotfiles_agent_dir() {
+  local repo
+  local output
+  make_temp_dir
+  repo="$REPLY"
+
+  mkdir -p "$repo/.git" "$repo/dotfiles/.agent/changes" "$repo/dotfiles/.agent/hooks" "$repo/work/subdir"
+  cp "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  print -r -- "# test changes" > "$repo/dotfiles/.agent/changes/CHANGES.md"
+
+  output="$(printf '%s\n' '{"hook_event_name":"UserPromptSubmit","cwd":"'"$repo"'","prompt":"implement this"}' | "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  print -r -- "$output" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+context = payload["additional_context"]
+assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+assert "/dotfiles/.agent/changes/CHANGES.md" in context
+'
+
+  output="$(printf '%s\n' '{"hook_event_name":"UserPromptSubmit","cwd":"'"$repo"'/work/subdir","prompt":"implement this"}' | "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  print -r -- "$output" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert "/dotfiles/.agent/changes/CHANGES.md" in payload["additional_context"]
+'
+
+  rm -rf "$repo"
+}
+
 main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
   test_agent_sync_wrapper_delegates_to_setup_script
   test_agent_context_reminder_hook_outputs_valid_json_context
+  test_agent_context_reminder_detects_managed_dotfiles_agent_dir
   echo "agent sync tests passed"
 }
 
