@@ -7,10 +7,8 @@
 
 let
   homebrewFallback = import ../homebrew-fallback.nix;
-  macAppStoreApps = import ../mas-apps.nix;
   homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ];
-  homebrewFallbackHasGuiEntries =
-    homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ] || macAppStoreApps != { };
+  homebrewFallbackHasGuiEntries = homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ];
   homebrewFallbackEnabled = homebrewFallbackHasCliEntries || (enableGuiApps && homebrewFallbackHasGuiEntries);
 in
 {
@@ -20,7 +18,7 @@ in
     taps = homebrewFallback.taps;
     brews = homebrewFallback.brews;
     casks = lib.optionals enableGuiApps homebrewFallback.casks;
-    masApps = lib.optionalAttrs enableGuiApps macAppStoreApps;
+    masApps = { };
     vscode = lib.optionals enableGuiApps homebrewFallback.vscode;
     enableZshIntegration = false;
     global.autoUpdate = false;

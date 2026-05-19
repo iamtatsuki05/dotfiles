@@ -18,15 +18,9 @@ dotfiles_homebrew_fallback_has_cli_entries() {
   dotfiles_list_nix_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "brews"
 }
 
-dotfiles_mas_apps_has_entries() {
-  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
-  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
-}
-
 dotfiles_homebrew_fallback_has_gui_entries() {
   dotfiles_list_nix_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "casks" \
-    || dotfiles_list_nix_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode" \
-    || dotfiles_mas_apps_has_entries
+    || dotfiles_list_nix_setting_has_entries "$HOMEBREW_FALLBACK_CONFIG" "vscode"
 }
 
 dotfiles_profile_requires_homebrew() {

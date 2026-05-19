@@ -7,6 +7,7 @@
   "iterm2"
   "karabiner-elements"
   "keycastr"
+  "mas"
   "notion-app"
   "orbstack"
   "raycast"

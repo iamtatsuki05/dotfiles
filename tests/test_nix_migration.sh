@@ -11,6 +11,7 @@ readonly ROOTLESS_NIX_INSTALL_SCRIPT="$REPO_ROOT/scripts/nix_rootless_install.sh
 readonly REMOVE_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/remove_homebrew.sh"
 readonly CLEANUP_PACKAGE_CACHES_SCRIPT="$REPO_ROOT/scripts/cleanup_package_caches.sh"
 readonly INSTALL_HOMEBREW_SCRIPT="$REPO_ROOT/scripts/install_homebrew.sh"
+readonly INSTALL_MAS_APPS_SCRIPT="$REPO_ROOT/scripts/install_mas_apps.sh"
 readonly UPDATE_MANAGED_VERSIONS_SCRIPT="$REPO_ROOT/scripts/update_managed_versions.sh"
 readonly APPLY_UPDATES_SCRIPT="$REPO_ROOT/scripts/apply_updates.sh"
 readonly SETUP_GIT_HOOKS_SCRIPT="$REPO_ROOT/scripts/setup_git_hooks.sh"
@@ -349,6 +350,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "betterdisplay"
     "daisydisk"
     "iterm2"
+    "mas"
     "raycast"
     "rectangle-pro"
   )
@@ -778,16 +780,16 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_DEFAULTS_MODULE" 'location = screenshotsDirectory'
 
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'import ../homebrew-fallback.nix'
-  assert_contains "$DARWIN_HOMEBREW_MODULE" 'import ../mas-apps.nix'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ]'
-  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ] || macAppStoreApps != { }'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackHasGuiEntries = homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ]'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackEnabled = homebrewFallbackHasCliEntries || (enableGuiApps && homebrewFallbackHasGuiEntries)'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrew = lib.mkIf homebrewFallbackEnabled'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'enable = true'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'taps = homebrewFallback.taps'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'brews = homebrewFallback.brews'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'casks = lib.optionals enableGuiApps homebrewFallback.casks'
-  assert_contains "$DARWIN_HOMEBREW_MODULE" 'masApps = lib.optionalAttrs enableGuiApps macAppStoreApps'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'masApps = { }'
+  assert_not_contains "$DARWIN_HOMEBREW_MODULE" 'import ../mas-apps.nix'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'vscode = lib.optionals enableGuiApps homebrewFallback.vscode'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'cleanup = "none"'
 
@@ -1311,9 +1313,8 @@ test_remove_homebrew_script_is_explicit_and_dry_run_first() {
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" '--confirm-nix-ready'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" '--force'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'homebrew-fallback.nix'
-  assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'mas-apps.nix'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'taps|brews|casks|vscode'
-  assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'mas_apps_has_entries'
+  assert_not_contains "$REMOVE_HOMEBREW_SCRIPT" 'mas_apps_has_entries'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'Refusing to remove Homebrew'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'source "$LIB_DIR/command.sh"'
   assert_contains "$REMOVE_HOMEBREW_SCRIPT" 'dotfiles_print_raw_command_block'
@@ -1441,6 +1442,15 @@ test_install_homebrew_script_supports_required_profiles() {
 test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MAIN_SCRIPT" 'nix_install.sh'
   assert_contains "$MAIN_SCRIPT" 'setup_agent_files.sh'
+  assert_contains "$MAIN_SCRIPT" 'install_mas_apps.sh'
+  assert_contains "$MAIN_SCRIPT" 'install_mas_apps_best_effort'
+  assert_contains "$MAIN_SCRIPT" 'prepare_sudo_authentication'
+  assert_contains "$MAIN_SCRIPT" 'sudo -v'
+  assert_contains "$MAIN_SCRIPT" 'sudo -n true'
+  assert_contains "$MAIN_SCRIPT" 'DOTFILES_SKIP_SUDO_KEEPALIVE'
+  assert_contains "$MAIN_SCRIPT" 'install_rosetta_if_needed'
+  assert_contains "$MAIN_SCRIPT" 'DOTFILES_SKIP_ROSETTA_INSTALL'
+  assert_contains "$MAIN_SCRIPT" 'softwareupdate --install-rosetta --agree-to-license'
   assert_not_contains "$MAIN_SCRIPT" 'dotfiles/.agent/sync.sh'
   assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
   assert_contains "$MAIN_SCRIPT" '--profile "$profile"'
@@ -1514,6 +1524,11 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
@@ -1530,11 +1545,14 @@ EOF
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
     "$bin_dir/nix" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_SUDO_KEEPALIVE=1 \
+    DOTFILES_SKIP_ROSETTA_INSTALL=1 \
     "$TEST_ZSH_BIN" "$repo/main.sh" --profile full > "$repo/output.log"
 
   assert_output_contains "$repo/output.log" "Setup completed successfully!"
@@ -1612,6 +1630,11 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
@@ -1628,6 +1651,7 @@ EOF
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
     "$bin_dir/uname" \
     "$bin_dir/curl" \
@@ -1635,6 +1659,7 @@ EOF
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_SUDO_KEEPALIVE=1 \
     "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log"
 
   assert_output_contains "$repo/output.log" "Profile: cli"
@@ -1694,6 +1719,11 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
@@ -1732,12 +1762,15 @@ EOF
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
     "$bin_dir/curl" \
     "$bin_dir/mise" \
     "$bin_dir/sh"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_SUDO_KEEPALIVE=1 \
+    DOTFILES_SKIP_ROSETTA_INSTALL=1 \
     DOTFILES_NIX_PROFILE_PATHS="$home_dir/.nix-profile/bin" \
     DOTFILES_NIX_INSTALL_SHELL="$bin_dir/sh" \
     "$TEST_ZSH_BIN" "$repo/main.sh" --profile full > "$repo/output.log"
@@ -1752,6 +1785,286 @@ EOF
   assert_contains "$log_file" '--yes'
   assert_contains "$log_file" 'nix_install:--profile full'
   assert_contains "$log_file" 'mise:install'
+
+  rm -rf "$repo"
+}
+
+test_main_script_keeps_sudo_authentication_alive_on_macos() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  copy_script_libs "$repo"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$bin_dir/nix" \
+    "$bin_dir/sudo" \
+    "$bin_dir/mise"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_ROSETTA_INSTALL=1 \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --profile full > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Preparing sudo authentication for this setup run"
+  assert_output_contains "$repo/output.log" "Sudo authentication cached"
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_contains "$log_file" 'sudo:-v'
+  assert_contains "$log_file" 'sudo:-n true'
+  assert_contains "$log_file" 'nix_install:--profile full'
+
+  rm -rf "$repo"
+}
+
+test_main_script_installs_rosetta_on_apple_silicon_full_profile() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  copy_script_libs "$repo"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+case "${1:-}" in
+  -s) print -r -- "Darwin" ;;
+  -m) print -r -- "arm64" ;;
+  *) print -r -- "Darwin" ;;
+esac
+EOF
+  cat > "$bin_dir/pkgutil" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "pkgutil:\$*" >> "$log_file"
+exit 1
+EOF
+  cat > "$bin_dir/softwareupdate" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$bin_dir/uname" \
+    "$bin_dir/pkgutil" \
+    "$bin_dir/softwareupdate" \
+    "$bin_dir/sudo" \
+    "$bin_dir/nix" \
+    "$bin_dir/mise"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_SUDO_KEEPALIVE=1 \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --profile full > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Installing Rosetta 2 for Intel-only macOS installers"
+  assert_output_contains "$repo/output.log" "Rosetta 2 installed"
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_contains "$log_file" 'pkgutil:--pkg-info com.apple.pkg.RosettaUpdateAuto'
+  assert_contains "$log_file" 'sudo:softwareupdate --install-rosetta --agree-to-license'
+  assert_contains "$log_file" 'nix_install:--profile full'
+
+  rm -rf "$repo"
+}
+
+test_install_mas_apps_script_continues_after_individual_failures() {
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+  local output_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/mas.log"
+  output_file="$repo/output.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$INSTALL_MAS_APPS_SCRIPT" "$repo/scripts/install_mas_apps.sh"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+
+  cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
+{
+  "AlreadyInstalled" = 111;
+  "BrokenDownload" = 333;
+  "NewApp" = 222;
+}
+EOF
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+case "${1:-}" in
+  -s) print -r -- "Darwin" ;;
+  -m) print -r -- "arm64" ;;
+  *) print -r -- "Darwin" ;;
+esac
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+if [[ "\$1" == "eval" ]]; then
+  print -r -- \$'AlreadyInstalled\t111\nBrokenDownload\t333\nNewApp\t222'
+fi
+EOF
+  cat > "$bin_dir/mas" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mas:\$*" >> "$log_file"
+case "\${1:-}" in
+  list)
+    print -r -- "111 AlreadyInstalled (1.0)"
+    ;;
+  install)
+    if [[ "\${2:-}" == "333" ]]; then
+      print -r -- "Error: No downloads initiated for ADAM ID 333" >&2
+      exit 2
+    fi
+    ;;
+esac
+EOF
+
+  chmod +x "$repo/scripts/install_mas_apps.sh" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/mas"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$TEST_ZSH_BIN" "$repo/scripts/install_mas_apps.sh" --profile full > "$output_file" 2>&1
+
+  assert_output_contains "$output_file" "Using AlreadyInstalled"
+  assert_output_contains "$output_file" "Installing BrokenDownload"
+  assert_output_contains "$output_file" "Installing BrokenDownload (333) failed; continuing."
+  assert_output_contains "$output_file" "Installing NewApp"
+  assert_output_contains "$output_file" "Mac App Store app step complete"
+  assert_contains "$log_file" 'mas:list'
+  assert_contains "$log_file" 'mas:install 333'
+  assert_contains "$log_file" 'mas:install 222'
 
   rm -rf "$repo"
 }
@@ -1803,12 +2116,18 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh"
 
   if HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -1867,6 +2186,11 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
   cat > "$bin_dir/mise" <<EOF
 #!/usr/bin/env zsh
 set -euo pipefail
@@ -1883,11 +2207,13 @@ EOF
     "$repo/scripts/nix_install.sh" \
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh" \
     "$bin_dir/nix" \
     "$bin_dir/mise"
 
   HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_SUDO_KEEPALIVE=1 \
     "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log"
 
   assert_output_contains "$repo/output.log" "Setup completed successfully!"
@@ -1927,10 +2253,16 @@ EOF
 set -euo pipefail
 print -r -- "sync_agent" >> "$log_file"
 EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\$*" >> "$log_file"
+EOF
 
   chmod +x \
     "$repo/scripts/chezmoi_apply.sh" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh"
 
   HOME="$home_dir" USER=dotfiles-test PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
@@ -2398,6 +2730,9 @@ main() {
   test_main_script_runs_homebrew_before_nix_setup
   test_main_script_uses_cli_profile_when_requested
   test_main_script_bootstraps_nix_on_macos_when_missing
+  test_main_script_keeps_sudo_authentication_alive_on_macos
+  test_main_script_installs_rosetta_on_apple_silicon_full_profile
+  test_install_mas_apps_script_continues_after_individual_failures
   test_main_script_reports_nix_portable_when_nix_missing_on_linux
   test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles
   test_apply_updates_applies_chezmoi_and_refreshes_agent_and_hooks

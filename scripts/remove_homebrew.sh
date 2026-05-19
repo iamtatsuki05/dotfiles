@@ -6,7 +6,6 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
-readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 
 source "$LIB_DIR/command.sh"
 
@@ -68,11 +67,6 @@ homebrew_fallback_has_entries() {
   ' "$HOMEBREW_FALLBACK_CONFIG"
 }
 
-mas_apps_has_entries() {
-  [[ -f "$MAS_APPS_CONFIG" ]] || return 1
-  grep -Eq '^[[:space:]]*("[^"]+"|[A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*=' "$MAS_APPS_CONFIG"
-}
-
 print_homebrew_uninstall_command() {
   dotfiles_print_raw_command_block \
     "Homebrew uninstall command:" \
@@ -93,9 +87,9 @@ remove_homebrew() {
     return 1
   fi
 
-  if (( ! FORCE )) && { homebrew_fallback_has_entries || mas_apps_has_entries; }; then
-    echo "ERROR: Refusing to remove Homebrew because Homebrew-managed fallback packages or Mac App Store apps remain configured." >&2
-    echo "Remove config/nix/homebrew-fallback.nix and config/nix/mas-apps.nix entries first, or rerun with --force if you intentionally want to break those activations." >&2
+  if (( ! FORCE )) && homebrew_fallback_has_entries; then
+    echo "ERROR: Refusing to remove Homebrew because Homebrew-managed fallback packages remain configured." >&2
+    echo "Remove config/nix/homebrew-fallback.nix entries first, or rerun with --force if you intentionally want to break those activations." >&2
     return 1
   fi
 
