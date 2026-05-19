@@ -1,5 +1,5 @@
 model = "gpt-5.5"
-sandbox_mode = "workspace-write"
+sandbox_mode = "danger-full-access"
 ignore_patterns = [
   "**/.env",
   "**/.env.*",
@@ -40,9 +40,6 @@ undo = true
 goals = true
 memories = true
 chronicle = true
-
-[sandbox_workspace_write]
-network_access = true
 
 [mcp_servers.deepwiki]
 url = "https://mcp.deepwiki.com/mcp"
