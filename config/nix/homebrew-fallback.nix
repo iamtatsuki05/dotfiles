@@ -47,7 +47,6 @@
     "hhkb-studio"
     "iriunwebcam"
     "macfuse"
-    "messenger"
     "minecraft"
     # microsoft-office already installs OneDrive and conflicts with the standalone onedrive cask.
     "microsoft-office"

@@ -412,11 +412,13 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity-photo"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'vscode = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"adpyke.codesnap"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'unsupportedUvPackages = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"claude-monitor"'
   assert_file "$MAS_APPS_FILE"
+  assert_not_contains "$MAS_APPS_FILE" '"Messenger"'
   assert_contains "$MAS_APPS_FILE" '"Xcode" = 497799835;'
   assert_not_contains "$MAS_APPS_FILE" '"Alfred"'
   assert_not_contains "$MAS_APPS_FILE" '"Bitwarden"'
