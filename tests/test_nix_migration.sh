@@ -411,6 +411,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'casks = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity-photo"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"background-music"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'vscode = ['

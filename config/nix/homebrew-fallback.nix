@@ -23,7 +23,6 @@
     "amazon-photos"
     "android-studio"
     "anki"
-    "background-music"
     "battery"
     "bettertouchtool"
     "chatgpt-atlas"

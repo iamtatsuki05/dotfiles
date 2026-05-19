@@ -12,7 +12,6 @@ cask	1password	requires-/Applications-install
 cask	affinity	no-nixpkg-mapping
 cask	amazon-photos	no-nixpkg-mapping
 cask	android-studio	nix-package-is-linux-only
-cask	background-music	no-nixpkg-mapping
 cask	battery	no-nixpkg-mapping
 cask	chatgpt-atlas	no-nixpkg-mapping
 cask	claude	no-nixpkg-mapping
