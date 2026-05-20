@@ -79,7 +79,6 @@
     "wechat"
     "windows-app"
     "yellowdot"
-    "yoink"
   ];
 
   vscode = [

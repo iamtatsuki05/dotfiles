@@ -48,7 +48,6 @@ cask	tunnelblick	no-nixpkg-mapping
 cask	unity-hub	nix-package-is-linux-only
 cask	vlc	nix-package-is-linux-only
 cask	vnc-viewer	no-nixpkg-mapping
-cask	yoink	no-nixpkg-mapping
 brew	claude-code	managed-by-mise:claude-code
 brew	codex	managed-by-mise:codex
 vscode	adpyke.codesnap	managed-outside-nix-package-set
