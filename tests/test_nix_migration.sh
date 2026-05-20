@@ -724,7 +724,7 @@ test_flake_exposes_nix_darwin_and_home_manager_profiles() {
 test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_MODULE" 'dotfiles.profile'
   assert_contains "$HOME_MANAGER_MODULE" 'dotfiles.enableGuiApps'
-  assert_contains "$HOME_MANAGER_MODULE" 'targets.darwin.copyApps.enable = false'
+  assert_contains "$HOME_MANAGER_MODULE" 'targets.darwin.copyApps.enable = pkgs.stdenv.hostPlatform.isDarwin && config.dotfiles.enableGuiApps'
   assert_contains "$HOME_MANAGER_MODULE" 'targets.darwin.linkApps.enable = false'
   assert_contains "$HOME_MANAGER_MODULE" 'programs.home-manager.enable = true'
   assert_contains "$HOME_MANAGER_MODULE" './packages.nix'

@@ -164,7 +164,6 @@ vscode	vscjava.vscode-java-test	managed-outside-nix-package-set
 vscode	vscjava.vscode-maven	managed-outside-nix-package-set
 vscode	vscode-icons-team.vscode-icons	managed-outside-nix-package-set
 vscode	waderyan.gitblame	managed-outside-nix-package-set
-vscode	wakatime.vscode-wakatime	managed-outside-nix-package-set
 vscode	wayou.vscode-todo-highlight	managed-outside-nix-package-set
 vscode	wesbos.theme-cobalt2	managed-outside-nix-package-set
 vscode	wholroyd.jinja	managed-outside-nix-package-set

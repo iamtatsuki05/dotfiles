@@ -196,7 +196,6 @@
     "vscjava.vscode-maven"
     "vscode-icons-team.vscode-icons"
     "waderyan.gitblame"
-    "wakatime.vscode-wakatime"
     "wayou.vscode-todo-highlight"
     "wesbos.theme-cobalt2"
     "wholroyd.jinja"
