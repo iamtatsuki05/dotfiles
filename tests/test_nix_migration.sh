@@ -392,7 +392,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   done
 
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	affinity'
-  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	yoink'
+  assert_not_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	yoink'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'vscode	adpyke.codesnap'
   assert_contains "$MIGRATED_FORMULAE_FILE" "mise"
   assert_not_contains "$MIGRATED_FORMULAE_FILE" "gemini-cli"
@@ -412,6 +412,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"background-music"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"yoink"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'vscode = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"adpyke.codesnap"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'unsupportedUvPackages = ['
