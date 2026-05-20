@@ -23,16 +23,27 @@ class AdapterRegistry:
 
 def default_builders() -> dict[Agent, CommandBuilder]:
     return {
+        Agent.ANTIGRAVITY: build_antigravity_command,
         Agent.CLAUDE: build_claude_command,
         Agent.CODEX: build_codex_command,
         Agent.COPILOT: build_copilot_command,
         Agent.CURSOR: build_cursor_command,
         Agent.DEVIN: build_devin_command,
-        Agent.GEMINI: build_gemini_command,
         Agent.HERMES: build_hermes_command,
         Agent.OPENCODE: build_opencode_command,
         Agent.OPENCLAW: build_openclaw_command,
     }
+
+
+def build_antigravity_command(job: JobRecord) -> CommandSpec:
+    argv = (
+        "agy",
+        "chat",
+        "--mode",
+        "agent",
+        job.prompt,
+    )
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
 
 
 def build_claude_command(job: JobRecord) -> CommandSpec:
@@ -52,19 +63,6 @@ def build_codex_command(job: JobRecord) -> CommandSpec:
         "--dangerously-bypass-approvals-and-sandbox",
         "-C",
         job.workdir,
-        job.prompt,
-    )
-    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
-
-
-def build_gemini_command(job: JobRecord) -> CommandSpec:
-    argv = (
-        "gemini",
-        "-m",
-        "gemini-3.1-pro-preview",
-        "--yolo",
-        "--skip-trust",
-        "-p",
         job.prompt,
     )
     return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))

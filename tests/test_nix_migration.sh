@@ -168,7 +168,6 @@ EOF
 # kind	name	mise tool
 brew	claude-code	claude-code
 brew	codex	codex
-brew	gemini-cli	gemini-cli
 brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	opencode	opencode
 cask	claude-code@latest	claude-code
@@ -201,7 +200,6 @@ brew "gnu-sed"
 brew "mise"
 brew "claude-code"
 brew "codex"
-brew "gemini-cli"
 brew "hermes-agent"
 brew "opencode"
 brew "private-tool"
@@ -259,7 +257,6 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "cursor-cli"
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	claude-code	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	codex	managed-by-mise:codex'
-  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	gemini-cli	managed-by-mise:gemini-cli'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	hermes-agent	managed-by-mise:pipx:git+https://github.com/NousResearch/hermes-agent.git'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	opencode	managed-by-mise:opencode'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	claude-code@latest	managed-by-mise:claude-code'
@@ -401,7 +398,6 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$MIGRATED_FORMULAE_FILE" "gemini-cli"
   assert_not_contains "$MIGRATED_CASKS_FILE" "claude-code@latest"
   assert_not_contains "$MIGRATED_CASKS_FILE" "codex"
-  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	gemini-cli	managed-by-mise:gemini-cli'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	codex	managed-by-mise:codex'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	claude-code	managed-by-mise:claude-code'
@@ -471,7 +467,7 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'CLI agent evals require explicit --allow'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'codex exec -C'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'claude -p'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'gemini -p'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'agy chat --mode agent'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'copilot'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'devin'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'cursor-agent'
@@ -479,6 +475,7 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'hermes'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'openclaw agent'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'run_direct_or_mise'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'run_direct_or_homebrew_cask'
   assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" '.waza-results/cli-agents'
 }
 
@@ -507,8 +504,12 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   assert_output_contains "$output" "DRY-RUN claude"
   assert_output_contains "$output" "dotfiles/.agent/evals/security-check/model.yaml"
 
-  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --model gemini --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
-  assert_output_contains "$output" "DRY-RUN gemini"
+  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --agent antigravity-cli --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN antigravity"
+  assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --model opencode --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN opencode"
   assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
 
   "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --agent all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
@@ -525,8 +526,13 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   assert_output_contains "$output" "dotfiles/.agent/evals/security-check/model.yaml"
   assert_output_contains "$output" "tasks/review-flask-handler.yaml"
 
-  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" gemini --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
-  assert_output_contains "$output" "DRY-RUN gemini"
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" agy --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN antigravity"
+  assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
+  assert_output_contains "$output" "tasks/pytest-typeerror.yaml"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" opencode --dry-run --suite dotfiles/.agent/evals/auto-debugger/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN opencode"
   assert_output_contains "$output" "dotfiles/.agent/evals/auto-debugger/model.yaml"
   assert_output_contains "$output" "tasks/pytest-typeerror.yaml"
 
@@ -550,6 +556,7 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
 
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
+  assert_output_contains "$output" "DRY-RUN antigravity"
   assert_output_contains "$output" "DRY-RUN copilot"
   assert_output_contains "$output" "DRY-RUN hermes"
   assert_output_contains "$output" "DRY-RUN openclaw"
@@ -639,7 +646,6 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     codex
     database-dev
     empirical-prompt-tuning
-    gemini
     go-dev
     goal-prompt-builder
     gws
@@ -2307,7 +2313,7 @@ test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
 test_ai_cli_tools_are_managed_by_mise() {
   assert_contains "$MISE_CONFIG" 'codex = "latest"'
   assert_contains "$MISE_CONFIG" 'claude-code = "latest"'
-  assert_contains "$MISE_CONFIG" 'gemini-cli = "latest"'
+  assert_not_contains "$MISE_CONFIG" 'gemini-cli = "latest"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'

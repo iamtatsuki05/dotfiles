@@ -2,29 +2,42 @@
   "mcpServers": {
     "codex": {
       "command": "codex",
-      "args": ["mcp-server"]
+      "args": [
+        "mcp-server"
+      ],
+      "env": {}
     },
     "colab-mcp": {
       "command": "uvx",
-      "args": ["git+https://github.com/googlecolab/colab-mcp"]
+      "args": [
+        "git+https://github.com/googlecolab/colab-mcp"
+      ],
+      "env": {}
     },
     "notion": {
+      "type": "http",
       "url": "https://mcp.notion.com/mcp"
     },
     "playwright": {
       "command": "bunx",
-      "args": ["@playwright/mcp@latest"]
+      "args": [
+        "@playwright/mcp@latest"
+      ],
+      "env": {}
     },
     "deepwiki": {
+      "type": "http",
       "url": "https://mcp.deepwiki.com/mcp"
     },
     "devin": {
+      "type": "http",
       "url": "https://mcp.devin.ai/mcp",
       "headers": {
-        "Authorization": "Bearer ${env:DEVIN_API_KEY}"
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
       }
     },
     "figma": {
+      "type": "http",
       "url": "https://mcp.figma.com/mcp"
     }
   }

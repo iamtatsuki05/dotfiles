@@ -13,12 +13,12 @@ Agent CLI を内部で呼び出すコードやツールの対応状況は [AGENT
 - `copilot`
 - `cursor-agent`
 - `devin`
-- `gemini-cli`
+- `antigravity-cli`
 - `hermes`
 - `opencode`
 - `openclaw`
 
-CLI 本体は `mise` で導入します。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
+CLI 本体は可能な範囲で `mise` から導入します。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
 
 ## 構成
 
@@ -47,7 +47,7 @@ zsh dotfiles/.agent/sync.sh
 | `AGENTS.md` | `~/.codex/AGENTS.md` |
 | `AGENTS.md` | `~/.claude/CLAUDE.md` |
 | `AGENTS.md` | `~/.copilot/copilot-instructions.md` |
-| `AGENTS.md` | `~/.gemini/GEMINI.md` |
+| `AGENTS.md` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/rules/AGENTS.md` |
 | `AGENTS.md` | `~/.cursor/AGENT.md` |
 | `AGENTS.md` | `~/.config/opencode/AGENTS.md` |
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
@@ -62,18 +62,20 @@ zsh dotfiles/.agent/sync.sh
 | `apps/cursor/hooks.json` | `~/.cursor/hooks.json` |
 | `apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
 | `apps/devin/config.json` | `~/.config/devin/config.json` |
-| `apps/gemini/settings.json` | `~/.gemini/settings.json` |
-| `apps/gemini/ignore` | `~/.gemini/ignore` |
+| `apps/antigravity-cli/settings.json` | `~/.gemini/antigravity-cli/settings.json` |
+| `apps/antigravity-cli/plugins/dotfiles-agent/plugin.json` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json` |
+| `apps/antigravity-cli/plugins/dotfiles-agent/mcp_config.json` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json` |
+| `apps/antigravity-cli/plugins/dotfiles-agent/hooks.json` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json` |
 | `apps/hermes-agent/config.yaml` | `~/.hermes/config.yaml` |
 | `apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 
-`skills/` は各対応 agent の home に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
+`skills/` は各対応 agent の home に symlink します。Antigravity CLI では `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills` に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/antigravity-cli/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
 
 Hermes では `apps/hermes-agent/agent-hooks/` のファイルも `~/.hermes/agent-hooks/` に symlink します。
 
-`agent_context_reminder.sh` は、Claude Code、Codex、Copilot、Cursor、Devin、Gemini CLI、Hermes の session / prompt 系 hook で同じリポジトリ向け reminder を注入します。opencode は Claude 型の prompt hook ではなく plugin event 方式のため、plugin 経由で compaction context に同じ hook 出力を入れます。OpenClaw は bundled internal hook の `bootstrap-extra-files` で、managed workspace の `AGENTS.md` を bootstrap context として読みます。
+`agent_context_reminder.sh` は、Claude Code、Codex、Copilot、Cursor、Devin、Antigravity CLI、Hermes の session / prompt 系 hook で同じリポジトリ向け reminder を注入します。opencode は Claude 型の prompt hook ではなく plugin event 方式のため、plugin 経由で compaction context に同じ hook 出力を入れます。OpenClaw は bundled internal hook の `bootstrap-extra-files` で、managed workspace の `AGENTS.md` を bootstrap context として読みます。
 
 ## Ignore と secrets
 
@@ -82,11 +84,11 @@ project-level の除外は agent の機能に合わせて分けています。
 - Cursor は repo root の `.cursorignore` を使います。実体は `apps/cursor/.cursorignore` です。
 - Copilot は `respectGitignore` により `.gitignore` を使います。
 - Devin は `respect_gitignore` と `apps/devin/config.json` の permission deny を使います。
-- Codex、Claude、Gemini、opencode、Cursor、Devin、Hermes はそれぞれ app config 側で ignore または permission rule を持ちます。OpenClaw は workspace、skills、bootstrap hook、`mcp.servers` を共通設定に寄せています。ファイル単位の secret deny は、既存の共通 shell hook と OpenClaw の hook/policy 面が直接互換ではないため、現時点では移植していません。
+- Codex、Claude、Antigravity CLI、opencode、Cursor、Devin、Hermes はそれぞれ app config 側で ignore または permission rule を持ちます。OpenClaw は workspace、skills、bootstrap hook、`mcp.servers` を共通設定に寄せています。ファイル単位の secret deny は、既存の共通 shell hook と OpenClaw の hook/policy 面が直接互換ではないため、現時点では移植していません。
 
 secret はこのディレクトリには置かず、`~/.config/shell/secrets.env` に置きます。`sync.sh` は現在 `DEVIN_API_KEY` を次のファイルへ書き出します。
 
-- `~/.gemini/.env`
+- `~/.gemini/antigravity-cli/.env`
 - `~/.hermes/.env`
 
 Waza の model suite は `copilot-sdk` executor を使うため、`GITHUB_TOKEN` が必要です。
@@ -121,7 +123,7 @@ model eval task を特定の CLI agent で実行する場合:
 ```bash
 mise run waza-eval-codex -- --allow
 mise run waza-eval-claude -- --allow
-mise run waza-eval-gemini -- --allow
+mise run waza-eval-model -- antigravity --allow
 mise run waza-eval-copilot -- --allow
 mise run waza-eval-devin -- --allow
 mise run waza-eval-cursor -- --allow
@@ -148,11 +150,12 @@ mise run agent-skill-update
 
 ```bash
 python3 scripts/agent_skill_upstreams.py update --dry-run
-python3 scripts/agent_skill_upstreams.py update --review-agent gemini-cli
+python3 scripts/agent_skill_upstreams.py update --review-agent antigravity-cli
+python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`gemini-cli`、`hermes`、`opencode`、`openclaw` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
+review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
 
 手動 review 用に、低レベルコマンドも残しています。
 

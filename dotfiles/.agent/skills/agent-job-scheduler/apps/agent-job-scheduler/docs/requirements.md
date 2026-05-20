@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode、OpenClaw に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI、Hermes Agent、opencode、OpenClaw に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
 
 ## 2. 前提
 
@@ -33,7 +33,7 @@ Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Herm
   - `workdir`
   - `agent`
 - `workdir` は絶対パスで保存すること
-- `agent` は `claude`、`codex`、`copilot`、`cursor`、`devin`、`gemini`、`hermes`、`opencode`、`openclaw` を受け付けること
+- `agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`devin`、`hermes`、`opencode`、`openclaw` を受け付けること
 
 ### 4.2 ジョブ台帳
 
@@ -113,18 +113,16 @@ claude --dangerously-skip-permissions -p "$prompt"
 codex exec --dangerously-bypass-approvals-and-sandbox -C "$workdir" "$prompt"
 ```
 
-#### Gemini CLI
+#### Antigravity CLI
 
-- 非対話モードは `gemini -p`
-- 強い権限モードは `--yolo`
-- headless 実行で trusted directory 判定に止められないように `--skip-trust` を使う
-- 作業ディレクトリ指定フラグは見当たらないため、プロセスの `cwd` を `workdir` にする
-- 必要なら `--include-directories` を追加できる設計にする
+- 非対話寄りの入口は `agy chat --mode agent`
+- `agy` は Homebrew Cask `antigravity` から提供される
+- 作業ディレクトリ指定フラグはないため、プロセスの `cwd` を `workdir` にする
 
 想定実行:
 
 ```bash
-gemini -m gemini-3.1-pro-preview --yolo --skip-trust -p "$prompt"
+agy chat --mode agent "$prompt"
 ```
 
 #### Copilot CLI

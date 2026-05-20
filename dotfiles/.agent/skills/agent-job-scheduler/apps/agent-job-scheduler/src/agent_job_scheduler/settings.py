@@ -13,6 +13,17 @@ from .runtime import RuntimePaths
 DEFAULT_STALE_RUNNING_TIMEOUT_SECONDS = 1800
 DEFAULT_PROMPT_PREVIEW_CHARS = 160
 DEFAULT_RATE_LIMIT_PROFILES = {
+    Agent.ANTIGRAVITY.value: {
+        "markers": [
+            "rate limit",
+            "too many requests",
+            "quota exceeded",
+            "usage limit",
+            "retry after",
+            "resource has been exhausted",
+        ],
+        "default_backoff_seconds": 900,
+    },
     Agent.CLAUDE.value: {
         "markers": [
             "rate limit",
@@ -59,16 +70,6 @@ DEFAULT_RATE_LIMIT_PROFILES = {
             "too many requests",
             "quota exceeded",
             "usage limit",
-            "retry after",
-        ],
-        "default_backoff_seconds": 900,
-    },
-    Agent.GEMINI.value: {
-        "markers": [
-            "rate limit",
-            "too many requests",
-            "quota exceeded",
-            "resource has been exhausted",
             "retry after",
         ],
         "default_backoff_seconds": 900,

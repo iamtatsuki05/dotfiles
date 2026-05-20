@@ -89,9 +89,9 @@ def test_allowlist_can_be_enabled_and_blocks_unknown_workdir(tmp_path: Path) -> 
     scheduler.set_allowlist_enforcement(enabled=True)
 
     with pytest.raises(ValueError, match="workdir is not in allowlist"):
-        scheduler.enqueue(agent=Agent.GEMINI, workdir=blocked, prompt="nope")
+        scheduler.enqueue(agent=Agent.COPILOT, workdir=blocked, prompt="nope")
 
-    job = scheduler.enqueue(agent=Agent.GEMINI, workdir=allowed, prompt="ok")
+    job = scheduler.enqueue(agent=Agent.COPILOT, workdir=allowed, prompt="ok")
     settings = load_settings(build_runtime_paths(runtime_root))
 
     assert job.workdir == str(allowed.resolve())
@@ -135,11 +135,11 @@ def test_list_active_runs_returns_sorted_records(tmp_path: Path) -> None:
         {
             "later": ActiveRun(
                 job_id="later",
-                agent=Agent.GEMINI,
+                agent=Agent.HERMES,
                 pid=222,
                 started_at="2026-04-19T12:01:00+09:00",
                 workdir="/tmp/later",
-                command="gemini -p later",
+                command="hermes -z later",
             ),
             "earlier": ActiveRun(
                 job_id="earlier",
@@ -221,7 +221,8 @@ def test_cancel_running_job_terminates_process_and_marks_cancelled(tmp_path: Pat
             {
                 Agent.CODEX: _sleep_builder(),
                 Agent.CLAUDE: _sleep_builder(),
-                Agent.GEMINI: _sleep_builder(),
+                Agent.ANTIGRAVITY: _sleep_builder(),
+                Agent.HERMES: _sleep_builder(),
             }
         ),
     )

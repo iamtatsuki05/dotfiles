@@ -1,0 +1,5 @@
+{
+  "name": "dotfiles-agent",
+  "version": "0.1.0",
+  "description": "dotfiles-managed shared rules, skills, hooks, and MCP servers for Antigravity CLI"
+}

@@ -56,14 +56,6 @@
         "Authorization": "Bearer ${DEVIN_API_KEY}"
       }
     },
-    "gemini-cli": {
-      "command": "bunx",
-      "args": [
-        "mcp-gemini-cli",
-        "--allow-npx"
-      ],
-      "env": {}
-    },
     "colab-mcp": {
       "command": "uvx",
       "args": [

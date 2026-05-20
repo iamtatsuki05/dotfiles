@@ -18,13 +18,6 @@
       "url": "https://mcp.figma.com/mcp",
       "tools": ["*"]
     },
-    "gemini-cli": {
-      "type": "local",
-      "command": "bunx",
-      "args": ["mcp-gemini-cli", "--allow-npx"],
-      "env": {},
-      "tools": ["*"]
-    },
     "colab-mcp": {
       "type": "local",
       "command": "uvx",

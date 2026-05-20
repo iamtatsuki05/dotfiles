@@ -49,10 +49,10 @@
 
 - `codex` adapter を実装する
 - `claude` adapter を実装する
+- `antigravity` adapter を実装する
 - `copilot` adapter を実装する
 - `cursor` adapter を実装する
 - `devin` adapter を実装する
-- `gemini` adapter を実装する
 - `hermes` adapter を実装する
 - `opencode` adapter を実装する
 - `openclaw` adapter を実装する

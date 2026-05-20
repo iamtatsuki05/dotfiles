@@ -79,7 +79,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/codex" \
     "$repo/dotfiles/.agent/apps/cursor" \
     "$repo/dotfiles/.agent/apps/devin" \
-    "$repo/dotfiles/.agent/apps/gemini" \
+    "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent" \
     "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks" \
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
     "$repo/dotfiles/.agent/apps/openclaw" \
@@ -124,12 +124,20 @@ EOF
   cat > "$repo/dotfiles/.agent/apps/devin/config.json" <<'EOF'
 {"auto_update":false,"include_gitignored_files":false,"respect_gitignore":true,"permissions":{"deny":["Read(**/.env*)","Write(**/.env*)"]},"mcpServers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"],"env":{}}},"hooks":{"SessionStart":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_context_reminder.sh"}]}],"UserPromptSubmit":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_context_reminder.sh"}]}],"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/jupytext_sync.sh"}]}]}}
 EOF
-  cat > "$repo/dotfiles/.agent/apps/gemini/settings.json" <<'EOF'
-{"general":{"sessionRetention":{"enabled":false}},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"~/.gemini/hooks/agent_context_reminder.sh"}]}],"BeforeAgent":[{"hooks":[{"type":"command","command":"~/.gemini/hooks/agent_context_reminder.sh"}]}]}}
+  cat > "$repo/dotfiles/.agent/apps/antigravity-cli/settings.json" <<'EOF'
+{"enableTerminalSandbox":false,"permissions":{"deny":["command(rm -rf)"]}}
 EOF
-  print -r -- 'secrets.env' > "$repo/dotfiles/.agent/apps/gemini/ignore"
+  cat > "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/plugin.json" <<'EOF'
+{"name":"dotfiles-agent","version":"0.1.0","description":"dotfiles-managed Antigravity CLI customization"}
+EOF
+  cat > "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/mcp_config.json" <<'EOF'
+{"mcpServers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"],"env":{}}}}
+EOF
+  cat > "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/hooks.json" <<'EOF'
+{"dotfiles-context-reminder":{"PreInvocation":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/agent_context_reminder.sh"}]},"dotfiles-jupytext-sync":{"PostToolUse":[{"matcher":"write_to_file|replace_file_content|multi_replace_file_content","hooks":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/jupytext_sync.sh"}]}]}}
+EOF
   cat > "$repo/dotfiles/.agent/apps/cursor/mcp.json" <<'EOF'
-{"mcpServers":{"gemini-cli":{"command":"bunx","args":["mcp-gemini-cli","--allow-npx"]}}}
+{"mcpServers":{"codex":{"command":"codex","args":["mcp-server"]}}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/cursor/cli-config.json" <<'EOF'
 {"version":1,"editor":{"vimMode":false},"permissions":{"allow":[],"deny":[]}}
@@ -183,6 +191,15 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
     print -r -- 'export DEVIN_API_KEY=test-key'
     print -r -- 'export OPENCODE_API_KEY=opencode-test-key'
   } > "$xdg_config_home/shell/secrets.env"
+  mkdir -p "$home_dir/.gemini/hooks"
+  ln -s "$repo/dotfiles/.agent/AGENTS.md" "$home_dir/.gemini/GEMINI.md"
+  ln -s "$repo/dotfiles/.agent/skills" "$home_dir/.gemini/skills"
+  ln -s "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh" "$home_dir/.gemini/hooks/agent_context_reminder.sh"
+  mkdir -p "$repo/dotfiles/.agent/apps/gemini"
+  print -r -- '{}' > "$repo/dotfiles/.agent/apps/gemini/settings.json"
+  print -r -- '.env' > "$repo/dotfiles/.agent/apps/gemini/ignore"
+  ln -s "$repo/dotfiles/.agent/apps/gemini/settings.json" "$home_dir/.gemini/settings.json"
+  ln -s "$repo/dotfiles/.agent/apps/gemini/ignore" "$home_dir/.gemini/ignore"
 
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
@@ -221,12 +238,23 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$xdg_config_home/devin/config.json" '"UserPromptSubmit"'
   assert_contains "$xdg_config_home/devin/config.json" 'agent_context_reminder.sh'
   assert_contains "$xdg_config_home/devin/config.json" 'Read(**/.env*)'
-  assert_symlink_target "$home_dir/.gemini/settings.json" "$repo/dotfiles/.agent/apps/gemini/settings.json"
-  assert_symlink_target "$home_dir/.gemini/ignore" "$repo/dotfiles/.agent/apps/gemini/ignore"
-  assert_symlink_target "$home_dir/.gemini/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
-  assert_contains "$home_dir/.gemini/settings.json" '"SessionStart"'
-  assert_contains "$home_dir/.gemini/settings.json" '"BeforeAgent"'
-  assert_contains "$home_dir/.gemini/settings.json" 'agent_context_reminder.sh'
+  assert_not_exists "$home_dir/.gemini/settings.json"
+  assert_not_exists "$home_dir/.gemini/ignore"
+  assert_not_exists "$home_dir/.gemini/GEMINI.md"
+  assert_not_exists "$home_dir/.gemini/skills"
+  assert_not_exists "$home_dir/.gemini/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/settings.json" "$repo/dotfiles/.agent/apps/antigravity-cli/settings.json"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json" "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/plugin.json"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json" "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/mcp_config.json"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json" "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/hooks.json"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/rules/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_contains "$home_dir/.gemini/antigravity-cli/settings.json" '"enableTerminalSandbox"'
+  assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json" '"dotfiles-agent"'
+  assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json" '"mcpServers"'
+  assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json" '"PreInvocation"'
   assert_symlink_target "$home_dir/.cursor/cli-config.json" "$repo/dotfiles/.agent/apps/cursor/cli-config.json"
   assert_symlink_target "$home_dir/.cursor/hooks.json" "$repo/dotfiles/.agent/apps/cursor/hooks.json"
   assert_symlink_target "$home_dir/.cursor/mcp.json" "$repo/dotfiles/.agent/apps/cursor/mcp.json"
@@ -277,8 +305,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_not_contains "$home_dir/.codex/config.toml" 'generate_memories = true'
   assert_not_contains "$home_dir/.codex/config.toml" 'max_rollout_age_days = 90'
   assert_not_contains "$home_dir/.codex/config.toml" 'max_unused_days = 365'
-  assert_file "$home_dir/.gemini/.env"
-  assert_contains "$home_dir/.gemini/.env" 'DEVIN_API_KEY=test-key'
+  assert_not_exists "$home_dir/.gemini/.env"
+  assert_file "$home_dir/.gemini/antigravity-cli/.env"
+  assert_contains "$home_dir/.gemini/antigravity-cli/.env" 'DEVIN_API_KEY=test-key'
   assert_file "$home_dir/.hermes/.env"
   assert_contains "$home_dir/.hermes/.env" 'DEVIN_API_KEY=test-key'
   assert_contains "$home_dir/.hermes/.env" 'OPENCODE_API_KEY=opencode-test-key'

@@ -25,7 +25,7 @@ if isinstance(ti, dict):
         if fp and fp not in paths:
             paths.append(fp)
 
-# Gemini CLI / Codex 形式: tool_use.input / function_call.arguments など
+# Codex / Antigravity 形式: tool_use.input / function_call.arguments など
 for key in ('tool_use', 'function_call', 'tool'):
     tc = d.get(key, {})
     if not isinstance(tc, dict):

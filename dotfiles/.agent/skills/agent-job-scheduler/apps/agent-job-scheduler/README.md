@@ -1,6 +1,6 @@
 # Agent Job Scheduler
 
-Codex、Claude Code、Copilot CLI、Cursor Agent、Devin CLI、Gemini CLI、Hermes Agent、opencode、OpenClaw を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI、Hermes Agent、opencode、OpenClaw を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
 
 現在は、runtime 初期化、CSV 台帳、prompt sidecar、atomic write、`enqueue`、`run-once`、`status`、`show`、`retry`、`cancel`、`requeue`、`active-runs`、allowlist、stale recovery、`launchd` 連携まで入った実用初版です。
 
@@ -60,19 +60,16 @@ claude --dangerously-skip-permissions -p "$prompt"
 codex exec --dangerously-bypass-approvals-and-sandbox -C "$workdir" "$prompt"
 ```
 
-### Gemini CLI
+### Antigravity CLI
 
-- 非対話実行は `gemini -p "$prompt"`
-- 強い権限モードは `--yolo` または `--approval-mode yolo`
-- headless 実行で trusted directory 判定に止められないように `--skip-trust` を使う
-- Claude と同様に、作業ディレクトリを直接指定する `--cd` 相当は見当たらない
-- そのため、スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
-- 必要であれば `--include-directories` を追加で使える
+- 非対話寄りの入口は `agy chat --mode agent "$prompt"`
+- `agy` は Homebrew Cask `antigravity` から提供される
+- 作業ディレクトリ指定フラグはないため、スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
 
 想定コマンド:
 
 ```bash
-gemini -m gemini-3.1-pro-preview --yolo --skip-trust -p "$prompt"
+agy chat --mode agent "$prompt"
 ```
 
 ### Copilot CLI

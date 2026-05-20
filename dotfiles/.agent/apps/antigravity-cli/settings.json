@@ -1,0 +1,11 @@
+{
+  "colorScheme": "solarized dark",
+  "enableTelemetry": false,
+  "permissions": {
+    "deny": [
+      "command(rm -rf)",
+      "command(git push --force)",
+      "command(git push --force-with-lease)"
+    ]
+  }
+}

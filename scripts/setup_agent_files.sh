@@ -80,6 +80,31 @@ link_symlink() {
   ln -s "$src" "$dst"
 }
 
+remove_managed_symlink() {
+  local dst="$1"
+  shift
+
+  if [ ! -L "$dst" ]; then
+    return 0
+  fi
+
+  local target
+  target="$(readlink "$dst")"
+  local target_abs=""
+  if [ -e "$dst" ]; then
+    target_abs="${dst:A}"
+  fi
+  local allowed
+  local allowed_abs
+  for allowed in "$@"; do
+    allowed_abs="${allowed:A}"
+    if [[ "$target" == "$allowed" || "$target" == "$allowed/"* || "$target_abs" == "$allowed_abs" || "$target_abs" == "$allowed_abs/"* ]]; then
+      rm -f "$dst"
+      return 0
+    fi
+  done
+}
+
 ensure_dir() {
   local dir="$1"
   if [ ! -d "$dir" ]; then
@@ -93,6 +118,10 @@ sync_shared_files() {
   ensure_dir ~/.copilot
   ensure_dir "${XDG_CONFIG_HOME:-$HOME/.config}/devin"
   ensure_dir ~/.gemini
+  ensure_dir ~/.gemini/antigravity-cli
+  ensure_dir ~/.gemini/antigravity-cli/hooks
+  ensure_dir ~/.gemini/antigravity-cli/plugins/dotfiles-agent
+  ensure_dir ~/.gemini/antigravity-cli/plugins/dotfiles-agent/rules
   ensure_dir ~/.cursor
   ensure_dir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   ensure_dir ~/.hermes
@@ -102,7 +131,7 @@ sync_shared_files() {
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.codex/AGENTS.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.claude/CLAUDE.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.copilot/copilot-instructions.md
-  link_symlink "$AGENT_DIR/AGENTS.md" ~/.gemini/GEMINI.md
+  link_symlink "$AGENT_DIR/AGENTS.md" ~/.gemini/antigravity-cli/plugins/dotfiles-agent/rules/AGENTS.md
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.cursor/AGENT.md
   link_symlink "$AGENT_DIR/AGENTS.md" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/AGENTS.md"
   link_symlink "$AGENT_DIR/AGENTS.md" ~/.hermes/AGENTS.md
@@ -112,7 +141,7 @@ sync_shared_files() {
   link_symlink "$AGENT_DIR/skills" ~/.claude/skills
   link_symlink "$AGENT_DIR/skills" ~/.copilot/skills
   link_symlink "$AGENT_DIR/skills" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/skills"
-  link_symlink "$AGENT_DIR/skills" ~/.gemini/skills
+  link_symlink "$AGENT_DIR/skills" ~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills
   link_symlink "$AGENT_DIR/skills" ~/.cursor/skills
   link_symlink "$AGENT_DIR/skills" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills"
   link_symlink "$AGENT_DIR/skills" ~/.hermes/skills
@@ -126,7 +155,7 @@ sync_hooks() {
   local hook_file
   local hook_name
 
-  for hooks_dir in ~/.claude/hooks ~/.gemini/hooks ~/.codex/hooks ~/.copilot/hooks ~/.cursor/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/hooks" ~/.hermes/agent-hooks; do
+  for hooks_dir in ~/.claude/hooks ~/.gemini/antigravity-cli/hooks ~/.codex/hooks ~/.copilot/hooks ~/.cursor/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/hooks" ~/.hermes/agent-hooks; do
     ensure_dir "$hooks_dir"
     for hook_file in "$AGENT_DIR/hooks"/*; do
       [ -f "$hook_file" ] || continue
@@ -153,8 +182,10 @@ sync_tool_configs() {
   link_symlink "$APPS_DIR/codex/config.toml" ~/.codex/config.toml
   link_symlink "$APPS_DIR/codex/hooks.json" ~/.codex/hooks.json
   link_symlink "$APPS_DIR/devin/config.json" "${XDG_CONFIG_HOME:-$HOME/.config}/devin/config.json"
-  link_symlink "$APPS_DIR/gemini/settings.json" ~/.gemini/settings.json
-  link_symlink "$APPS_DIR/gemini/ignore" ~/.gemini/ignore
+  link_symlink "$APPS_DIR/antigravity-cli/settings.json" ~/.gemini/antigravity-cli/settings.json
+  link_symlink "$APPS_DIR/antigravity-cli/plugins/dotfiles-agent/plugin.json" ~/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json
+  link_symlink "$APPS_DIR/antigravity-cli/plugins/dotfiles-agent/mcp_config.json" ~/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json
+  link_symlink "$APPS_DIR/antigravity-cli/plugins/dotfiles-agent/hooks.json" ~/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json
   link_symlink "$APPS_DIR/cursor/cli-config.json" ~/.cursor/cli-config.json
   link_symlink "$APPS_DIR/cursor/hooks.json" ~/.cursor/hooks.json
   link_symlink "$APPS_DIR/cursor/mcp.json" ~/.cursor/mcp.json
@@ -211,9 +242,24 @@ write_env_file_from_secrets() {
 }
 
 sync_agent_env_files() {
-  write_env_file_from_secrets "$HOME/.gemini/.env" DEVIN_API_KEY
+  write_env_file_from_secrets "$HOME/.gemini/antigravity-cli/.env" DEVIN_API_KEY
   write_env_file_from_secrets "$HOME/.hermes/.env" DEVIN_API_KEY OPENCODE_API_KEY OPENCODE_API_KEY:OPENCODE_GO_API_KEY
   write_env_file_from_secrets "$HOME/.openclaw/.env" DEVIN_API_KEY OPENCODE_API_KEY
+}
+
+cleanup_legacy_gemini_cli_files() {
+  remove_managed_symlink "$HOME/.gemini/GEMINI.md" "$AGENT_DIR"
+  remove_managed_symlink "$HOME/.gemini/skills" "$AGENT_DIR"
+  remove_managed_symlink "$HOME/.gemini/settings.json" "$APPS_DIR/gemini"
+  remove_managed_symlink "$HOME/.gemini/ignore" "$APPS_DIR/gemini"
+
+  local hook_file
+  local hook_name
+  for hook_file in "$AGENT_DIR/hooks"/*; do
+    [ -f "$hook_file" ] || continue
+    hook_name="${hook_file:t}"
+    remove_managed_symlink "$HOME/.gemini/hooks/$hook_name" "$AGENT_DIR/hooks"
+  done
 }
 
 sync_hermes_mcp_dependency() {
@@ -263,6 +309,7 @@ main() {
   sync_hooks
   sync_tool_configs
   sync_agent_env_files
+  cleanup_legacy_gemini_cli_files
   sync_hermes_mcp_dependency
 }
 

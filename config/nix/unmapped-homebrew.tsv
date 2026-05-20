@@ -51,7 +51,6 @@ cask	vnc-viewer	no-nixpkg-mapping
 cask	yoink	no-nixpkg-mapping
 brew	claude-code	managed-by-mise:claude-code
 brew	codex	managed-by-mise:codex
-brew	gemini-cli	managed-by-mise:gemini-cli
 vscode	adpyke.codesnap	managed-outside-nix-package-set
 vscode	ahmadawais.shades-of-purple	managed-outside-nix-package-set
 vscode	alefragnani.bookmarks	managed-outside-nix-package-set

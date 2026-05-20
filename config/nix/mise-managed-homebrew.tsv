@@ -1,7 +1,6 @@
 # kind	name	mise tool
 brew	claude-code	claude-code
 brew	codex	codex
-brew	gemini-cli	gemini-cli
 brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	hermes	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	opencode	opencode

@@ -19,6 +19,13 @@ def test_default_registry_supports_all_agents(tmp_path: Path) -> None:
 def test_default_agent_commands_match_cli_contracts(tmp_path: Path) -> None:
     registry = AdapterRegistry()
 
+    assert registry.build(_job(agent=Agent.ANTIGRAVITY, workdir=tmp_path)).argv == (
+        "agy",
+        "chat",
+        "--mode",
+        "agent",
+        "prompt",
+    )
     assert registry.build(_job(agent=Agent.CLAUDE, workdir=tmp_path)).argv == (
         "claude",
         "--dangerously-skip-permissions",
@@ -59,15 +66,6 @@ def test_default_agent_commands_match_cli_contracts(tmp_path: Path) -> None:
         "dangerous",
         "--respect-workspace-trust",
         "true",
-        "-p",
-        "prompt",
-    )
-    assert registry.build(_job(agent=Agent.GEMINI, workdir=tmp_path)).argv == (
-        "gemini",
-        "-m",
-        "gemini-3.1-pro-preview",
-        "--yolo",
-        "--skip-trust",
         "-p",
         "prompt",
     )

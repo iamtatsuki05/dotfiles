@@ -26,10 +26,10 @@ SHA_REPR_LENGTH = 12
 REVIEW_AGENTS = (
     "codex",
     "claude-code",
+    "antigravity-cli",
     "copilot",
     "cursor-agent",
     "devin",
-    "gemini-cli",
     "hermes",
     "opencode",
     "openclaw",
@@ -37,10 +37,10 @@ REVIEW_AGENTS = (
 MISE_TOOLS_BY_REVIEW_AGENT = {
     "codex": "codex",
     "claude-code": "claude-code",
+    "antigravity-cli": "brew-cask:antigravity",
     "copilot": "npm:@github/copilot",
     "cursor-agent": "http:cursor-agent",
     "devin": "http:devin",
-    "gemini-cli": "gemini-cli",
     "hermes": "pipx:git+https://github.com/NousResearch/hermes-agent.git",
     "opencode": "opencode",
     "openclaw": "npm:openclaw",
@@ -227,10 +227,14 @@ def run_direct_or_mise(
     if shutil.which(command[0]) is not None:
         return run_command(command, cwd, env)
 
+    mise_tool = MISE_TOOLS_BY_REVIEW_AGENT[review_agent]
+    if mise_tool.startswith("brew-cask:"):
+        cask = mise_tool.removeprefix("brew-cask:")
+        raise UpstreamError(f"{command[0]} CLI is not on PATH. Install it with: brew install --cask {cask}")
+
     mise = shutil.which("mise")
     if mise is None:
         raise UpstreamError(f"{command[0]} CLI is not on PATH and mise is not available")
-    mise_tool = MISE_TOOLS_BY_REVIEW_AGENT[review_agent]
     mise_env = dict(os.environ)
     if env:
         mise_env.update(env)
@@ -415,8 +419,13 @@ def run_review_agent(
         output = run_direct_or_mise(review_agent, ["codex", "exec", "-C", str(REPO_ROOT), prompt], REPO_ROOT, env)
     elif review_agent == "claude-code":
         output = run_direct_or_mise(review_agent, ["claude", "-p", prompt], REPO_ROOT, env)
-    elif review_agent == "gemini-cli":
-        output = run_direct_or_mise(review_agent, ["gemini", "-p", prompt], REPO_ROOT, env)
+    elif review_agent == "antigravity-cli":
+        output = run_direct_or_mise(
+            review_agent,
+            ["agy", "chat", "--mode", "agent", prompt],
+            REPO_ROOT,
+            env,
+        )
     elif review_agent == "copilot":
         output = run_direct_or_mise(
             review_agent,

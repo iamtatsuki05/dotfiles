@@ -13,11 +13,11 @@ Usage:
   zsh scripts/waza_eval_model.sh --model AGENT [options]
 
 Agents:
-  codex, claude, gemini, copilot, devin, cursor, opencode, hermes, openclaw, all
+  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, all
 
 Aliases:
   claude-code -> claude
-  gemini-cli -> gemini
+  agy, antigravity-cli -> antigravity
   cursor-agent -> cursor
   hermes-agent -> hermes
 
@@ -48,7 +48,7 @@ main() {
       --agent|--model)
         shift
         if ((! $#)); then
-          echo "ERROR: --agent/--model requires an agent such as codex, claude, or gemini" >&2
+          echo "ERROR: --agent/--model requires an agent such as codex, claude, or copilot" >&2
           usage >&2
           return 1
         fi

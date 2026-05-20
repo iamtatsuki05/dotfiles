@@ -13,12 +13,12 @@ Managed agents:
 - `copilot`
 - `cursor-agent`
 - `devin`
-- `gemini-cli`
+- `antigravity-cli`
 - `hermes`
 - `opencode`
 - `openclaw`
 
-The tools themselves are installed by `mise`. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
+The tools themselves are installed by `mise` where available. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
 
 ## Layout
 
@@ -47,7 +47,7 @@ zsh dotfiles/.agent/sync.sh
 | `AGENTS.md` | `~/.codex/AGENTS.md` |
 | `AGENTS.md` | `~/.claude/CLAUDE.md` |
 | `AGENTS.md` | `~/.copilot/copilot-instructions.md` |
-| `AGENTS.md` | `~/.gemini/GEMINI.md` |
+| `AGENTS.md` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/rules/AGENTS.md` |
 | `AGENTS.md` | `~/.cursor/AGENT.md` |
 | `AGENTS.md` | `~/.config/opencode/AGENTS.md` |
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
@@ -62,18 +62,20 @@ zsh dotfiles/.agent/sync.sh
 | `apps/cursor/hooks.json` | `~/.cursor/hooks.json` |
 | `apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
 | `apps/devin/config.json` | `~/.config/devin/config.json` |
-| `apps/gemini/settings.json` | `~/.gemini/settings.json` |
-| `apps/gemini/ignore` | `~/.gemini/ignore` |
+| `apps/antigravity-cli/settings.json` | `~/.gemini/antigravity-cli/settings.json` |
+| `apps/antigravity-cli/plugins/dotfiles-agent/plugin.json` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json` |
+| `apps/antigravity-cli/plugins/dotfiles-agent/mcp_config.json` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json` |
+| `apps/antigravity-cli/plugins/dotfiles-agent/hooks.json` | `~/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json` |
 | `apps/hermes-agent/config.yaml` | `~/.hermes/config.yaml` |
 | `apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 
-`skills/` is linked to each supported agent home. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
+`skills/` is linked to each supported agent home. For Antigravity CLI, it is linked into `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills`. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/antigravity-cli/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
 
 Hermes also links files from `apps/hermes-agent/agent-hooks/` into `~/.hermes/agent-hooks/`.
 
-`agent_context_reminder.sh` injects the same repository reminder into supported session or prompt hook phases for Claude Code, Codex, Copilot, Cursor, Devin, Gemini CLI, and Hermes. opencode loads the shared hook through a plugin for compaction context, because it exposes plugin events rather than Claude-style prompt hooks. OpenClaw enables its bundled `bootstrap-extra-files` internal hook to load the shared `AGENTS.md` from the managed workspace.
+`agent_context_reminder.sh` injects the same repository reminder into supported session or prompt hook phases for Claude Code, Codex, Copilot, Cursor, Devin, Antigravity CLI, and Hermes. opencode loads the shared hook through a plugin for compaction context, because it exposes plugin events rather than Claude-style prompt hooks. OpenClaw enables its bundled `bootstrap-extra-files` internal hook to load the shared `AGENTS.md` from the managed workspace.
 
 ## Ignore And Secrets
 
@@ -82,11 +84,11 @@ Project-level exclusions are split by agent capability:
 - Cursor uses the repository root `.cursorignore`, which points to `apps/cursor/.cursorignore`.
 - Copilot uses `.gitignore` through `respectGitignore`.
 - Devin uses `respect_gitignore` plus explicit permission denies in `apps/devin/config.json`.
-- Codex, Claude, Gemini, opencode, Cursor, Devin, and Hermes have their own ignore or permission rules in their app configs. OpenClaw is currently managed for workspace, skills, bootstrap hooks, and `mcp.servers`; file-level secret deny rules are not mirrored yet because its hook/policy surface is not directly compatible with the existing shared shell hook.
+- Codex, Claude, Antigravity CLI, opencode, Cursor, Devin, and Hermes have their own ignore or permission rules in their app configs. OpenClaw is currently managed for workspace, skills, bootstrap hooks, and `mcp.servers`; file-level secret deny rules are not mirrored yet because its hook/policy surface is not directly compatible with the existing shared shell hook.
 
 Secrets belong in `~/.config/shell/secrets.env`, not in this directory. `sync.sh` currently writes `DEVIN_API_KEY` into:
 
-- `~/.gemini/.env`
+- `~/.gemini/antigravity-cli/.env`
 - `~/.hermes/.env`
 
 Waza model suites use the `copilot-sdk` executor, which requires `GITHUB_TOKEN`.
@@ -121,7 +123,7 @@ To run model eval tasks through one CLI agent:
 ```bash
 mise run waza-eval-codex -- --allow
 mise run waza-eval-claude -- --allow
-mise run waza-eval-gemini -- --allow
+mise run waza-eval-model -- antigravity --allow
 mise run waza-eval-copilot -- --allow
 mise run waza-eval-devin -- --allow
 mise run waza-eval-cursor -- --allow
@@ -148,11 +150,12 @@ mise run agent-skill-update
 
 ```bash
 python3 scripts/agent_skill_upstreams.py update --dry-run
-python3 scripts/agent_skill_upstreams.py update --review-agent gemini-cli
+python3 scripts/agent_skill_upstreams.py update --review-agent antigravity-cli
+python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, `opencode`, and `openclaw`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, and `openclaw`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
 
 For manual review workflows, lower-level commands are still available:
 

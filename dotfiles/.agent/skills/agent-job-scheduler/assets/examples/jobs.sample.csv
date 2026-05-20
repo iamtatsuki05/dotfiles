@@ -1,7 +1,7 @@
 job_id,created_at,scheduled_at,status,agent,workdir,prompt,prompt_path,conversation_hash,last_response,started_at,finished_at,run_count,next_retry_at,last_error,result_path,transcript_path
 example-codex,2026-04-19T10:00:00+09:00,2026-04-19T10:05:00+09:00,queued,codex,/abs/path/to/project,Investigate the failing test and implement a fix.,,,"",,,0,,,,
 example-claude,2026-04-19T10:01:00+09:00,2026-04-19T10:06:00+09:00,queued,claude,/abs/path/to/project,Review the recent code changes and summarize the main risks.,,,"",,,0,,,,
-example-gemini,2026-04-19T10:02:00+09:00,2026-04-19T10:07:00+09:00,queued,gemini,/abs/path/to/project,Analyze the current implementation and propose the smallest safe refactor.,,,"",,,0,,,,
+example-antigravity,2026-04-19T10:02:00+09:00,2026-04-19T10:07:00+09:00,queued,antigravity,/abs/path/to/project,Analyze the current implementation and propose the smallest safe refactor.,,,"",,,0,,,,
 example-copilot,2026-04-19T10:03:00+09:00,2026-04-19T10:08:00+09:00,queued,copilot,/abs/path/to/project,Inspect the CLI behavior and report actionable gaps.,,,"",,,0,,,,
 example-devin,2026-04-19T10:04:00+09:00,2026-04-19T10:09:00+09:00,queued,devin,/abs/path/to/project,Implement the requested configuration update and summarize the diff.,,,"",,,0,,,,
 example-cursor,2026-04-19T10:05:00+09:00,2026-04-19T10:10:00+09:00,queued,cursor,/abs/path/to/project,Find the smallest safe fix for the failing workflow.,,,"",,,0,,,,

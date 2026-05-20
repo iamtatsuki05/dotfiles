@@ -8,12 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Agent(StrEnum):
+    ANTIGRAVITY = "antigravity"
     CLAUDE = "claude"
     CODEX = "codex"
     COPILOT = "copilot"
     CURSOR = "cursor"
     DEVIN = "devin"
-    GEMINI = "gemini"
     HERMES = "hermes"
     OPENCODE = "opencode"
     OPENCLAW = "openclaw"

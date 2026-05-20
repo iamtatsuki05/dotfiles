@@ -11,7 +11,7 @@
 | `copilot` | `copilot` / `npm:@github/copilot` | GitHub Copilot CLI |
 | `cursor` | `cursor-agent` / `http:cursor-agent` | Cursor Agent |
 | `devin` | `devin` / `http:devin` | Devin CLI |
-| `gemini` | `gemini` / `gemini-cli` | Gemini CLI |
+| `antigravity` | `agy` / `brew cask: antigravity` | Antigravity CLI |
 | `hermes` | `hermes` / `pipx:git+https://github.com/NousResearch/hermes-agent.git` | Hermes Agent |
 | `opencode` | `opencode` / `opencode` | opencode |
 | `openclaw` | `openclaw` / `npm:openclaw` | OpenClaw |
@@ -20,9 +20,9 @@
 
 | Code / tool | Supported agents | Notes |
 |---|---|---|
-| `scripts/agent_skill_upstreams.py` | `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `gemini-cli`, `hermes`, `opencode`, `openclaw` | `--review-agent` で upstream skill 更新前の security review を実行する。 |
-| `scripts/waza_eval_cli_agent.sh` | `codex`, `claude`, `gemini`, `copilot`, `devin`, `cursor`, `opencode`, `hermes`, `openclaw`, `all` | Waza model suite を CLI agent で実行する。`all` は全 canonical agent を対象にする。 |
-| `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler` | `claude`, `codex`, `copilot`, `cursor`, `devin`, `gemini`, `hermes`, `opencode`, `openclaw` | CSV 台帳ベースの非対話ジョブスケジューラ。 |
+| `scripts/agent_skill_upstreams.py` | `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw` | `--review-agent` で upstream skill 更新前の security review を実行する。 |
+| `scripts/waza_eval_cli_agent.sh` | `codex`, `claude`, `antigravity`, `copilot`, `devin`, `cursor`, `opencode`, `hermes`, `openclaw`, `all` | Waza model suite を CLI agent で実行する。`all` は全 canonical agent を対象にする。 |
+| `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler` | `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `devin`, `hermes`, `opencode`, `openclaw` | CSV 台帳ベースの非対話ジョブスケジューラ。 |
 
 ## Checklist For Adding An Agent
 

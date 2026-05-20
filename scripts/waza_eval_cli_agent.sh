@@ -12,11 +12,11 @@ Usage:
   zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
 
 Agents:
-  codex, claude, gemini, copilot, devin, cursor, opencode, hermes, openclaw, all
+  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, all
 
 Aliases:
   claude-code -> claude
-  gemini-cli -> gemini
+  agy, antigravity-cli -> antigravity
   cursor-agent -> cursor
   hermes-agent -> hermes
 
@@ -39,7 +39,7 @@ canonical_agent() {
   case "$agent" in
     codex) print -- codex ;;
     claude|claude-code) print -- claude ;;
-    gemini|gemini-cli) print -- gemini ;;
+    agy|antigravity|antigravity-cli) print -- antigravity ;;
     copilot) print -- copilot ;;
     devin) print -- devin ;;
     cursor|cursor-agent) print -- cursor ;;
@@ -54,7 +54,7 @@ canonical_agent() {
 agents_for() {
   local agent="$1"
   if [[ "$agent" == "all" ]]; then
-    print -l codex claude gemini copilot devin cursor opencode hermes openclaw
+    print -l codex claude antigravity copilot devin cursor opencode hermes openclaw
   else
     print -- "$agent"
   fi
@@ -245,6 +245,19 @@ run_direct_or_mise() {
   MISE_CONFIG_FILE="${MISE_CONFIG_FILE:-$REPO_ROOT/config/mise/config.toml}" mise exec "$mise_tool" -- "$bin" "$@"
 }
 
+run_direct_or_homebrew_cask() {
+  local cask="$1"
+  local bin="$2"
+  shift 2
+
+  if command -v "$bin" >/dev/null 2>&1; then
+    "$bin" "$@"
+    return
+  fi
+
+  fail "$bin CLI is not on PATH. Install it with: brew install --cask $cask"
+}
+
 run_cli_agent() {
   local agent="$1"
   local workspace="$2"
@@ -261,8 +274,8 @@ run_cli_agent() {
     claude)
       (cd "$workspace" && run_direct_or_mise claude-code claude -p "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
-    gemini)
-      (cd "$workspace" && run_direct_or_mise gemini-cli gemini -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+    antigravity)
+      (cd "$workspace" && run_direct_or_homebrew_cask antigravity agy chat --mode agent "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     copilot)
       run_direct_or_mise "npm:@github/copilot" copilot \

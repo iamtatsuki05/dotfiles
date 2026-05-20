@@ -1,0 +1,23 @@
+{
+  "dotfiles-context-reminder": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "~/.gemini/antigravity-cli/hooks/agent_context_reminder.sh"
+      }
+    ]
+  },
+  "dotfiles-jupytext-sync": {
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.gemini/antigravity-cli/hooks/jupytext_sync.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

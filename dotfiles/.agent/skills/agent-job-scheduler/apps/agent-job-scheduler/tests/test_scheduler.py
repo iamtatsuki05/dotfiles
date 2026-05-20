@@ -77,7 +77,8 @@ def test_run_once_executes_oldest_due_job_per_agent(tmp_path: Path) -> None:
             {
                 Agent.CODEX: _builder("codex ok"),
                 Agent.CLAUDE: _builder("claude ok"),
-                Agent.GEMINI: _builder("gemini ok"),
+                Agent.ANTIGRAVITY: _builder("antigravity ok"),
+                Agent.HERMES: _builder("hermes ok"),
             }
         ),
     )
@@ -104,10 +105,10 @@ def test_run_once_marks_rate_limited_job_and_agent_state(tmp_path: Path) -> None
     ledger.write_jobs(
         [
             _job(
-                job_id="gemini-rate-limit",
+                job_id="hermes-rate-limit",
                 created_at="2026-04-19T09:00:00+09:00",
                 scheduled_at="2026-04-19T09:05:00+09:00",
-                agent=Agent.GEMINI,
+                agent=Agent.HERMES,
                 workdir=workdir,
                 prompt="rate limit test",
             )
@@ -120,7 +121,8 @@ def test_run_once_marks_rate_limited_job_and_agent_state(tmp_path: Path) -> None
             {
                 Agent.CODEX: _builder("codex ok"),
                 Agent.CLAUDE: _builder("claude ok"),
-                Agent.GEMINI: _failing_builder("rate limit hit, retry after 2 minutes"),
+                Agent.ANTIGRAVITY: _builder("antigravity ok"),
+                Agent.HERMES: _failing_builder("rate limit hit, retry after 2 minutes"),
             }
         ),
     )
@@ -128,7 +130,7 @@ def test_run_once_marks_rate_limited_job_and_agent_state(tmp_path: Path) -> None
     outcomes = scheduler.run_once(now=parse_timestamp("2026-04-19T12:00:00+09:00"))
     job = ledger.list_jobs()[0]
     states = ledger.load_agent_states()
-    state = states[Agent.GEMINI]
+    state = states[Agent.HERMES]
 
     assert outcomes[0].status == JobStatus.RETRY_WAITING
     assert job.status == JobStatus.RETRY_WAITING
@@ -201,7 +203,8 @@ def test_run_once_masks_secret_like_output(tmp_path: Path) -> None:
             {
                 Agent.CODEX: _builder("OPENAI_API_KEY=sk-secret-value"),
                 Agent.CLAUDE: _builder("claude ok"),
-                Agent.GEMINI: _builder("gemini ok"),
+                Agent.ANTIGRAVITY: _builder("antigravity ok"),
+                Agent.HERMES: _builder("hermes ok"),
             }
         ),
     )
