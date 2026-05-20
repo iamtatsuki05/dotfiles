@@ -209,13 +209,50 @@ mise_command() {
   return 1
 }
 
+prepend_mise_tool_dir() {
+  local mise_bin="$1"
+  local executable_name="$2"
+  local resolved_path
+
+  resolved_path="$("$mise_bin" which "$executable_name" 2>/dev/null || true)"
+  if [[ -n "$resolved_path" && -x "$resolved_path" ]]; then
+    export PATH="${resolved_path:h}:$PATH"
+    REPLY="$resolved_path"
+    return 0
+  fi
+
+  REPLY=""
+  return 1
+}
+
+install_mise_bootstrap_tools() {
+  local mise_bin="$1"
+  local python_path
+
+  log_step "Installing mise bootstrap tools"
+  "$mise_bin" install python uv
+
+  prepend_mise_tool_dir "$mise_bin" python3 || true
+  python_path="$REPLY"
+  prepend_mise_tool_dir "$mise_bin" uv || true
+  if [[ -n "$python_path" ]]; then
+    export CLOUDSDK_PYTHON="$python_path"
+  fi
+
+  log_success "mise bootstrap tools installed"
+}
+
 install_mise_tools() {
+  local mise_bin
+
   log_step "Installing tools managed by mise"
+  mise_bin="$(mise_command)"
+  install_mise_bootstrap_tools "$mise_bin"
   CPPFLAGS="${CPPFLAGS:-}" \
     LDFLAGS="${LDFLAGS:-}" \
     LIBS="${LIBS:-}" \
     PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
-    "$(mise_command)" install
+    "$mise_bin" install
   log_success "mise tools installed"
 }
 

@@ -1675,6 +1675,9 @@ EOF
   assert_contains "$log_file" 'nix_install:--profile cli'
   assert_contains "$log_file" 'chezmoi_apply:--profile cli --mark-default'
   assert_contains "$log_file" 'setup_git_hooks:--profile cli'
+  assert_contains "$log_file" 'mise:install python uv'
+  assert_contains "$log_file" 'mise:which python3'
+  assert_contains "$log_file" 'mise:which uv'
   assert_contains "$log_file" 'mise:install'
   assert_not_contains "$log_file" 'curl:'
 
