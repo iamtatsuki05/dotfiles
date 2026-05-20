@@ -62,6 +62,143 @@ if [ "$(uname -s)" = "Darwin" ]; then
   alias arm="env /usr/bin/arch -arm64 $dotfiles_shell_bin -l"
 fi
 
+dotfiles_is_in_git_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+dotfiles_fzf_down() {
+  if command -v fzf-down >/dev/null 2>&1; then
+    fzf-down "$@"
+  else
+    fzf "$@"
+  fi
+}
+
+gt() {
+  dotfiles_is_in_git_repo || return
+  git tag --sort -version:refname |
+    dotfiles_fzf_down --multi --preview-window right:70% \
+      --preview 'git show --color=always {} | head -200'
+}
+
+gr() {
+  dotfiles_is_in_git_repo || return
+  git remote -v | awk '{print $1 "\t" $2}' | uniq |
+    dotfiles_fzf_down --tac \
+      --preview 'git log --oneline --graph --date=short --pretty="format:%C(auto)%cd %h%d %s" {1} | head -200' |
+    cut -d'	' -f1
+}
+
+gs() {
+  dotfiles_is_in_git_repo || return
+  git stash list |
+    dotfiles_fzf_down --reverse -d: --preview 'git show --color=always {1}' |
+    cut -d: -f1
+}
+
+if [ "$dotfiles_shell_name" = "zsh" ]; then
+  _ssh() {
+    compadd $(fgrep 'Host ' ~/.ssh/config 2>/dev/null | awk '{print $2}' | sort)
+  }
+fi
+
+fgcp() {
+  local configuration
+
+  configuration="$(
+    gcloud config configurations list |
+      awk '{ print $1,$3,$4 }' |
+      column -t |
+      fzf --header-lines=1 |
+      awk '{ print $1 }'
+  )"
+
+  if [ -n "$configuration" ]; then
+    gcloud config configurations activate "$configuration"
+  fi
+}
+
+fgcc() {
+  local host
+
+  for host in $(
+    gcloud compute instances list |
+      fzf --header-lines=1 |
+      awk '{ print $1"@"$2 }'
+  ); do
+    gcloud compute ssh \
+      --zone "${host##*@}" "${host%%@*}" \
+      --tunnel-through-iap \
+      --ssh-flag="-A"
+  done
+}
+
+fgcc_rinit() {
+  local host
+
+  for host in $(
+    gcloud compute instances list |
+      fzf --header-lines=1 |
+      awk '{ print $1"@"$2 }'
+  ); do
+    gcloud compute ssh \
+      --zone "${host##*@}" "${host%%@*}" \
+      --tunnel-through-iap \
+      --dry-run
+  done
+}
+
+fgcc_p() {
+  local port="${1:-}"
+  local host
+
+  if [ -z "$port" ]; then
+    echo "usage: fgcc_p <local-port>" >&2
+    return 2
+  fi
+
+  for host in $(
+    gcloud compute instances list |
+      fzf --header-lines=1 |
+      awk '{ print $1"@"$2 }'
+  ); do
+    gcloud compute ssh \
+      --zone "${host##*@}" "${host%%@*}" \
+      --tunnel-through-iap \
+      --ssh-flag="-A" \
+      --ssh-flag="-L ${port}:localhost:${port}"
+  done
+}
+
+gstop_instance() {
+  gcloud compute instances stop "$@"
+}
+
+gstart_instance() {
+  gcloud compute instances start "$@"
+}
+
+gdelete_instance() {
+  gcloud compute instances delete "$@"
+}
+
+fgrs() {
+  local host
+
+  for host in $(
+    gcloud compute instances list |
+      fzf --header-lines=1 |
+      awk '{ print $1"@"$2 }'
+  ); do
+    gstop_instance --zone "${host##*@}" "${host%%@*}"
+    gstart_instance --zone "${host##*@}" "${host%%@*}"
+  done
+}
+
+alias ginit='gcloud init'
+alias gauth='gcloud auth login'
+alias gls='gcloud compute instances list'
+
 if command -v mise >/dev/null 2>&1; then
   if [ "$dotfiles_shell_name" = "bash" ]; then
     eval "$(command mise activate "$dotfiles_shell_name")"
