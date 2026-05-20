@@ -49,6 +49,13 @@ in
     wvous-tr-corner = 2;
   };
 
+  system.defaults.CustomUserPreferences."com.apple.dock" = {
+    "wvous-bl-modifier" = 0;
+    "wvous-br-modifier" = 0;
+    "wvous-tl-modifier" = 0;
+    "wvous-tr-modifier" = 0;
+  };
+
   system.defaults.finder = {
     FXPreferredViewStyle = "Nlsv";
     FXRemoveOldTrashItems = true;
