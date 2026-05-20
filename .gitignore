@@ -31,6 +31,10 @@ dotfiles/.agent/*
 dotfiles/.agent/hooks/*
 !dotfiles/.agent/hooks/jupytext_sync.sh
 !dotfiles/.agent/hooks/agent_context_reminder.sh
+!dotfiles/.agent/skills/
+dotfiles/.agent/skills/*
+!dotfiles/.agent/skills/kimi-webbridge/
+!dotfiles/.agent/skills/kimi-webbridge/**
 !dotfiles/.agent/pets/
 dotfiles/.agent/pets/*
 !dotfiles/.agent/pets/*/
