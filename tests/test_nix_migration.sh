@@ -734,7 +734,7 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_MODULE" './session.nix'
 
   assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'home.packages'
-  assert_contains "$HOME_MANAGER_PACKAGES_MODULE" '!pkgs.stdenv.hostPlatform.isDarwin'
+  assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'lib.optionals config.dotfiles.enableGuiApps guiPackages'
   assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'homeManagerProvidedPackageNames'
   assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'lib.getName pkg'
 
@@ -770,10 +770,9 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
 
   assert_contains "$DARWIN_BASE_MODULE" 'system.stateVersion'
   assert_contains "$DARWIN_BASE_MODULE" 'nix.enable = false'
-  assert_contains "$DARWIN_BASE_MODULE" 'enableGuiApps'
-  assert_contains "$DARWIN_BASE_MODULE" 'import ../gui-packages.nix'
-  assert_contains "$DARWIN_BASE_MODULE" 'enableGuiApps && !pkgs.stdenv.hostPlatform.isDarwin'
   assert_contains "$DARWIN_BASE_MODULE" 'users.users.${username}.home'
+  assert_not_contains "$DARWIN_BASE_MODULE" 'import ../gui-packages.nix'
+  assert_not_contains "$DARWIN_BASE_MODULE" 'enableGuiApps && !pkgs.stdenv.hostPlatform.isDarwin'
   assert_not_contains "$DARWIN_BASE_MODULE" 'nix.settings'
   assert_not_contains "$DARWIN_BASE_MODULE" 'nix.optimise'
 
@@ -1582,6 +1581,89 @@ EOF
   nix_line="$(grep -n 'nix_install:--profile full' "$log_file" | cut -d: -f1)"
   [[ -n "$install_line" && -n "$nix_line" && "$install_line" -lt "$nix_line" ]] || \
     fail "expected Homebrew install step to run before nix_install"
+
+  rm -rf "$repo"
+}
+
+test_main_script_can_skip_mas_apps_for_full_profile() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local home_dir
+  local bin_dir
+  local log_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  log_file="$repo/main.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
+  cp "$MAIN_SCRIPT" "$repo/main.sh"
+  copy_script_libs "$repo"
+
+  cat > "$repo/scripts/install_homebrew.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_homebrew:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/nix_install.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix_install:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/chezmoi_apply.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "chezmoi_apply:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_git_hooks.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "setup_git_hooks:\$*" >> "$log_file"
+EOF
+  cat > "$repo/scripts/setup_agent_files.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sync_agent" >> "$log_file"
+EOF
+  cat > "$repo/scripts/install_mas_apps.sh" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "install_mas_apps:\${*}:skip=\${DOTFILES_SKIP_MAS_APPS:-0}" >> "$log_file"
+EOF
+  cat > "$bin_dir/mise" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:\$*" >> "$log_file"
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+EOF
+
+  chmod +x \
+    "$repo/scripts/install_homebrew.sh" \
+    "$repo/scripts/nix_install.sh" \
+    "$repo/scripts/chezmoi_apply.sh" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/install_mas_apps.sh" \
+    "$repo/scripts/setup_git_hooks.sh" \
+    "$bin_dir/nix" \
+    "$bin_dir/mise"
+
+  HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SKIP_SUDO_KEEPALIVE=1 \
+    DOTFILES_SKIP_ROSETTA_INSTALL=1 \
+    "$TEST_ZSH_BIN" "$repo/main.sh" --full --skip-mas-apps > "$repo/output.log"
+
+  assert_output_contains "$repo/output.log" "Profile: full"
+  assert_output_contains "$repo/output.log" "Setup completed successfully!"
+  assert_contains "$log_file" 'nix_install:--profile full'
+  assert_contains "$log_file" 'install_mas_apps:--profile full:skip=1'
 
   rm -rf "$repo"
 }
@@ -2748,6 +2830,7 @@ main() {
   test_install_homebrew_script_supports_required_profiles
   test_main_mise_shell_and_hooks_use_nix_as_the_setup_path
   test_main_script_runs_homebrew_before_nix_setup
+  test_main_script_can_skip_mas_apps_for_full_profile
   test_main_script_uses_cli_profile_when_requested
   test_main_script_bootstraps_nix_on_macos_when_missing
   test_main_script_keeps_sudo_authentication_alive_on_macos

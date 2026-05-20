@@ -14,7 +14,5 @@ in
 {
   home.packages =
     unmanagedCliPackages
-    ++ lib.optionals
-      (config.dotfiles.enableGuiApps && !pkgs.stdenv.hostPlatform.isDarwin)
-      guiPackages;
+    ++ lib.optionals config.dotfiles.enableGuiApps guiPackages;
 }

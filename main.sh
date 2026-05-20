@@ -13,6 +13,7 @@ readonly LIB_DIR="$SCRIPTS_DIR/lib"
 readonly NIX_INSTALL_URL="https://nixos.org/nix/install"
 readonly NIX_INSTALL_SHELL="${DOTFILES_NIX_INSTALL_SHELL:-/bin/sh}"
 SUDO_KEEPALIVE_PID=""
+SKIP_MAS_APPS=0
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
@@ -34,6 +35,47 @@ log_error() {
 
 log_skip() {
   echo "- Skipped: $*"
+}
+
+usage() {
+  dotfiles_print_profile_usage "main.sh"
+  cat <<'EOF'
+
+Options:
+  --skip-mas-apps  Skip Mac App Store apps while keeping the selected profile.
+EOF
+}
+
+parse_main_args() {
+  local profile_args=()
+
+  SKIP_MAS_APPS=0
+  while (($#)); do
+    case "$1" in
+      --skip-mas-apps)
+        SKIP_MAS_APPS=1
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --profile)
+        profile_args+=("$1")
+        shift
+        if ((! $#)); then
+          echo "ERROR: --profile requires a value" >&2
+          return 1
+        fi
+        profile_args+=("$1")
+        ;;
+      *)
+        profile_args+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  dotfiles_parse_profile_args "main.sh" "${profile_args[@]}"
 }
 
 # -----------------------------------------------------------------------------
@@ -266,7 +308,11 @@ install_mas_apps_best_effort() {
   local profile="$1"
 
   log_step "Installing Mac App Store apps best-effort"
-  zsh "$SCRIPTS_DIR/install_mas_apps.sh" --profile "$profile"
+  if (( SKIP_MAS_APPS )); then
+    DOTFILES_SKIP_MAS_APPS=1 zsh "$SCRIPTS_DIR/install_mas_apps.sh" --profile "$profile"
+  else
+    zsh "$SCRIPTS_DIR/install_mas_apps.sh" --profile "$profile"
+  fi
   log_success "Mac App Store app step complete"
 }
 
@@ -282,7 +328,7 @@ apply_chezmoi() {
 # Main execution
 # -----------------------------------------------------------------------------
 main() {
-  dotfiles_parse_profile_args "main.sh" "$@"
+  parse_main_args "$@"
   local profile="$DOTFILES_PROFILE"
 
   echo "Starting dotfiles setup..."

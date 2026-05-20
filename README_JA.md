@@ -183,6 +183,12 @@ Mac App Store app は nix-darwin の `homebrew.masApps` には渡しません。
 }
 ```
 
+macOS GUI package は入れつつ Mac App Store app だけを skip したい場合は、次を使います。
+
+```sh
+zsh main.sh --full --skip-mas-apps
+```
+
 Mac App Store にサインインしている必要があります。また Homebrew Bundle の制限により、`mas-apps.nix` から削除しても app は自動 uninstall されません。
 
 ```sh

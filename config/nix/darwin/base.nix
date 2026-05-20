@@ -7,9 +7,6 @@
   ...
 }:
 
-let
-  guiPackages = import ../gui-packages.nix { inherit pkgs; };
-in
 {
   nixpkgs.config.allowUnfree = true;
 
@@ -26,8 +23,7 @@ in
       curl
       git
       zsh
-    ])
-    ++ lib.optionals (enableGuiApps && !pkgs.stdenv.hostPlatform.isDarwin) guiPackages;
+    ]);
 
   users.users.${username}.home = homeDirectory;
 

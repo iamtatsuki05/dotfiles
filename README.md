@@ -185,6 +185,12 @@ Mac App Store apps are not passed to nix-darwin's `homebrew.masApps` because `br
 }
 ```
 
+To run the full macOS setup, including GUI packages, while skipping only Mac App Store apps:
+
+```sh
+zsh main.sh --full --skip-mas-apps
+```
+
 You must be signed in to the Mac App Store. Removing an app from `mas-apps.nix` does not automatically uninstall it because Homebrew Bundle does not support MAS cleanup.
 
 ```sh
