@@ -12,5 +12,4 @@
   "orbstack"
   "raycast"
   "rectangle-pro"
-  "xquartz"
 ]
