@@ -60,27 +60,44 @@ in
     location = screenshotsDirectory;
   };
 
+  system.defaults.spaces = {
+    spans-displays = false;
+  };
+
   system.defaults.trackpad = {
+    ActuateDetents = true;
     Clicking = true;
+    DragLock = false;
+    Dragging = false;
     FirstClickThreshold = 2;
+    ForceSuppressed = false;
     SecondClickThreshold = 2;
+    TrackpadCornerSecondaryClick = 0;
     TrackpadFourFingerHorizSwipeGesture = 2;
     TrackpadFourFingerPinchGesture = 2;
+    TrackpadFourFingerVertSwipeGesture = 2;
+    TrackpadMomentumScroll = true;
     TrackpadPinch = true;
     TrackpadRightClick = true;
     TrackpadRotate = true;
+    TrackpadThreeFingerDrag = false;
+    TrackpadThreeFingerHorizSwipeGesture = 2;
     TrackpadThreeFingerTapGesture = 0;
+    TrackpadThreeFingerVertSwipeGesture = 2;
     TrackpadTwoFingerDoubleTapGesture = true;
     TrackpadTwoFingerFromRightEdgeSwipeGesture = 3;
   };
 
   system.defaults.WindowManager = {
     AppWindowGroupingBehavior = true;
+    AutoHide = false;
     EnableTiledWindowMargins = false;
     EnableTilingByEdgeDrag = false;
     EnableTopTilingByEdgeDrag = false;
+    GloballyEnabled = false;
     HideDesktop = true;
     StandardHideWidgets = true;
+    StageManagerHideWidgets = false;
   };
 
   system.defaults.CustomUserPreferences.NSGlobalDomain = {
