@@ -14,6 +14,8 @@ in
     touchIdAuth = true;
   };
 
+  system.startup.chime = false;
+
   system.activationScripts.postActivation.text = lib.mkAfter ''
     sudo --user=${username} -- mkdir -p ${lib.escapeShellArg screenshotsDirectory}
   '';
