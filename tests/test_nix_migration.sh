@@ -928,6 +928,8 @@ EOF
   chmod +x "$bin_dir/uname" "$bin_dir/darwin-rebuild" "$bin_dir/nix" "$bin_dir/sudo"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" > "$output_file"
 
   assert_output_contains "$output_file" 'Nix profile: cli'
@@ -2224,6 +2226,7 @@ EOF
 set -euo pipefail
 print -r -- "install_mas_apps:\$*" >> "$log_file"
 EOF
+  ln -s "$TEST_ZSH_BIN" "$bin_dir/zsh"
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
@@ -2233,7 +2236,7 @@ EOF
     "$repo/scripts/install_mas_apps.sh" \
     "$repo/scripts/setup_git_hooks.sh"
 
-  if HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+  if HOME="$home_dir" USER=dotfiles-test PATH="$bin_dir" \
     DOTFILES_NIX_PROFILE_PATHS="" \
     "$TEST_ZSH_BIN" "$repo/main.sh" --cli-only > "$repo/output.log" 2>&1; then
     fail "expected main.sh to fail when nix is missing on Linux"
