@@ -134,7 +134,15 @@ assert_output_contains() {
   local output_file="$1"
   local expected="$2"
 
-  grep -Fq -- "$expected" "$output_file" || fail "expected output to contain: $expected"
+  if grep -Fq -- "$expected" "$output_file"; then
+    return 0
+  fi
+
+  echo "FAIL: expected output to contain: $expected" >&2
+  echo "--- output: $output_file ---" >&2
+  sed -n '1,160p' "$output_file" >&2
+  echo "--- end output ---" >&2
+  exit 1
 }
 
 is_test_macos() {
@@ -929,7 +937,7 @@ EOF
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
-    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" > "$output_file"
 
   assert_output_contains "$output_file" 'Nix profile: cli'
@@ -1005,7 +1013,7 @@ EOF
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$sudo_local" \
-    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" "Backing up existing $sudo_local to $backup_file before nix-darwin manages sudo Touch ID."
@@ -1168,7 +1176,7 @@ EOF
   HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="1700000000" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
-    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" "Archiving existing Home Manager backup $old_zshrc_backup to $archived_zshrc_backup before activation."
@@ -1254,7 +1262,7 @@ EOF
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
-    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" 'Flake path: /private/tmp/dotfiles-flake.'
@@ -2234,6 +2242,7 @@ set -euo pipefail
 print -r -- "install_mas_apps:\$*" >> "$log_file"
 EOF
   ln -s "$TEST_ZSH_BIN" "$bin_dir/zsh"
+  ln -s "$(command -v dirname)" "$bin_dir/dirname"
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
