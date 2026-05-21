@@ -1005,6 +1005,7 @@ EOF
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" "Backing up existing $sudo_local to $backup_file before nix-darwin manages sudo Touch ID."
@@ -1166,6 +1167,8 @@ EOF
 
   HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="1700000000" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" "Archiving existing Home Manager backup $old_zshrc_backup to $archived_zshrc_backup before activation."
@@ -1250,6 +1253,8 @@ EOF
   chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" 'Flake path: /private/tmp/dotfiles-flake.'
@@ -2096,6 +2101,8 @@ EOF
 }
 
 test_install_mas_apps_script_continues_after_individual_failures() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
   local repo
   local home_dir
   local bin_dir
