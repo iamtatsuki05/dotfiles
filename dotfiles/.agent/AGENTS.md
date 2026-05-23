@@ -111,6 +111,12 @@
 - `plan.md` には目的、制約、対象ファイル、完了条件を短く書いてください。`changes.md` には何を変えたかと理由を書き、`verification.md` には実行した検証、未検証事項、残リスクを書いてください。
 - `handoff.md` は中断や別 session への引き継ぎが必要な場合だけ作成してください。既に差分、issue、PR、ADR、検証ログに残っている内容を重複コピーせず、参照先と次に見るべき順序を中心に書いてください。
 - `CONTEXT.md` や ADR の考え方を使う場合でも、この repo が明示的に採用していない限り repo 直下へ作成しないでください。用語整理や設計判断のメモが必要な場合は、まず該当 session directory 内に置き、恒久化する理由が明確なときだけユーザー確認を取ってください。
+- 大きな作業、長期作業、複数 session にまたがる作業では、`$PWD/.agent/work/wiki/` を LLM-maintained local wiki として使ってください。session directory は一次記録、wiki は再利用しやすい統合メモとして分けてください。
+- `wiki/purpose.md` にはこの local wiki の目的と判断基準を書いてください。`wiki/index.md` は内容カタログ、`wiki/log.md` は wiki 内容の append-only 更新履歴、`wiki/overview.md` は現在状態の synthesis として扱ってください。raw event log や command log は session directory 側に残してください。
+- `wiki/` には検証済み事実、未検証事項、参照先 session を明示してください。raw log、巨大ファイル、秘密情報、個人情報、外部送信内容の丸ごとコピーは避け、必要な場合は session 内の最小メモか元 artifact への参照に留めてください。
+- この運用は軽量な Markdown wiki に留めます。外部 `llm_wiki` アプリ、vector/graph index、常駐プロセス、検索 DB、raw source の自動複製は導入しないでください。
+- subagent や reviewer は原則として `wiki/` を直接更新せず、`sessions/.../subagents/` に結果を残してください。メインの agent が採否を判断し、必要な内容だけ `wiki/` に統合してください。
+- 小さい作業では `wiki/` 更新を省略して構いません。後から再利用する価値がある判断、手順、失敗原因、検証結果だけを統合対象にしてください。
 - 最終報告では、ログに書いた内容へ依存しすぎず、変更点、影響範囲、検証結果、未検証事項をユーザーに直接伝えてください。
 
 # ユーザー対応・レビュー姿勢
