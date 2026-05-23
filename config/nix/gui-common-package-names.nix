@@ -3,7 +3,6 @@
   "alacritty"
   "antigravity"
   "code-cursor"
-  "discord"
   "firefox"
   "git-credential-manager"
   "google-chrome"

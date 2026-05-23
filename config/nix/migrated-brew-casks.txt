@@ -8,7 +8,6 @@ copilot-cli
 cursor
 cursor-cli
 daisydisk
-discord
 firefox
 git-credential-manager
 google-chrome

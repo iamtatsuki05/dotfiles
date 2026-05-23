@@ -34,7 +34,6 @@
     "codexbar"
     "comet"
     "corretto"
-    "cinebench"
     "datagrip"
     "docker-desktop"
     "figma"
