@@ -50,6 +50,8 @@ create_agent_fixture_repo() {
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
+  print -r -- '# hooks docs' > "$repo/dotfiles/.agent/hooks/README.md"
+  print -r -- '# hooks docs ja' > "$repo/dotfiles/.agent/hooks/README_JA.md"
   chmod +x "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
@@ -65,7 +67,7 @@ EOF
 {"mcpServers":{"playwright":{"type":"local","command":"bunx","args":["@playwright/mcp@latest"],"env":{},"tools":["*"]}}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/copilot/settings.json" <<'EOF'
-{"autoUpdate":false,"respectGitignore":true,"allowedUrls":["github.com"],"hooks":{"sessionStart":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\""}],"userPromptSubmitted":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\""}],"postToolUse":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/jupytext_sync.sh\""}]}}
+{"autoUpdate":false,"respectGitignore":true,"allowedUrls":["github.com"],"hooks":{"sessionStart":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\""}],"userPromptSubmitted":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\""}],"agentStop":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_turn_done_notify.sh\"","timeoutSec":5}],"postToolUse":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/jupytext_sync.sh\""}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/codex/hooks.json" <<'EOF'
 {"hooks":{"SessionStart":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/agent_context_reminder.sh"}]}],"UserPromptSubmit":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/agent_context_reminder.sh"}]}],"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/jupytext_sync.sh"}]}]}}
@@ -81,7 +83,7 @@ hooks = true
 network_access = true
 EOF
   cat > "$repo/dotfiles/.agent/apps/devin/config.json" <<'EOF'
-{"auto_update":false,"include_gitignored_files":false,"respect_gitignore":true,"permissions":{"deny":["Read(**/.env*)","Write(**/.env*)"]},"mcpServers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"],"env":{}}},"hooks":{"SessionStart":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_context_reminder.sh"}]}],"UserPromptSubmit":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_context_reminder.sh"}]}],"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/jupytext_sync.sh"}]}]}}
+{"auto_update":false,"include_gitignored_files":false,"respect_gitignore":true,"permissions":{"deny":["Read(**/.env*)","Write(**/.env*)"]},"mcpServers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"],"env":{}}},"hooks":{"SessionStart":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_context_reminder.sh"}]}],"UserPromptSubmit":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_context_reminder.sh"}]}],"Stop":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/agent_turn_done_notify.sh","timeout":5}]}],"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.config/devin/hooks/jupytext_sync.sh"}]}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/antigravity-cli/settings.json" <<'EOF'
 {"enableTerminalSandbox":false,"permissions":{"deny":["command(rm -rf)"]}}
@@ -93,7 +95,7 @@ EOF
 {"mcpServers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"],"env":{}}}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/hooks.json" <<'EOF'
-{"dotfiles-context-reminder":{"PreInvocation":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/agent_context_reminder.sh"}]},"dotfiles-jupytext-sync":{"PostToolUse":[{"matcher":"write_to_file|replace_file_content|multi_replace_file_content","hooks":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/jupytext_sync.sh"}]}]}}
+{"dotfiles-context-reminder":{"PreInvocation":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/agent_context_reminder.sh"}]},"dotfiles-jupytext-sync":{"PostToolUse":[{"matcher":"write_to_file|replace_file_content|multi_replace_file_content","hooks":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/jupytext_sync.sh"}]}]},"dotfiles-turn-done-notify":{"Stop":[{"type":"command","command":"~/.gemini/antigravity-cli/hooks/agent_turn_done_notify.sh","timeout":5}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/cursor/mcp.json" <<'EOF'
 {"mcpServers":{"codex":{"command":"codex","args":["mcp-server"]}}}
@@ -102,7 +104,7 @@ EOF
 {"version":1,"editor":{"vimMode":false},"permissions":{"allow":[],"deny":[]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/cursor/hooks.json" <<'EOF'
-{"version":1,"hooks":{"sessionStart":[{"command":"zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""}],"beforeSubmitPrompt":[{"command":"zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""}],"postToolUse":[{"command":"zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""}],"afterFileEdit":[{"command":"zsh \"$HOME/.cursor/hooks/jupytext_sync.sh\""}]}}
+{"version":1,"hooks":{"sessionStart":[{"command":"zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""}],"beforeSubmitPrompt":[{"command":"zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""}],"postToolUse":[{"command":"zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""}],"stop":[{"command":"zsh \"$HOME/.cursor/hooks/agent_turn_done_notify.sh\""}],"afterFileEdit":[{"command":"zsh \"$HOME/.cursor/hooks/jupytext_sync.sh\""}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/opencode/opencode.json" <<'EOF'
 {"$schema":"https://opencode.ai/config.json","autoupdate":false,"instructions":["~/.config/opencode/AGENTS.md"],"permission":{"bash":"ask","webfetch":"allow","read":{"**/.env":"deny"},"edit":{"**/.env":"deny"}},"mcp":{"playwright":{"type":"local","command":["bunx","@playwright/mcp@latest"],"enabled":true}}}
@@ -110,12 +112,16 @@ EOF
   print -r -- 'export const JupytextSync = async () => ({})' > "$repo/dotfiles/.agent/apps/opencode/plugins/jupytext-sync.js"
   print -r -- 'export const SecretProtection = async () => ({})' > "$repo/dotfiles/.agent/apps/opencode/plugins/secret-protection.js"
   print -r -- 'export const AgentContextReminder = async () => ({})' > "$repo/dotfiles/.agent/apps/opencode/plugins/agent-context-reminder.js"
+  print -r -- 'export const AgentTurnDoneNotify = async () => ({ event: async ({ event }) => { if (event.type === "session.idle") return } })' > "$repo/dotfiles/.agent/apps/opencode/plugins/agent-turn-done-notify.js"
   cat > "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml" <<'EOF'
 hooks_auto_accept: true
 hooks:
   pre_llm_call:
     - matcher: ".*"
       command: "~/.hermes/agent-hooks/agent_context_reminder.sh"
+  post_llm_call:
+    - matcher: ".*"
+      command: "~/.hermes/agent-hooks/agent_turn_done_notify.sh"
   pre_tool_call:
     - matcher: "read_file|write_file|patch|terminal"
       command: "~/.hermes/agent-hooks/secret-protection.sh"
@@ -173,6 +179,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
+  assert_not_exists "$home_dir/.claude/hooks/README.md"
+  assert_not_exists "$home_dir/.claude/hooks/README_JA.md"
   assert_contains "$home_dir/.claude/settings.json" '"Notification"'
   assert_contains "$home_dir/.claude/settings.json" '"idle_prompt"'
   assert_contains "$home_dir/.claude/settings.json" 'agent_turn_done_notify.sh'
@@ -180,6 +188,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.copilot/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.copilot/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.copilot/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.copilot/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_symlink_target "$home_dir/.copilot/settings.json" "$repo/dotfiles/.agent/apps/copilot/settings.json"
   assert_symlink_target "$home_dir/.copilot/mcp-config.json" "$repo/dotfiles/.agent/apps/copilot/mcp-config.json"
   assert_contains "$home_dir/.copilot/settings.json" '"respectGitignore"'
@@ -188,18 +197,23 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.copilot/settings.json" '"userPromptSubmitted"'
   assert_contains "$home_dir/.copilot/settings.json" 'agent_context_reminder.sh'
   assert_contains "$home_dir/.copilot/settings.json" '"postToolUse"'
+  assert_contains "$home_dir/.copilot/settings.json" '"agentStop"'
+  assert_contains "$home_dir/.copilot/settings.json" 'agent_turn_done_notify.sh'
   assert_contains "$home_dir/.copilot/mcp-config.json" '"mcpServers"'
   assert_contains "$home_dir/.copilot/mcp-config.json" '"playwright"'
   assert_symlink_target "$xdg_config_home/devin/config.json" "$repo/dotfiles/.agent/apps/devin/config.json"
   assert_symlink_target "$xdg_config_home/devin/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$xdg_config_home/devin/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$xdg_config_home/devin/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$xdg_config_home/devin/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$xdg_config_home/devin/config.json" '"mcpServers"'
   assert_contains "$xdg_config_home/devin/config.json" '"playwright"'
   assert_contains "$xdg_config_home/devin/config.json" '"respect_gitignore"'
   assert_contains "$xdg_config_home/devin/config.json" '"SessionStart"'
   assert_contains "$xdg_config_home/devin/config.json" '"UserPromptSubmit"'
   assert_contains "$xdg_config_home/devin/config.json" 'agent_context_reminder.sh'
+  assert_contains "$xdg_config_home/devin/config.json" '"Stop"'
+  assert_contains "$xdg_config_home/devin/config.json" 'agent_turn_done_notify.sh'
   assert_contains "$xdg_config_home/devin/config.json" 'Read(**/.env*)'
   assert_not_exists "$home_dir/.gemini/settings.json"
   assert_not_exists "$home_dir/.gemini/ignore"
@@ -214,25 +228,34 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$home_dir/.gemini/antigravity-cli/settings.json" '"enableTerminalSandbox"'
   assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json" '"dotfiles-agent"'
   assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json" '"mcpServers"'
   assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json" '"PreInvocation"'
+  assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json" '"Stop"'
+  assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/hooks.json" 'agent_turn_done_notify.sh'
   assert_symlink_target "$home_dir/.cursor/cli-config.json" "$repo/dotfiles/.agent/apps/cursor/cli-config.json"
   assert_symlink_target "$home_dir/.cursor/hooks.json" "$repo/dotfiles/.agent/apps/cursor/hooks.json"
   assert_symlink_target "$home_dir/.cursor/mcp.json" "$repo/dotfiles/.agent/apps/cursor/mcp.json"
   assert_symlink_target "$home_dir/.cursor/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.cursor/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.cursor/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$home_dir/.cursor/cli-config.json" '"permissions"'
   assert_contains "$home_dir/.cursor/hooks.json" '"beforeSubmitPrompt"'
   assert_contains "$home_dir/.cursor/hooks.json" 'agent_context_reminder.sh'
+  assert_contains "$home_dir/.cursor/hooks.json" '"stop"'
+  assert_contains "$home_dir/.cursor/hooks.json" 'agent_turn_done_notify.sh'
   assert_symlink_target "$xdg_config_home/opencode/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$xdg_config_home/opencode/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$xdg_config_home/opencode/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$xdg_config_home/opencode/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$xdg_config_home/opencode/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_symlink_target "$xdg_config_home/opencode/opencode.json" "$repo/dotfiles/.agent/apps/opencode/opencode.json"
   assert_symlink_target "$xdg_config_home/opencode/plugins" "$repo/dotfiles/.agent/apps/opencode/plugins"
   assert_file "$xdg_config_home/opencode/plugins/agent-context-reminder.js"
+  assert_file "$xdg_config_home/opencode/plugins/agent-turn-done-notify.js"
+  assert_contains "$xdg_config_home/opencode/plugins/agent-turn-done-notify.js" 'session.idle'
   assert_contains "$xdg_config_home/opencode/opencode.json" '"mcp"'
   assert_contains "$xdg_config_home/opencode/opencode.json" '"permission"'
   assert_symlink_target "$home_dir/.hermes/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
@@ -240,11 +263,14 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.hermes/config.yaml" "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.hermes/agent-hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/secret-protection.sh" "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
   assert_contains "$home_dir/.hermes/config.yaml" 'mcp_servers:'
   assert_contains "$home_dir/.hermes/config.yaml" 'hooks_auto_accept: true'
   assert_contains "$home_dir/.hermes/config.yaml" 'pre_llm_call:'
+  assert_contains "$home_dir/.hermes/config.yaml" 'post_llm_call:'
   assert_contains "$home_dir/.hermes/config.yaml" 'agent_context_reminder.sh'
+  assert_contains "$home_dir/.hermes/config.yaml" 'agent_turn_done_notify.sh'
   assert_symlink_target "$home_dir/.openclaw/openclaw.json" "$repo/dotfiles/.agent/apps/openclaw/openclaw.json"
   assert_symlink_target "$home_dir/.openclaw/workspace/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.openclaw/workspace/skills" "$repo/dotfiles/.agent/skills"

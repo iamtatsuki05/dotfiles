@@ -7,6 +7,7 @@ readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly SUPPORT_MATRIX="$REPO_ROOT/dotfiles/.agent/AGENT_SUPPORT.md"
 readonly UPSTREAM_SCRIPT="$REPO_ROOT/scripts/agent_skill_upstreams.py"
 readonly WAZA_CLI_AGENT_SCRIPT="$REPO_ROOT/scripts/waza_eval_cli_agent.sh"
+readonly WAZA_CLI_AGENT_IMPL="$REPO_ROOT/scripts/agent/waza_eval_cli_agent.sh"
 readonly SCHEDULER_MODELS="$REPO_ROOT/dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/src/agent_job_scheduler/models.py"
 readonly SCHEDULER_ADAPTERS="$REPO_ROOT/dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/src/agent_job_scheduler/adapters.py"
 readonly SCHEDULER_SETTINGS="$REPO_ROOT/dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/src/agent_job_scheduler/settings.py"
@@ -31,6 +32,7 @@ test_support_matrix_documents_managed_agents() {
   assert_contains "$SUPPORT_MATRIX" "brew cask: antigravity"
   assert_contains "$SUPPORT_MATRIX" "scripts/agent_skill_upstreams.py"
   assert_contains "$SUPPORT_MATRIX" "scripts/waza_eval_cli_agent.sh"
+  assert_contains "$SUPPORT_MATRIX" "scripts/agent/waza_eval_cli_agent.sh"
   assert_contains "$SUPPORT_MATRIX" "agent-job-scheduler"
 }
 
@@ -52,12 +54,13 @@ test_waza_cli_agent_code_supports_matrix_agents() {
   local agent
 
   for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw; do
-    assert_contains "$WAZA_CLI_AGENT_SCRIPT" "$agent"
+    assert_contains "$WAZA_CLI_AGENT_IMPL" "$agent"
   done
-  assert_contains "$WAZA_CLI_AGENT_SCRIPT" 'brew install --cask $cask'
-  assert_contains "$WAZA_CLI_AGENT_SCRIPT" "agy chat --mode agent"
-  assert_contains "$WAZA_CLI_AGENT_SCRIPT" "npm:openclaw"
-  assert_contains "$WAZA_CLI_AGENT_SCRIPT" "openclaw agent"
+  assert_contains "$WAZA_CLI_AGENT_SCRIPT" 'agent/waza_eval_cli_agent.sh'
+  assert_contains "$WAZA_CLI_AGENT_IMPL" 'brew install --cask $cask'
+  assert_contains "$WAZA_CLI_AGENT_IMPL" "agy chat --mode agent"
+  assert_contains "$WAZA_CLI_AGENT_IMPL" "npm:openclaw"
+  assert_contains "$WAZA_CLI_AGENT_IMPL" "openclaw agent"
   assert_contains "$MISE_CONFIG" "[tasks.waza-eval-model]"
   assert_contains "$MISE_TEMPLATE" "[tasks.waza-eval-model]"
   assert_not_contains "$MISE_CONFIG" "[tasks.waza-eval-openclaw]"

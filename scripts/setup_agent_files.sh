@@ -157,7 +157,9 @@ sync_hooks() {
 
   for hooks_dir in ~/.claude/hooks ~/.gemini/antigravity-cli/hooks ~/.codex/hooks ~/.copilot/hooks ~/.cursor/hooks "${XDG_CONFIG_HOME:-$HOME/.config}/devin/hooks" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/hooks" ~/.hermes/agent-hooks; do
     ensure_dir "$hooks_dir"
-    for hook_file in "$AGENT_DIR/hooks"/*; do
+    remove_managed_symlink "$hooks_dir/README.md" "$AGENT_DIR/hooks"
+    remove_managed_symlink "$hooks_dir/README_JA.md" "$AGENT_DIR/hooks"
+    for hook_file in "$AGENT_DIR/hooks"/*.sh; do
       [ -f "$hook_file" ] || continue
       hook_name="${hook_file:t}"
       chmod +x "$hook_file"

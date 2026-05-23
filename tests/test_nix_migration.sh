@@ -36,6 +36,9 @@ readonly WAZA_SECURITY_CHECK_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/s
 readonly WAZA_ALL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_all.sh"
 readonly WAZA_MODEL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_model.sh"
 readonly WAZA_CLI_AGENT_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_cli_agent.sh"
+readonly WAZA_ALL_EVAL_IMPL="$REPO_ROOT/scripts/agent/waza_eval_all.sh"
+readonly WAZA_MODEL_EVAL_IMPL="$REPO_ROOT/scripts/agent/waza_eval_model.sh"
+readonly WAZA_CLI_AGENT_EVAL_IMPL="$REPO_ROOT/scripts/agent/waza_eval_cli_agent.sh"
 readonly WAZA_EVAL_ROOT="$REPO_ROOT/dotfiles/.agent/evals"
 readonly AGENT_README="$REPO_ROOT/dotfiles/.agent/README.md"
 readonly AGENT_README_JA="$REPO_ROOT/dotfiles/.agent/README_JA.md"
@@ -404,27 +407,33 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE" 'authorization_bypass_detected'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'executor: copilot-sdk'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'sql_injection_detected'
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'DEFAULT_AGENT="codex"'
   assert_executable "$WAZA_MODEL_EVAL_SCRIPT"
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" '--agent AGENT'
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" '--model AGENT'
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'zsh scripts/waza_eval_model.sh --allow'
-  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'waza_eval_cli_agent.sh" "$agent"'
-  assert_contains "$WAZA_ALL_EVAL_SCRIPT" 'if [[ -d "$context_dir" ]]'
   assert_executable "$WAZA_CLI_AGENT_EVAL_SCRIPT"
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'CLI agent evals require explicit --allow'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'codex exec -C'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'claude -p'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'agy chat --mode agent'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'copilot'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'devin'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'cursor-agent'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'opencode run'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'hermes'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'openclaw agent'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'run_direct_or_mise'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'run_direct_or_homebrew_cask'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" '.waza-results/cli-agents'
+  assert_executable "$WAZA_ALL_EVAL_IMPL"
+  assert_executable "$WAZA_MODEL_EVAL_IMPL"
+  assert_executable "$WAZA_CLI_AGENT_EVAL_IMPL"
+  assert_contains "$WAZA_ALL_EVAL_SCRIPT" 'agent/waza_eval_all.sh'
+  assert_contains "$WAZA_MODEL_EVAL_SCRIPT" 'agent/waza_eval_model.sh'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_SCRIPT" 'agent/waza_eval_cli_agent.sh'
+  assert_contains "$WAZA_MODEL_EVAL_IMPL" 'DEFAULT_AGENT="codex"'
+  assert_contains "$WAZA_MODEL_EVAL_IMPL" '--agent AGENT'
+  assert_contains "$WAZA_MODEL_EVAL_IMPL" '--model AGENT'
+  assert_contains "$WAZA_MODEL_EVAL_IMPL" 'zsh scripts/waza_eval_model.sh --allow'
+  assert_contains "$WAZA_MODEL_EVAL_IMPL" 'waza_eval_cli_agent.sh" "$agent"'
+  assert_contains "$WAZA_ALL_EVAL_IMPL" 'if [[ -d "$context_dir" ]]'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'CLI agent evals require explicit --allow'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'codex exec -C'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'claude -p'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'agy chat --mode agent'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'copilot'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'devin'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'cursor-agent'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'opencode run'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'hermes'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'openclaw agent'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'run_direct_or_mise'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'run_direct_or_homebrew_cask'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" '.waza-results/cli-agents'
 }
 
 test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {

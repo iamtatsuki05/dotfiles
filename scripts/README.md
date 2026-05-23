@@ -8,10 +8,11 @@ This directory contains setup, migration, update, sync, and test helper scripts 
 
 | Path | Purpose |
 |---|---|
+| `agent/` | Agent and Waza eval implementations. Top-level Waza scripts are compatibility wrappers. |
 | `lib/` | Shared shell helper libraries used by setup scripts. |
 | `utils/` | Smaller utility scripts that are not part of the primary setup path. |
 | `*_install.sh` | Installation and apply entrypoints for Nix, Homebrew, MAS, and rootless Nix variants. |
-| `*_eval_*.sh` | Waza / agent eval wrappers. |
+| `waza_eval_*.sh` | Compatibility wrappers for Waza / agent eval entrypoints. |
 | `agent_skill_upstreams.py` | External skill update and security review manifest tool. |
 | `setup_agent_files.sh` | Canonical AI agent config, hook, skill, and pet sync script. |
 
@@ -26,7 +27,7 @@ This directory contains setup, migration, update, sync, and test helper scripts 
 ## Common Checks
 
 ```bash
-bash -n scripts/*.sh scripts/lib/*.sh scripts/utils/*.sh
+zsh tests/run.sh --syntax-only
 zsh tests/run.sh
 python3 scripts/agent_skill_upstreams.py check
 ```
