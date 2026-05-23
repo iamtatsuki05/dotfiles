@@ -53,6 +53,7 @@ Do not manually copy external skill trees without recording provenance and revie
 | `magika` | Identify file types and verify whether extensions match file contents. | Magika CLI workflow. |
 | `markdown-docs` | Create, edit, review, and lint README and Markdown documentation. | This README is also covered by this skill. |
 | `markitdown` | Convert PDF, Word, PowerPoint, Excel, HTML, and other sources into Markdown. | MarkItDown CLI workflow. |
+| `missing-tools` | Resolve unavailable commands without changing global machine state. | Prefers project env, mise, comma, and Nix fallbacks. |
 | `pr-code-review` | Review GitHub PR diffs for bugs, risks, and missing tests. | Uses finding-oriented review output. |
 | `prompt-tuner` | Improve, evaluate, and rewrite LLM prompts and templates. | Prompt tuning workflow. |
 | `python-dev` | Implement, test, and debug Python, pytest, typing, Pydantic, and packaging work. | Links to `eng-practices`. |

@@ -52,6 +52,7 @@ skills/
 | `magika` | ファイル種別の判定、拡張子と中身の確認。 | Magika CLI 用。 |
 | `markdown-docs` | README、技術文書、校閲、Markdown 整形。 | この README もこの skill の対象。 |
 | `markitdown` | PDF / Word / PowerPoint / Excel / HTML などを Markdown に変換。 | MarkItDown CLI 用。 |
+| `missing-tools` | 見つからないコマンドを global install なしで解決する。 | project env、mise、comma、Nix fallback を優先。 |
 | `pr-code-review` | GitHub PR 差分を bug / risk / test gap 優先でレビュー。 | review finding 形式に寄せる。 |
 | `prompt-tuner` | LLM prompt / system prompt / template の改善・評価。 | prompt tuning 作業用。 |
 | `python-dev` | Python 実装、pytest、typing、Pydantic、packaging。 | `eng-practices` と連携。 |
