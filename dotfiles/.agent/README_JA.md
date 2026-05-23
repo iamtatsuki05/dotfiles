@@ -150,7 +150,7 @@ python3 scripts/agent_skill_upstreams.py update
 mise run agent-skill-update
 ```
 
-`update` は、デフォルトで登録済み upstream すべての最新 branch head を対象にします。review prompt を生成して選択した Agent を実行し、review report を `changes/skill-upstream-reviews/` に保存します。全 report が Critical / High finding なしで `update recommendation: approve` の場合だけ更新を適用します。
+`update` は、デフォルトで登録済み upstream すべての最新 branch head を対象にします。review prompt を生成して選択した Agent を実行し、review report を `work/skill-upstream-reviews/` に保存します。全 report が Critical / High finding なしで `update recommendation: approve` の場合だけ更新を適用します。
 
 ```bash
 python3 scripts/agent_skill_upstreams.py update --dry-run
@@ -175,7 +175,7 @@ python3 scripts/agent_skill_upstreams.py apply-update \
   --id superpowers \
   --commit <40-char-sha> \
   --review-agent codex \
-  --review-report dotfiles/.agent/changes/<review-report>.md \
+  --review-report dotfiles/.agent/work/<review-report>.md \
   --security-reviewed
 ```
 

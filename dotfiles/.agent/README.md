@@ -150,7 +150,7 @@ python3 scripts/agent_skill_upstreams.py update
 mise run agent-skill-update
 ```
 
-`update` defaults to every registered upstream at the latest branch head. It generates a review prompt, runs the selected Agent, writes review reports under `changes/skill-upstream-reviews/`, and applies the update only when every report says `update recommendation: approve` without Critical or High findings.
+`update` defaults to every registered upstream at the latest branch head. It generates a review prompt, runs the selected Agent, writes review reports under `work/skill-upstream-reviews/`, and applies the update only when every report says `update recommendation: approve` without Critical or High findings.
 
 ```bash
 python3 scripts/agent_skill_upstreams.py update --dry-run
@@ -175,7 +175,7 @@ python3 scripts/agent_skill_upstreams.py apply-update \
   --id superpowers \
   --commit <40-char-sha> \
   --review-agent codex \
-  --review-report dotfiles/.agent/changes/<review-report>.md \
+  --review-report dotfiles/.agent/work/<review-report>.md \
   --security-reviewed
 ```
 

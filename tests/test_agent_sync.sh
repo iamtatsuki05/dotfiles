@@ -454,7 +454,8 @@ assert payload["prependContext"] == hook_output["additionalContext"]
 context = hook_output["additionalContext"]
 assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
-assert ".agent/changes/CHANGES.md" in context
+assert ".agent/work/sessions" in context
+assert "CHANGES.md" not in context
 '
 
   output="$(printf '%s\n' '{"hook_event_name":"pre_llm_call","cwd":"'"$REPO_ROOT"'","user_message":"implement this"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
@@ -474,7 +475,8 @@ import sys
 
 payload = json.load(sys.stdin)
 assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-assert ".agent/changes/CHANGES.md" in payload["additional_context"]
+assert ".agent/work/sessions" in payload["additional_context"]
+assert "CHANGES.md" not in payload["additional_context"]
 '
 }
 
@@ -484,10 +486,9 @@ test_agent_context_reminder_detects_managed_dotfiles_agent_dir() {
   make_temp_dir
   repo="$REPLY"
 
-  mkdir -p "$repo/.git" "$repo/dotfiles/.agent/changes" "$repo/dotfiles/.agent/hooks" "$repo/work/subdir"
+  mkdir -p "$repo/.git" "$repo/dotfiles/.agent/work/sessions" "$repo/dotfiles/.agent/hooks" "$repo/work/subdir"
   cp "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
-  print -r -- "# test changes" > "$repo/dotfiles/.agent/changes/CHANGES.md"
 
   output="$(printf '%s\n' '{"hook_event_name":"UserPromptSubmit","cwd":"'"$repo"'","prompt":"implement this"}' | "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh")"
   print -r -- "$output" | python3 -c '
@@ -497,7 +498,8 @@ import sys
 payload = json.load(sys.stdin)
 context = payload["additional_context"]
 assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-assert "/dotfiles/.agent/changes/CHANGES.md" in context
+assert "/dotfiles/.agent/work/sessions" in context
+assert "CHANGES.md" not in context
 '
 
   output="$(printf '%s\n' '{"hook_event_name":"UserPromptSubmit","cwd":"'"$repo"'/work/subdir","prompt":"implement this"}' | "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh")"
@@ -506,7 +508,8 @@ import json
 import sys
 
 payload = json.load(sys.stdin)
-assert "/dotfiles/.agent/changes/CHANGES.md" in payload["additional_context"]
+assert "/dotfiles/.agent/work/sessions" in payload["additional_context"]
+assert "CHANGES.md" not in payload["additional_context"]
 '
 
   rm -rf "$repo"

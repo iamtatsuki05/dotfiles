@@ -102,9 +102,9 @@ if git_dir:
     )
 
 if agent_dir:
-    changes_path = os.path.join(agent_dir, "changes", "CHANGES.md")
+    sessions_path = os.path.join(agent_dir, "work", "sessions")
     lines.append(
-        f"- この workspace には .agent metadata がある。repo 状態を変える作業や引き継ぎ情報が必要な作業では {changes_path} を読む/更新する。"
+        f"- この workspace には .agent metadata がある。repo 状態を変える作業や引き継ぎ情報が必要な作業では {sessions_path}/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/ に記録する。"
     )
 
 lines.extend(

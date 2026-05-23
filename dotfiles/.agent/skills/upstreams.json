@@ -28,7 +28,7 @@
         "review_agent": "codex",
         "last_reviewed_commit": "f2cbfbefebbfef77321e4c9abc9e949826bea9d7",
         "last_reviewed_at": "2026-05-10T14:18:12+00:00",
-        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260510T141626Z/superpowers.md"
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260510T141626Z/superpowers.md"
       },
       "provenance_note": "既存取り込み後に manifest を追加したため、pinned_commit は取り込み時期に近い upstream commit の記録であり、byte-identical とは限らない。"
     },
@@ -50,7 +50,7 @@
         "review_agent": "codex",
         "last_reviewed_commit": "1e40906d470624f60cfbff7895ba5c7e68893a00",
         "last_reviewed_at": "2026-05-10T14:18:14+00:00",
-        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260510T141626Z/empirical-prompt-tuning.md"
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260510T141626Z/empirical-prompt-tuning.md"
       },
       "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning"
     },
@@ -100,7 +100,7 @@
         "review_agent": "codex",
         "last_reviewed_commit": "b8be62ffacb0118fa3eaa29a0923c87c8c11985c",
         "last_reviewed_at": "2026-05-23T06:00:46+00:00",
-        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260523T060046Z/mattpocock-skills.md"
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260523T060046Z/mattpocock-skills.md"
       },
       "source_url": "https://github.com/mattpocock/skills/tree/main",
       "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys were removed from the vendored handoff and zoom-out SKILL.md files without changing the instruction body."
@@ -123,7 +123,7 @@
         "review_agent": "codex",
         "last_reviewed_commit": "2c606141936f1eeef17fa3043a72095b4765b9c2",
         "last_reviewed_at": "2026-05-23T08:42:37+00:00",
-        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260523T084237Z/karpathy-guidelines.md"
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260523T084237Z/karpathy-guidelines.md"
       },
       "source_url": "https://github.com/multica-ai/andrej-karpathy-skills/tree/main/skills/karpathy-guidelines",
       "provenance_note": "Only the karpathy-guidelines skill is vendored. Upstream plugin metadata, Cursor rules, README install commands, and examples are intentionally excluded. Upstream has no root LICENSE file at the inspected commit; MIT is declared in the vendored SKILL.md frontmatter."
@@ -150,7 +150,7 @@
         "review_agent": "codex",
         "last_reviewed_commit": "65d7f20ac85517a362107ce89b7be7f905105fd3",
         "last_reviewed_at": "2026-05-23T06:21:47+00:00",
-        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260523T062147Z/modern-web-guidance.md"
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260523T062147Z/modern-web-guidance.md"
       },
       "source_url": "https://github.com/GoogleChrome/modern-web-guidance/tree/main/skills/modern-web-guidance",
       "provenance_note": "Only the modern-web-guidance skill is vendored. The optional chrome-extensions skill is intentionally excluded. Local SKILL.md and guide cross-references pin the npm CLI to modern-web-guidance@0.0.169 instead of upstream @latest to avoid unreviewed supply-chain drift."

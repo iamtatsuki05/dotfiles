@@ -103,9 +103,8 @@
 # 作業ログ・引き継ぎ
 
 - 現在の作業ディレクトリに `$PWD/.agent` が存在する場合は、作業ログを `$PWD/.agent/work/` 配下に残してください。このディレクトリは作業用のローカル状態であり、Git 管理対象にしません。
-- 新しい作業では、単一の `CHANGES.md` を上書きせず、`$PWD/.agent/work/sessions/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/` を作成してください。例: `.agent/work/sessions/2026-05-23-171230-agent-worklog-prompt-codex/`。既に存在する場合は上書きせず、短い乱数や連番を付けて新規作成してください。
+- 新しい作業では、`$PWD/.agent/work/sessions/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/` を作成してください。例: `.agent/work/sessions/2026-05-23-171230-agent-worklog-prompt-codex/`。既に存在する場合は上書きせず、短い乱数や連番を付けて新規作成してください。
 - session directory には、必要に応じて `plan.md`、`changes.md`、`verification.md`、`handoff.md`、`subagents/` を置いてください。小さい調査や 1 ファイル程度の低リスク修正では、`changes.md` だけでも構いません。
-- 既存の `.agent/changes/CHANGES.md` や hook が示す `CHANGES.md` は legacy の入口として扱い、過去ログがある場合は読むだけにしてください。hook が更新を促しても、今回の作業ログは新しい session directory に残し、legacy `CHANGES.md` は上書き・空化・追記しないでください。
 - 作業開始時は、`$PWD/.agent/work/sessions/` が存在する場合だけ、関連しそうな最新 session とユーザー依頼に近い session を確認してください。存在しない場合は新規 session directory を作成して進めてください。続き作業では、`handoff.md`、`changes.md`、`verification.md`、未完了項目の順に読み、現在の `git status` と突き合わせてください。
 - subagent、parallel agent、reviewer を使う場合は、メインの agent が session directory を作り、subagent ごとに `subagents/<role>-<timestamp>.md` などの重複しない出力先を指定してください。subagent には既存ログの削除・上書きや最終判断を任せないでください。
 - `plan.md` には目的、制約、対象ファイル、完了条件を短く書いてください。`changes.md` には何を変えたかと理由を書き、`verification.md` には実行した検証、未検証事項、残リスクを書いてください。

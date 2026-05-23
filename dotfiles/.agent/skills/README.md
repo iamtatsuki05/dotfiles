@@ -78,7 +78,7 @@ They use the same shape as repo-local skills, but their origin is Codex / OpenAI
 ## Vendored External Skills
 
 These external skills are registered in `upstreams.json`.
-Updates write security review reports under `dotfiles/.agent/changes/skill-upstream-reviews/`.
+Updates write security review reports under `dotfiles/.agent/work/skill-upstream-reviews/`.
 
 | Group | Upstream | Local path | Contents |
 |---|---|---|---|

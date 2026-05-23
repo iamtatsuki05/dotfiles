@@ -77,7 +77,7 @@ skills/
 ## vendored external skill
 
 `upstreams.json` に登録された外部 skill です。
-更新時は security review report を `dotfiles/.agent/changes/skill-upstream-reviews/` に残します。
+更新時は security review report を `dotfiles/.agent/work/skill-upstream-reviews/` に残します。
 
 | Group | Upstream | Local path | 内容 |
 |---|---|---|---|

@@ -316,7 +316,7 @@ def read_review_prompt_template(path: Path) -> Template:
 
 def default_review_report_dir() -> Path:
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return REPO_ROOT / "dotfiles/.agent/changes/skill-upstream-reviews" / timestamp
+    return REPO_ROOT / "dotfiles/.agent/work/skill-upstream-reviews" / timestamp
 
 
 def cmd_check(args: argparse.Namespace) -> int:
