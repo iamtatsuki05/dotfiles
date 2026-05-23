@@ -25,7 +25,7 @@ The tools themselves are installed by `mise` where available. Antigravity CLI is
 - `AGENTS.md`: shared prompt copied into each supported tool home. The repository root intentionally does not contain an `AGENTS.md` symlink.
 - `apps/`: per-agent config files.
 - `hooks/`: shared hook scripts such as `jupytext_sync.sh` and `agent_context_reminder.sh`.
-- `skills/`: shared skills used by Codex-compatible agents and Waza.
+- `skills/`: shared skills used by Codex-compatible agents and Waza. See [skills/README.md](skills/README.md) for the hierarchy, origins, and per-skill summaries.
 - `evals/`: Waza eval suites for skills.
 - `sync.sh`: wrapper around `scripts/setup_agent_files.sh`.
 - `changes/`: local work notes for the current task. This is not user-facing documentation.
