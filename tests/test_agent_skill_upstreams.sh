@@ -47,9 +47,11 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 2"
+  assert_contains_text "$output" "registered upstream skills: 4"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
+  assert_contains_text "$output" "mattpocock-skills"
+  assert_contains_text "$output" "modern-web-guidance"
 }
 
 test_updates_accepts_fixture_ls_remote_output() {
@@ -142,13 +144,19 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
     python3 "$SCRIPT" security-prompt \
       --all \
       --latest-commit superpowers=dddddddddddddddddddddddddddddddddddddddd \
-      --latest-commit empirical-prompt-tuning=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+      --latest-commit empirical-prompt-tuning=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+      --latest-commit mattpocock-skills=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      --latest-commit modern-web-guidance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
   assert_contains_text "$output" "candidate_commit: dddddddddddddddddddddddddddddddddddddddd"
   assert_contains_text "$output" "Skill ID: empirical-prompt-tuning"
   assert_contains_text "$output" "candidate_commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  assert_contains_text "$output" "Skill ID: mattpocock-skills"
+  assert_contains_text "$output" "candidate_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  assert_contains_text "$output" "Skill ID: modern-web-guidance"
+  assert_contains_text "$output" "candidate_commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -158,6 +166,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   report_dir="$(mktemp -d)"
   print -r -- "reviewed superpowers" > "$report_dir/superpowers.md"
   print -r -- "reviewed empirical-prompt-tuning" > "$report_dir/empirical-prompt-tuning.md"
+  print -r -- "reviewed mattpocock-skills" > "$report_dir/mattpocock-skills.md"
+  print -r -- "reviewed modern-web-guidance" > "$report_dir/modern-web-guidance.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -167,13 +177,19 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --security-reviewed \
       --dry-run \
       --latest-commit superpowers=ffffffffffffffffffffffffffffffffffffffff \
-      --latest-commit empirical-prompt-tuning=1111111111111111111111111111111111111111
+      --latest-commit empirical-prompt-tuning=1111111111111111111111111111111111111111 \
+      --latest-commit mattpocock-skills=2222222222222222222222222222222222222222 \
+      --latest-commit modern-web-guidance=3333333333333333333333333333333333333333
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=ffffffffffffffffffffffffffffffffffffffff"
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
   assert_contains_text "$output" "candidate=1111111111111111111111111111111111111111"
+  assert_contains_text "$output" "mattpocock-skills: plan update"
+  assert_contains_text "$output" "candidate=2222222222222222222222222222222222222222"
+  assert_contains_text "$output" "modern-web-guidance: plan update"
+  assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -238,15 +254,23 @@ EOF'
       --dry-run \
       --review-command "$review_command" \
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
-      --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444
+      --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
+      --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
+      --latest-commit modern-web-guidance=6666666666666666666666666666666666666666
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
+  assert_contains_text "$output" "mattpocock-skills: review approved"
+  assert_contains_text "$output" "modern-web-guidance: review approved"
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
   assert_contains_text "$output" "candidate=4444444444444444444444444444444444444444"
+  assert_contains_text "$output" "mattpocock-skills: plan update"
+  assert_contains_text "$output" "candidate=5555555555555555555555555555555555555555"
+  assert_contains_text "$output" "modern-web-guidance: plan update"
+  assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_not_contains_text "$output" "manifest updated"
 }
 
@@ -275,7 +299,9 @@ PY
       --dry-run \
       --review-command "$review_command" \
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
-      --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444
+      --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
+      --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
+      --latest-commit modern-web-guidance=6666666666666666666666666666666666666666
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -295,6 +321,8 @@ raise SystemExit(0 if elapsed < 1.8 else 1)
 PY
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
+  assert_contains_text "$output" "mattpocock-skills: review approved"
+  assert_contains_text "$output" "modern-web-guidance: review approved"
 }
 
 test_update_blocks_when_agent_review_does_not_approve() {
@@ -315,7 +343,9 @@ EOF'
       --dry-run \
       --review-command "$review_command" \
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
-      --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 2>&1
+      --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
+      --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
+      --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 2>&1
   )"
   local exit_status=$?
   set -e

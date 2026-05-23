@@ -104,6 +104,33 @@
       },
       "source_url": "https://github.com/mattpocock/skills/tree/main",
       "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys were removed from the vendored handoff and zoom-out SKILL.md files without changing the instruction body."
+    },
+    {
+      "id": "modern-web-guidance",
+      "description": "Google Chrome modern web development guidance skill vendored into the shared agent skill tree.",
+      "repository": "https://github.com/GoogleChrome/modern-web-guidance.git",
+      "branch": "main",
+      "pinned_commit": "65d7f20ac85517a362107ce89b7be7f905105fd3",
+      "local_tree_sha256": "f08cc618db54b75ac2d1ece6adacaf0339e3f0a4d7bd979f09760656df8801ca",
+      "mappings": [
+        {
+          "source_path": "skills/modern-web-guidance",
+          "local_path": "dotfiles/.agent/skills/modern-web-guidance"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/modern-web-guidance/LICENSE"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "65d7f20ac85517a362107ce89b7be7f905105fd3",
+        "last_reviewed_at": "2026-05-23T06:21:47+00:00",
+        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260523T062147Z/modern-web-guidance.md"
+      },
+      "source_url": "https://github.com/GoogleChrome/modern-web-guidance/tree/main/skills/modern-web-guidance",
+      "provenance_note": "Only the modern-web-guidance skill is vendored. The optional chrome-extensions skill is intentionally excluded. Local SKILL.md and guide cross-references pin the npm CLI to modern-web-guidance@0.0.169 instead of upstream @latest to avoid unreviewed supply-chain drift."
     }
   ]
 }
