@@ -366,22 +366,24 @@ run_darwin_rebuild() {
   local nix_bin="$2"
   local flake_path="$3"
   local flake_ref
+  local flake_username
   flake_url "$flake_path"
   flake_ref="$REPLY"
+  flake_username="${DOTFILES_USERNAME:-${USER:-}}"
 
   if (( DRY_RUN )); then
     if command -v darwin-rebuild >/dev/null 2>&1; then
-      darwin-rebuild build --flake "$flake_ref#$attr"
+      env DOTFILES_USERNAME="$flake_username" darwin-rebuild build --impure --flake "$flake_ref#$attr"
     else
-      "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" run "$flake_ref#darwin-rebuild" -- build --flake "$flake_ref#$attr"
+      env DOTFILES_USERNAME="$flake_username" "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" --impure run "$flake_ref#darwin-rebuild" -- build --impure --flake "$flake_ref#$attr"
     fi
     return
   fi
 
   if command -v darwin-rebuild >/dev/null 2>&1; then
-    sudo env HOME=/var/root darwin-rebuild switch --flake "$flake_ref#$attr"
+    sudo env HOME=/var/root DOTFILES_USERNAME="$flake_username" darwin-rebuild switch --impure --flake "$flake_ref#$attr"
   else
-    sudo env HOME=/var/root "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" run "$flake_ref#darwin-rebuild" -- switch --flake "$flake_ref#$attr"
+    sudo env HOME=/var/root DOTFILES_USERNAME="$flake_username" "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" --impure run "$flake_ref#darwin-rebuild" -- switch --impure --flake "$flake_ref#$attr"
   fi
 }
 
@@ -390,22 +392,24 @@ run_home_manager() {
   local nix_bin="$2"
   local flake_path="$3"
   local flake_ref
+  local flake_username
   flake_url "$flake_path"
   flake_ref="$REPLY"
+  flake_username="${DOTFILES_USERNAME:-${USER:-}}"
 
   if (( DRY_RUN )); then
     if command -v home-manager >/dev/null 2>&1; then
-      home-manager build --flake "$flake_ref#$attr"
+      env DOTFILES_USERNAME="$flake_username" home-manager build --impure --flake "$flake_ref#$attr"
     else
-      "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" run "$flake_ref#home-manager" -- build --flake "$flake_ref#$attr"
+      env DOTFILES_USERNAME="$flake_username" "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" --impure run "$flake_ref#home-manager" -- build --impure --flake "$flake_ref#$attr"
     fi
     return
   fi
 
   if command -v home-manager >/dev/null 2>&1; then
-    home-manager switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake "$flake_ref#$attr"
+    env DOTFILES_USERNAME="$flake_username" home-manager switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --impure --flake "$flake_ref#$attr"
   else
-    "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" run "$flake_ref#home-manager" -- switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake "$flake_ref#$attr"
+    env DOTFILES_USERNAME="$flake_username" "$nix_bin" "${NIX_EXPERIMENTAL_ARGS[@]}" --impure run "$flake_ref#home-manager" -- switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --impure --flake "$flake_ref#$attr"
   fi
 }
 

@@ -664,6 +664,11 @@ test_flake_exposes_nix_darwin_and_home_manager_profiles() {
   assert_contains "$FLAKE_FILE" 'nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable"'
   assert_contains "$FLAKE_FILE" 'url = "github:nix-darwin/nix-darwin"'
   assert_contains "$FLAKE_FILE" 'url = "github:nix-community/home-manager"'
+  assert_contains "$FLAKE_FILE" 'builtins.getEnv "DOTFILES_USERNAME"'
+  assert_contains "$FLAKE_FILE" 'builtins.getEnv "USER"'
+  assert_contains "$FLAKE_FILE" 'DOTFILES_USERNAME or USER must be available while evaluating this flake'
+  assert_not_contains "$FLAKE_FILE" 'username = "tatsuki-o"'
+  assert_not_contains "$FLAKE_FILE" 'username = "tatsuki"'
   assert_contains "$FLAKE_FILE" 'darwinConfigurations'
   assert_contains "$FLAKE_FILE" 'homeConfigurations'
   assert_contains "$FLAKE_FILE" 'mkDarwinConfiguration'
@@ -802,8 +807,8 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" '--uninstall-homebrew'
   assert_contains "$INSTALL_SCRIPT" 'darwin-rebuild'
   assert_contains "$INSTALL_SCRIPT" 'home-manager'
-  assert_contains "$INSTALL_SCRIPT" 'switch --flake'
-  assert_contains "$INSTALL_SCRIPT" 'build --flake'
+  assert_contains "$INSTALL_SCRIPT" 'switch --impure --flake'
+  assert_contains "$INSTALL_SCRIPT" 'build --impure --flake'
   assert_contains "$INSTALL_SCRIPT" 'aarch64-darwin-full'
   assert_contains "$INSTALL_SCRIPT" 'x86_64-linux-cli'
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
@@ -815,12 +820,14 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_SUDO_LOCAL_PATH'
   assert_contains "$INSTALL_SCRIPT" 'DARWIN_SUDO_LOCAL_BACKUP_PATH'
   assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_ETC_SHELL_RC_PATHS'
+  assert_contains "$INSTALL_SCRIPT" 'DOTFILES_USERNAME="$flake_username"'
+  assert_contains "$INSTALL_SCRIPT" '--impure --flake'
   assert_contains "$INSTALL_SCRIPT" 'archive_existing_home_manager_backups'
   assert_contains "$INSTALL_SCRIPT" 'backup_existing_darwin_sudo_local'
   assert_contains "$INSTALL_SCRIPT" 'backup_existing_darwin_etc_shell_rc_files'
   assert_contains "$INSTALL_SCRIPT" 'sudo mv "$DARWIN_SUDO_LOCAL_PATH" "$DARWIN_SUDO_LOCAL_BACKUP_PATH"'
   assert_contains "$INSTALL_SCRIPT" 'before nix-darwin manages shell startup files'
-  assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --flake'
+  assert_contains "$INSTALL_SCRIPT" 'switch -b "$HOME_MANAGER_BACKUP_EXTENSION" --impure --flake'
   assert_contains "$INSTALL_SCRIPT" '"${NIX_EXPERIMENTAL_ARGS[@]}"'
   assert_contains "$INSTALL_SCRIPT" 'dotfiles_create_unique_temp_directory'
   assert_contains "$INSTALL_SCRIPT" 'dotfiles_resolve_command_from_path'
@@ -900,7 +907,7 @@ EOF
 
   assert_output_contains "$output_file" 'Nix profile: cli'
   assert_output_contains "$output_file" 'Flake output: aarch64-darwin-cli'
-  assert_contains "$log_file" 'darwin-rebuild:switch --flake'
+  assert_contains "$log_file" 'darwin-rebuild:switch --impure --flake'
   assert_not_contains "$output_file" 'aarch64-darwin-full'
 
   rm -rf "$repo"
@@ -976,8 +983,9 @@ EOF
 
   assert_output_contains "$output_file" "Backing up existing $sudo_local to $backup_file before nix-darwin manages sudo Touch ID."
   assert_contains "$log_file" "sudo:mv $sudo_local $backup_file"
-  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake'
-  assert_contains "$log_file" 'darwin-rebuild:switch --flake'
+  assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
+  assert_contains "$log_file" 'darwin-rebuild switch --impure --flake'
+  assert_contains "$log_file" 'darwin-rebuild:switch --impure --flake'
   assert_file "$backup_file"
   assert_not_exists "$sudo_local"
 
@@ -1052,7 +1060,8 @@ EOF
   assert_output_contains "$output_file" "Backing up existing $zshrc to $zshrc.before-nix-darwin before nix-darwin manages shell startup files."
   assert_contains "$log_file" "sudo:mv $bashrc $bashrc.before-nix-darwin"
   assert_contains "$log_file" "sudo:mv $zshrc $zshrc.before-nix-darwin"
-  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake'
+  assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
+  assert_contains "$log_file" 'darwin-rebuild switch --impure --flake'
   assert_file "$bashrc.before-nix-darwin"
   assert_file "$zshrc.before-nix-darwin"
   assert_not_exists "$bashrc"
@@ -1139,7 +1148,8 @@ EOF
 
   assert_output_contains "$output_file" "Archiving existing Home Manager backup $old_zshrc_backup to $archived_zshrc_backup before activation."
   assert_output_contains "$output_file" "Archiving existing Home Manager backup $old_xdg_backup to $archived_xdg_backup before activation."
-  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake'
+  assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
+  assert_contains "$log_file" 'darwin-rebuild switch --impure --flake'
   assert_file "$archived_zshrc_backup"
   assert_file "$archived_xdg_backup"
   assert_not_exists "$old_zshrc_backup"
@@ -1224,8 +1234,9 @@ EOF
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
   assert_output_contains "$output_file" 'Flake path: /private/tmp/dotfiles-flake.'
-  assert_contains "$log_file" 'sudo:env HOME=/var/root darwin-rebuild switch --flake path:/private/tmp/dotfiles-flake.'
-  assert_contains "$log_file" 'darwin-rebuild:switch --flake path:/private/tmp/dotfiles-flake.'
+  assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
+  assert_contains "$log_file" 'darwin-rebuild switch --impure --flake path:/private/tmp/dotfiles-flake.'
+  assert_contains "$log_file" 'darwin-rebuild:switch --impure --flake path:/private/tmp/dotfiles-flake.'
 
   rm -rf "$repo"
 }

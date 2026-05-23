@@ -18,7 +18,14 @@
   outputs = inputs@{ self, nixpkgs, nix-darwin, home-manager, ... }:
     let
       lib = nixpkgs.lib;
-      username = "tatsuki-o";
+      username =
+        let
+          dotfilesUsername = builtins.getEnv "DOTFILES_USERNAME";
+          user = builtins.getEnv "USER";
+        in
+        if dotfilesUsername != "" then dotfilesUsername
+        else if user != "" then user
+        else throw "DOTFILES_USERNAME or USER must be available while evaluating this flake";
       homeManagerBackupExtension = "before-nix-darwin";
 
       systems = [
