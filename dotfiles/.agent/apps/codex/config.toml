@@ -40,6 +40,7 @@ undo = true
 goals = true
 memories = true
 chronicle = true
+js_repl = false
 
 [mcp_servers.deepwiki]
 url = "https://mcp.deepwiki.com/mcp"
