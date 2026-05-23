@@ -7,34 +7,7 @@ readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly APPLY_SCRIPT="$REPO_ROOT/scripts/chezmoi_apply.sh"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_not_exists() {
-  local target_path="$1"
-  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
-}
-
-assert_contains() {
-  local file_path="$1"
-  local expected="$2"
-
-  grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
-}
-
-assert_file_content() {
-  local file_path="$1"
-  local expected="$2"
-
-  [[ "$(cat "$file_path")" == "$expected" ]] || fail "expected $file_path to be: $expected"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 create_fake_chezmoi() {
   local bin_dir="$1"

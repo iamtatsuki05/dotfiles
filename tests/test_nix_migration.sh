@@ -37,6 +37,8 @@ readonly WAZA_ALL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_all.sh"
 readonly WAZA_MODEL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_model.sh"
 readonly WAZA_CLI_AGENT_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_cli_agent.sh"
 readonly WAZA_EVAL_ROOT="$REPO_ROOT/dotfiles/.agent/evals"
+readonly AGENT_README="$REPO_ROOT/dotfiles/.agent/README.md"
+readonly AGENT_README_JA="$REPO_ROOT/dotfiles/.agent/README_JA.md"
 readonly HOME_MANAGER_MODULE="$REPO_ROOT/config/nix/home-manager/default.nix"
 readonly HOME_MANAGER_PACKAGES_MODULE="$REPO_ROOT/config/nix/home-manager/packages.nix"
 readonly HOME_MANAGER_ZSH_MODULE="$REPO_ROOT/config/nix/home-manager/zsh.nix"
@@ -61,32 +63,7 @@ readonly MIGRATED_CASKS_FILE="$REPO_ROOT/config/nix/migrated-brew-casks.txt"
 readonly MIGRATED_MAS_APPS_FILE="$REPO_ROOT/config/nix/migrated-mas-apps.tsv"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-make_temp_dir() {
-  local candidate
-  local attempts=0
-
-  while (( attempts < 10 )); do
-    candidate="${TMPDIR:-/tmp}/dotfiles-test-$$-$RANDOM-$RANDOM"
-    if mkdir "$candidate" 2>/dev/null; then
-      REPLY="$candidate"
-      return 0
-    fi
-    attempts=$((attempts + 1))
-  done
-
-  fail "failed to create temporary directory"
-}
-
-make_temp_file() {
-  make_temp_dir
-  rmdir "$REPLY"
-  : > "$REPLY"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 copy_script_libs() {
   local repo="$1"
@@ -97,52 +74,6 @@ copy_script_libs() {
   cp "$HOMEBREW_LIB" "$repo/scripts/lib/homebrew.sh"
   cp "$HOMEBREW_FALLBACK_LIB" "$repo/scripts/lib/homebrew_fallback.sh"
   cp "$RUNTIME_LIB" "$repo/scripts/lib/runtime.sh"
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_executable() {
-  local file_path="$1"
-  [[ -x "$file_path" ]] || fail "expected executable file: $file_path"
-}
-
-assert_not_exists() {
-  local target_path="$1"
-  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
-}
-
-assert_contains() {
-  local file_path="$1"
-  local expected="$2"
-
-  assert_file "$file_path"
-  grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
-}
-
-assert_not_contains() {
-  local file_path="$1"
-  local unexpected="$2"
-
-  assert_file "$file_path"
-  ! grep -Fq -- "$unexpected" "$file_path" || fail "expected $file_path not to contain: $unexpected"
-}
-
-assert_output_contains() {
-  local output_file="$1"
-  local expected="$2"
-
-  if grep -Fq -- "$expected" "$output_file"; then
-    return 0
-  fi
-
-  echo "FAIL: expected output to contain: $expected" >&2
-  echo "--- output: $output_file ---" >&2
-  sed -n '1,160p' "$output_file" >&2
-  echo "--- end output ---" >&2
-  exit 1
 }
 
 is_test_macos() {
@@ -452,6 +383,14 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-hermes]'
   assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-openclaw]'
   assert_not_contains "$MISE_CONFIG" '[tasks.waza-eval-cli-agents]'
+  assert_contains "$AGENT_README" 'mise run waza-eval-model -- --agent all --dry-run'
+  assert_contains "$AGENT_README_JA" 'mise run waza-eval-model -- --agent all --dry-run'
+  assert_contains "$AGENT_README" 'mise run waza-eval-model -- --agent openclaw --allow'
+  assert_contains "$AGENT_README_JA" 'mise run waza-eval-model -- --agent openclaw --allow'
+  assert_not_contains "$AGENT_README" 'waza-eval-cli-agents'
+  assert_not_contains "$AGENT_README_JA" 'waza-eval-cli-agents'
+  assert_not_contains "$AGENT_README" 'waza-eval-codex'
+  assert_not_contains "$AGENT_README_JA" 'waza-eval-codex'
   assert_contains "$MISE_CONFIG" '[tasks.waza-dashboard]'
   assert_contains "$MISE_CONFIG" 'nix run path:.#waza -- run'
   assert_contains "$WAZA_AGENT_EVAL_FILE" 'markdown-docs-eval'

@@ -11,52 +11,7 @@ readonly KIMI_WEBBRIDGE_SETUP_SCRIPT="$REPO_ROOT/scripts/setup_kimi_webbridge.sh
 readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_contains() {
-  local file_path="$1"
-  local expected="$2"
-
-  grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
-}
-
-assert_not_contains() {
-  local file_path="$1"
-  local unexpected="$2"
-
-  ! grep -Fq -- "$unexpected" "$file_path" || fail "expected $file_path not to contain: $unexpected"
-}
-
-assert_output_contains() {
-  local output_file="$1"
-  local expected="$2"
-
-  grep -Fq -- "$expected" "$output_file" || fail "expected output to contain: $expected"
-}
-
-make_temp_dir() {
-  local candidate
-  local attempts=0
-
-  while (( attempts < 10 )); do
-    candidate="${TMPDIR:-/tmp}/dotfiles-runner-test-$$-$RANDOM-$RANDOM"
-    if mkdir "$candidate" 2>/dev/null; then
-      REPLY="$candidate"
-      return 0
-    fi
-    attempts=$((attempts + 1))
-  done
-
-  fail "failed to create temporary directory"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 write_fixture_zsh_script() {
   local file_path="$1"
@@ -124,7 +79,7 @@ test_test_runner_syntax_only_stops_before_unit_tests() {
   local repo
   local output
 
-  make_temp_dir
+  make_temp_dir "dotfiles-runner-test"
   repo="${REPLY:A}"
   output="$repo/output.log"
   create_runner_fixture "$repo"
@@ -145,7 +100,7 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   local nix_log
   local output
 
-  make_temp_dir
+  make_temp_dir "dotfiles-runner-test"
   repo="${REPLY:A}"
   bin_dir="$repo/bin"
   nix_log="$repo/nix.log"

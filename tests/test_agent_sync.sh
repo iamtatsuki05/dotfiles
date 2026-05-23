@@ -9,34 +9,7 @@ readonly SYNC_SCRIPT="$REPO_ROOT/dotfiles/.agent/sync.sh"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 readonly TEST_TIMEOUT_SECONDS="${DOTFILES_TEST_TIMEOUT_SECONDS:-10}"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_not_exists() {
-  local target_path="$1"
-  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
-}
-
-assert_contains() {
-  local file_path="$1"
-  local expected="$2"
-
-  grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
-}
-
-assert_not_contains() {
-  local file_path="$1"
-  local unexpected="$2"
-
-  ! grep -Fq -- "$unexpected" "$file_path" || fail "expected $file_path not to contain: $unexpected"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 assert_symlink_target() {
   local link_path="$1"
@@ -51,22 +24,6 @@ run_with_timeout() {
   shift
 
   perl -e 'alarm shift @ARGV; exec @ARGV' "$timeout_seconds" "$@" || fail "command timed out: $*"
-}
-
-make_temp_dir() {
-  local candidate
-  local attempts=0
-
-  while (( attempts < 10 )); do
-    candidate="${TMPDIR:-/tmp}/dotfiles-test-$$-$RANDOM-$RANDOM"
-    if mkdir "$candidate" 2>/dev/null; then
-      REPLY="$candidate"
-      return 0
-    fi
-    attempts=$((attempts + 1))
-  done
-
-  fail "failed to create temporary directory"
 }
 
 create_agent_fixture_repo() {
@@ -92,12 +49,14 @@ create_agent_fixture_repo() {
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   chmod +x "$repo/scripts/setup_agent_files.sh" "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'
-{"cleanupPeriodDays":36500}
+{"cleanupPeriodDays":36500,"hooks":{"Notification":[{"matcher":"idle_prompt","hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/claude/.mcp.json" <<'EOF'
 {"mcpServers":{"codex":{"command":"codex","args":["mcp-server"]}}}
@@ -213,6 +172,10 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.claude/CLAUDE.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.claude/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
+  assert_contains "$home_dir/.claude/settings.json" '"Notification"'
+  assert_contains "$home_dir/.claude/settings.json" '"idle_prompt"'
+  assert_contains "$home_dir/.claude/settings.json" 'agent_turn_done_notify.sh'
   assert_symlink_target "$home_dir/.copilot/copilot-instructions.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.copilot/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.copilot/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"

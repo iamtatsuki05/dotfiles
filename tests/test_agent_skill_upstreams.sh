@@ -8,34 +8,7 @@ readonly SCRIPT="$REPO_ROOT/scripts/agent_skill_upstreams.py"
 readonly MANIFEST="$REPO_ROOT/dotfiles/.agent/skills/upstreams.json"
 readonly DEFAULT_REVIEW_PROMPT="$REPO_ROOT/dotfiles/.agent/skills/review-prompts/skill-upstream-security.md"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_contains_text() {
-  local text="$1"
-  local expected="$2"
-
-  [[ "$text" == *"$expected"* ]] || fail "expected output to contain: $expected"
-}
-
-assert_not_contains_text() {
-  local text="$1"
-  local unexpected="$2"
-
-  [[ "$text" != *"$unexpected"* ]] || fail "expected output not to contain: $unexpected"
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_executable() {
-  local file_path="$1"
-  [[ -x "$file_path" ]] || fail "expected executable: $file_path"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 test_manifest_and_cli_exist() {
   assert_file "$MANIFEST"

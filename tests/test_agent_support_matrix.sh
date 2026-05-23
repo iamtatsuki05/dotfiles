@@ -13,29 +13,7 @@ readonly SCHEDULER_SETTINGS="$REPO_ROOT/dotfiles/.agent/skills/agent-job-schedul
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly MISE_TEMPLATE="$REPO_ROOT/home/.chezmoitemplates/mise-config.toml"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_contains() {
-  local file_path="$1"
-  local expected="$2"
-
-  grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
-}
-
-assert_not_contains() {
-  local file_path="$1"
-  local unexpected="$2"
-
-  ! grep -Fq -- "$unexpected" "$file_path" || fail "expected $file_path not to contain: $unexpected"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 assert_agent_documented() {
   local agent="$1"

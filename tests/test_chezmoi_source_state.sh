@@ -5,37 +5,7 @@ set -euo pipefail
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file() {
-  local file_path="$1"
-  [[ -f "$file_path" ]] || fail "expected file: $file_path"
-}
-
-assert_not_exists() {
-  local target_path="$1"
-  [[ ! -e "$target_path" ]] || fail "expected path not to exist: $target_path"
-}
-
-assert_same_file() {
-  local expected="$1"
-  local actual="$2"
-
-  assert_file "$expected"
-  assert_file "$actual"
-  cmp "$expected" "$actual" >/dev/null || fail "expected $actual to match $expected"
-}
-
-assert_contains() {
-  local file_path="$1"
-  local expected="$2"
-
-  assert_file "$file_path"
-  grep -Fq -- "$expected" "$file_path" || fail "expected $file_path to contain: $expected"
-}
+source "$TEST_DIR/lib/assertions.sh"
 
 test_chezmoi_root_points_to_home() {
   assert_file "$REPO_ROOT/.chezmoiroot"
