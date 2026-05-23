@@ -117,6 +117,10 @@
 - この運用は軽量な Markdown wiki に留めます。外部 `llm_wiki` アプリ、vector/graph index、常駐プロセス、検索 DB、raw source の自動複製は導入しないでください。
 - subagent や reviewer は原則として `wiki/` を直接更新せず、`sessions/.../subagents/` に結果を残してください。メインの agent が採否を判断し、必要な内容だけ `wiki/` に統合してください。
 - 小さい作業では `wiki/` 更新を省略して構いません。後から再利用する価値がある判断、手順、失敗原因、検証結果だけを統合対象にしてください。
+- この作業ログ運用は、agent harness の `観測 -> 実行 -> 検証 -> 記憶` を閉じるための作業記録上の整理として扱ってください。新しい常駐プロセス、検索 DB、外部アプリ、hook 自動化の導入は意味しません。session directory は trace、`verification.md` は feedback、`wiki/` は次回へ持ち越す memory として使い分けてください。
+- 秘密情報、個人情報、外部送信内容、生ログを除き、失敗、手戻り、誤った仮定、検証漏れは再発防止に使える形で `changes.md` または `verification.md` に要約してください。同じ失敗が再発しそうな場合は、prompt、hook、skill、test、lint、schema のどれに昇格すべきかを検討してください。
+- 作業環境の検証難度を意識してください。coding は filesystem、shell、git により再現・検証しやすい一方、wiki、browser、GUI、外部サービスは意味確認や外部状態に依存します。検証できた範囲と未検証事項を分けて記録してください。
+- open harness の前提として、今回作成する session、wiki、prompt、skill、policy artifact はユーザー側が読める場所に残してください。ただし秘密情報、個人情報、外部送信内容、生ログの丸ごと保存は避けてください。
 - 最終報告では、ログに書いた内容へ依存しすぎず、変更点、影響範囲、検証結果、未検証事項をユーザーに直接伝えてください。
 
 # ユーザー対応・レビュー姿勢
