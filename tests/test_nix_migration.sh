@@ -127,7 +127,6 @@ EOF
 
   cat > "$repo/config/nix/mas-to-nix.tsv" <<'EOF'
 # mas app name	app store id	nix	nix scope
-Bitwarden	1352778147	bitwarden-desktop	common
 EOF
 
   cat > "$repo/config/nix/mas-to-cask.tsv" <<'EOF'
@@ -153,7 +152,6 @@ cask "cursor-cli"
 cask "ghostty"
 cask "raycast"
 cask "private-app"
-mas "Bitwarden", id: 1352778147
 mas "Affinity Photo", id: 824183456
 mas "Xcode", id: 497799835
 vscode "example.extension"
@@ -182,7 +180,6 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_not_contains "$repo/config/nix/package-names.nix" '"opencode"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"slack"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"alacritty"'
-  assert_contains "$repo/config/nix/gui-common-package-names.nix" '"bitwarden-desktop"'
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"copilot-cli"'
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"cursor-cli"'
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"claude-code"'
@@ -220,9 +217,7 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"example.extension"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"claude-monitor"'
   assert_contains "$repo/config/nix/mas-apps.nix" '"Xcode" = 497799835;'
-  assert_not_contains "$repo/config/nix/mas-apps.nix" 'Bitwarden'
   assert_not_contains "$repo/config/nix/mas-apps.nix" 'Affinity Photo'
-  assert_contains "$repo/config/nix/migrated-mas-apps.tsv" $'Bitwarden	nix	bitwarden-desktop'
   assert_contains "$repo/config/nix/migrated-mas-apps.tsv" $'Affinity Photo	brew	affinity-photo'
   assert_not_exists "$repo/config/homebrew/fallback.Brewfile"
   assert_not_exists "$repo/config/homebrew/macos-casks.Brewfile"
@@ -366,7 +361,6 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$MAS_APPS_FILE" '"Messenger"'
   assert_contains "$MAS_APPS_FILE" '"Xcode" = 497799835;'
   assert_not_contains "$MAS_APPS_FILE" '"Alfred"'
-  assert_not_contains "$MAS_APPS_FILE" '"Bitwarden"'
 }
 
 test_waza_is_integrated_for_agent_skill_evaluations() {

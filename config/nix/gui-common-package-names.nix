@@ -2,7 +2,6 @@
   "_1password-cli"
   "alacritty"
   "antigravity"
-  "bitwarden-desktop"
   "code-cursor"
   "discord"
   "firefox"
