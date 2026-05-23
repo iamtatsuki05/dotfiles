@@ -5,6 +5,7 @@
   "bitwarden-desktop"
   "code-cursor"
   "discord"
+  "firefox"
   "git-credential-manager"
   "google-chrome"
   "jetbrains-toolbox"

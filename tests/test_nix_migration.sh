@@ -279,6 +279,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "_1password-cli"
     "alacritty"
     "discord"
+    "firefox"
     "google-chrome"
     "slack"
     "vscode"
@@ -304,6 +305,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "1password-cli"
     "alacritty"
     "discord"
+    "firefox"
     "google-chrome"
     "slack"
     "visual-studio-code"
@@ -316,6 +318,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'
+  assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'firefox\tfirefox\tcommon'
 
   for nix_attr in "${common_gui_attrs[@]}"; do
     assert_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" "\"$nix_attr\""
