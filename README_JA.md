@@ -8,6 +8,19 @@ cd dotfiles
 zsh main.sh
 ```
 
+## リポジトリ構成
+
+| Path | 用途 |
+|---|---|
+| [`.github/`](.github/README_JA.md) | GitHub Actions と repository automation。 |
+| [`config/`](config/README_JA.md) | Nix、terminal、shell template、mise などの設定 source。 |
+| [`config/nix/`](config/nix/README_JA.md) | Nix package list、nix-darwin module、Home Manager module、migration report。 |
+| [`home/`](home/README_JA.md) | `$HOME` に render される chezmoi source state。 |
+| [`scripts/`](scripts/README_JA.md) | setup、migration、update、sync、eval helper script。 |
+| [`tests/`](tests/README_JA.md) | local / CI check。 |
+| [`dotfiles/`](dotfiles/README_JA.md) | 通常の chezmoi source tree 外で管理する dotfile と runtime asset。 |
+| [`dotfiles/.agent/`](dotfiles/.agent/README_JA.md) | 共有 AI agent prompt、config、hook、skill、eval、pet asset。 |
+
 ## セットアッププロファイル
 
 `main.sh` は OS に応じて既定プロファイルを切り替えます。

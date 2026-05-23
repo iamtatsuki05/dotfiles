@@ -10,6 +10,18 @@ cd dotfiles
 zsh main.sh
 ```
 
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| [`config/`](config/README.md) | Source configuration for Nix, terminals, shell templates, mise, and related tools. |
+| [`config/nix/`](config/nix/README.md) | Nix package lists, nix-darwin modules, Home Manager modules, and migration reports. |
+| [`home/`](home/README.md) | Chezmoi source state rendered into `$HOME`. |
+| [`scripts/`](scripts/README.md) | Setup, migration, update, sync, and evaluation helper scripts. |
+| [`tests/`](tests/README.md) | Local and CI checks. |
+| [`dotfiles/`](dotfiles/README.md) | Repo-managed dotfiles and runtime assets outside the normal chezmoi source tree. |
+| [`dotfiles/.agent/`](dotfiles/.agent/README.md) | Shared AI agent prompts, configs, hooks, skills, evals, and pet assets. |
+
 ## Setup profiles
 
 `main.sh` picks a default profile by OS:
