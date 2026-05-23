@@ -43,8 +43,4 @@ dotfiles/.agent/pets/*
 !dotfiles/.agent/pets/*/pet.json
 !dotfiles/.agent/pets/*/spritesheet.webp
 dotfiles/.agent/changes/
-!dotfiles/.agent/changes/
-dotfiles/.agent/changes/*
-!dotfiles/.agent/changes/skill-upstream-reviews/
-!dotfiles/.agent/changes/skill-upstream-reviews/**
 .vscode
