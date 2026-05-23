@@ -1,0 +1,34 @@
+id: missing-tools-command-not-found-001
+name: Handle Command Not Found
+description: |
+  Checks that the skill plans safe fallbacks for an unavailable CLI command.
+
+tags:
+  - missing-tools
+  - tooling
+  - smoke
+
+inputs:
+  prompt: "`markitdown` が `command not found` になります。この dotfiles 環境で、global install せずにどう実行するか説明してください。"
+  context:
+    missing_command: markitdown
+
+expected:
+  output_contains:
+    - "markitdown"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: mentions_non_global_fallback
+    type: text
+    config:
+      regex_match:
+        - "(?i)(mise|direnv|comma|nix)"
+  - name: avoids_global_install
+    type: text
+    config:
+      regex_not_match:
+        - "(?i)(brew install|npm install -g|npm i -g|pnpm add -g|yarn global add|uv tool install|pipx install)"
