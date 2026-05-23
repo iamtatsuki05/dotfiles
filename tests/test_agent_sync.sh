@@ -58,7 +58,7 @@ create_agent_fixture_repo() {
   chmod +x "$repo/scripts/setup_agent_files.sh" "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'
-{"cleanupPeriodDays":36500,"hooks":{"Notification":[{"matcher":"idle_prompt","hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}]}}
+{"cleanupPeriodDays":36500,"hooks":{"Notification":[{"matcher":"idle_prompt","hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}],"Stop":[{"hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/claude/.mcp.json" <<'EOF'
 {"mcpServers":{"codex":{"command":"codex","args":["mcp-server"]}}}
@@ -183,6 +183,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_not_exists "$home_dir/.claude/hooks/README_JA.md"
   assert_contains "$home_dir/.claude/settings.json" '"Notification"'
   assert_contains "$home_dir/.claude/settings.json" '"idle_prompt"'
+  assert_contains "$home_dir/.claude/settings.json" '"Stop"'
   assert_contains "$home_dir/.claude/settings.json" 'agent_turn_done_notify.sh'
   assert_symlink_target "$home_dir/.copilot/copilot-instructions.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.copilot/skills" "$repo/dotfiles/.agent/skills"
@@ -402,6 +403,24 @@ EOF
   rm -rf "$repo" "$home_dir"
 }
 
+test_claude_completion_notification_uses_stop_hook() {
+  python3 - "$REPO_ROOT/dotfiles/.agent/apps/claude/settings.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+settings = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+stop_entries = settings.get("hooks", {}).get("Stop", [])
+commands = [
+    hook.get("command", "")
+    for entry in stop_entries
+    for hook in entry.get("hooks", [])
+    if hook.get("type") == "command"
+]
+assert any(command.endswith("/agent_turn_done_notify.sh") or command == "~/.claude/hooks/agent_turn_done_notify.sh" for command in commands), commands
+PY
+}
+
 test_agent_sync_wrapper_delegates_to_setup_script() {
   assert_contains "$SYNC_SCRIPT" 'scripts/setup_agent_files.sh'
   assert_contains "$SYNC_SCRIPT" '--repo-root "$REPO_ROOT"'
@@ -488,6 +507,7 @@ main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
+  test_claude_completion_notification_uses_stop_hook
   test_agent_sync_wrapper_delegates_to_setup_script
   test_agent_context_reminder_hook_outputs_valid_json_context
   test_agent_context_reminder_detects_managed_dotfiles_agent_dir

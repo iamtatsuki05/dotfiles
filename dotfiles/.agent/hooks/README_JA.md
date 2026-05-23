@@ -10,6 +10,7 @@ English version: [README.md](README.md)
 | Hook | 用途 |
 |---|---|
 | `agent_context_reminder.sh` | 対応 agent の prompt / session hook で、この repo 向け reminder context を出力する。 |
+| `agent_turn_done_notify.sh` | turn 完了通知に対応する agent で使う共有完了音を鳴らす。 |
 | `jupytext_sync.sh` | agent が paired `.py` を編集したあと、対応する Jupyter notebook を同期する。 |
 
 agent 固有の hook 登録は `../apps/` 配下にあります。
@@ -27,6 +28,7 @@ JSON hook map を読む agent と、hook directory の shell script を読む ag
 
 ```bash
 bash -n dotfiles/.agent/hooks/agent_context_reminder.sh
+bash -n dotfiles/.agent/hooks/agent_turn_done_notify.sh
 bash -n dotfiles/.agent/hooks/jupytext_sync.sh
 printf '{}' | dotfiles/.agent/hooks/agent_context_reminder.sh | python3 -m json.tool
 zsh tests/test_agent_sync.sh

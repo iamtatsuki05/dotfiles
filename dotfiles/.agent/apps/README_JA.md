@@ -27,6 +27,7 @@ English version: [README.md](README.md)
 - `settings.*`、`config.*`、`*.toml`、`*.yaml`、`*.json`: agent 固有 runtime 設定。
 - `mcp*`: MCP server 定義。
 - `hooks.json`: hook 対応 agent の hook 登録。
+- 完了通知 hook: 対応 agent の turn 完了イベント（`Stop`、`agentStop`、`stop`、`post_llm_call`、opencode の `session.idle`）に `agent_turn_done_notify.sh` を登録します。Claude Code では idle / 権限通知用に `Notification` hook も残しますが、完了音は `Stop` が担当します。
 - `plugins/`: plugin API を持つ agent 向けの plugin code / manifest。
 - `agent-hooks/`: JSON hook map ではなく hook directory を読む agent 向けの shell hook。
 
@@ -40,8 +41,8 @@ English version: [README.md](README.md)
 ## よく使う確認コマンド
 
 ```bash
-jq empty dotfiles/.agent/apps/claude/settings.json
-jq empty dotfiles/.agent/apps/codex/hooks.json
+jq empty dotfiles/.agent/apps/claude/settings.json dotfiles/.agent/apps/copilot/settings.json dotfiles/.agent/apps/devin/config.json dotfiles/.agent/apps/codex/hooks.json dotfiles/.agent/apps/cursor/hooks.json dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/hooks.json dotfiles/.agent/apps/opencode/opencode.json
+bash -n dotfiles/.agent/hooks/agent_turn_done_notify.sh
 bash -n dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh
 zsh tests/test_agent_sync.sh
 ```

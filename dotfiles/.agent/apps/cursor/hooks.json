@@ -16,6 +16,11 @@
         "command": "zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""
       }
     ],
+    "stop": [
+      {
+        "command": "zsh \"$HOME/.cursor/hooks/agent_turn_done_notify.sh\""
+      }
+    ],
     "afterFileEdit": [
       {
         "command": "zsh \"$HOME/.cursor/hooks/jupytext_sync.sh\""

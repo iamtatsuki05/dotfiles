@@ -10,6 +10,7 @@ This directory contains shared hook scripts used by multiple local AI agents.
 | Hook | Purpose |
 |---|---|
 | `agent_context_reminder.sh` | Emits repository-specific reminder context for supported agent prompt or session hook phases. |
+| `agent_turn_done_notify.sh` | Plays the shared completion sound for agents that support end-of-turn notifications. |
 | `jupytext_sync.sh` | Keeps paired Jupyter notebooks synchronized after agents edit paired `.py` files. |
 
 Agent-specific hook registration lives under `../apps/`.
@@ -27,6 +28,7 @@ Some agents use JSON hook maps, while others consume shell scripts from hook dir
 
 ```bash
 bash -n dotfiles/.agent/hooks/agent_context_reminder.sh
+bash -n dotfiles/.agent/hooks/agent_turn_done_notify.sh
 bash -n dotfiles/.agent/hooks/jupytext_sync.sh
 printf '{}' | dotfiles/.agent/hooks/agent_context_reminder.sh | python3 -m json.tool
 zsh tests/test_agent_sync.sh

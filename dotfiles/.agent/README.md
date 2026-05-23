@@ -24,7 +24,7 @@ The tools themselves are installed by `mise` where available. Antigravity CLI is
 
 - `AGENTS.md`: shared prompt copied into each supported tool home. The repository root intentionally does not contain an `AGENTS.md` symlink.
 - `apps/`: per-agent config files. See [apps/README.md](apps/README.md).
-- `hooks/`: shared hook scripts such as `jupytext_sync.sh` and `agent_context_reminder.sh`. See [hooks/README.md](hooks/README.md).
+- `hooks/`: shared hook scripts such as `jupytext_sync.sh`, `agent_context_reminder.sh`, and `agent_turn_done_notify.sh`. See [hooks/README.md](hooks/README.md).
 - `skills/`: shared skills used by Codex-compatible agents and Waza. See [skills/README.md](skills/README.md) for the hierarchy, origins, and per-skill summaries.
 - `evals/`: Waza eval suites for skills. See [evals/README.md](evals/README.md).
 - `pets/`: packaged Codex pet assets. See [pets/README.md](pets/README.md).
@@ -78,6 +78,8 @@ Hermes also links files from `apps/hermes-agent/agent-hooks/` into `~/.hermes/ag
 
 `agent_context_reminder.sh` injects the same repository reminder into supported session or prompt hook phases for Claude Code, Codex, Copilot, Cursor, Devin, Antigravity CLI, and Hermes. opencode loads the shared hook through a plugin for compaction context, because it exposes plugin events rather than Claude-style prompt hooks. OpenClaw enables its bundled `bootstrap-extra-files` internal hook to load the shared `AGENTS.md` from the managed workspace.
 
+`agent_turn_done_notify.sh` is registered on compatible end-of-turn events for Claude Code, Copilot, Cursor, Devin, Antigravity CLI, Hermes, and opencode. For Claude Code, completion uses the `Stop` hook; `Notification` is only for permission or idle-input notifications. Codex keeps using its native `notify` setting and the same shared hook is still linked into `~/.codex/hooks/` for reuse.
+
 ## Ignore And Secrets
 
 Project-level exclusions are split by agent capability:
@@ -115,21 +117,22 @@ mise run waza-check
 mise run waza-eval
 mise run waza-eval-all
 mise run waza-eval-model -- --allow
-mise run waza-eval-cli-agents -- --dry-run
+mise run waza-eval-model -- --agent all --dry-run
 mise run waza-dashboard
 ```
 
 To run model eval tasks through one CLI agent:
 
 ```bash
-mise run waza-eval-codex -- --allow
-mise run waza-eval-claude -- --allow
-mise run waza-eval-model -- antigravity --allow
-mise run waza-eval-copilot -- --allow
-mise run waza-eval-devin -- --allow
-mise run waza-eval-cursor -- --allow
-mise run waza-eval-opencode -- --allow
-mise run waza-eval-hermes -- --allow
+mise run waza-eval-model -- --agent codex --allow
+mise run waza-eval-model -- --agent claude --allow
+mise run waza-eval-model -- --agent antigravity --allow
+mise run waza-eval-model -- --agent copilot --allow
+mise run waza-eval-model -- --agent devin --allow
+mise run waza-eval-model -- --agent cursor --allow
+mise run waza-eval-model -- --agent opencode --allow
+mise run waza-eval-model -- --agent hermes --allow
+mise run waza-eval-model -- --agent openclaw --allow
 ```
 
 Use `--dry-run` to inspect suites without invoking an AI CLI. Results are written under `.waza-results/`.

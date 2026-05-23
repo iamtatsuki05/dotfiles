@@ -26,6 +26,7 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 - `settings.*`, `config.*`, `*.toml`, `*.yaml`, `*.json`: agent-specific runtime configuration.
 - `mcp*`: MCP server definitions for agents that support them.
 - `hooks.json`: hook registration for agents with hook support.
+- completion notification hooks: register `agent_turn_done_notify.sh` on each compatible agent's end-of-turn event (`Stop`, `agentStop`, `stop`, `post_llm_call`, or opencode `session.idle`). Claude Code also keeps a `Notification` hook for its idle/permission notifications, but completion sound depends on `Stop`.
 - `plugins/`: plugin code or plugin manifests for agents that expose plugin APIs.
 - `agent-hooks/`: shell hooks consumed by agents that use hook directories instead of JSON hook maps.
 
@@ -39,8 +40,8 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 ## Common Checks
 
 ```bash
-jq empty dotfiles/.agent/apps/claude/settings.json
-jq empty dotfiles/.agent/apps/codex/hooks.json
+jq empty dotfiles/.agent/apps/claude/settings.json dotfiles/.agent/apps/copilot/settings.json dotfiles/.agent/apps/devin/config.json dotfiles/.agent/apps/codex/hooks.json dotfiles/.agent/apps/cursor/hooks.json dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/hooks.json dotfiles/.agent/apps/opencode/opencode.json
+bash -n dotfiles/.agent/hooks/agent_turn_done_notify.sh
 bash -n dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh
 zsh tests/test_agent_sync.sh
 ```

@@ -39,6 +39,13 @@
         "timeoutSec": 10
       }
     ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "zsh \"$HOME/.copilot/hooks/agent_turn_done_notify.sh\"",
+        "timeoutSec": 5
+      }
+    ],
     "postToolUse": [
       {
         "type": "command",

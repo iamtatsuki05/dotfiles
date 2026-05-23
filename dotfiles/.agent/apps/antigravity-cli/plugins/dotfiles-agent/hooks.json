@@ -19,5 +19,14 @@
         ]
       }
     ]
+  },
+  "dotfiles-turn-done-notify": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.gemini/antigravity-cli/hooks/agent_turn_done_notify.sh",
+        "timeout": 5
+      }
+    ]
   }
 }
