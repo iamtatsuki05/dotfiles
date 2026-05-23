@@ -140,6 +140,17 @@ description: "Use when the user asks to create, edit, review, proofread, restruc
 
 ---
 
+## エンジニアリング文書の Why（eng-practices）
+
+エンジニアリング向けドキュメント（README、設計メモ、リリースノート、ADR、運用 runbook 等）では、`eng-practices` スキルの「Why を残す」原則を併用する。
+
+- **Why と What を分ける**: なぜそうしたか（背景・動機・捨てた代替案）と、何をしたか（変更・現状）を別段落に書く。
+- **命令形タイトル**: PR/CL/RFC のタイトル相当には命令形を使う（`Add ...` / `Fix ...` / `Switch ...`）。`改善` `更新` だけの曖昧タイトルは避ける。
+- **影響範囲と残課題を明示**: 公開 API、運用手順、データへの影響、未検証項目、関連 issue を本文に含める。
+- **悪い例の自己点検**: `Bug fix` / `Update` / `WIP` だけのタイトル、Why の無い変更履歴、`こちら` 等の指示不明リンクを避ける。
+
+CL/PR description のテンプレートは `eng-practices` スキル参照。
+
 ## 品質基準
 
 ### 文章スタイル

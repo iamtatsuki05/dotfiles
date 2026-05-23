@@ -393,6 +393,17 @@ resource "aws_s3_bucket_public_access_block" "main" {
 }
 ```
 
+## CL/PR 運用（eng-practices）
+
+Terraform 変更にも `eng-practices` スキルの共通原則を併用する。
+
+- **Small CL**: plan diff を小さく保つ。複数リソース種別を一度に変える PR は分割を検討する。
+- **Blast radius を明示**: PR 本文に対象 workspace、影響リソース、`plan` 要約（add/change/destroy 件数）、特に destroy/replace の対象、権限変更、公開設定変更を必ず書く。
+- **Why を残す**: なぜそのモジュール構造／プロバイダ設定／インスタンスタイプを選んだかを PR 本文か HCL コメント（必要な箇所のみ）に残す。
+- **段階適用**: production の変更は dev → staging → production の順で適用し、CL を分けるか、同一 CL なら適用順を明記する。
+
+詳細は `eng-practices` スキル参照。
+
 ## コード品質チェック
 
 実装後に確認:

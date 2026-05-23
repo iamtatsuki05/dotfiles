@@ -335,6 +335,16 @@ jobs:
   uses: returntocorp/semgrep-action@v1
 ```
 
+## PR 運用（eng-practices）
+
+workflow 変更にも `eng-practices` スキルの共通原則を併用する。
+
+- **Small CL**: workflow 変更は 1 目的に絞る。新 job 追加と既存 job 変更を同居させない。
+- **意図と影響を PR に書く**: trigger 変更、`permissions` の昇格、secret 追加、外部サービス連携、deploy 影響、cache key 変更を本文で明示する。
+- **Why を YAML コメントに残す**: `if:` 条件、`continue-on-error: true`、独自 retry など読みにくい分岐には理由コメントを 1 行残す。
+
+詳細は `eng-practices` スキル参照。
+
 ## 実装後の検証と報告
 
 - YAML 構文検証、既存の lint、`actionlint`、`gitlab-ci-lint` などプロジェクトに合う検証を実行する。

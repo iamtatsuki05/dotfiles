@@ -343,6 +343,15 @@ container.register('DatabaseService', { useClass: DatabaseService });
 const userService = container.resolve(UserService);
 ```
 
+## エンジニアリング作法（共通）
+
+TypeScript 実装時にも `eng-practices` スキルの共通原則を併用する。
+
+- **Small CL**: 1 PR は 1 目的に絞る（〜100 行目安、>400 行で再分割を検討）。リファクタと機能追加は分ける。
+- **テスト同梱**: 機能変更には新規/更新の Jest/Vitest/Playwright テストを同 PR に入れる。難しい場合は理由と代替検証を PR 説明に書く。
+- **Why コメント**: コードコメントは「なぜそうしているか」を書く。`any` や型アサーションを使う箇所では理由を残す。
+- **PR description**: タイトルは命令形・具体的に。本文に Why / What / 影響範囲（公開 API 型変更含む）/ 代替案 / 残課題を書く。
+
 ## コード品質チェック
 
 実装後に確認:
