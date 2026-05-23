@@ -751,6 +751,11 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_DEFAULTS_MODULE" '"wvous-br-modifier" = 0'
   assert_contains "$DARWIN_DEFAULTS_MODULE" 'system.defaults.screencapture = {'
   assert_contains "$DARWIN_DEFAULTS_MODULE" 'location = screenshotsDirectory'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'current_wifi_dns='
+  assert_contains "$DARWIN_DEFAULTS_MODULE" '[ "$current_wifi_dns" = "8.8.8.8 8.8.4.4" ]'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'networksetup -setdnsservers Wi-Fi 1.1.1.1 8.8.8.8 8.8.4.4 >/dev/null 2>&1 || true'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'tmutil addexclusion -p /nix'
+  assert_contains "$DARWIN_DEFAULTS_MODULE" 'mdutil -i off /nix'
 
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'import ../homebrew-fallback.nix'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ]'

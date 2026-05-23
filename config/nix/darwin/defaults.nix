@@ -18,6 +18,22 @@ in
 
   system.activationScripts.postActivation.text = lib.mkAfter ''
     sudo --user=${username} -- mkdir -p ${lib.escapeShellArg screenshotsDirectory}
+
+    if /usr/sbin/networksetup -listallnetworkservices | /usr/bin/grep -qx 'Wi-Fi'; then
+      current_wifi_dns="$(
+        /usr/sbin/networksetup -getdnsservers Wi-Fi 2>/dev/null \
+          | /usr/bin/awk 'NF { print }' \
+          | /usr/bin/paste -sd ' ' -
+      )"
+      if [ "$current_wifi_dns" = "8.8.8.8 8.8.4.4" ]; then
+        /usr/sbin/networksetup -setdnsservers Wi-Fi 1.1.1.1 8.8.8.8 8.8.4.4 >/dev/null 2>&1 || true
+      fi
+    fi
+
+    if [ -d /nix ]; then
+      /usr/bin/tmutil addexclusion -p /nix >/dev/null 2>&1 || true
+      /usr/bin/mdutil -i off /nix >/dev/null 2>&1 || true
+    fi
   '';
 
   system.defaults.NSGlobalDomain = {
