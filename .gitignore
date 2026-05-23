@@ -9,6 +9,7 @@
 # Local agent workspace state
 /.agent/
 dotfiles/.agent/changes/
+dotfiles/.agent/work/
 dotfiles/.agent/skills/.curator_state
 dotfiles/.agent/skills/.hub/
 dotfiles/.agent/skills/codex-primary-runtime/
