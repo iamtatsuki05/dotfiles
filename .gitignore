@@ -33,6 +33,8 @@ dotfiles/.agent/hooks/*
 !dotfiles/.agent/hooks/agent_context_reminder.sh
 !dotfiles/.agent/skills/
 dotfiles/.agent/skills/*
+!dotfiles/.agent/skills/mattpocock/
+!dotfiles/.agent/skills/mattpocock/**
 !dotfiles/.agent/skills/kimi-webbridge/
 !dotfiles/.agent/skills/kimi-webbridge/**
 !dotfiles/.agent/pets/
@@ -41,4 +43,8 @@ dotfiles/.agent/pets/*
 !dotfiles/.agent/pets/*/pet.json
 !dotfiles/.agent/pets/*/spritesheet.webp
 dotfiles/.agent/changes/
+!dotfiles/.agent/changes/
+dotfiles/.agent/changes/*
+!dotfiles/.agent/changes/skill-upstream-reviews/
+!dotfiles/.agent/changes/skill-upstream-reviews/**
 .vscode

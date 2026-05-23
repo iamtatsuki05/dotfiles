@@ -53,6 +53,57 @@
         "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260510T141626Z/empirical-prompt-tuning.md"
       },
       "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning"
+    },
+    {
+      "id": "mattpocock-skills",
+      "description": "Selected Matt Pocock engineering and productivity skills vendored into the shared agent skill tree.",
+      "repository": "https://github.com/mattpocock/skills.git",
+      "branch": "main",
+      "pinned_commit": "b8be62ffacb0118fa3eaa29a0923c87c8c11985c",
+      "local_tree_sha256": "6e320950281ff63f5ddd3e70dd6192977c48c1ef18f362a98376c4ba473dafc8",
+      "mappings": [
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/mattpocock/LICENSE"
+        },
+        {
+          "source_path": "skills/productivity/grill-me",
+          "local_path": "dotfiles/.agent/skills/mattpocock/grill-me"
+        },
+        {
+          "source_path": "skills/productivity/handoff",
+          "local_path": "dotfiles/.agent/skills/mattpocock/handoff"
+        },
+        {
+          "source_path": "skills/engineering/grill-with-docs",
+          "local_path": "dotfiles/.agent/skills/mattpocock/grill-with-docs"
+        },
+        {
+          "source_path": "skills/engineering/diagnose",
+          "local_path": "dotfiles/.agent/skills/mattpocock/diagnose"
+        },
+        {
+          "source_path": "skills/engineering/zoom-out",
+          "local_path": "dotfiles/.agent/skills/mattpocock/zoom-out"
+        },
+        {
+          "source_path": "skills/engineering/prototype",
+          "local_path": "dotfiles/.agent/skills/mattpocock/prototype"
+        },
+        {
+          "source_path": "skills/engineering/improve-codebase-architecture",
+          "local_path": "dotfiles/.agent/skills/mattpocock/improve-codebase-architecture"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "b8be62ffacb0118fa3eaa29a0923c87c8c11985c",
+        "last_reviewed_at": "2026-05-23T06:00:46+00:00",
+        "review_report": "dotfiles/.agent/changes/skill-upstream-reviews/20260523T060046Z/mattpocock-skills.md"
+      },
+      "source_url": "https://github.com/mattpocock/skills/tree/main",
+      "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys were removed from the vendored handoff and zoom-out SKILL.md files without changing the instruction body."
     }
   ]
 }
