@@ -34,27 +34,47 @@ Options:
 EOF
 }
 
+canonical_agent_specs() {
+  print -r -- "codex"$'\t'"codex"
+  print -r -- "claude"$'\t'"claude"
+  print -r -- "claude-code"$'\t'"claude"
+  print -r -- "agy"$'\t'"antigravity"
+  print -r -- "antigravity"$'\t'"antigravity"
+  print -r -- "antigravity-cli"$'\t'"antigravity"
+  print -r -- "copilot"$'\t'"copilot"
+  print -r -- "devin"$'\t'"devin"
+  print -r -- "cursor"$'\t'"cursor"
+  print -r -- "cursor-agent"$'\t'"cursor"
+  print -r -- "opencode"$'\t'"opencode"
+  print -r -- "hermes"$'\t'"hermes"
+  print -r -- "hermes-agent"$'\t'"hermes"
+  print -r -- "openclaw"$'\t'"openclaw"
+  print -r -- "all"$'\t'"all"
+}
+
 canonical_agent() {
-  local agent="$1"
-  case "$agent" in
-    codex) print -- codex ;;
-    claude|claude-code) print -- claude ;;
-    agy|antigravity|antigravity-cli) print -- antigravity ;;
-    copilot) print -- copilot ;;
-    devin) print -- devin ;;
-    cursor|cursor-agent) print -- cursor ;;
-    opencode) print -- opencode ;;
-    hermes|hermes-agent) print -- hermes ;;
-    openclaw) print -- openclaw ;;
-    all) print -- all ;;
-    *) return 1 ;;
-  esac
+  local requested="$1"
+  local alias
+  local canonical
+
+  while IFS=$'\t' read -r alias canonical; do
+    if [[ "$requested" == "$alias" ]]; then
+      print -- "$canonical"
+      return 0
+    fi
+  done < <(canonical_agent_specs)
+
+  return 1
+}
+
+all_cli_agents() {
+  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw
 }
 
 agents_for() {
   local agent="$1"
   if [[ "$agent" == "all" ]]; then
-    print -l codex claude antigravity copilot devin cursor opencode hermes openclaw
+    all_cli_agents
   else
     print -- "$agent"
   fi

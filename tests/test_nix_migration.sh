@@ -434,6 +434,8 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'run_direct_or_mise'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'run_direct_or_homebrew_cask'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" '.waza-results/cli-agents'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'canonical_agent_specs'
+  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'all_cli_agents'
 }
 
 test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {

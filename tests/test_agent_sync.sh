@@ -309,6 +309,15 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   rm -rf "$repo" "$home_dir"
 }
 
+test_agent_sync_uses_declarative_link_specs() {
+  assert_contains "$SETUP_AGENT_SCRIPT" "sync_link_specs"
+  assert_contains "$SETUP_AGENT_SCRIPT" "shared_link_specs"
+  assert_contains "$SETUP_AGENT_SCRIPT" "tool_config_link_specs"
+  assert_contains "$SETUP_AGENT_SCRIPT" "common_hook_target_dirs"
+  assert_contains "$SETUP_AGENT_SCRIPT" "agent_env_file_specs"
+  assert_contains "$SETUP_AGENT_SCRIPT" "legacy_gemini_symlink_specs"
+}
+
 test_agent_sync_installs_missing_hermes_mcp_dependency() {
   local repo
   local home_dir
@@ -505,6 +514,7 @@ assert "/dotfiles/.agent/changes/CHANGES.md" in payload["additional_context"]
 
 main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
+  test_agent_sync_uses_declarative_link_specs
   test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
   test_claude_completion_notification_uses_stop_hook
