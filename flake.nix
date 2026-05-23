@@ -18,7 +18,7 @@
   outputs = inputs@{ self, nixpkgs, nix-darwin, home-manager, ... }:
     let
       lib = nixpkgs.lib;
-      username = "tatsuki";
+      username = "tatsuki-o";
       homeManagerBackupExtension = "before-nix-darwin";
 
       systems = [
