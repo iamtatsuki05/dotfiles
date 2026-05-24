@@ -20,11 +20,10 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 5"
+  assert_contains_text "$output" "registered upstream skills: 4"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
-  assert_contains_text "$output" "karpathy-guidelines"
   assert_contains_text "$output" "modern-web-guidance"
 }
 
@@ -120,7 +119,6 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit superpowers=dddddddddddddddddddddddddddddddddddddddd \
       --latest-commit empirical-prompt-tuning=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
       --latest-commit mattpocock-skills=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-      --latest-commit karpathy-guidelines=9999999999999999999999999999999999999999 \
       --latest-commit modern-web-guidance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   )"
 
@@ -130,8 +128,6 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   assert_contains_text "$output" "Skill ID: mattpocock-skills"
   assert_contains_text "$output" "candidate_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  assert_contains_text "$output" "Skill ID: karpathy-guidelines"
-  assert_contains_text "$output" "candidate_commit: 9999999999999999999999999999999999999999"
   assert_contains_text "$output" "Skill ID: modern-web-guidance"
   assert_contains_text "$output" "candidate_commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
@@ -144,7 +140,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed superpowers" > "$report_dir/superpowers.md"
   print -r -- "reviewed empirical-prompt-tuning" > "$report_dir/empirical-prompt-tuning.md"
   print -r -- "reviewed mattpocock-skills" > "$report_dir/mattpocock-skills.md"
-  print -r -- "reviewed karpathy-guidelines" > "$report_dir/karpathy-guidelines.md"
   print -r -- "reviewed modern-web-guidance" > "$report_dir/modern-web-guidance.md"
 
   output="$(
@@ -157,7 +152,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit superpowers=ffffffffffffffffffffffffffffffffffffffff \
       --latest-commit empirical-prompt-tuning=1111111111111111111111111111111111111111 \
       --latest-commit mattpocock-skills=2222222222222222222222222222222222222222 \
-      --latest-commit karpathy-guidelines=7777777777777777777777777777777777777777 \
       --latest-commit modern-web-guidance=3333333333333333333333333333333333333333
   )"
 
@@ -167,8 +161,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "candidate=1111111111111111111111111111111111111111"
   assert_contains_text "$output" "mattpocock-skills: plan update"
   assert_contains_text "$output" "candidate=2222222222222222222222222222222222222222"
-  assert_contains_text "$output" "karpathy-guidelines: plan update"
-  assert_contains_text "$output" "candidate=7777777777777777777777777777777777777777"
   assert_contains_text "$output" "modern-web-guidance: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_not_contains_text "$output" "manifest updated"
@@ -237,14 +229,12 @@ EOF'
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
       --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
-      --latest-commit karpathy-guidelines=7777777777777777777777777777777777777777 \
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
   assert_contains_text "$output" "mattpocock-skills: review approved"
-  assert_contains_text "$output" "karpathy-guidelines: review approved"
   assert_contains_text "$output" "modern-web-guidance: review approved"
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
@@ -252,8 +242,6 @@ EOF'
   assert_contains_text "$output" "candidate=4444444444444444444444444444444444444444"
   assert_contains_text "$output" "mattpocock-skills: plan update"
   assert_contains_text "$output" "candidate=5555555555555555555555555555555555555555"
-  assert_contains_text "$output" "karpathy-guidelines: plan update"
-  assert_contains_text "$output" "candidate=7777777777777777777777777777777777777777"
   assert_contains_text "$output" "modern-web-guidance: plan update"
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_not_contains_text "$output" "manifest updated"
@@ -286,7 +274,6 @@ PY
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
       --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
-      --latest-commit karpathy-guidelines=7777777777777777777777777777777777777777 \
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666
   )"
   ended_at="$(python3 - <<'PY'
@@ -308,7 +295,6 @@ PY
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
   assert_contains_text "$output" "mattpocock-skills: review approved"
-  assert_contains_text "$output" "karpathy-guidelines: review approved"
   assert_contains_text "$output" "modern-web-guidance: review approved"
 }
 
@@ -332,7 +318,6 @@ EOF'
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
       --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
-      --latest-commit karpathy-guidelines=7777777777777777777777777777777777777777 \
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 2>&1
   )"
   local exit_status=$?

@@ -34,7 +34,6 @@ evals/<skill>/
 | `colab-mcp` | Colab MCP の安全な setup / troubleshoot。 |
 | `database-dev` | database diagnosis と query review。 |
 | `empirical-prompt-tuning` | prompt tuning workflow の品質。 |
-| `gemini` | legacy Gemini 相談 workflow。 |
 | `go-dev` | Go debugging / review。 |
 | `goal-prompt-builder` | `/goal` prompt 作成、言語維持、拒否挙動。 |
 | `gws` | Google Workspace CLI inspection。 |

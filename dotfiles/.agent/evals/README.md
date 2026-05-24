@@ -34,7 +34,6 @@ evals/<skill>/
 | `colab-mcp` | Safe Colab MCP setup and troubleshooting. |
 | `database-dev` | Database diagnosis and query review. |
 | `empirical-prompt-tuning` | Prompt tuning workflow quality. |
-| `gemini` | Legacy Gemini consultation workflow. |
 | `go-dev` | Go debugging and review behavior. |
 | `goal-prompt-builder` | `/goal` prompt construction, language handling, and refusal behavior. |
 | `gws` | Google Workspace CLI inspection behavior. |

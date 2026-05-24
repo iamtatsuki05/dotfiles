@@ -106,29 +106,6 @@
       "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys were removed from the vendored handoff and zoom-out SKILL.md files without changing the instruction body."
     },
     {
-      "id": "karpathy-guidelines",
-      "description": "Karpathy-inspired behavioral guidelines for simpler, scoped, verifiable coding-agent work.",
-      "repository": "https://github.com/multica-ai/andrej-karpathy-skills.git",
-      "branch": "main",
-      "pinned_commit": "2c606141936f1eeef17fa3043a72095b4765b9c2",
-      "local_tree_sha256": "12944396016f9d4ecc0b927334224c79b8ddd73123f41d0781322e8dbcb334a1",
-      "mappings": [
-        {
-          "source_path": "skills/karpathy-guidelines",
-          "local_path": "dotfiles/.agent/skills/karpathy-guidelines"
-        }
-      ],
-      "security_review": {
-        "status": "reviewed",
-        "review_agent": "codex",
-        "last_reviewed_commit": "2c606141936f1eeef17fa3043a72095b4765b9c2",
-        "last_reviewed_at": "2026-05-23T08:42:37+00:00",
-        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260523T084237Z/karpathy-guidelines.md"
-      },
-      "source_url": "https://github.com/multica-ai/andrej-karpathy-skills/tree/main/skills/karpathy-guidelines",
-      "provenance_note": "Only the karpathy-guidelines skill is vendored. Upstream plugin metadata, Cursor rules, README install commands, and examples are intentionally excluded. Upstream has no root LICENSE file at the inspected commit; MIT is declared in the vendored SKILL.md frontmatter."
-    },
-    {
       "id": "modern-web-guidance",
       "description": "Google Chrome modern web development guidance skill vendored into the shared agent skill tree.",
       "repository": "https://github.com/GoogleChrome/modern-web-guidance.git",
