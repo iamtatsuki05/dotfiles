@@ -350,6 +350,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"background-music"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"tailscale-app"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"yoink"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'vscode = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"adpyke.codesnap"'

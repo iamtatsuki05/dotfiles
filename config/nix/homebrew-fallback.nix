@@ -69,6 +69,7 @@
     "steermouse"
     "superset"
     "superwhisper"
+    "tailscale-app"
     "textsniper"
     "tunnelblick"
     "unity-hub"
