@@ -19,9 +19,10 @@ ignore_patterns = [
   "node_modules/",
   "result",
   "result-*",
-  "dotfiles/.agent/changes/"
+  "dotfiles/.agent/changes/",
+  "dotfiles/.agent/work/"
 ]
-model_reasoning_effort = "medium"
+model_reasoning_effort = "high"
 hide_agent_reasoning = true
 network_access = true
 web_search = "live"
