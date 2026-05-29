@@ -305,35 +305,6 @@ sync_agent_env_files() {
   done < <(agent_env_file_specs)
 }
 
-legacy_gemini_symlink_specs() {
-  print -r -- "$HOME/.gemini/GEMINI.md"$'\t'"$AGENT_DIR"
-  print -r -- "$HOME/.gemini/skills"$'\t'"$AGENT_DIR"
-  print -r -- "$HOME/.gemini/settings.json"$'\t'"$APPS_DIR/gemini"
-  print -r -- "$HOME/.gemini/ignore"$'\t'"$APPS_DIR/gemini"
-}
-
-remove_managed_symlink_specs() {
-  local dst
-  local allowed
-
-  while IFS=$'\t' read -r dst allowed; do
-    [[ -n "$dst" && -n "$allowed" ]] || continue
-    remove_managed_symlink "$dst" "$allowed"
-  done < <("$1")
-}
-
-cleanup_legacy_gemini_cli_files() {
-  remove_managed_symlink_specs legacy_gemini_symlink_specs
-
-  local hook_file
-  local hook_name
-  for hook_file in "$AGENT_DIR/hooks"/*; do
-    [ -f "$hook_file" ] || continue
-    hook_name="${hook_file:t}"
-    remove_managed_symlink "$HOME/.gemini/hooks/$hook_name" "$AGENT_DIR/hooks"
-  done
-}
-
 sync_hermes_mcp_dependency() {
   local hermes_bin
   local hermes_install_dir
@@ -381,7 +352,6 @@ main() {
   sync_hooks
   sync_tool_configs
   sync_agent_env_files
-  cleanup_legacy_gemini_cli_files
   sync_hermes_mcp_dependency
 }
 

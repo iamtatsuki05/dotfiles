@@ -56,10 +56,6 @@ startup_timeout_sec = 60
 url = "https://mcp.figma.com/mcp"
 startup_timeout_sec = 60
 
-[mcp_servers.gemini-cli]
-command = "bunx"
-args = ["mcp-gemini-cli", "--allow-npx"]
-
 [mcp_servers.colab-mcp]
 command = "uvx"
 args = ["git+https://github.com/googlecolab/colab-mcp"]

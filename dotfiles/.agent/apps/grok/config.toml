@@ -36,8 +36,3 @@ enabled = true
 command = "uvx"
 args = ["git+https://github.com/googlecolab/colab-mcp"]
 enabled = true
-
-[mcp_servers.gemini-cli]
-command = "bunx"
-args = ["mcp-gemini-cli", "--allow-npx"]
-enabled = true

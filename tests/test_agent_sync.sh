@@ -178,11 +178,6 @@ enabled = true
 command = "uvx"
 args = ["git+https://github.com/googlecolab/colab-mcp"]
 enabled = true
-
-[mcp_servers.gemini-cli]
-command = "bunx"
-args = ["mcp-gemini-cli", "--allow-npx"]
-enabled = true
 EOF
 }
 
@@ -202,15 +197,6 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
     print -r -- 'export DEVIN_API_KEY=test-key'
     print -r -- 'export OPENCODE_API_KEY=opencode-test-key'
   } > "$xdg_config_home/shell/secrets.env"
-  mkdir -p "$home_dir/.gemini/hooks"
-  ln -s "$repo/dotfiles/.agent/AGENTS.md" "$home_dir/.gemini/GEMINI.md"
-  ln -s "$repo/dotfiles/.agent/skills" "$home_dir/.gemini/skills"
-  ln -s "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh" "$home_dir/.gemini/hooks/agent_context_reminder.sh"
-  mkdir -p "$repo/dotfiles/.agent/apps/gemini"
-  print -r -- '{}' > "$repo/dotfiles/.agent/apps/gemini/settings.json"
-  print -r -- '.env' > "$repo/dotfiles/.agent/apps/gemini/ignore"
-  ln -s "$repo/dotfiles/.agent/apps/gemini/settings.json" "$home_dir/.gemini/settings.json"
-  ln -s "$repo/dotfiles/.agent/apps/gemini/ignore" "$home_dir/.gemini/ignore"
 
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
@@ -262,11 +248,6 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$xdg_config_home/devin/config.json" '"Stop"'
   assert_contains "$xdg_config_home/devin/config.json" 'agent_turn_done_notify.sh'
   assert_contains "$xdg_config_home/devin/config.json" 'Read(**/.env*)'
-  assert_not_exists "$home_dir/.gemini/settings.json"
-  assert_not_exists "$home_dir/.gemini/ignore"
-  assert_not_exists "$home_dir/.gemini/GEMINI.md"
-  assert_not_exists "$home_dir/.gemini/skills"
-  assert_not_exists "$home_dir/.gemini/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/settings.json" "$repo/dotfiles/.agent/apps/antigravity-cli/settings.json"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json" "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/plugin.json"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/mcp_config.json" "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent/mcp_config.json"
@@ -337,7 +318,6 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.notion]'
   assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.figma]'
   assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.colab-mcp]'
-  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.gemini-cli]'
   assert_contains "$home_dir/.grok/config.toml" 'command = "bunx"'
   assert_contains "$home_dir/.grok/config.toml" 'command = "codex"'
   assert_contains "$home_dir/.grok/config.toml" 'url = "https://mcp.deepwiki.com/mcp"'
@@ -360,7 +340,6 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_not_contains "$home_dir/.codex/config.toml" 'generate_memories = true'
   assert_not_contains "$home_dir/.codex/config.toml" 'max_rollout_age_days = 90'
   assert_not_contains "$home_dir/.codex/config.toml" 'max_unused_days = 365'
-  assert_not_exists "$home_dir/.gemini/.env"
   assert_file "$home_dir/.gemini/antigravity-cli/.env"
   assert_contains "$home_dir/.gemini/antigravity-cli/.env" 'DEVIN_API_KEY=test-key'
   assert_file "$home_dir/.hermes/.env"
@@ -380,7 +359,6 @@ test_agent_sync_uses_declarative_link_specs() {
   assert_contains "$SETUP_AGENT_SCRIPT" "tool_config_link_specs"
   assert_contains "$SETUP_AGENT_SCRIPT" "common_hook_target_dirs"
   assert_contains "$SETUP_AGENT_SCRIPT" "agent_env_file_specs"
-  assert_contains "$SETUP_AGENT_SCRIPT" "legacy_gemini_symlink_specs"
 }
 
 test_agent_sync_installs_missing_hermes_mcp_dependency() {
