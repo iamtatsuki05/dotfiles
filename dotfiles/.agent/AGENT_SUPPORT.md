@@ -15,6 +15,7 @@
 | `hermes` | `hermes` / `pipx:git+https://github.com/NousResearch/hermes-agent.git` | Hermes Agent |
 | `opencode` | `opencode` / `opencode` | opencode |
 | `openclaw` | `openclaw` / `npm:openclaw` | OpenClaw |
+| `grok` | `grok` / `npm:@xai-official/grok` | Grok CLI (xAI) |
 
 ## Internal Call Sites
 

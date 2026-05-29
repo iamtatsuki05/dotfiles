@@ -17,6 +17,7 @@ class Agent(StrEnum):
     HERMES = "hermes"
     OPENCODE = "opencode"
     OPENCLAW = "openclaw"
+    GROK = "grok"
 
 
 class JobStatus(StrEnum):

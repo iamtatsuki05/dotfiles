@@ -1,0 +1,43 @@
+[cli]
+installer = "npm"
+auto_update = true
+
+[mcp_servers.codex]
+command = "codex"
+args = ["mcp-server"]
+enabled = true
+
+[mcp_servers.playwright]
+command = "bunx"
+args = ["@playwright/mcp@latest"]
+enabled = true
+
+[mcp_servers.deepwiki]
+url = "https://mcp.deepwiki.com/mcp"
+enabled = true
+
+[mcp_servers.devin]
+url = "https://mcp.devin.ai/mcp"
+type = "http"
+headers = { Authorization = "Bearer ${DEVIN_API_KEY}" }
+enabled = true
+
+[mcp_servers.notion]
+url = "https://mcp.notion.com/mcp"
+type = "http"
+enabled = true
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+type = "http"
+enabled = true
+
+[mcp_servers.colab-mcp]
+command = "uvx"
+args = ["git+https://github.com/googlecolab/colab-mcp"]
+enabled = true
+
+[mcp_servers.gemini-cli]
+command = "bunx"
+args = ["mcp-gemini-cli", "--allow-npx"]
+enabled = true

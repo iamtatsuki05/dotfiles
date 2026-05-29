@@ -12,7 +12,7 @@ Usage:
   zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
 
 Agents:
-  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, all
+  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, all
 
 Aliases:
   claude-code -> claude
@@ -49,6 +49,7 @@ canonical_agent_specs() {
   print -r -- "hermes"$'\t'"hermes"
   print -r -- "hermes-agent"$'\t'"hermes"
   print -r -- "openclaw"$'\t'"openclaw"
+  print -r -- "grok"$'\t'"grok"
   print -r -- "all"$'\t'"all"
 }
 
@@ -68,7 +69,7 @@ canonical_agent() {
 }
 
 all_cli_agents() {
-  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw
+  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok
 }
 
 agents_for() {
@@ -337,6 +338,10 @@ run_cli_agent() {
         --session-id "waza-cli-agent-${workspace:t}" \
         --message "$prompt" \
         --timeout 600) >"$stdout_file" 2>"$stderr_file"
+      ;;
+    grok)
+      (cd "$workspace" && run_direct_or_mise "npm:@xai-official/grok" grok \
+        -p "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     *)
       fail "unsupported agent: $agent"

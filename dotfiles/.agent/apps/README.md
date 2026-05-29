@@ -20,6 +20,7 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 | `hermes-agent/` | Hermes Agent | Hermes config plus extra agent hooks. |
 | `opencode/` | opencode | opencode config and JavaScript plugins. |
 | `openclaw/` | OpenClaw | OpenClaw workspace and MCP configuration. |
+| `grok/` | Grok CLI (xAI) | Grok CLI config and settings. |
 
 ## File Types
 

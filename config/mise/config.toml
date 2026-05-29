@@ -20,6 +20,7 @@ opencode = "latest"
 "pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"
 "npm:@github/copilot" = "latest"
 "npm:openclaw" = "latest"
+"npm:@xai-official/grok" = "latest"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"

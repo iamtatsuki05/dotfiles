@@ -33,6 +33,7 @@ REVIEW_AGENTS = (
     "hermes",
     "opencode",
     "openclaw",
+    "grok",
 )
 MISE_TOOLS_BY_REVIEW_AGENT = {
     "codex": "codex",
@@ -44,6 +45,7 @@ MISE_TOOLS_BY_REVIEW_AGENT = {
     "hermes": "pipx:git+https://github.com/NousResearch/hermes-agent.git",
     "opencode": "opencode",
     "openclaw": "npm:openclaw",
+    "grok": "npm:@xai-official/grok",
 }
 
 
@@ -486,6 +488,19 @@ def run_review_agent(
                 prompt,
                 "--timeout",
                 "600",
+            ],
+            REPO_ROOT,
+            env,
+        )
+    elif review_agent == "grok":
+        output = run_direct_or_mise(
+            review_agent,
+            [
+                "grok",
+                "-p",
+                prompt,
+                "--cwd",
+                str(REPO_ROOT),
             ],
             REPO_ROOT,
             env,

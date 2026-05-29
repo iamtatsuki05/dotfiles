@@ -32,6 +32,7 @@ def default_builders() -> dict[Agent, CommandBuilder]:
         Agent.HERMES: build_hermes_command,
         Agent.OPENCODE: build_opencode_command,
         Agent.OPENCLAW: build_openclaw_command,
+        Agent.GROK: build_grok_command,
     }
 
 
@@ -148,5 +149,14 @@ def build_openclaw_command(job: JobRecord) -> CommandSpec:
         job.prompt,
         "--timeout",
         "600",
+    )
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
+
+
+def build_grok_command(job: JobRecord) -> CommandSpec:
+    argv = (
+        "grok",
+        "-p",
+        job.prompt,
     )
     return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))

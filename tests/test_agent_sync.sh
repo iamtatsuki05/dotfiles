@@ -40,6 +40,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks" \
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
     "$repo/dotfiles/.agent/apps/openclaw" \
+    "$repo/dotfiles/.agent/apps/grok" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills" \
     "$repo/dotfiles/.agent/pets"
@@ -137,6 +138,51 @@ EOF
   chmod +x "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
   cat > "$repo/dotfiles/.agent/apps/openclaw/openclaw.json" <<'EOF'
 {"agents":{"defaults":{"workspace":"~/.openclaw/workspace","skipBootstrap":true}},"tools":{"profile":"coding"},"hooks":{"internal":{"enabled":true,"entries":{"bootstrap-extra-files":{"enabled":true,"paths":["AGENTS.md"]}}}},"mcp":{"servers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"]}}}}
+EOF
+  cat > "$repo/dotfiles/.agent/apps/grok/config.toml" <<'EOF'
+[cli]
+installer = "npm"
+auto_update = true
+
+[mcp_servers.codex]
+command = "codex"
+args = ["mcp-server"]
+enabled = true
+
+[mcp_servers.playwright]
+command = "bunx"
+args = ["@playwright/mcp@latest"]
+enabled = true
+
+[mcp_servers.deepwiki]
+url = "https://mcp.deepwiki.com/mcp"
+enabled = true
+
+[mcp_servers.devin]
+url = "https://mcp.devin.ai/mcp"
+type = "http"
+headers = { Authorization = "Bearer ${DEVIN_API_KEY}" }
+enabled = true
+
+[mcp_servers.notion]
+url = "https://mcp.notion.com/mcp"
+type = "http"
+enabled = true
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+type = "http"
+enabled = true
+
+[mcp_servers.colab-mcp]
+command = "uvx"
+args = ["git+https://github.com/googlecolab/colab-mcp"]
+enabled = true
+
+[mcp_servers.gemini-cli]
+command = "bunx"
+args = ["mcp-gemini-cli", "--allow-npx"]
+enabled = true
 EOF
 }
 
@@ -278,6 +324,25 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.openclaw/openclaw.json" '"workspace"'
   assert_contains "$home_dir/.openclaw/openclaw.json" '"bootstrap-extra-files"'
   assert_contains "$home_dir/.openclaw/openclaw.json" '"mcp"'
+  assert_symlink_target "$home_dir/.grok/config.toml" "$repo/dotfiles/.agent/apps/grok/config.toml"
+  assert_symlink_target "$home_dir/.grok/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.grok/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.grok/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.grok/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
+  assert_contains "$home_dir/.grok/config.toml" 'installer = "npm"'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.codex]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.playwright]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.deepwiki]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.devin]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.notion]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.figma]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.colab-mcp]'
+  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.gemini-cli]'
+  assert_contains "$home_dir/.grok/config.toml" 'command = "bunx"'
+  assert_contains "$home_dir/.grok/config.toml" 'command = "codex"'
+  assert_contains "$home_dir/.grok/config.toml" 'url = "https://mcp.deepwiki.com/mcp"'
+  assert_contains "$home_dir/.grok/config.toml" 'url = "https://mcp.devin.ai/mcp"'
+  assert_contains "$home_dir/.grok/config.toml" 'Authorization = "Bearer ${DEVIN_API_KEY}"'
   assert_symlink_target "$home_dir/.codex/config.toml" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_symlink_target "$home_dir/.codex/hooks.json" "$repo/dotfiles/.agent/apps/codex/hooks.json"
   assert_symlink_target "$home_dir/.codex/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"

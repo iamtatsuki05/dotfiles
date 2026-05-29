@@ -104,6 +104,16 @@ DEFAULT_RATE_LIMIT_PROFILES = {
         ],
         "default_backoff_seconds": 900,
     },
+    Agent.GROK.value: {
+        "markers": [
+            "rate limit",
+            "too many requests",
+            "quota exceeded",
+            "usage limit",
+            "retry after",
+        ],
+        "default_backoff_seconds": 900,
+    },
 }
 
 

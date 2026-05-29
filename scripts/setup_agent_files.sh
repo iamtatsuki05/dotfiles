@@ -135,6 +135,7 @@ shared_link_specs() {
   print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$xdg_config_home/opencode/AGENTS.md"
   print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.hermes/AGENTS.md"
   print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.openclaw/workspace/AGENTS.md"
+  print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.grok/AGENTS.md"
 
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.codex/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.claude/skills"
@@ -179,6 +180,7 @@ common_hook_target_dirs() {
   print -r -- "$xdg_config_home/devin/hooks"
   print -r -- "$xdg_config_home/opencode/hooks"
   print -r -- "$HOME/.hermes/agent-hooks"
+  print -r -- "$HOME/.grok/hooks"
 }
 
 app_hook_dir_specs() {
@@ -232,6 +234,7 @@ tool_config_link_specs() {
   print -r -- "$APPS_DIR/opencode/plugins"$'\t'"$xdg_config_home/opencode/plugins"
   print -r -- "$APPS_DIR/hermes-agent/config.yaml"$'\t'"$HOME/.hermes/config.yaml"
   print -r -- "$APPS_DIR/openclaw/openclaw.json"$'\t'"$HOME/.openclaw/openclaw.json"
+  print -r -- "$APPS_DIR/grok/config.toml"$'\t'"$HOME/.grok/config.toml"
 }
 
 sync_tool_configs() {

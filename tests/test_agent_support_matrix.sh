@@ -26,7 +26,7 @@ test_support_matrix_documents_managed_agents() {
   local agent
 
   assert_file "$SUPPORT_MATRIX"
-  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw; do
+  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok; do
     assert_agent_documented "$agent"
   done
   assert_contains "$SUPPORT_MATRIX" "brew cask: antigravity"
@@ -39,7 +39,7 @@ test_support_matrix_documents_managed_agents() {
 test_review_agent_code_supports_matrix_agents() {
   local agent
 
-  for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw; do
+  for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw grok; do
     assert_contains "$UPSTREAM_SCRIPT" "\"$agent\""
   done
   assert_contains "$UPSTREAM_SCRIPT" "brew-cask:antigravity"
@@ -53,7 +53,7 @@ test_review_agent_code_supports_matrix_agents() {
 test_waza_cli_agent_code_supports_matrix_agents() {
   local agent
 
-  for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw; do
+  for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw grok; do
     assert_contains "$WAZA_CLI_AGENT_IMPL" "$agent"
   done
   assert_contains "$WAZA_CLI_AGENT_SCRIPT" 'agent/waza_eval_cli_agent.sh'
@@ -70,7 +70,7 @@ test_waza_cli_agent_code_supports_matrix_agents() {
 test_agent_job_scheduler_code_supports_matrix_agents() {
   local enum_name
 
-  for enum_name in ANTIGRAVITY CLAUDE CODEX COPILOT CURSOR DEVIN HERMES OPENCODE OPENCLAW; do
+  for enum_name in ANTIGRAVITY CLAUDE CODEX COPILOT CURSOR DEVIN HERMES OPENCODE OPENCLAW GROK; do
     assert_contains "$SCHEDULER_MODELS" "$enum_name"
   done
   assert_contains "$SCHEDULER_ADAPTERS" "Agent.ANTIGRAVITY"
@@ -79,6 +79,9 @@ test_agent_job_scheduler_code_supports_matrix_agents() {
   assert_contains "$SCHEDULER_ADAPTERS" "Agent.OPENCLAW"
   assert_contains "$SCHEDULER_ADAPTERS" "build_openclaw_command"
   assert_contains "$SCHEDULER_SETTINGS" "Agent.OPENCLAW.value"
+  assert_contains "$SCHEDULER_ADAPTERS" "Agent.GROK"
+  assert_contains "$SCHEDULER_ADAPTERS" "build_grok_command"
+  assert_contains "$SCHEDULER_SETTINGS" "Agent.GROK.value"
 }
 
 main() {
