@@ -15,6 +15,7 @@
   ];
 
   casks = [
+    "antigravity-cli"
     "1password"
     "affinity"
     "affinity-designer"

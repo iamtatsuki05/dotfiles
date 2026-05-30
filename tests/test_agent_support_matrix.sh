@@ -29,7 +29,7 @@ test_support_matrix_documents_managed_agents() {
   for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok; do
     assert_agent_documented "$agent"
   done
-  assert_contains "$SUPPORT_MATRIX" "brew cask: antigravity"
+  assert_contains "$SUPPORT_MATRIX" "brew cask: antigravity-cli"
   assert_contains "$SUPPORT_MATRIX" "scripts/agent_skill_upstreams.py"
   assert_contains "$SUPPORT_MATRIX" "scripts/waza_eval_cli_agent.sh"
   assert_contains "$SUPPORT_MATRIX" "scripts/agent/waza_eval_cli_agent.sh"
@@ -42,7 +42,7 @@ test_review_agent_code_supports_matrix_agents() {
   for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw grok; do
     assert_contains "$UPSTREAM_SCRIPT" "\"$agent\""
   done
-  assert_contains "$UPSTREAM_SCRIPT" "brew-cask:antigravity"
+  assert_contains "$UPSTREAM_SCRIPT" "brew-cask:antigravity-cli"
   assert_contains "$UPSTREAM_SCRIPT" "agy"
   assert_contains "$UPSTREAM_SCRIPT" "chat"
   assert_contains "$UPSTREAM_SCRIPT" "\"openclaw\": \"npm:openclaw\""

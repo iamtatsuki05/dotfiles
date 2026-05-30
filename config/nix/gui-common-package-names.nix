@@ -1,7 +1,6 @@
 [
   "_1password-cli"
   "alacritty"
-  "antigravity"
   "code-cursor"
   "firefox"
   "git-credential-manager"

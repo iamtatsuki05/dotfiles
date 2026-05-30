@@ -296,7 +296,7 @@ run_cli_agent() {
       (cd "$workspace" && run_direct_or_mise claude-code claude -p "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     antigravity)
-      (cd "$workspace" && run_direct_or_homebrew_cask antigravity agy chat --mode agent "$prompt") >"$stdout_file" 2>"$stderr_file"
+      (cd "$workspace" && run_direct_or_homebrew_cask antigravity-cli agy chat --mode agent "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     copilot)
       run_direct_or_mise "npm:@github/copilot" copilot \

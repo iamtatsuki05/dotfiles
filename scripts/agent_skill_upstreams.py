@@ -38,7 +38,7 @@ REVIEW_AGENTS = (
 MISE_TOOLS_BY_REVIEW_AGENT = {
     "codex": "codex",
     "claude-code": "claude-code",
-    "antigravity-cli": "brew-cask:antigravity",
+    "antigravity-cli": "brew-cask:antigravity-cli",
     "copilot": "npm:@github/copilot",
     "cursor-agent": "http:cursor-agent",
     "devin": "http:devin",

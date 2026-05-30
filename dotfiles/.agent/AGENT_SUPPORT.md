@@ -11,7 +11,7 @@
 | `copilot` | `copilot` / `npm:@github/copilot` | GitHub Copilot CLI |
 | `cursor` | `cursor-agent` / `http:cursor-agent` | Cursor Agent |
 | `devin` | `devin` / `http:devin` | Devin CLI |
-| `antigravity` | `agy` / `brew cask: antigravity` | Antigravity CLI |
+| `antigravity` | `agy` / `brew cask: antigravity-cli` | Antigravity CLI |
 | `hermes` | `hermes` / `pipx:git+https://github.com/NousResearch/hermes-agent.git` | Hermes Agent |
 | `opencode` | `opencode` / `opencode` | opencode |
 | `openclaw` | `openclaw` / `npm:openclaw` | OpenClaw |
