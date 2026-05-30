@@ -16,7 +16,10 @@ dotfiles_prepend_path() {
   esac
 }
 
-if [ -d "$HOME/.linuxbrew/bin" ]; then
+if [ -d "/opt/homebrew/bin" ]; then
+  dotfiles_prepend_path "/opt/homebrew/sbin"
+  dotfiles_prepend_path "/opt/homebrew/bin"
+elif [ -d "$HOME/.linuxbrew/bin" ]; then
   dotfiles_prepend_path "$HOME/.linuxbrew/sbin"
   dotfiles_prepend_path "$HOME/.linuxbrew/bin"
 elif [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
