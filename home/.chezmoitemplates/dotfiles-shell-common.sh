@@ -199,6 +199,10 @@ alias ginit='gcloud init'
 alias gauth='gcloud auth login'
 alias gls='gcloud compute instances list'
 
+if command -v claude >/dev/null 2>&1; then
+  alias claude-auto='claude --dangerously-skip-permissions'
+fi
+
 if command -v mise >/dev/null 2>&1; then
   if [ "$dotfiles_shell_name" = "bash" ]; then
     eval "$(command mise activate "$dotfiles_shell_name")"
