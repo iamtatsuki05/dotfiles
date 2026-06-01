@@ -121,3 +121,10 @@ enabled = true
 generate_memories = true
 use_memories = true
 disable_on_external_context = true
+
+[desktop]
+ambient-suggestions-enabled = false
+preventSleepWhileRunning = true
+keepRemoteControlAwakeWhilePluggedIn = true
+selected-avatar-id = "custom:mirai"
+conversationDetailMode = "STEPS_COMMANDS"
