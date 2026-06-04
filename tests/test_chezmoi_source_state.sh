@@ -45,10 +45,32 @@ test_templates_keep_repo_root_behavior() {
   assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '.chezmoitemplates/dotfiles-shell-common.sh'
 }
 
+test_shell_common_loads_in_zsh_when_git_helper_aliases_exist() {
+  local output
+
+  output="$(
+    SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl" \
+      zsh -fc '
+        alias gt="git tag"
+        alias gr="git remote"
+        alias gs="git status"
+        . "$SHELL_COMMON_TEMPLATE_FILE"
+        whence -w gt
+        whence -w gr
+        whence -w gs
+      '
+  )"
+
+  assert_contains_text "$output" "gt: function"
+  assert_contains_text "$output" "gr: function"
+  assert_contains_text "$output" "gs: function"
+}
+
 main() {
   test_chezmoi_root_points_to_home
   test_copied_source_state_matches_current_sources
   test_templates_keep_repo_root_behavior
+  test_shell_common_loads_in_zsh_when_git_helper_aliases_exist
   echo "chezmoi source state tests passed"
 }
 
