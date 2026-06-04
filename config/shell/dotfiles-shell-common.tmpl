@@ -69,6 +69,8 @@ dotfiles_is_in_git_repo() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
+unalias gt gr gs 2>/dev/null || true
+
 dotfiles_fzf_down() {
   if command -v fzf-down >/dev/null 2>&1; then
     fzf-down "$@"
