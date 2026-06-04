@@ -1234,6 +1234,93 @@ EOF
   rm -rf "$repo"
 }
 
+test_nix_install_script_uses_git_aware_flake_ref_for_tracked_worktree() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local repo_abs
+  local bin_dir
+  local log_file
+  local output_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  repo_abs="${repo:A}"
+  bin_dir="$repo/bin"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  cat > "$repo/flake.nix" <<'EOF'
+{ }
+EOF
+  cat > "$repo/flake.lock" <<'EOF'
+{ }
+EOF
+  cat > "$repo/.git" <<'EOF'
+gitdir: /tmp/example-worktree-git-dir
+EOF
+
+  cat > "$bin_dir/git" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "\$*" == *'rev-parse --is-inside-work-tree'* ]]; then
+  exit 0
+fi
+if [[ "\$*" == *'ls-files --others --exclude-standard --'* ]]; then
+  exit 0
+fi
+print -r -- "git:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
+
+  assert_output_contains "$output_file" "Flake path: $repo_abs"
+  assert_contains "$log_file" "darwin-rebuild switch --impure --flake $repo_abs#"
+  assert_contains "$log_file" "darwin-rebuild:switch --impure --flake $repo_abs#"
+  assert_not_contains "$log_file" "path:$repo_abs"
+
+  rm -rf "$repo"
+}
+
 test_rootless_nix_install_script_supports_no_sudo_linux() {
   assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'nix-user-chroot'
   assert_contains "$ROOTLESS_NIX_INSTALL_SCRIPT" 'unshare --user --pid true'
@@ -2809,6 +2896,7 @@ main() {
   test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch
   test_nix_install_script_archives_existing_home_manager_backups_before_switch
   test_nix_install_script_handles_dirty_worktree_without_hanging
+  test_nix_install_script_uses_git_aware_flake_ref_for_tracked_worktree
   test_rootless_nix_install_script_supports_no_sudo_linux
   test_nix_portable_install_script_supports_no_sudo_nix_main_path
   test_remove_homebrew_script_is_explicit_and_dry_run_first

@@ -346,6 +346,11 @@ prepare_flake_path() {
 }
 
 flake_url() {
+  if [[ -e "$1/.git" ]] && git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    REPLY="$1"
+    return
+  fi
+
   REPLY="path:$1"
 }
 
