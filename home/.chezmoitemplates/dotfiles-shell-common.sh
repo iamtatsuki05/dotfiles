@@ -105,6 +105,22 @@ if [ "$dotfiles_shell_name" = "zsh" ]; then
   }
 fi
 
+dotfiles_add_default_ssh_key() {
+  local key_path="$HOME/.ssh/id_rsa"
+
+  case "$-" in
+    *i*) ;;
+    *) return 0 ;;
+  esac
+
+  if [ -r "$key_path" ] && [ -S "${SSH_AUTH_SOCK:-}" ]; then
+    ssh-add -q "$key_path" 2>/dev/null || true
+  fi
+}
+
+dotfiles_add_default_ssh_key
+unset -f dotfiles_add_default_ssh_key
+
 fgcp() {
   local configuration
 
