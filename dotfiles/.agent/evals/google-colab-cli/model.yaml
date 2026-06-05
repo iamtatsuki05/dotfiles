@@ -1,0 +1,56 @@
+name: google-colab-cli-model-eval
+description: |
+  Model-backed quality evaluation for the google-colab-cli skill.
+  This suite is intentionally not run by waza_eval_all.sh because it requires
+  model credentials and may use paid quota.
+skill: google-colab-cli
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: google_colab_cli_guidance_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response provide correct install, auth, account switching, and Colab resource safety guidance?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: official_colab_cli_detected
+    config:
+      regex_match:
+        - "(?i)(google-colab-cli|colab cli|Google Colab|colab)"
+  - type: text
+    name: managed_install_detected
+    config:
+      regex_match:
+        - "(?i)(mise|pipx:google-colab-cli|uvx|uv tool)"
+  - type: text
+    name: auth_identity_detected
+    config:
+      regex_match:
+        - "(?i)(--auth=oauth2|--auth=adc|whoami|token\\.json|application-default)"
+  - type: text
+    name: resource_safety_detected
+    config:
+      regex_match:
+        - "(?i)(GPU|TPU|Drive|課金|compute|session|stop|確認|account)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/switch-account-safely.yaml"
+  - "tasks/plan-gpu-run.yaml"
