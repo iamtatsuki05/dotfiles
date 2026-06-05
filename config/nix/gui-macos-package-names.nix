@@ -4,6 +4,7 @@
   "betterdisplay"
   "blackhole"
   "daisydisk"
+  "dotfiles.hermes-desktop"
   "iterm2"
   "karabiner-elements"
   "keycastr"

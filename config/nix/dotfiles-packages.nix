@@ -61,6 +61,53 @@ in
     };
   };
 
+  hermes-desktop =
+    let
+      version = "0.5.5";
+      asset =
+        if stdenv.hostPlatform.isDarwin && stdenv.hostPlatform.isAarch64 then
+          {
+            suffix = "arm64-mac";
+            hash = "sha256-iACiqJa0gdz70z0V1fysokr48BPu4b+3F8uFbrVGL3k=";
+          }
+        else if stdenv.hostPlatform.isDarwin && stdenv.hostPlatform.isx86_64 then
+          {
+            suffix = "x64-mac";
+            hash = "sha256-PU+qwUZDg4qaroXWIWIsBJxN/cSWi4GQhtqKXnL8Sts=";
+          }
+        else
+          throw "unsupported platform for hermes-desktop: ${stdenv.hostPlatform.system}";
+    in
+    pkgs.stdenvNoCC.mkDerivation {
+      pname = "hermes-desktop";
+      inherit version;
+
+      src = pkgs.fetchurl {
+        url = "https://github.com/fathah/hermes-desktop/releases/download/v${version}/hermes-desktop-${version}-${asset.suffix}.zip";
+        inherit (asset) hash;
+      };
+
+      nativeBuildInputs = [ pkgs.unzip ];
+      sourceRoot = ".";
+      dontBuild = true;
+      dontFixup = true;
+
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/Applications"
+        cp -R "Hermes Agent.app" "$out/Applications/"
+        runHook postInstall
+      '';
+
+      meta = {
+        description = "Desktop companion for Hermes Agent";
+        homepage = "https://github.com/fathah/hermes-desktop";
+        license = lib.licenses.mit;
+        platforms = darwinOnly;
+        sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
+      };
+    };
+
   mactop = pkgs.mactop.overrideAttrs (old: {
     doCheck = false;
     doInstallCheck = false;
