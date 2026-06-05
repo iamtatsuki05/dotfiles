@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Colab CLI"
+  short_description: "Use Google Colab CLI safely from the terminal"
+  default_prompt: "Use $google-colab-cli to manage a Colab runtime from my terminal."

@@ -1,0 +1,32 @@
+id: google-colab-cli-plan-gpu-run-001
+name: Plan GPU Run
+description: |
+  Checks that the skill can plan a Colab CLI GPU run while preserving account,
+  file-transfer, and teardown safety checks.
+
+tags:
+  - google-colab-cli
+  - gpu
+  - remote-execution
+  - smoke
+
+inputs:
+  prompt: "ローカルの train.py を google-colab-cli で T4 GPU 上に投げたいです。実行前確認、コマンド例、出力取得、最後の teardown まで示してください。"
+  context:
+    script: train.py
+    accelerator: T4 GPU
+
+expected:
+  output_contains:
+    - "T4"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_gpu_run_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(colab run|colab new|--gpu|T4|download|stop|whoami|確認)"

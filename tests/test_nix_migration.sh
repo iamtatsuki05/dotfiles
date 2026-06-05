@@ -603,6 +603,7 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     empirical-prompt-tuning
     go-dev
     goal-prompt-builder
+    google-colab-cli
     gws
     magika
     markdown-docs
@@ -2810,6 +2811,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
   assert_contains "$MISE_CONFIG" 'opencode = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:markitdown" = "latest"'
+  assert_contains "$MISE_CONFIG" '"pipx:google-colab-cli" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'

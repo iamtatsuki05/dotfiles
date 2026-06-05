@@ -1,0 +1,34 @@
+id: google-colab-cli-switch-account-safely-001
+name: Switch Account Safely
+description: |
+  Checks that the skill can explain account switching without leaving stale
+  Colab sessions or relying on ambiguous default credentials.
+
+tags:
+  - google-colab-cli
+  - auth
+  - account
+  - smoke
+
+inputs:
+  prompt: "google-colab-cli で普段の Google アカウントではなく研究用アカウントの Colab を使いたいです。既存セッションを残さず、安全に切り替える手順を整理してください。"
+  context:
+    risks:
+      - wrong Google account
+      - stale Colab sessions
+      - paid compute units
+
+expected:
+  output_contains:
+    - "colab"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: mentions_account_switch_context
+    type: text
+    config:
+      regex_match:
+        - "(?i)(whoami|--auth|token\\.json|application-default|sessions|stop|アカウント)"
