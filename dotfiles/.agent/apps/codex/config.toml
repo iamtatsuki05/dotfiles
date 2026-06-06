@@ -99,9 +99,6 @@ enabled = true
 [plugins."github@openai-curated"]
 enabled = true
 
-[plugins."computer-use@openai-bundled"]
-enabled = true
-
 [plugins."documents@openai-primary-runtime"]
 enabled = true
 
@@ -117,6 +114,9 @@ enabled = true
 [plugins."chrome@openai-bundled"]
 enabled = true
 
+[plugins."computer-use@openai-bundled"]
+enabled = true
+
 [memories]
 generate_memories = true
 use_memories = true
@@ -128,3 +128,4 @@ preventSleepWhileRunning = true
 keepRemoteControlAwakeWhilePluggedIn = true
 selected-avatar-id = "custom:mirai"
 conversationDetailMode = "STEPS_COMMANDS"
+show-context-window-usage = true
