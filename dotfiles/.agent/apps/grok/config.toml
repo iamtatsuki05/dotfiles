@@ -4,12 +4,12 @@ auto_update = true
 
 [mcp_servers.codex]
 command = "codex"
-args = ["mcp-server"]
+args = [ "mcp-server" ]
 enabled = true
 
 [mcp_servers.playwright]
 command = "bunx"
-args = ["@playwright/mcp@latest"]
+args = [ "@playwright/mcp@latest" ]
 enabled = true
 
 [mcp_servers.deepwiki]
@@ -19,8 +19,10 @@ enabled = true
 [mcp_servers.devin]
 url = "https://mcp.devin.ai/mcp"
 type = "http"
-headers = { Authorization = "Bearer ${DEVIN_API_KEY}" }
 enabled = true
+
+  [mcp_servers.devin.headers]
+  Authorization = "Bearer ${DEVIN_API_KEY}"
 
 [mcp_servers.notion]
 url = "https://mcp.notion.com/mcp"
@@ -34,5 +36,5 @@ enabled = true
 
 [mcp_servers.colab-mcp]
 command = "uvx"
-args = ["git+https://github.com/googlecolab/colab-mcp"]
+args = [ "git+https://github.com/googlecolab/colab-mcp" ]
 enabled = true

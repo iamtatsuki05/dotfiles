@@ -78,7 +78,6 @@
       "Bash(chown:*)"
     ]
   },
-  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -169,6 +168,7 @@
     "agent-sdk-dev@claude-code-plugins": true
   },
   "effortLevel": "xhigh",
+  "skipDangerousModePermissionPrompt": true,
   "autoCompactEnabled": false,
   "co_authored_commits": true,
   "BASH_DEFAULT_TIMEOUT_MS": 600000,
@@ -177,5 +177,5 @@
   "DISABLE_AUTOUPDATER": "0",
   "ANTHROPIC_MODEL": "claude-sonnet-4-6",
   "MAX_THINKING_TOKENS": 32000,
-  "skipDangerousModePermissionPrompt": true
+  "model": "opus[1m]"
 }
