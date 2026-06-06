@@ -63,45 +63,41 @@ in
 
   hermes-desktop =
     let
-      version = "0.5.5";
-      asset =
-        if stdenv.hostPlatform.isDarwin && stdenv.hostPlatform.isAarch64 then
-          {
-            suffix = "arm64-mac";
-            hash = "sha256-iACiqJa0gdz70z0V1fysokr48BPu4b+3F8uFbrVGL3k=";
-          }
-        else if stdenv.hostPlatform.isDarwin && stdenv.hostPlatform.isx86_64 then
-          {
-            suffix = "x64-mac";
-            hash = "sha256-PU+qwUZDg4qaroXWIWIsBJxN/cSWi4GQhtqKXnL8Sts=";
-          }
-        else
-          throw "unsupported platform for hermes-desktop: ${stdenv.hostPlatform.system}";
+      version = "0.16.0";
+      build = "b91aade17683";
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "hermes-desktop";
       inherit version;
 
       src = pkgs.fetchurl {
-        url = "https://github.com/fathah/hermes-desktop/releases/download/v${version}/hermes-desktop-${version}-${asset.suffix}.zip";
-        inherit (asset) hash;
+        name = "Hermes-Setup-${build}.dmg";
+        url = "https://hermes-assets.nousresearch.com/Hermes-Setup.dmg?build=${build}";
+        hash = "sha256-th4Efv4wWfrxxV/sMlLmYfLSqZOno+6/XMapqlwXkPU=";
       };
 
-      nativeBuildInputs = [ pkgs.unzip ];
-      sourceRoot = ".";
+      dontUnpack = true;
       dontBuild = true;
       dontFixup = true;
 
       installPhase = ''
         runHook preInstall
         mkdir -p "$out/Applications"
-        cp -R "Hermes Agent.app" "$out/Applications/"
+        mount="$(mktemp -d)"
+        cleanup() {
+          /usr/bin/hdiutil detach "$mount" >/dev/null 2>&1 || true
+        }
+        trap cleanup EXIT
+        /usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$src"
+        cp -R "$mount/Hermes.app" "$out/Applications/"
+        cleanup
+        trap - EXIT
         runHook postInstall
       '';
 
       meta = {
         description = "Desktop companion for Hermes Agent";
-        homepage = "https://github.com/fathah/hermes-desktop";
+        homepage = "https://hermes-agent.nousresearch.com/desktop";
         license = lib.licenses.mit;
         platforms = darwinOnly;
         sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
