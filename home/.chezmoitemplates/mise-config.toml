@@ -11,6 +11,7 @@ python = "3.13"
 uv = "latest"
 poetry = "latest"
 "pipx:markitdown" = "latest"
+"pipx:google-colab-cli" = "latest"
 rust = "latest"
 chezmoi = "latest"
 # ai
