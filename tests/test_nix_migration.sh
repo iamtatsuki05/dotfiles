@@ -257,7 +257,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   local cask
   local cli_attrs=(
     "agent-browser"
-    "emacs.pkgs.cask"
+    "emacs-nox.pkgs.cask"
     "ghq"
     "gws"
     "dotfiles.e2b"
