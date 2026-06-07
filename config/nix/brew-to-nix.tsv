@@ -7,13 +7,13 @@ automake	automake
 autossh	autossh
 bat	bat
 byobu	byobu
-cask	emacs.pkgs.cask
+cask	emacs-nox.pkgs.cask
 chezmoi	chezmoi
 cloc	cloc
 cloudflared	cloudflared
 curl	curl
 e2b	dotfiles.e2b
-emacs	emacs
+emacs	emacs-nox
 magika	dotfiles.magika-cli
 ffmpeg	ffmpeg
 fzf	fzf
