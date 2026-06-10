@@ -78,6 +78,7 @@
       "Bash(chown:*)"
     ]
   },
+  "model": "claude-fable-5[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -176,6 +177,5 @@
   "MCP_TOOL_TIMEOUT": 600000,
   "DISABLE_AUTOUPDATER": "0",
   "ANTHROPIC_MODEL": "claude-sonnet-4-6",
-  "MAX_THINKING_TOKENS": 32000,
-  "model": "opus[1m]"
+  "MAX_THINKING_TOKENS": 32000
 }
