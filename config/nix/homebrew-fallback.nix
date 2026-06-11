@@ -82,6 +82,11 @@
     "yellowdot"
   ];
 
+  trustedCasks = [
+    "grishka/grishka/neardrop"
+    "lyraphase/pcloud/pcloud-drive"
+  ];
+
   vscode = [
     "adpyke.codesnap"
     "ahmadawais.shades-of-purple"

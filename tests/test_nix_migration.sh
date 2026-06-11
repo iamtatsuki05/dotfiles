@@ -161,9 +161,34 @@ EOF
 
 test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   local repo
+  local trusted_casks
   make_temp_dir
   repo="$REPLY"
   create_fixture_repo "$repo"
+
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+
+  brews = [
+  ];
+
+  casks = [
+  ];
+
+  trustedCasks = [
+    "private-app"
+    "removed-app"
+  ];
+
+  vscode = [
+  ];
+
+  unsupportedUvPackages = [
+  ];
+}
+EOF
 
   "$TEST_ZSH_BIN" "$MIGRATION_SCRIPT" \
     --repo-root "$repo" \
@@ -214,6 +239,11 @@ test_brewfile_migration_writes_nix_lists_and_unmapped_report() {
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"ghostty"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"private-app"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"affinity-photo"'
+  assert_contains "$repo/config/nix/homebrew-fallback.nix" 'trustedCasks = ['
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"removed-app"'
+  trusted_casks="$(awk '/trustedCasks = \[/ { in_section = 1; next } in_section && /\];/ { in_section = 0 } in_section { print }' "$repo/config/nix/homebrew-fallback.nix")"
+  assert_contains_text "$trusted_casks" '"private-app"'
+  assert_not_contains_text "$trusted_casks" '"removed-app"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"example.extension"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"claude-monitor"'
   assert_contains "$repo/config/nix/mas-apps.nix" '"Xcode" = 497799835;'
@@ -352,6 +382,9 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"tailscale-app"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"yoink"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" 'trustedCasks = ['
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"grishka/grishka/neardrop"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"lyraphase/pcloud/pcloud-drive"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'vscode = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"adpyke.codesnap"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'unsupportedUvPackages = ['
@@ -763,6 +796,7 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackHasCliEntries = homebrewFallback.brews != [ ]'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackHasGuiEntries = homebrewFallback.casks != [ ] || homebrewFallback.vscode != [ ]'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewFallbackEnabled = homebrewFallbackHasCliEntries || (enableGuiApps && homebrewFallbackHasGuiEntries)'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrewTrustedCasks = lib.optionals enableGuiApps (homebrewFallback.trustedCasks or [ ])'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'homebrew = lib.mkIf homebrewFallbackEnabled'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'enable = true'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'taps = homebrewFallback.taps'
@@ -772,6 +806,9 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_not_contains "$DARWIN_HOMEBREW_MODULE" 'import ../mas-apps.nix'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'vscode = lib.optionals enableGuiApps homebrewFallback.vscode'
   assert_contains "$DARWIN_HOMEBREW_MODULE" 'cleanup = "none"'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'system.activationScripts.homebrew.text'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'lib.mkBefore'
+  assert_contains "$DARWIN_HOMEBREW_MODULE" 'brew trust --cask'
 
   assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'launchd.user.agents.dotfiles-auto-update'
   assert_contains "$DARWIN_AUTO_UPDATE_MODULE" 'profile == "full"'

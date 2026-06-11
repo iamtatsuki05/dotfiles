@@ -253,6 +253,50 @@ append_homebrew_fallback() {
   esac
 }
 
+array_contains() {
+  local array_name="$1"
+  local value="$2"
+  local existing
+
+  eval "for existing in \"\${${array_name}[@]:-}\"; do [[ \"\$existing\" == \"\$value\" ]] && return 0; done"
+  return 1
+}
+
+read_nix_attr_string_list() {
+  local source_file="$1"
+  local setting_name="$2"
+
+  [[ -f "$source_file" ]] || return 0
+
+  awk -v target="$setting_name" '
+    BEGIN { in_section = 0 }
+    $0 ~ "^[[:space:]]*" target "[[:space:]]*=" { in_section = 1; next }
+    in_section && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=/ { in_section = 0 }
+    in_section {
+      line = $0
+      sub(/#.*/, "", line)
+      while (match(line, /"([^"\\]|\\.)*"/)) {
+        value = substr(line, RSTART + 1, RLENGTH - 2)
+        gsub(/\\"/, "\"", value)
+        print value
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$source_file"
+}
+
+preserve_existing_homebrew_trusted_casks() {
+  local source_file="$REPO_ROOT/config/nix/homebrew-fallback.nix"
+  local cask
+
+  while IFS= read -r cask || [[ -n "$cask" ]]; do
+    [[ -n "$cask" ]] || continue
+    if array_contains HOMEBREW_FALLBACK_CASKS "$cask"; then
+      append_unique HOMEBREW_FALLBACK_TRUSTED_CASKS "$cask"
+    fi
+  done < <(read_nix_attr_string_list "$source_file" "trustedCasks")
+}
+
 append_mas_app() {
   local name="$1"
   local app_id="$2"
@@ -459,6 +503,8 @@ write_homebrew_fallback_config() {
     echo ""
     write_nix_attr_string_list "casks" HOMEBREW_FALLBACK_CASKS
     echo ""
+    write_nix_attr_string_list "trustedCasks" HOMEBREW_FALLBACK_TRUSTED_CASKS
+    echo ""
     write_nix_attr_string_list "vscode" HOMEBREW_FALLBACK_VSCODE
     echo ""
     write_nix_attr_string_list "unsupportedUvPackages" HOMEBREW_FALLBACK_UNSUPPORTED_UV
@@ -543,6 +589,7 @@ main() {
   typeset -ga HOMEBREW_FALLBACK_TAPS=()
   typeset -ga HOMEBREW_FALLBACK_BREWS=()
   typeset -ga HOMEBREW_FALLBACK_CASKS=()
+  typeset -ga HOMEBREW_FALLBACK_TRUSTED_CASKS=()
   typeset -ga HOMEBREW_FALLBACK_VSCODE=()
   typeset -ga HOMEBREW_FALLBACK_UNSUPPORTED_UV=()
   typeset -gA MAS_APP_IDS=()
@@ -552,6 +599,7 @@ main() {
   resolve_brewfile
   load_mappings
   parse_brewfile
+  preserve_existing_homebrew_trusted_casks
   print_summary
 
   if (( APPLY )); then
