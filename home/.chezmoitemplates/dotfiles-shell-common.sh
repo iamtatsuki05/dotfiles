@@ -108,16 +108,20 @@ if [ "$dotfiles_shell_name" = "zsh" ]; then
 fi
 
 dotfiles_add_default_ssh_key() {
-  local key_path="$HOME/.ssh/id_rsa"
+  local key_path
 
   case "$-" in
     *i*) ;;
     *) return 0 ;;
   esac
 
-  if [ -r "$key_path" ] && [ -S "${SSH_AUTH_SOCK:-}" ]; then
-    ssh-add -q "$key_path" 2>/dev/null || true
-  fi
+  [ -S "${SSH_AUTH_SOCK:-}" ] || return 0
+
+  for key_path in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
+    if [ -r "$key_path" ]; then
+      ssh-add -q "$key_path" 2>/dev/null || true
+    fi
+  done
 }
 
 dotfiles_add_default_ssh_key
