@@ -1,0 +1,48 @@
+name: compatibility-safety-model-eval
+description: |
+  Model-backed quality evaluation for the compatibility-safety skill.
+skill: compatibility-safety
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: compatibility_safety_judgment
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response avoid unrequested compatibility paths while preserving explicit contracts?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: requires_explicit_contract_or_fail_fast
+    config:
+      regex_match:
+        - "(?i)(明示.*(契約|要件|要求|根拠).*(なければ|ない場合|ないなら).*(追加しない|足さない|避ける)|根拠がなければ.*(fail fast|追加しない|足さない)|fail fast)"
+  - type: text
+    name: flags_unrequested_fallback
+    config:
+      regex_match:
+        - "(?i)(fallback|alias|compat|互換|silent fallback|default)"
+  - type: text
+    name: avoids_blanket_breaking_change
+    config:
+      regex_not_match:
+        - "(?i)(always delete|常に破壊|必ず破壊|その方針でよい|そのまま実装|問題ありません)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/avoid-silent-fallback.yaml"

@@ -32,6 +32,7 @@ evals/<skill>/
 | `claude-code` | Claude Code consultation routing. |
 | `codex` | Codex consultation routing. |
 | `colab-mcp` | Safe Colab MCP setup and troubleshooting. |
+| `compatibility-safety` | Compatibility, alias, and fallback discipline. |
 | `database-dev` | Database diagnosis and query review. |
 | `empirical-prompt-tuning` | Prompt tuning workflow quality. |
 | `go-dev` | Go debugging and review behavior. |

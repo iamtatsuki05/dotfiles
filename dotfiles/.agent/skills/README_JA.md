@@ -43,6 +43,7 @@ skills/
 | `claude-code` | Claude Code CLI に相談する workflow。 | 明示的に Claude Code 相談を求められた時に使う。 |
 | `codex` | Codex CLI に相談する workflow。 | 明示的に Codex 相談を求められた時に使う。 |
 | `colab-mcp` | Google Colab と local MCP agent の接続設定・トラブルシュート。 | Google 公式 colab-mcp 用。 |
+| `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
 | `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |
 | `eng-practices` | code review、CL/PR 説明、small CL、review comment 作法。 | Google eng-practices を repo 向けに要約した共通 skill。 |
 | `go-dev` | Go 実装、テスト、並行処理、interface、module 周り。 | `eng-practices` と連携。 |
