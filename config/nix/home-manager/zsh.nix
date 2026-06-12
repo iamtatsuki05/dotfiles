@@ -18,12 +18,14 @@
       if [[ -L /opt/homebrew/share/zsh/site-functions/_brew && ! -e /opt/homebrew/share/zsh/site-functions/_brew ]]; then
         fpath=(''${fpath:#/opt/homebrew/share/zsh/site-functions})
       fi
+      # Shared Linuxbrew completions are not owned by the current user or root on
+      # some NAIST hosts, so zsh compaudit treats them as insecure.
+      fpath=(''${fpath:#/home/linuxbrew/.linuxbrew/share/zsh/site-functions})
+      fpath=(''${fpath:#/home/linuxbrew/.linuxbrew/share/zsh-completions})
 
       for dotfiles_completion_dir in \
         "$HOME/.linuxbrew/share/zsh/site-functions" \
         "$HOME/.linuxbrew/share/zsh-completions" \
-        "/home/linuxbrew/.linuxbrew/share/zsh/site-functions" \
-        "/home/linuxbrew/.linuxbrew/share/zsh-completions" \
         "/opt/homebrew/share/zsh/site-functions" \
         "/usr/local/share/zsh/site-functions"
       do
