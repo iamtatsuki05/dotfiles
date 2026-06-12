@@ -32,6 +32,7 @@ evals/<skill>/
 | `claude-code` | Claude Code 相談 routing。 |
 | `codex` | Codex 相談 routing。 |
 | `colab-mcp` | Colab MCP の安全な setup / troubleshoot。 |
+| `compatibility-safety` | 互換、alias、fallback の追加判断。 |
 | `database-dev` | database diagnosis と query review。 |
 | `empirical-prompt-tuning` | prompt tuning workflow の品質。 |
 | `go-dev` | Go debugging / review。 |

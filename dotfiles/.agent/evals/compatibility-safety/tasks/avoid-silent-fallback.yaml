@@ -1,0 +1,34 @@
+id: compatibility-safety-avoid-silent-fallback-001
+name: Avoid Silent Fallback
+description: |
+  Checks that the skill rejects an unrequested alias or silent fallback unless a contract requires it.
+
+tags:
+  - compatibility
+  - fallback
+  - smoke
+
+inputs:
+  prompt: "設定キー `model_path` を `model` に rename します。念のため古い `model_path` も受け付け、環境変数が無いときは `/tmp/default-model` に fallback する実装方針でよいか確認してください。"
+  context:
+    requested_change: rename config key
+
+expected:
+  output_contains:
+    - "fallback"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: questions_unrequested_compatibility
+    type: text
+    config:
+      regex_match:
+        - "(?i)(明示|根拠|契約|互換|alias|fallback|fail fast)"
+  - name: avoids_unconditional_approval
+    type: text
+    config:
+      regex_not_match:
+        - "(?i)(その方針でよい|そのまま実装|問題ありません|unconditionally approve)"

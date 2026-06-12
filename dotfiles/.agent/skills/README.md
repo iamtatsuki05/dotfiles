@@ -44,6 +44,7 @@ Do not manually copy external skill trees without recording provenance and revie
 | `claude-code` | Consult Claude Code CLI. | Use only when the user explicitly asks for Claude Code consultation. |
 | `codex` | Consult Codex CLI. | Use only when the user explicitly asks for Codex consultation. |
 | `colab-mcp` | Set up and troubleshoot Google Colab MCP connections. | For Google's official colab-mcp flow. |
+| `compatibility-safety` | Avoid unrequested compatibility layers, aliases, silent fallbacks, and default-value fallbacks. | Use before adding compatibility behavior or legacy paths. |
 | `database-dev` | Design and review schemas, queries, indexes, migrations, and database performance. | Covers SQL and NoSQL work. |
 | `eng-practices` | Code review standards, CL/PR descriptions, small CLs, and review comment etiquette. | Repo-oriented summary of Google eng-practices. |
 | `go-dev` | Implement, test, and review Go code, modules, concurrency, and interfaces. | Links to `eng-practices`. |
