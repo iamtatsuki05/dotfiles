@@ -16,14 +16,15 @@
 | `opencode` | `opencode` / `opencode` | opencode |
 | `openclaw` | `openclaw` / `npm:openclaw` | OpenClaw |
 | `grok` | `grok` / `npm:@xai-official/grok` | Grok CLI (xAI) |
+| `agent-swarm` | `agent-swarm` / `npm:@desplega.ai/agent-swarm` | Desplega Agent Swarm CLI。非対話評価では `agent-swarm claude --headless -m` を使う。 |
 
 ## Internal Call Sites
 
 | Code / tool | Supported agents | Notes |
 |---|---|---|
-| `scripts/agent_skill_upstreams.py` | `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw` | `--review-agent` で upstream skill 更新前の security review を実行する。 |
-| `scripts/waza_eval_cli_agent.sh` | `codex`, `claude`, `antigravity`, `copilot`, `devin`, `cursor`, `opencode`, `hermes`, `openclaw`, `all` | Waza model suite を CLI agent で実行する public entrypoint。実装は `scripts/agent/waza_eval_cli_agent.sh`。`all` は全 canonical agent を対象にする。 |
-| `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler` | `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `devin`, `hermes`, `opencode`, `openclaw` | CSV 台帳ベースの非対話ジョブスケジューラ。 |
+| `scripts/agent_skill_upstreams.py` | `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `agent-swarm` | `--review-agent` で upstream skill 更新前の security review を実行する。 |
+| `scripts/waza_eval_cli_agent.sh` | `codex`, `claude`, `antigravity`, `copilot`, `devin`, `cursor`, `opencode`, `hermes`, `openclaw`, `grok`, `agent-swarm`, `all` | Waza model suite を CLI agent で実行する public entrypoint。実装は `scripts/agent/waza_eval_cli_agent.sh`。`all` は全 canonical agent を対象にする。 |
+| `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler` | `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `agent-swarm` | CSV 台帳ベースの非対話ジョブスケジューラ。 |
 
 ## Checklist For Adding An Agent
 

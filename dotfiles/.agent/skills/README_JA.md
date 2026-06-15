@@ -35,6 +35,7 @@ skills/
 | Skill | 用途 | 備考 |
 |---|---|---|
 | `agent-job-scheduler` | 複数 agent CLI の長時間・非対話ジョブを CSV 台帳で queue / retry / cancel する。 | 内部アプリ本体、README、pytest を含む大きめの skill。 |
+| `agent-swarm` | Desplega Agent Swarm の CLI、local API/MCP、onboard/connect、lead/worker、Composio route を安全に扱う。 | CLI は `mise`、MCP はテンプレート経由で必要時だけ接続。 |
 | `alphaxiv-paper-lookup` | arXiv / alphaxiv 論文の要約、比較、実装詳細抽出。 | 論文調査用。 |
 | `api-design` | REST API / OpenAPI / versioning / auth / error response の設計・レビュー。 | `eng-practices` と連携。 |
 | `auto-debugger` | エラー、stack trace、失敗テストの原因調査と修正。 | 実装前に再現・仮説・検証を重視。 |

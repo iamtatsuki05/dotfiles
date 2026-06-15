@@ -17,8 +17,10 @@ Managed agents:
 - `hermes`
 - `opencode`
 - `openclaw`
+- `grok`
+- `agent-swarm`
 
-The tools themselves are installed by `mise` where available. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
+The tools themselves are installed by `mise` where available. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites. Agent Swarm's localhost MCP server is not enabled globally by default; copy templates from `apps/agent-swarm/` only into the project/client that should connect.
 
 ## Layout
 
@@ -53,6 +55,7 @@ zsh dotfiles/.agent/sync.sh
 | `AGENTS.md` | `~/.config/opencode/AGENTS.md` |
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
+| `AGENTS.md` | `~/.grok/AGENTS.md` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -71,6 +74,7 @@ zsh dotfiles/.agent/sync.sh
 | `apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
+| `apps/grok/config.toml` | `~/.grok/config.toml` |
 
 `skills/` is linked to each supported agent home. For Antigravity CLI, it is linked into `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills`. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/antigravity-cli/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
 
@@ -133,6 +137,8 @@ mise run waza-eval-model -- --agent cursor --allow
 mise run waza-eval-model -- --agent opencode --allow
 mise run waza-eval-model -- --agent hermes --allow
 mise run waza-eval-model -- --agent openclaw --allow
+mise run waza-eval-model -- --agent grok --allow
+mise run waza-eval-model -- --agent agent-swarm --allow
 ```
 
 Use `--dry-run` to inspect suites without invoking an AI CLI. Results are written under `.waza-results/`.
@@ -159,7 +165,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, and `openclaw`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, and `agent-swarm`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
 
 For manual review workflows, lower-level commands are still available:
 

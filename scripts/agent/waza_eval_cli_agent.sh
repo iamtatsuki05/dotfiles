@@ -12,13 +12,14 @@ Usage:
   zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
 
 Agents:
-  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, all
+  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, agent-swarm, all
 
 Aliases:
   claude-code -> claude
   agy, antigravity-cli -> antigravity
   cursor-agent -> cursor
   hermes-agent -> hermes
+  swarm -> agent-swarm
 
 Options:
   --allow       Run CLI-backed evals. These require CLI credentials and may use paid quota.
@@ -50,6 +51,8 @@ canonical_agent_specs() {
   print -r -- "hermes-agent"$'\t'"hermes"
   print -r -- "openclaw"$'\t'"openclaw"
   print -r -- "grok"$'\t'"grok"
+  print -r -- "swarm"$'\t'"agent-swarm"
+  print -r -- "agent-swarm"$'\t'"agent-swarm"
   print -r -- "all"$'\t'"all"
 }
 
@@ -69,7 +72,7 @@ canonical_agent() {
 }
 
 all_cli_agents() {
-  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok
+  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok agent-swarm
 }
 
 agents_for() {
@@ -342,6 +345,12 @@ run_cli_agent() {
     grok)
       (cd "$workspace" && run_direct_or_mise "npm:@xai-official/grok" grok \
         -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
+    agent-swarm)
+      (cd "$workspace" && run_direct_or_mise "npm:@desplega.ai/agent-swarm" agent-swarm \
+        claude \
+        --headless \
+        -m "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     *)
       fail "unsupported agent: $agent"

@@ -21,6 +21,7 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 | `opencode/` | opencode | opencode config and JavaScript plugins. |
 | `openclaw/` | OpenClaw | OpenClaw workspace and MCP configuration. |
 | `grok/` | Grok CLI (xAI) | Grok CLI config and settings. |
+| `agent-swarm/` | Agent Swarm | CLI / MCP connection templates. Not synced by default. |
 
 ## File Types
 
@@ -34,7 +35,7 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 ## Update Rules
 
 - Keep the canonical agent list aligned with `../AGENT_SUPPORT.md`.
-- When adding a new supported agent, update this directory, `../AGENT_SUPPORT.md`, `../../scripts/setup_agent_files.sh`, and relevant tests in the same change.
+- When adding a new supported agent, update this directory, `../AGENT_SUPPORT.md`, `../../scripts/setup_agent_files.sh`, and relevant tests in the same change. If a directory only stores helper templates that should not be synced by default, document why in that directory.
 - Do not put secrets in this directory. Runtime env files are generated from `~/.config/shell/secrets.env`.
 - Validate structured config after edits. Typical checks include `jq empty` for JSON, `bash -n` for shell hooks, and agent-specific config validators when available.
 

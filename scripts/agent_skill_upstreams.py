@@ -34,6 +34,7 @@ REVIEW_AGENTS = (
     "opencode",
     "openclaw",
     "grok",
+    "agent-swarm",
 )
 MISE_TOOLS_BY_REVIEW_AGENT = {
     "codex": "codex",
@@ -46,6 +47,7 @@ MISE_TOOLS_BY_REVIEW_AGENT = {
     "opencode": "opencode",
     "openclaw": "npm:openclaw",
     "grok": "npm:@xai-official/grok",
+    "agent-swarm": "npm:@desplega.ai/agent-swarm",
 }
 
 
@@ -502,6 +504,13 @@ def run_review_agent(
                 "--cwd",
                 str(REPO_ROOT),
             ],
+            REPO_ROOT,
+            env,
+        )
+    elif review_agent == "agent-swarm":
+        output = run_direct_or_mise(
+            review_agent,
+            ["agent-swarm", "claude", "--headless", "-m", prompt],
             REPO_ROOT,
             env,
         )

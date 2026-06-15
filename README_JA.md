@@ -257,7 +257,7 @@ zsh scripts/setup_git_hooks.sh
 
 AI agent 関連ファイルは [dotfiles/.agent](dotfiles/.agent) にまとめています。共通 prompt は `dotfiles/.agent/AGENTS.md` で管理し、リポジトリルートには `AGENTS.md` symlink を置きません。
 
-管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`antigravity-cli`、`hermes`、`opencode`、`openclaw` です。CLI 本体は可能な範囲で `mise` から導入し、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。Antigravity CLI は Homebrew Cask `antigravity-cli` として管理し、`agy` binary もそこから提供されます。
+管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`antigravity-cli`、`hermes`、`opencode`、`openclaw`、`grok`、`agent-swarm` です。CLI 本体は可能な範囲で `mise` から導入し、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。Antigravity CLI は Homebrew Cask `antigravity-cli` として管理し、`agy` binary もそこから提供されます。Agent Swarm の localhost MCP は常時有効化せず、`dotfiles/.agent/apps/agent-swarm/` のテンプレートから必要な project/client にだけ入れます。
 
 ```bash
 zsh dotfiles/.agent/sync.sh

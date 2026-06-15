@@ -18,6 +18,7 @@ class Agent(StrEnum):
     OPENCODE = "opencode"
     OPENCLAW = "openclaw"
     GROK = "grok"
+    AGENT_SWARM = "agent-swarm"
 
 
 class JobStatus(StrEnum):
