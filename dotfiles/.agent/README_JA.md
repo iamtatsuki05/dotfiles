@@ -17,8 +17,10 @@ Agent CLI を内部で呼び出すコードやツールの対応状況は [AGENT
 - `hermes`
 - `opencode`
 - `openclaw`
+- `grok`
+- `agent-swarm`
 
-CLI 本体は可能な範囲で `mise` から導入します。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
+CLI 本体は可能な範囲で `mise` から導入します。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。Agent Swarm の localhost MCP は常時有効化せず、`apps/agent-swarm/` のテンプレートから必要な project/client にだけ入れます。
 
 ## 構成
 
@@ -53,6 +55,7 @@ zsh dotfiles/.agent/sync.sh
 | `AGENTS.md` | `~/.config/opencode/AGENTS.md` |
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
+| `AGENTS.md` | `~/.grok/AGENTS.md` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -71,6 +74,7 @@ zsh dotfiles/.agent/sync.sh
 | `apps/opencode/opencode.json` | `~/.config/opencode/opencode.json` |
 | `apps/opencode/plugins/` | `~/.config/opencode/plugins/` |
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
+| `apps/grok/config.toml` | `~/.grok/config.toml` |
 
 `skills/` は各対応 agent の home に symlink します。Antigravity CLI では `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills` に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/antigravity-cli/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
 
@@ -133,6 +137,8 @@ mise run waza-eval-model -- --agent cursor --allow
 mise run waza-eval-model -- --agent opencode --allow
 mise run waza-eval-model -- --agent hermes --allow
 mise run waza-eval-model -- --agent openclaw --allow
+mise run waza-eval-model -- --agent grok --allow
+mise run waza-eval-model -- --agent agent-swarm --allow
 ```
 
 AI CLI を起動せず対象 suite だけ確認する場合は `--dry-run` を使います。結果は `.waza-results/` に出力します。
@@ -159,7 +165,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
+review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw`、`grok`、`agent-swarm` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
 
 手動 review 用に、低レベルコマンドも残しています。
 

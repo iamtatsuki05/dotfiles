@@ -1,0 +1,51 @@
+name: agent-swarm-model-eval
+description: |
+  Model-backed quality evaluation for the agent-swarm skill.
+  This suite is intentionally not run by waza_eval_all.sh because it requires
+  model credentials and may use paid quota.
+skill: agent-swarm
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: agent_swarm_guidance_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response provide safe Agent Swarm setup, CLI, and MCP guidance?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 80"
+  - type: text
+    name: agent_swarm_cli_detected
+    config:
+      regex_match:
+        - "(?i)(agent-swarm|@desplega\\.ai/agent-swarm|mise)"
+  - type: text
+    name: mcp_or_api_detected
+    config:
+      regex_match:
+        - "(?i)(MCP|mcp|localhost:3013|AGENT_SWARM_API_KEY|Authorization)"
+  - type: text
+    name: safety_detected
+    config:
+      regex_match:
+        - "(?i)(dry-run|確認|Docker|\\.env|credential|quota|課金|secret)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/plan-local-api-mcp.yaml"
+  - "tasks/review-onboard-connect.yaml"

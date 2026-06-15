@@ -1,6 +1,6 @@
 # Agent Job Scheduler
 
-Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI、Hermes Agent、opencode、OpenClaw を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI、Hermes Agent、opencode、OpenClaw、Grok CLI、Agent Swarm を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
 
 現在は、runtime 初期化、CSV 台帳、prompt sidecar、atomic write、`enqueue`、`run-once`、`status`、`show`、`retry`、`cancel`、`requeue`、`active-runs`、allowlist、stale recovery、`launchd` 連携まで入った実用初版です。
 
@@ -144,6 +144,30 @@ HERMES_ACCEPT_HOOKS=1 hermes --accept-hooks --yolo -z "$prompt"
 
 ```bash
 openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$prompt" --timeout 600
+```
+
+### Grok CLI
+
+- 非対話実行は `grok -p "$prompt"`
+- スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
+
+想定コマンド:
+
+```bash
+grok -p "$prompt"
+```
+
+### Agent Swarm
+
+- 非対話実行は `agent-swarm claude --headless -m "$prompt"`
+- CLI は `npm:@desplega.ai/agent-swarm` として mise で管理する
+- Agent Swarm の `api` / `lead` / `worker` は長時間・外部接続を伴うため、scheduler では一回完結の headless Claude 経路だけを使う
+- スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
+
+想定コマンド:
+
+```bash
+agent-swarm claude --headless -m "$prompt"
 ```
 
 ## 実行モデルの初期方針

@@ -33,6 +33,7 @@ def default_builders() -> dict[Agent, CommandBuilder]:
         Agent.OPENCODE: build_opencode_command,
         Agent.OPENCLAW: build_openclaw_command,
         Agent.GROK: build_grok_command,
+        Agent.AGENT_SWARM: build_agent_swarm_command,
     }
 
 
@@ -157,6 +158,17 @@ def build_grok_command(job: JobRecord) -> CommandSpec:
     argv = (
         "grok",
         "-p",
+        job.prompt,
+    )
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
+
+
+def build_agent_swarm_command(job: JobRecord) -> CommandSpec:
+    argv = (
+        "agent-swarm",
+        "claude",
+        "--headless",
+        "-m",
         job.prompt,
     )
     return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))

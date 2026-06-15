@@ -17,7 +17,7 @@ dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-jo
 dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler show-config
 ```
 
-`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`devin`、`hermes`、`opencode`、`openclaw` を指定できます。
+`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`devin`、`hermes`、`opencode`、`openclaw`、`grok`、`agent-swarm` を指定できます。
 
 ## 使い分け
 

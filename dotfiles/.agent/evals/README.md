@@ -25,6 +25,7 @@ evals/<skill>/
 | Suite | Covers |
 |---|---|
 | `agent-job-scheduler` | Queueing and recovery workflows for the scheduler skill. |
+| `agent-swarm` | Safe Agent Swarm CLI / MCP setup routing. |
 | `alphaxiv-paper-lookup` | Paper lookup and summarization behavior. |
 | `api-design` | API review and design feedback. |
 | `auto-debugger` | Debugging from stack traces and failing code. |

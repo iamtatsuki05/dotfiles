@@ -1,0 +1,8 @@
+[mcp_servers."agent-swarm"]
+url = "http://localhost:3013/mcp"
+bearer_token_env_var = "AGENT_SWARM_API_KEY"
+startup_timeout_sec = 60
+
+[mcp_servers."agent-swarm".http_headers]
+X-Agent-ID = "${AGENT_SWARM_AGENT_ID}"
+X-Source-Task-Id = "${AGENT_SWARM_SOURCE_TASK_ID}"

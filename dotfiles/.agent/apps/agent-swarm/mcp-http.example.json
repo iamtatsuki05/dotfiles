@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agent-swarm": {
+      "type": "http",
+      "url": "http://localhost:3013/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AGENT_SWARM_API_KEY}",
+        "X-Agent-ID": "${AGENT_SWARM_AGENT_ID}",
+        "X-Source-Task-Id": "${AGENT_SWARM_SOURCE_TASK_ID}"
+      }
+    }
+  }
+}
