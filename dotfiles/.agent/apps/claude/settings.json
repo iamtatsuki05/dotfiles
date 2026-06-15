@@ -103,17 +103,6 @@
         ]
       }
     ],
-    "UserPromptExpansion": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent_context_reminder.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "SubagentStart": [
       {
         "hooks": [
