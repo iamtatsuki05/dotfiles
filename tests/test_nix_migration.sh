@@ -954,6 +954,69 @@ EOF
   rm -rf "$repo"
 }
 
+test_nix_install_script_uses_nix_run_impure_after_subcommand_when_darwin_rebuild_is_missing() {
+  skip_unless_macos "$funcstack[1]" || return 0
+
+  local repo
+  local bin_dir
+  local log_file
+  local output_file
+
+  make_temp_dir
+
+  repo="$REPLY"
+  bin_dir="$repo/bin"
+  log_file="$repo/commands.log"
+  output_file="$repo/output.log"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{ taps = [ ]; brews = [ ]; casks = [ ]; vscode = [ ]; }
+EOF
+  cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
+{ }
+EOF
+
+  cat > "$bin_dir/uname" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  print -r -- "Darwin"
+elif [[ "${1:-}" == "-m" ]]; then
+  print -r -- "arm64"
+else
+  print -r -- "Darwin"
+fi
+EOF
+  cat > "$bin_dir/nix" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:\$*" >> "$log_file"
+exit 0
+EOF
+  cat > "$bin_dir/sudo" <<EOF
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "sudo:\$*" >> "$log_file"
+"\$@"
+EOF
+
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/sudo"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
+
+  assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
+  assert_contains "$log_file" 'nix:--extra-experimental-features nix-command flakes run --impure'
+  assert_not_contains "$log_file" 'nix:--extra-experimental-features nix-command flakes --impure run'
+
+  rm -rf "$repo"
+}
+
 test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
   skip_unless_macos "$funcstack[1]" || return 0
 
@@ -2942,6 +3005,7 @@ main() {
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager
   test_nix_install_script_defaults_to_cli_profile_on_macos
+  test_nix_install_script_uses_nix_run_impure_after_subcommand_when_darwin_rebuild_is_missing
   test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch
   test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch
   test_nix_install_script_archives_existing_home_manager_backups_before_switch
