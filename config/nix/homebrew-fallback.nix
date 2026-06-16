@@ -63,6 +63,7 @@
     "pycharm"
     "qtspim"
     "raspberry-pi-imager"
+    "rekordbox"
     "rustrover"
     "sensei"
     "sourcetree"
