@@ -37,7 +37,7 @@
 
     programs.home-manager.enable = true;
 
-    targets.darwin.copyApps.enable = false;
-    targets.darwin.linkApps.enable = pkgs.stdenv.hostPlatform.isDarwin && config.dotfiles.enableGuiApps;
+    targets.darwin.copyApps.enable = pkgs.stdenv.hostPlatform.isDarwin && config.dotfiles.enableGuiApps;
+    targets.darwin.linkApps.enable = false;
   };
 }
