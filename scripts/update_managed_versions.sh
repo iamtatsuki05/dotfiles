@@ -311,6 +311,93 @@ homebrew_fallback_entry_list() {
   fi
 }
 
+filter_homebrew_casks_for_managed_upgrade() {
+  local brew_path="$1"
+  shift
+
+  local -a requested_casks
+  local ruby_bin="/usr/bin/ruby"
+  local temp_root
+  local metadata_file
+  local upgrade_file
+  local skipped_file
+  local skipped_entries
+  local -a skipped_casks
+
+  requested_casks=("$@")
+
+  if (( ${#requested_casks[@]} == 0 )); then
+    REPLY=""
+    return 0
+  fi
+
+  if [[ ! -x "$ruby_bin" ]]; then
+    echo "ERROR: /usr/bin/ruby is required to inspect Homebrew cask metadata before managed upgrades." >&2
+    return 1
+  fi
+
+  dotfiles_temporary_directory_root
+  temp_root="$REPLY"
+  dotfiles_create_unique_temp_file "$temp_root" "dotfiles-homebrew-cask-info" || return 1
+  metadata_file="$REPLY"
+  if ! dotfiles_create_unique_temp_file "$temp_root" "dotfiles-homebrew-cask-upgrade"; then
+    rm -f "$metadata_file"
+    return 1
+  fi
+  upgrade_file="$REPLY"
+  if ! dotfiles_create_unique_temp_file "$temp_root" "dotfiles-homebrew-cask-skipped"; then
+    rm -f "$metadata_file" "$upgrade_file"
+    return 1
+  fi
+  skipped_file="$REPLY"
+
+  if ! "$brew_path" info --cask --json=v2 "${requested_casks[@]}" > "$metadata_file"; then
+    rm -f "$metadata_file" "$upgrade_file" "$skipped_file"
+    return 1
+  fi
+
+  if ! "$ruby_bin" -rjson -e '
+metadata_path = ARGV.shift
+upgrade_path = ARGV.shift
+skipped_path = ARGV.shift
+requested = ARGV
+metadata = JSON.parse(File.read(metadata_path))
+by_name = {}
+
+metadata.fetch("casks").each do |cask|
+  names = [cask["full_token"], cask["token"], *cask.fetch("old_tokens", [])].compact
+  names.each { |name| by_name[name] = cask }
+end
+
+File.open(upgrade_path, "w") do |upgrade_file|
+  File.open(skipped_path, "w") do |skipped_file|
+    requested.each do |name|
+      cask = by_name[name]
+      abort "ERROR: brew did not return metadata for cask: #{name}" if cask.nil?
+
+      if cask["auto_updates"]
+        skipped_file.puts(name)
+      else
+        upgrade_file.puts(name)
+      end
+    end
+  end
+end
+' "$metadata_file" "$upgrade_file" "$skipped_file" "${requested_casks[@]}"; then
+    rm -f "$metadata_file" "$upgrade_file" "$skipped_file"
+    return 1
+  fi
+
+  skipped_entries="$(cat "$skipped_file")"
+  if [[ -n "$skipped_entries" ]]; then
+    skipped_casks=("${(@f)skipped_entries}")
+    warn "Skipping Homebrew auto-updating casks during managed upgrade: ${(j:, :)skipped_casks}"
+  fi
+
+  REPLY="$(cat "$upgrade_file")"
+  rm -f "$metadata_file" "$upgrade_file" "$skipped_file"
+}
+
 should_update_homebrew_fallback_packages() {
   dotfiles_is_macos || return 1
 
@@ -354,7 +441,15 @@ update_homebrew_fallback_packages() {
 
   if [[ -n "$cask_entries" ]]; then
     casks=("${(@f)cask_entries}")
-    "$brew_path" upgrade --cask "${casks[@]}"
+    filter_homebrew_casks_for_managed_upgrade "$brew_path" "${casks[@]}"
+    if [[ -n "$REPLY" ]]; then
+      casks=("${(@f)REPLY}")
+    else
+      casks=()
+    fi
+    if (( ${#casks[@]} > 0 )); then
+      "$brew_path" upgrade --cask "${casks[@]}"
+    fi
   fi
 }
 
