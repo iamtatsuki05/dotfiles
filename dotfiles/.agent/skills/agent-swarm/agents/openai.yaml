@@ -1,4 +1,0 @@
-interface:
-  display_name: "Agent Swarm"
-  short_description: "Operate Desplega Agent Swarm safely"
-  default_prompt: "Use $agent-swarm to set up or operate Agent Swarm safely."

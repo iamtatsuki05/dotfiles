@@ -420,8 +420,8 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$AGENT_README_JA" 'mise run waza-eval-model -- --agent all --dry-run'
   assert_contains "$AGENT_README" 'mise run waza-eval-model -- --agent openclaw --allow'
   assert_contains "$AGENT_README_JA" 'mise run waza-eval-model -- --agent openclaw --allow'
-  assert_contains "$AGENT_README" 'mise run waza-eval-model -- --agent agent-swarm --allow'
-  assert_contains "$AGENT_README_JA" 'mise run waza-eval-model -- --agent agent-swarm --allow'
+  assert_not_contains "$AGENT_README" 'mise run waza-eval-model -- --agent agent-swarm --allow'
+  assert_not_contains "$AGENT_README_JA" 'mise run waza-eval-model -- --agent agent-swarm --allow'
   assert_not_contains "$AGENT_README" 'waza-eval-cli-agents'
   assert_not_contains "$AGENT_README_JA" 'waza-eval-cli-agents'
   assert_not_contains "$AGENT_README" 'waza-eval-codex'
@@ -463,7 +463,7 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'opencode run'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'hermes'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'openclaw agent'
-  assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'npm:@desplega.ai/agent-swarm'
+  assert_not_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'npm:@desplega.ai/agent-swarm'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'run_direct_or_mise'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" 'run_direct_or_homebrew_cask'
   assert_contains "$WAZA_CLI_AGENT_EVAL_IMPL" '.waza-results/cli-agents'
@@ -507,7 +507,7 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   "$TEST_ZSH_BIN" "$WAZA_MODEL_EVAL_SCRIPT" --agent all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
   assert_output_contains "$output" "DRY-RUN openclaw"
-  assert_output_contains "$output" "DRY-RUN agent-swarm"
+  assert_not_contains "$output" "DRY-RUN agent-swarm"
 
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" codex --dry-run >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
@@ -547,17 +547,13 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" openclaw --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN openclaw"
 
-  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" agent-swarm --dry-run --suite dotfiles/.agent/evals/agent-swarm/model.yaml >"$output"
-  assert_output_contains "$output" "DRY-RUN agent-swarm"
-  assert_output_contains "$output" "dotfiles/.agent/evals/agent-swarm/model.yaml"
-
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
   assert_output_contains "$output" "DRY-RUN antigravity"
   assert_output_contains "$output" "DRY-RUN copilot"
   assert_output_contains "$output" "DRY-RUN hermes"
   assert_output_contains "$output" "DRY-RUN openclaw"
-  assert_output_contains "$output" "DRY-RUN agent-swarm"
+  assert_not_contains "$output" "DRY-RUN agent-swarm"
 
   rm -f "$output"
 }
@@ -3090,7 +3086,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'
-  assert_contains "$MISE_CONFIG" '"npm:@desplega.ai/agent-swarm" = "latest"'
+  assert_not_contains "$MISE_CONFIG" '"npm:@desplega.ai/agent-swarm" = "latest"'
   assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'
   assert_contains "$MISE_CONFIG" 'redis = "8.2"'

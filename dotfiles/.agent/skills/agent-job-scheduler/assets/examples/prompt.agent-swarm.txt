@@ -1,6 +1,0 @@
-Use Agent Swarm in headless mode to inspect the target workspace.
-
-Requirements:
-- Work only in the requested workdir.
-- Do not start long-running lead, worker, API, Docker, or external connector processes.
-- Summarize the concrete changes or findings and verification performed.

@@ -25,7 +25,6 @@ evals/<skill>/
 | Suite | 対象 |
 |---|---|
 | `agent-job-scheduler` | scheduler skill の queue / recovery workflow。 |
-| `agent-swarm` | Agent Swarm CLI / MCP setup の安全な routing。 |
 | `alphaxiv-paper-lookup` | 論文 lookup と要約。 |
 | `api-design` | API review と設計 feedback。 |
 | `auto-debugger` | stack trace や失敗コードからの debugging。 |

@@ -26,7 +26,7 @@ test_support_matrix_documents_managed_agents() {
   local agent
 
   assert_file "$SUPPORT_MATRIX"
-  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok agent-swarm; do
+  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok; do
     assert_agent_documented "$agent"
   done
   assert_contains "$SUPPORT_MATRIX" "brew cask: antigravity-cli"
@@ -39,7 +39,7 @@ test_support_matrix_documents_managed_agents() {
 test_review_agent_code_supports_matrix_agents() {
   local agent
 
-  for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw grok agent-swarm; do
+  for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw grok; do
     assert_contains "$UPSTREAM_SCRIPT" "\"$agent\""
   done
   assert_contains "$UPSTREAM_SCRIPT" "brew-cask:antigravity-cli"
@@ -48,14 +48,14 @@ test_review_agent_code_supports_matrix_agents() {
   assert_contains "$UPSTREAM_SCRIPT" "\"openclaw\": \"npm:openclaw\""
   assert_contains "$UPSTREAM_SCRIPT" "openclaw"
   assert_contains "$UPSTREAM_SCRIPT" "--local"
-  assert_contains "$UPSTREAM_SCRIPT" "\"agent-swarm\": \"npm:@desplega.ai/agent-swarm\""
-  assert_contains "$UPSTREAM_SCRIPT" "agent-swarm"
+  assert_not_contains "$UPSTREAM_SCRIPT" "agent-swarm"
+  assert_not_contains "$UPSTREAM_SCRIPT" "@desplega.ai/agent-swarm"
 }
 
 test_waza_cli_agent_code_supports_matrix_agents() {
   local agent
 
-  for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw grok agent-swarm; do
+  for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw grok; do
     assert_contains "$WAZA_CLI_AGENT_IMPL" "$agent"
   done
   assert_contains "$WAZA_CLI_AGENT_SCRIPT" 'agent/waza_eval_cli_agent.sh'
@@ -63,9 +63,8 @@ test_waza_cli_agent_code_supports_matrix_agents() {
   assert_contains "$WAZA_CLI_AGENT_IMPL" "agy chat --mode agent"
   assert_contains "$WAZA_CLI_AGENT_IMPL" "npm:openclaw"
   assert_contains "$WAZA_CLI_AGENT_IMPL" "openclaw agent"
-  assert_contains "$WAZA_CLI_AGENT_IMPL" "npm:@desplega.ai/agent-swarm"
-  assert_contains "$WAZA_CLI_AGENT_IMPL" "run_direct_or_mise \"npm:@desplega.ai/agent-swarm\" agent-swarm"
-  assert_contains "$WAZA_CLI_AGENT_IMPL" "--headless"
+  assert_not_contains "$WAZA_CLI_AGENT_IMPL" "agent-swarm"
+  assert_not_contains "$WAZA_CLI_AGENT_IMPL" "@desplega.ai/agent-swarm"
   assert_contains "$MISE_CONFIG" "[tasks.waza-eval-model]"
   assert_contains "$MISE_TEMPLATE" "[tasks.waza-eval-model]"
   assert_not_contains "$MISE_CONFIG" "[tasks.waza-eval-openclaw]"
@@ -75,7 +74,7 @@ test_waza_cli_agent_code_supports_matrix_agents() {
 test_agent_job_scheduler_code_supports_matrix_agents() {
   local enum_name
 
-  for enum_name in ANTIGRAVITY CLAUDE CODEX COPILOT CURSOR DEVIN HERMES OPENCODE OPENCLAW GROK AGENT_SWARM; do
+  for enum_name in ANTIGRAVITY CLAUDE CODEX COPILOT CURSOR DEVIN HERMES OPENCODE OPENCLAW GROK; do
     assert_contains "$SCHEDULER_MODELS" "$enum_name"
   done
   assert_contains "$SCHEDULER_ADAPTERS" "Agent.ANTIGRAVITY"
@@ -87,9 +86,10 @@ test_agent_job_scheduler_code_supports_matrix_agents() {
   assert_contains "$SCHEDULER_ADAPTERS" "Agent.GROK"
   assert_contains "$SCHEDULER_ADAPTERS" "build_grok_command"
   assert_contains "$SCHEDULER_SETTINGS" "Agent.GROK.value"
-  assert_contains "$SCHEDULER_ADAPTERS" "Agent.AGENT_SWARM"
-  assert_contains "$SCHEDULER_ADAPTERS" "build_agent_swarm_command"
-  assert_contains "$SCHEDULER_SETTINGS" "Agent.AGENT_SWARM.value"
+  assert_not_contains "$SCHEDULER_MODELS" "AGENT_SWARM"
+  assert_not_contains "$SCHEDULER_ADAPTERS" "Agent.AGENT_SWARM"
+  assert_not_contains "$SCHEDULER_ADAPTERS" "build_agent_swarm_command"
+  assert_not_contains "$SCHEDULER_SETTINGS" "Agent.AGENT_SWARM.value"
 }
 
 main() {

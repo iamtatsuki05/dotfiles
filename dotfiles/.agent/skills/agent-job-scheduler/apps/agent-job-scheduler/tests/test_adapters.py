@@ -97,13 +97,6 @@ def test_default_agent_commands_match_cli_contracts(tmp_path: Path) -> None:
         "--timeout",
         "600",
     )
-    assert registry.build(_job(agent=Agent.AGENT_SWARM, workdir=tmp_path)).argv == (
-        "agent-swarm",
-        "claude",
-        "--headless",
-        "-m",
-        "prompt",
-    )
 
 
 def _job(*, agent: Agent, workdir: Path, prompt: str = "prompt") -> JobRecord:

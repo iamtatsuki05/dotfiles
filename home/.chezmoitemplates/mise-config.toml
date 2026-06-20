@@ -22,7 +22,6 @@ opencode = "latest"
 "npm:@github/copilot" = "latest"
 "npm:openclaw" = "latest"
 "npm:@xai-official/grok" = "latest"
-"npm:@desplega.ai/agent-swarm" = "latest"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"

@@ -22,7 +22,6 @@ English version: [README.md](README.md)
 | `opencode/` | opencode | opencode config と JavaScript plugin。 |
 | `openclaw/` | OpenClaw | OpenClaw workspace と MCP 設定。 |
 | `grok/` | Grok CLI (xAI) | Grok CLI config と MCP 設定。 |
-| `agent-swarm/` | Agent Swarm | CLI / MCP 接続テンプレート。常時 sync しない。 |
 
 ## ファイル種別
 
@@ -36,7 +35,7 @@ English version: [README.md](README.md)
 ## 更新ルール
 
 - canonical agent 一覧は `../AGENT_SUPPORT.md` と揃えます。
-- 新しい対応 agent を追加する場合は、このディレクトリ、`../AGENT_SUPPORT.md`、`../../scripts/setup_agent_files.sh`、関連テストを同じ変更で更新します。Agent Swarm のように常時同期しない補助テンプレートだけを置く場合は、その理由を当該 README に明記します。
+- 新しい対応 agent を追加する場合は、このディレクトリ、`../AGENT_SUPPORT.md`、`../../scripts/setup_agent_files.sh`、関連テストを同じ変更で更新します。
 - secret はこのディレクトリに置きません。runtime env file は `~/.config/shell/secrets.env` から生成します。
 - 編集後は構造化 config を検証します。JSON は `jq empty`、shell hook は `bash -n`、利用可能なら agent 固有 validator を使います。
 
