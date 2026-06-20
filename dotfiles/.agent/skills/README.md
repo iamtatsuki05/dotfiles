@@ -36,7 +36,6 @@ Do not manually copy external skill trees without recording provenance and revie
 | Skill | Purpose | Notes |
 |---|---|---|
 | `agent-job-scheduler` | Queue, inspect, retry, and cancel long non-interactive jobs for multiple agent CLIs. | Larger skill with an internal app, README, and pytest coverage. |
-| `agent-swarm` | Safely operate Desplega Agent Swarm CLI, local API/MCP, onboard/connect, lead/worker, and Composio routes. | CLI is managed by `mise`; MCP is connected from templates only when needed. |
 | `alphaxiv-paper-lookup` | Summarize, compare, and extract implementation details from arXiv / alphaxiv papers. | Paper research workflow. |
 | `api-design` | Design and review REST APIs, OpenAPI specs, versioning, auth, and error responses. | Links to `eng-practices`. |
 | `auto-debugger` | Investigate errors, stack traces, and failing tests. | Emphasizes reproduction, hypotheses, and verification before fixing. |

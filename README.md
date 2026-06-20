@@ -258,7 +258,7 @@ zsh scripts/setup_git_hooks.sh
 
 AI agent files live under [dotfiles/.agent](dotfiles/.agent). The shared prompt is `dotfiles/.agent/AGENTS.md`; the repository root intentionally does not contain an `AGENTS.md` symlink.
 
-Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `antigravity-cli`, `hermes`, `opencode`, `openclaw`, `grok`, and `agent-swarm`. They are installed by `mise` where available, while per-agent settings, MCP files, hooks, skills, and Waza eval suites are tracked under `dotfiles/.agent/`. Antigravity CLI is managed as the Homebrew Cask `antigravity-cli`, which provides the `agy` binary. Agent Swarm's localhost MCP is not enabled globally by default; copy the templates in `dotfiles/.agent/apps/agent-swarm/` into the specific project/client that should connect.
+Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `antigravity-cli`, `hermes`, `opencode`, `openclaw`, and `grok`. They are installed by `mise` where available, while per-agent settings, MCP files, hooks, skills, and Waza eval suites are tracked under `dotfiles/.agent/`. Antigravity CLI is managed as the Homebrew Cask `antigravity-cli`, which provides the `agy` binary.
 
 ```bash
 zsh dotfiles/.agent/sync.sh

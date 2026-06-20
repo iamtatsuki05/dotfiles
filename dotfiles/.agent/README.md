@@ -18,9 +18,8 @@ Managed agents:
 - `opencode`
 - `openclaw`
 - `grok`
-- `agent-swarm`
 
-The tools themselves are installed by `mise` where available. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites. Agent Swarm's localhost MCP server is not enabled globally by default; copy templates from `apps/agent-swarm/` only into the project/client that should connect.
+The tools themselves are installed by `mise` where available. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
 
 ## Layout
 
@@ -138,7 +137,6 @@ mise run waza-eval-model -- --agent opencode --allow
 mise run waza-eval-model -- --agent hermes --allow
 mise run waza-eval-model -- --agent openclaw --allow
 mise run waza-eval-model -- --agent grok --allow
-mise run waza-eval-model -- --agent agent-swarm --allow
 ```
 
 Use `--dry-run` to inspect suites without invoking an AI CLI. Results are written under `.waza-results/`.
@@ -165,7 +163,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, and `agent-swarm`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, and `grok`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
 
 For manual review workflows, lower-level commands are still available:
 
