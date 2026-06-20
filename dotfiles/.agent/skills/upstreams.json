@@ -131,6 +131,64 @@
       },
       "source_url": "https://github.com/GoogleChrome/modern-web-guidance/tree/main/skills/modern-web-guidance",
       "provenance_note": "Only the modern-web-guidance skill is vendored. The optional chrome-extensions skill is intentionally excluded. Local SKILL.md and guide cross-references pin the npm CLI to modern-web-guidance@0.0.169 instead of upstream @latest to avoid unreviewed supply-chain drift."
+    },
+    {
+      "id": "report-skills",
+      "description": "Japanese report and academic assignment writing skill vendored into the shared agent skill tree.",
+      "repository": "https://github.com/mizuamedesu/ReportSkills.git",
+      "branch": "main",
+      "pinned_commit": "b1c400cc2f13fea1cc423de651afb083f60a4f8f",
+      "local_tree_sha256": "b371789c678d06c2a243b7d9f6fe75ba12e92daba98f4506bf2eff70c293cec0",
+      "mappings": [
+        {
+          "source_path": "skills/report-skills",
+          "local_path": "dotfiles/.agent/skills/report-skills"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/report-skills/LICENSE"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "b1c400cc2f13fea1cc423de651afb083f60a4f8f",
+        "last_reviewed_at": "2026-06-20T11:50:10+00:00",
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260620T115010Z/report-skills.md"
+      },
+      "source_url": "https://github.com/mizuamedesu/ReportSkills/tree/main/skills/report-skills",
+      "provenance_note": "MIT license copied into the vendored skill directory. Local SKILL.md narrows the upstream description to Japanese reports and assignments for safer Codex triggering; instruction body remains unchanged. Upstream README attribution is intentionally not vendored as runtime skill content."
+    },
+    {
+      "id": "stop-ai-slop-jp",
+      "description": "Japanese AI-slop prose review and rewrite skill vendored into the shared agent skill tree.",
+      "repository": "https://github.com/iKora128/stop-ai-slop-jp.git",
+      "branch": "main",
+      "pinned_commit": "e09d32796f253a62693885757cea484c275d06f2",
+      "local_tree_sha256": "4ee2cab2c2fe2b91183f492b58da05964b87b1dac49af84ad5c09045e85f308b",
+      "mappings": [
+        {
+          "source_path": "SKILL.md",
+          "local_path": "dotfiles/.agent/skills/stop-ai-slop-jp/SKILL.md"
+        },
+        {
+          "source_path": "references",
+          "local_path": "dotfiles/.agent/skills/stop-ai-slop-jp/references"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/stop-ai-slop-jp/LICENSE"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "e09d32796f253a62693885757cea484c275d06f2",
+        "last_reviewed_at": "2026-06-20T11:50:10+00:00",
+        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260620T115010Z/stop-ai-slop-jp.md"
+      },
+      "source_url": "https://github.com/iKora128/stop-ai-slop-jp/tree/main",
+      "provenance_note": "MIT license copied into the vendored skill directory. Upstream SKILL.md and references are vendored without local instruction changes; README and CHANGELOG are intentionally excluded from the loadable skill."
     }
   ]
 }
