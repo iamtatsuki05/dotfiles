@@ -81,6 +81,7 @@
     "wechat"
     "windows-app"
     "yellowdot"
+    "zed"
   ];
 
   trustedCasks = [
