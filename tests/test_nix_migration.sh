@@ -307,7 +307,6 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "google-chrome"
     "slack"
     "vscode"
-    "zed-editor"
   )
   local macos_gui_attrs=(
     "alt-tab-macos"
@@ -324,6 +323,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "ghostty"
     "pcloud"
     "vlc"
+    "zed-editor"
   )
   local migrated_casks=(
     "1password-cli"
@@ -342,6 +342,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'
   assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'firefox\tfirefox\tcommon'
+  assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'zed\tzed-editor\tlinux'
 
   for nix_attr in "${common_gui_attrs[@]}"; do
     assert_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" "\"$nix_attr\""
@@ -366,8 +367,10 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$MIGRATED_FORMULAE_FILE" "gemini-cli"
   assert_not_contains "$MIGRATED_CASKS_FILE" "claude-code@latest"
   assert_not_contains "$MIGRATED_CASKS_FILE" "codex"
+  assert_not_contains "$MIGRATED_CASKS_FILE" "zed"
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	codex	managed-by-mise:codex'
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	zed	nix-package-is-linux-only'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	claude-code	managed-by-mise:claude-code'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'brew	codex	managed-by-mise:codex'
   assert_contains "$MIGRATED_MAS_APPS_FILE" $'Alfred	nix	alfred'
@@ -382,6 +385,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"tailscale-app"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"yoink"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"zed"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'trustedCasks = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"grishka/grishka/neardrop"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"lyraphase/pcloud/pcloud-drive"'

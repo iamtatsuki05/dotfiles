@@ -14,6 +14,5 @@
   "temurin-bin"
   "vscode"
   "webex"
-  "zed-editor"
   "zoom-us"
 ]

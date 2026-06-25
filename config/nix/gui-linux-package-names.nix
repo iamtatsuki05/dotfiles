@@ -6,4 +6,5 @@
   "qtspim"
   "unityhub"
   "vlc"
+  "zed-editor"
 ]
