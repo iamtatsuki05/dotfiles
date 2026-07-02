@@ -1,6 +1,6 @@
 ---
 name: eng-practices
-description: "Use when the user asks about engineering practices, code review standards, CL/PR description writing, keeping CLs/PRs small, handling reviewer comments or pushback, review speed and etiquette, the Standard of Code Review, or any topic derived from Google eng-practices (review/reviewer/* and review/developer/*). Other dev skills (pr-code-review, python-dev, go-dev, typescript-dev, api-design, database-dev, terraform-dev, ci-cd, security-check, auto-debugger, markdown-docs) link here for shared review and CL standards."
+description: "Use when the user asks about engineering practices, code review standards, CL/PR description writing, keeping CLs/PRs small, handling reviewer comments or pushback, review speed and etiquette, the Standard of Code Review, or any topic derived from Google eng-practices (review/reviewer/* and review/developer/*). Other dev skills link here for shared review and CL standards."
 ---
 
 # Engineering Practices スキル

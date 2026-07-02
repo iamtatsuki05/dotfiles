@@ -87,7 +87,7 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 以下のテンプレートに従ってレビューレポートを作成する。
 
-重大度の基準:
+重大度の基準（カテゴリ別の具体例は [references/review-guidelines.md](references/review-guidelines.md) の「指摘の重要度分類」）:
 - Critical: マージ前に直すべき correctness / security / data loss / production regression
 - Warning: 修正または明確な説明が必要なリスク
 - Suggestion: 品質改善だが、マージ可否を直接左右しない提案
@@ -164,10 +164,8 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 ## レビュアー運用
 
-- レビュー応答は 1 営業日以内を目安にする。集中時間で遅らせる場合も半日以内に区切る。
-- 1000 行超や複数目的が混ざった PR は、コメント前に「分割を依頼する」ことが最善のレビューになりやすい。
-- 「Critical / Warning / Suggestion」の severity は eng-practices のコメントラベル（`Critical:` / `Warning:` / `Nit:` / `Optional:` / `FYI:`）と整合させる。詳細は `eng-practices` スキル参照。
-- レビュアー側の作法・著者側の作法・小さい CL の閾値（〜100 行目安、>400 行で再分割検討）は `eng-practices` スキルに集約してある。
+- 応答速度・分割依頼の判断は 2.7 の Speed / Navigate に従う。
+- 「Critical / Warning / Suggestion」の severity は eng-practices のコメントラベル（`Critical:` / `Warning:` / `Nit:` / `Optional:` / `FYI:`）と整合させる。レビュアー側・著者側の作法や小さい CL の閾値は `eng-practices` スキルに集約してある。
 
 ## 使用例
 

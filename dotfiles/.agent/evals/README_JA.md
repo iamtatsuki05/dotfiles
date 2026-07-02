@@ -24,13 +24,12 @@ evals/<skill>/
 
 | Suite | 対象 |
 |---|---|
+| `agent-cli-consult` | 外部 agent CLI（Codex / Claude Code）相談 routing。 |
 | `agent-job-scheduler` | scheduler skill の queue / recovery workflow。 |
 | `alphaxiv-paper-lookup` | 論文 lookup と要約。 |
 | `api-design` | API review と設計 feedback。 |
 | `auto-debugger` | stack trace や失敗コードからの debugging。 |
 | `ci-cd` | CI workflow review。 |
-| `claude-code` | Claude Code 相談 routing。 |
-| `codex` | Codex 相談 routing。 |
 | `colab-mcp` | Colab MCP の安全な setup / troubleshoot。 |
 | `compatibility-safety` | 互換、alias、fallback の追加判断。 |
 | `database-dev` | database diagnosis と query review。 |

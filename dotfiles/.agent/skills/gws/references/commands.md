@@ -9,11 +9,13 @@ gws 0.22.5 時点のコマンドリファレンス。
 | `--params <JSON>` | URL/クエリパラメータを JSON で指定 |
 | `--json <JSON>` | リクエストボディを JSON で指定（POST/PATCH/PUT） |
 | `--upload <PATH>` | アップロードするローカルファイル |
+| `--upload-content-type <MIME>` | アップロードファイルの MIME type（省略時は拡張子から自動判定） |
 | `--output <PATH>` | バイナリレスポンスの保存先 |
 | `--format <FMT>` | 出力形式: `json`（デフォルト）/ `table` / `yaml` / `csv` |
 | `--api-version <VER>` | API バージョンの上書き |
 | `--page-all` | 全ページを自動取得（NDJSON） |
 | `--page-limit <N>` | `--page-all` 時の最大ページ数（デフォルト: 10） |
+| `--page-delay <MS>` | ページ取得間の待機 ms（デフォルト: 100） |
 | `--dry-run` | API に送信せずにリクエスト内容を検証 |
 
 ## 認証

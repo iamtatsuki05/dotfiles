@@ -1,7 +1,7 @@
-name: claude-code-model-eval
+name: agent-cli-consult-model-eval
 description: |
-  Model-backed quality evaluation for the claude-code skill.
-skill: claude-code
+  Model-backed quality evaluation for the agent-cli-consult skill.
+skill: agent-cli-consult
 version: "1.0"
 
 config:
@@ -12,10 +12,10 @@ config:
   model: claude-sonnet-4.6
 
 metrics:
-  - name: claude_consultation_quality
+  - name: agent_cli_consultation_quality
     weight: 1.0
     threshold: 0.8
-    description: Did the response frame a bounded Claude Code consultation?
+    description: Did the response frame a bounded external agent CLI consultation?
 
 graders:
   - type: code
@@ -24,15 +24,15 @@ graders:
       assertions:
         - "len(output) > 80"
   - type: text
-    name: claude_cli_detected
+    name: agent_cli_detected
     config:
       regex_match:
-        - "(?i)(claude|claude code|consult|review)"
+        - "(?i)(codex|claude|consult|review|debug)"
   - type: text
     name: scope_or_safety_explained
     config:
       regex_match:
-        - "(?i)(scope|prompt|read-only|review|result)"
+        - "(?i)(scope|prompt|read-only|review|result|finding)"
   - type: text
     name: no_runtime_errors
     config:
@@ -41,3 +41,4 @@ graders:
 
 tasks:
   - "tasks/consult-claude-review.yaml"
+  - "tasks/consult-codex-debug.yaml"

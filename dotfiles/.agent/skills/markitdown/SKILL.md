@@ -19,17 +19,14 @@ markitdown --version
 
 **インストールされていない場合:**
 
-インストールは環境変更を伴うため、ユーザーに確認してから実行する。OCR・音声文字起こしが必要な場合だけ `[all]` を検討する。
+global install はせず、まず `missing-tools` skill の方針に沿って ad-hoc 実行を試す。
 
 ```bash
-# 標準インストール（PDF・Word・Excel・HTML 等に対応）
-pip install markitdown
-
-# 全形式サポート（画像OCR・音声文字起こし等を含む）
-pip install 'markitdown[all]'
+# mise の pipx backend で一時実行（推奨）
+mise exec 'pipx:markitdown' -- markitdown --version
 ```
 
-> `pip` が使えない場合は `pip3` または `python3 -m pip` を使用する。
+永続インストール（`pip install markitdown`、全形式サポートなら `pip install 'markitdown[all]'`）は環境変更を伴うため、ユーザーに確認してから実行する。`[all]` は画像 OCR・音声文字起こしが必要な場合だけ検討する。
 
 ## 対応フォーマット
 
@@ -78,7 +75,7 @@ print(result.text_content)
 
 1. `markitdown --version` でインストールを確認
 2. 入力ファイル/URL、出力先、既存ファイルの上書き可否を確認する
-3. 未インストールなら `pip install markitdown` を案内し、ユーザー承認後に実行する
+3. 未インストールなら `mise exec 'pipx:markitdown' -- markitdown` などの ad-hoc 実行を優先し、永続インストールはユーザー承認後に行う
 4. 変換コマンドを実行する
 5. 先頭・末尾・見出し・表・コードブロックなどを確認し、変換崩れや欠落を報告する
 6. ファイル保存が必要なら `-o` を使う。既存ファイルを上書きする場合は事前確認する

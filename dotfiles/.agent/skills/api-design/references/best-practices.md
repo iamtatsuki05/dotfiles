@@ -234,6 +234,77 @@ schemas:
         type: string
 ```
 
+### 標準エラーレスポンス定義一式
+
+`components.responses` に全種類を定義し、各 endpoint から `$ref` で参照する。
+
+```yaml
+components:
+  responses:
+    BadRequest:
+      description: リクエスト不正
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: リクエストパラメータが不正です
+            details:
+              - field: email
+                message: 有効なメールアドレスを入力してください
+
+    Unauthorized:
+      description: 認証エラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: UNAUTHORIZED
+            message: 認証が必要です
+
+    Forbidden:
+      description: アクセス拒否
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FORBIDDEN
+            message: このリソースへのアクセス権限がありません
+
+    NotFound:
+      description: リソース未検出
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: 指定されたリソースが見つかりません
+
+    Conflict:
+      description: 競合エラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: CONFLICT
+            message: リソースが既に存在します
+
+    InternalServerError:
+      description: サーバーエラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INTERNAL_ERROR
+            message: 内部エラーが発生しました
+```
+
 ### バリデーションエラー
 
 ```json

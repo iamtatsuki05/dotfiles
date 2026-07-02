@@ -52,69 +52,14 @@ jobs:
         run: npm run build
 ```
 
-### GitLab CI
+例中の action バージョン（`actions/checkout@v4` など）は執筆時点のもの。major は各 action の最新安定版を確認して選び、既存 repo では周囲のピン方針（タグ / commit SHA）に合わせる。
 
-```yaml
-# .gitlab-ci.yml
-stages:
-  - test
-  - build
-  - deploy
+### 他プラットフォームとの差分
 
-variables:
-  NODE_VERSION: "20"
+上の GitHub Actions の骨子（trigger → job → step）を基準に、主な対応関係だけ押さえる。
 
-test:
-  stage: test
-  image: node:${NODE_VERSION}
-  cache:
-    key: ${CI_COMMIT_REF_SLUG}
-    paths:
-      - node_modules/
-  script:
-    - npm ci
-    - npm test
-
-build:
-  stage: build
-  image: node:${NODE_VERSION}
-  script:
-    - npm ci
-    - npm run build
-  artifacts:
-    paths:
-      - dist/
-```
-
-### CircleCI
-
-```yaml
-# .circleci/config.yml
-version: 2.1
-
-orbs:
-  node: circleci/node@5
-
-jobs:
-  build-and-test:
-    docker:
-      - image: cimg/node:20.0
-    steps:
-      - checkout
-      - node/install-packages:
-          pkg-manager: npm
-      - run:
-          name: Run tests
-          command: npm test
-      - run:
-          name: Build
-          command: npm run build
-
-workflows:
-  main:
-    jobs:
-      - build-and-test
-```
+- **GitLab CI**（`.gitlab-ci.yml`）: job を `stages` で順序付けし、step の代わりに `image` + `script` を書く。action の代わりに `include` / `extends` でテンプレートを再利用し、cache / artifacts はキーワードで宣言する。完全な YAML 例と rules・親子パイプライン等は [references/gitlab-ci.md](references/gitlab-ci.md) 参照。
+- **CircleCI**（`.circleci/config.yml`）: 再利用単位は orbs。`jobs` を `workflows` で組み合わせ、依存は `requires` で宣言する。実行環境は `docker` / `machine` / `macos` の executor で指定する。最小構成例は [references/circleci.md](references/circleci.md) 参照。
 
 ## ベストプラクティス
 
@@ -152,10 +97,10 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node-version: [18, 20, 22]
+        node-version: [20, 22]  # サポート対象の LTS を列挙し、EOL 版は外す（最新の LTS 状況を確認）
         exclude:
           - os: macos-latest
-            node-version: 18
+            node-version: 20
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/setup-node@v4
@@ -330,24 +275,34 @@ jobs:
 ```yaml
 - name: Run CodeQL
   uses: github/codeql-action/analyze@v3
+```
 
-- name: Run Semgrep
-  uses: returntocorp/semgrep-action@v1
+Semgrep は `returntocorp/semgrep-action` が廃止済みのため、公式コンテナで `semgrep ci` を実行する。
+
+```yaml
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      # Semgrep AppSec Platform 連携なしなら `semgrep scan --config auto`
+      - run: semgrep ci
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 ```
 
 ## PR 運用（eng-practices）
 
-workflow 変更にも `eng-practices` スキルの共通原則を併用する。
+Small CL、PR 説明の書き方などの共通原則は `eng-practices` スキル参照。CI/CD 固有には以下を徹底する。
 
-- **Small CL**: workflow 変更は 1 目的に絞る。新 job 追加と既存 job 変更を同居させない。
 - **意図と影響を PR に書く**: trigger 変更、`permissions` の昇格、secret 追加、外部サービス連携、deploy 影響、cache key 変更を本文で明示する。
 - **Why を YAML コメントに残す**: `if:` 条件、`continue-on-error: true`、独自 retry など読みにくい分岐には理由コメントを 1 行残す。
 
-詳細は `eng-practices` スキル参照。
-
 ## 実装後の検証と報告
 
-- YAML 構文検証、既存の lint、`actionlint`、`gitlab-ci-lint` などプロジェクトに合う検証を実行する。
+- YAML 構文検証、既存の lint に加え、プラットフォームに合う検証を実行する: GitHub Actions は `actionlint`、GitLab CI は CI Lint（Web UI の Pipeline Editor、または `POST /projects/:id/ci/lint` API）、CircleCI は `circleci config validate`。
 - 可能ならローカルで同等の build/test コマンドを実行する。CI 上でしか確認できない場合は、その前提を報告する。
 - デプロイ、権限拡大、secret 追加、外部サービス更新を伴う変更は、対象環境と影響を明示してユーザー承認を取る。
 - 最終報告には、変更した workflow/job、trigger、権限、secret 参照、実行した検証、残るリスクを含める。
@@ -358,4 +313,5 @@ workflow 変更にも `eng-practices` スキルの共通原則を併用する。
 
 - **GitHub Actions詳細**: [references/github-actions.md](references/github-actions.md)
 - **GitLab CI詳細**: [references/gitlab-ci.md](references/gitlab-ci.md)
+- **CircleCI最小構成**: [references/circleci.md](references/circleci.md)
 - **デプロイパターン集**: [references/deploy-patterns.md](references/deploy-patterns.md)

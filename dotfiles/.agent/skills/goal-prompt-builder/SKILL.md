@@ -1,6 +1,6 @@
 ---
 name: goal-prompt-builder
-description: "Use when the user asks to create, rewrite, evaluate, or tighten a Codex /goal prompt for long-running work, durable objectives, migrations, large refactors, experiments, deployment retry loops, prototypes, prompt optimization, or any task that should keep Codex working until a verifiable stopping condition is reached."
+description: "Use when the user asks to create, rewrite, evaluate, or tighten a Codex /goal prompt for long-running work, durable objectives, migrations, large refactors, experiments, deployment retry loops, prototypes, self-driven prompt-optimization goals for Codex, or any task that should keep Codex working until a verifiable stopping condition is reached."
 ---
 
 # Goal Prompt Builder

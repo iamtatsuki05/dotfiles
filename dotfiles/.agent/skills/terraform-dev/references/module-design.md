@@ -4,6 +4,8 @@
 
 - [モジュール設計原則](#モジュール設計原則)
 - [ディレクトリ構成](#ディレクトリ構成)
+- [モジュール実装と呼び出し例](#モジュール実装と呼び出し例)
+- [HCL パターン](#hcl-パターン)
 - [変数設計](#変数設計)
 - [出力設計](#出力設計)
 - [バージョニング](#バージョニング)
@@ -111,6 +113,157 @@ modules/
     │       └── main.tf
     └── tests/
         └── basic_test.go
+```
+
+---
+
+## モジュール実装と呼び出し例
+
+### 再利用可能なモジュール
+
+```hcl
+# modules/vpc/main.tf
+resource "aws_vpc" "this" {
+  cidr_block           = var.cidr_block
+  enable_dns_hostnames = var.enable_dns_hostnames
+  enable_dns_support   = var.enable_dns_support
+
+  tags = merge(var.tags, {
+    Name = var.name
+  })
+}
+
+resource "aws_subnet" "public" {
+  count = length(var.public_subnet_cidrs)
+
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = var.public_subnet_cidrs[count.index]
+  availability_zone       = var.availability_zones[count.index]
+  map_public_ip_on_launch = true
+
+  tags = merge(var.tags, {
+    Name = "${var.name}-public-${count.index + 1}"
+    Type = "public"
+  })
+}
+
+resource "aws_subnet" "private" {
+  count = length(var.private_subnet_cidrs)
+
+  vpc_id            = aws_vpc.this.id
+  cidr_block        = var.private_subnet_cidrs[count.index]
+  availability_zone = var.availability_zones[count.index]
+
+  tags = merge(var.tags, {
+    Name = "${var.name}-private-${count.index + 1}"
+    Type = "private"
+  })
+}
+```
+
+### モジュール呼び出し
+
+```hcl
+# environments/production/main.tf
+module "vpc" {
+  source = "../../modules/vpc"
+
+  name       = "${var.project_name}-${var.environment}"
+  cidr_block = var.vpc_cidr
+
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+  availability_zones   = data.aws_availability_zones.available.names
+
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = local.common_tags
+}
+
+module "ecs_cluster" {
+  source = "../../modules/ecs"
+
+  cluster_name = "${var.project_name}-${var.environment}"
+  vpc_id       = module.vpc.vpc_id
+  subnet_ids   = module.vpc.private_subnet_ids
+
+  depends_on = [module.vpc]
+}
+```
+
+---
+
+## HCL パターン
+
+### for_each と dynamic ブロック
+
+```hcl
+# for_each でリソースを動的に作成
+resource "aws_security_group_rule" "ingress" {
+  for_each = var.ingress_rules
+
+  type              = "ingress"
+  from_port         = each.value.from_port
+  to_port           = each.value.to_port
+  protocol          = each.value.protocol
+  cidr_blocks       = each.value.cidr_blocks
+  security_group_id = aws_security_group.main.id
+  description       = each.value.description
+}
+
+# dynamic ブロック
+resource "aws_security_group" "main" {
+  name   = "${var.name}-sg"
+  vpc_id = var.vpc_id
+
+  dynamic "ingress" {
+    for_each = var.ingress_rules
+    content {
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+      description = ingress.value.description
+    }
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+```
+
+### 条件分岐とループ
+
+```hcl
+# 三項演算子
+resource "aws_instance" "main" {
+  ami           = var.ami_id
+  instance_type = var.environment == "production" ? "m5.large" : "t3.small"
+
+  monitoring = var.environment == "production" ? true : false
+}
+
+# for式
+locals {
+  subnet_map = {
+    for idx, cidr in var.subnet_cidrs :
+    "subnet-${idx}" => {
+      cidr = cidr
+      az   = var.availability_zones[idx % length(var.availability_zones)]
+    }
+  }
+
+  # フィルタリング
+  production_instances = [
+    for instance in var.instances :
+    instance if instance.environment == "production"
+  ]
+}
 ```
 
 ---

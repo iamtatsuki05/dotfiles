@@ -9,7 +9,7 @@ exec\(
 compile\(
 __import__\(
 pickle\.load
-yaml\.load\((?!.*Loader=yaml\.SafeLoader)
+yaml\.load\(   # SafeLoader 指定の有無はヒット行を目視確認 (look-ahead を使う場合は rg -P)
 subprocess\..*shell=True
 os\.system\(
 os\.popen\(

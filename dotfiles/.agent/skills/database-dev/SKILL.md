@@ -47,20 +47,9 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- 更新日時の自動更新（PostgreSQL）
-CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 ```
+
+`updated_at` の自動更新は ORM/アプリ層かトリガーで行う。PostgreSQL のトリガー実装例は [references/engine-specific.md](references/engine-specific.md) を参照。
 
 ### リレーション設計
 
@@ -227,125 +216,41 @@ SET lock_timeout = '5s';
 
 ## マイグレーション
 
-### 安全なマイグレーション
+安全に進めるための判断基準:
 
-```sql
--- カラム追加（デフォルト値なし = 即座に完了）
-ALTER TABLE users ADD COLUMN phone VARCHAR(20);
+- **カラム追加（デフォルト値なし）**: 即座に完了する安全な操作。
+- **カラム追加（デフォルト値あり）**: PostgreSQL 11+ は非 volatile なデフォルト（定数など）に限り即座に完了する。volatile なデフォルト（`gen_random_uuid()` 等）や古いバージョンでは全行書き換えが発生する。MySQL はバージョンと `ALGORITHM` 指定で挙動が異なるため、対象バージョンのドキュメントを確認する。
+- **大きなテーブルへのインデックス追加**: PostgreSQL では `CREATE INDEX CONCURRENTLY` を使い、書き込みロックを避ける。
+- **カラム削除**: アプリからの参照削除 → NOT NULL 制約解除 → 期間を置いてカラム削除、と段階的に行う。
+- **カラム名変更・型変更**: 直接の `RENAME` / `ALTER TYPE` はアプリと非互換になるため、expand-contract（新カラム追加 → データコピーと二重書き込み → 参照切替 → 旧カラム削除）で段階的に行う。
 
--- カラム追加（デフォルト値あり）
--- PostgreSQL 11+: 即座に完了
--- それ以前/MySQL: 全行書き換え発生
-ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT false;
-
--- 大きなテーブルへのインデックス追加
-CREATE INDEX CONCURRENTLY idx_orders_status ON orders(status);
-
--- カラム削除は段階的に
--- 1. アプリからの参照を削除
--- 2. NOT NULL制約を外す
--- 3. しばらく経ってからカラム削除
-ALTER TABLE users ALTER COLUMN old_column DROP NOT NULL;
-ALTER TABLE users DROP COLUMN old_column;
-```
-
-### ダウンタイムなしの変更
-
-```sql
--- カラム名変更（段階的）
--- 1. 新カラム追加
-ALTER TABLE users ADD COLUMN display_name VARCHAR(100);
--- 2. データコピー（バッチ処理）
-UPDATE users SET display_name = name WHERE display_name IS NULL LIMIT 1000;
--- 3. アプリで両方参照
--- 4. 旧カラム削除
-```
+各操作の SQL 実例は [references/migrations.md](references/migrations.md) を参照。
 
 ## NoSQL (MongoDB) パターン
 
-### ドキュメント設計
+ドキュメント設計の判断基準:
 
-```javascript
-// 埋め込み（1対少、頻繁にアクセス）
-{
-  _id: ObjectId("..."),
-  name: "John",
-  addresses: [
-    { type: "home", city: "Tokyo" },
-    { type: "work", city: "Osaka" }
-  ]
-}
+- **埋め込み**: 1対少で、親と常に一緒に読み書きするデータ（例: ユーザーの住所一覧）。ドキュメントサイズ上限に注意。
+- **参照**: 1対多・多対多で、独立してアクセス・更新するデータ（例: ユーザーと注文）。
+- インデックスは RDB と同様に、複合（左端から使用）、部分、ユニーク、TTL、テキストを使い分ける。
 
-// 参照（1対多、独立してアクセス）
-// users collection
-{ _id: ObjectId("user1"), name: "John" }
-
-// orders collection
-{ _id: ObjectId("order1"), user_id: ObjectId("user1"), total: 1000 }
-```
-
-### インデックス
-
-```javascript
-// 単一フィールド
-db.users.createIndex({ email: 1 }, { unique: true });
-
-// 複合インデックス
-db.orders.createIndex({ user_id: 1, created_at: -1 });
-
-// 部分インデックス
-db.orders.createIndex(
-  { created_at: 1 },
-  { partialFilterExpression: { status: "pending" } }
-);
-
-// テキストインデックス
-db.products.createIndex({ name: "text", description: "text" });
-```
+ドキュメント設計・インデックス・アグリゲーション・トランザクションの実例は [references/engine-specific.md](references/engine-specific.md) の MongoDB 節を参照。
 
 ## パフォーマンス監視
 
-### PostgreSQL
+- **PostgreSQL**: `pg_stat_statements` でスロークエリを特定する（PostgreSQL 13+ ではカラム名が `mean_exec_time` / `total_exec_time`。12 以前は `mean_time` / `total_time`）。`pg_stat_user_tables` で Seq Scan の多いテーブル、`pg_stat_user_indexes` で未使用インデックスを確認する。
+- **MySQL**: スロークエリログと `performance_schema` で実行統計を確認する。
 
-```sql
--- スロークエリ確認
-SELECT query, calls, mean_time, total_time
-FROM pg_stat_statements
-ORDER BY mean_time DESC
-LIMIT 10;
-
--- テーブル統計
-SELECT relname, seq_scan, idx_scan, n_live_tup
-FROM pg_stat_user_tables
-ORDER BY seq_scan DESC;
-
--- インデックス使用状況
-SELECT indexrelname, idx_scan, idx_tup_read
-FROM pg_stat_user_indexes
-WHERE idx_scan = 0;  -- 未使用インデックス
-```
-
-### MySQL
-
-```sql
--- スロークエリログ有効化
-SET GLOBAL slow_query_log = 'ON';
-SET GLOBAL long_query_time = 1;
-
--- クエリ実行計画キャッシュ
-SHOW STATUS LIKE 'Qcache%';
-```
+具体的な監視 SQL は [references/engine-specific.md](references/engine-specific.md) の各エンジン節を参照。
 
 ## マイグレーション運用（eng-practices）
 
-スキーマ変更／migration にも `eng-practices` スキルの共通原則を併用する。
+スキーマ変更／migration に固有の運用:
 
-- **Small CL**: 1 migration は 1 目的に絞る。複数テーブル横断の変更は段階分割を検討する。
+- **1 migration は 1 目的に絞る**: 複数テーブル横断の変更は段階分割を検討する。
 - **影響範囲と戻し方を明示**: PR 本文に対象テーブル、想定 lock 時間、データ量、ロールバック手順、必要なら段階的リリース計画を書く。
-- **Why を残す**: なぜこの正規化／非正規化／インデックス／分離レベルを選んだかを migration ファイルか PR 本文に残す。
-- **テスト同梱**: クエリ変更にはテスト（リポジトリテスト、`EXPLAIN` 比較、計測スクリプト）を同 PR に入れる。
 
-詳細は `eng-practices` スキル参照。
+Small CL、Why の残し方、テスト同梱などの共通原則は `eng-practices` スキルを参照。
 
 ## コード品質チェック
 
@@ -364,4 +269,5 @@ SHOW STATUS LIKE 'Qcache%';
 
 - **正規化とモデリング**: [references/normalization.md](references/normalization.md)
 - **クエリ最適化詳細**: [references/query-optimization.md](references/query-optimization.md)
-- **各DBエンジン固有のTips**: [references/engine-specific.md](references/engine-specific.md)
+- **安全なマイグレーション実例**: [references/migrations.md](references/migrations.md)
+- **各DBエンジン固有のTips（監視SQL、MongoDB実例を含む）**: [references/engine-specific.md](references/engine-specific.md)
