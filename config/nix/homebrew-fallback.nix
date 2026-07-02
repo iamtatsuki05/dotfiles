@@ -9,6 +9,7 @@
     "lyraphase/pcloud"
     "microsoft/git"
     "modularml/packages"
+    "stablyai/orca"
   ];
 
   brews = [
@@ -67,6 +68,7 @@
     "rustrover"
     "sensei"
     "sourcetree"
+    "stablyai/orca/orca"
     "steam"
     "steermouse"
     "superset"
@@ -87,6 +89,7 @@
   trustedCasks = [
     "grishka/grishka/neardrop"
     "lyraphase/pcloud/pcloud-drive"
+    "stablyai/orca/orca"
   ];
 
   vscode = [
