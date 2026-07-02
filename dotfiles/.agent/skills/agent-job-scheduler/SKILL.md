@@ -52,17 +52,19 @@ description: "Use when the user wants to queue, inspect, retry, cancel, or run l
 ## コマンド例
 
 ```bash
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler status
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler enqueue --agent codex --workdir /abs/path --prompt "調査して修正してください"
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler run-once
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler show <job_id>
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler retry <job_id>
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler cancel <job_id>
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler requeue <job_id>
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler active-runs
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler allow-workdir /abs/path
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler set-allowlist-enforcement on
-dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler set-stale-running-timeout 600
+AJS=dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agent-job-scheduler
+
+"$AJS" status
+"$AJS" enqueue --agent codex --workdir /abs/path --prompt "調査して修正してください"
+"$AJS" run-once
+"$AJS" show <job_id>
+"$AJS" retry <job_id>
+"$AJS" cancel <job_id>
+"$AJS" requeue <job_id>
+"$AJS" active-runs
+"$AJS" allow-workdir /abs/path
+"$AJS" set-allowlist-enforcement on
+"$AJS" set-stale-running-timeout 600
 dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/scripts/install_launch_agent.sh --interval-seconds 60
 ```
 

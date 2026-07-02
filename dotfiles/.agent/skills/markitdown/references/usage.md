@@ -100,7 +100,7 @@ with open("output.md", "w") as f:
 
 ## トラブルシューティング
 
-- **`markitdown: command not found`** → `pip install markitdown` でインストール。PATH が通っているか確認（`python3 -m markitdown` でも実行可能）。
+- **`markitdown: command not found`** → まず `mise exec 'pipx:markitdown' -- markitdown` などの ad-hoc 実行（SKILL.md 冒頭参照）。永続インストール（`pip install markitdown`）はユーザー確認後に行う（`python3 -m markitdown` でも実行可能）。
 - **PDF の変換結果が空** → スキャン PDF（画像ベース）の場合は `markitdown[all]` で OCR を有効化する。
 - **音声・画像が変換できない** → `pip install 'markitdown[all]'` で追加依存をインストール。
 - **文字化け** → 出力は UTF-8 。ターミナルのエンコーディングを確認するか `-o` でファイルに保存する。

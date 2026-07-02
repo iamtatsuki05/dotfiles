@@ -2,10 +2,57 @@
 
 ## 目次
 
+- [プロバイダ共通パターン](#プロバイダ共通パターン)
 - [AWS](#aws)
 - [Google Cloud (GCP)](#google-cloud-gcp)
 - [Azure](#azure)
 - [Kubernetes](#kubernetes)
+
+---
+
+## プロバイダ共通パターン
+
+### データソースとリモートステート
+
+```hcl
+# リモートステート参照
+data "terraform_remote_state" "network" {
+  backend = "s3"
+  config = {
+    bucket = "terraform-state-bucket"
+    key    = "network/terraform.tfstate"
+    region = "ap-northeast-1"
+  }
+}
+
+# 既存リソースのインポート用データソース
+data "aws_vpc" "existing" {
+  filter {
+    name   = "tag:Name"
+    values = ["existing-vpc"]
+  }
+}
+```
+
+### プロバイダエイリアス
+
+```hcl
+# マルチリージョン対応
+provider "aws" {
+  region = "ap-northeast-1"
+  alias  = "tokyo"
+}
+
+provider "aws" {
+  region = "us-east-1"
+  alias  = "virginia"
+}
+
+resource "aws_s3_bucket" "replica" {
+  provider = aws.virginia
+  bucket   = "${var.bucket_name}-replica"
+}
+```
 
 ---
 

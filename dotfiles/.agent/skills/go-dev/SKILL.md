@@ -224,91 +224,30 @@ func BenchmarkFilter(b *testing.B) {
 
 ## 高度なパターン
 
-### Context活用
+詳細なコード例（context、errgroup、セマフォ、ワーカープール、functional options、リトライ等）は [references/common-patterns.md](references/common-patterns.md) を参照。判断基準:
+
+- **context**: 外部 I/O やブロックし得る処理には `context.Context` を第一引数で渡す。タイムアウトやキャンセルは `context.WithTimeout` + `defer cancel()` で呼び出し側が制御する。
+- **並行処理**: エラーを返す goroutine 群には `errgroup` を第一候補にする。並行数制限はセマフォ、ストリーム処理はワーカープールや fan-in/fan-out を検討する。
+- **functional options**: 省略可能な設定が多いコンストラクタは `Option func(*Config)` パターンでデフォルト値 + 可変長オプションにする。
+
+最小例（errgroup、Go 1.22+ 前提。Go 1.21 以前ではループ変数の再宣言 `url := url` が必要）:
 
 ```go
-func ProcessWithTimeout(ctx context.Context) error {
-    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-    defer cancel()
+import "golang.org/x/sync/errgroup"
 
-    select {
-    case <-ctx.Done():
-        return ctx.Err()
-    case result := <-doWork(ctx):
-        return handleResult(result)
-    }
+g, ctx := errgroup.WithContext(ctx)
+for _, url := range urls {
+    g.Go(func() error { return fetch(ctx, url) })
 }
-```
-
-### 並行処理
-
-```go
-func FetchAll(ctx context.Context, urls []string) ([]Result, error) {
-    g, ctx := errgroup.WithContext(ctx)
-    results := make([]Result, len(urls))
-
-    for i, url := range urls {
-        i, url := i, url // ループ変数キャプチャ（Go 1.22以前）
-        g.Go(func() error {
-            res, err := fetch(ctx, url)
-            if err != nil {
-                return err
-            }
-            results[i] = res
-            return nil
-        })
-    }
-
-    if err := g.Wait(); err != nil {
-        return nil, err
-    }
-    return results, nil
-}
-```
-
-### オプションパターン
-
-```go
-type Config struct {
-    timeout time.Duration
-    retries int
-    logger  *slog.Logger
-}
-
-type Option func(*Config)
-
-func WithTimeout(d time.Duration) Option {
-    return func(c *Config) {
-        c.timeout = d
-    }
-}
-
-func WithRetries(n int) Option {
-    return func(c *Config) {
-        c.retries = n
-    }
-}
-
-func NewClient(opts ...Option) *Client {
-    cfg := &Config{
-        timeout: 30 * time.Second,
-        retries: 3,
-    }
-    for _, opt := range opts {
-        opt(cfg)
-    }
-    return &Client{config: cfg}
+if err := g.Wait(); err != nil {
+    return err
 }
 ```
 
 ## エンジニアリング作法（共通）
 
-Go 実装時にも `eng-practices` スキルの共通原則を併用する。
-
-- **Small CL**: 1 PR は 1 目的に絞る（〜100 行目安、>400 行で再分割を検討）。リファクタと機能追加は分ける。
-- **テスト同梱**: 機能変更には新規/更新の `_test.go` を同 PR に入れる。難しい場合は理由と代替検証を PR 説明に書く。
-- **Why コメント**: コードコメントは「なぜそうしているか」を書く。godoc コメントもこの観点で整える。
-- **PR description**: タイトルは命令形・具体的に。本文に Why / What / 影響範囲 / 代替案 / 残課題を書く。`Bug fix` 等の曖昧タイトルは避ける。
+Small CL、テスト同梱、Why コメント、PR description の共通規範は `eng-practices` スキルを参照する。
+Go では特に、機能変更に対応する `_test.go` の追加・更新を同じ PR に含めることを徹底する。
 
 ## コード品質チェック
 
@@ -327,3 +266,4 @@ Go 実装時にも `eng-practices` スキルの共通原則を併用する。
 - **コーディング規約詳細**: [references/coding-standards.md](references/coding-standards.md)
 - **テストガイド**: [references/testing-guide.md](references/testing-guide.md)
 - **よく使うパターン集**: [references/common-patterns.md](references/common-patterns.md)
+- **標準ライブラリ早見表**（context / errors / io / net/http / encoding/json / sync / time / log/slog）: [references/api_reference.md](references/api_reference.md)

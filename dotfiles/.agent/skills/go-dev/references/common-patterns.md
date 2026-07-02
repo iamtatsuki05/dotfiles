@@ -161,6 +161,22 @@ func GetConfig() *Config {
 
 ## 並行処理パターン
 
+### context によるタイムアウト制御
+
+```go
+func ProcessWithTimeout(ctx context.Context) error {
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    case result := <-doWork(ctx):
+        return handleResult(result)
+    }
+}
+```
+
 ### errgroup
 
 ```go
@@ -171,7 +187,7 @@ func FetchAll(ctx context.Context, urls []string) ([]Response, error) {
     responses := make([]Response, len(urls))
 
     for i, url := range urls {
-        i, url := i, url // Go 1.22以前ではキャプチャが必要
+        i, url := i, url // Go 1.21 以前ではキャプチャが必要（Go 1.22+ では不要）
         g.Go(func() error {
             resp, err := fetch(ctx, url)
             if err != nil {

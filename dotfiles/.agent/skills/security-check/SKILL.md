@@ -71,7 +71,8 @@ rg "\.html\(.*\$|document\.write\("
 
 ### デシリアライゼーション
 ```bash
-rg "pickle\.load|yaml\.load\((?!.*SafeLoader)|unserialize\(|ObjectInputStream"
+# yaml.load の look-ahead には PCRE2 (-P) が必要。ヒット後に SafeLoader 指定の有無を目視確認する
+rg -P "pickle\.load|yaml\.load\((?!.*SafeLoader)|unserialize\(|ObjectInputStream"
 ```
 
 ## Phase 3: 認証・認可チェック

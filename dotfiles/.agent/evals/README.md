@@ -24,13 +24,12 @@ evals/<skill>/
 
 | Suite | Covers |
 |---|---|
+| `agent-cli-consult` | External agent CLI (Codex / Claude Code) consultation routing. |
 | `agent-job-scheduler` | Queueing and recovery workflows for the scheduler skill. |
 | `alphaxiv-paper-lookup` | Paper lookup and summarization behavior. |
 | `api-design` | API review and design feedback. |
 | `auto-debugger` | Debugging from stack traces and failing code. |
 | `ci-cd` | CI workflow review. |
-| `claude-code` | Claude Code consultation routing. |
-| `codex` | Codex consultation routing. |
 | `colab-mcp` | Safe Colab MCP setup and troubleshooting. |
 | `compatibility-safety` | Compatibility, alias, and fallback discipline. |
 | `database-dev` | Database diagnosis and query review. |

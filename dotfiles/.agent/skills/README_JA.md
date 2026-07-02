@@ -34,14 +34,13 @@ skills/
 
 | Skill | 用途 | 備考 |
 |---|---|---|
+| `agent-cli-consult` | 外部 agent CLI（Codex CLI / Claude Code CLI）へのレビュー・調査相談。 | 明示的に CLI 相談を求められた時に使う。 |
 | `agent-job-scheduler` | 複数 agent CLI の長時間・非対話ジョブを CSV 台帳で queue / retry / cancel する。 | 内部アプリ本体、README、pytest を含む大きめの skill。 |
 | `alphaxiv-paper-lookup` | arXiv / alphaxiv 論文の要約、比較、実装詳細抽出。 | 論文調査用。 |
 | `api-design` | REST API / OpenAPI / versioning / auth / error response の設計・レビュー。 | `eng-practices` と連携。 |
 | `auto-debugger` | エラー、stack trace、失敗テストの原因調査と修正。 | 実装前に再現・仮説・検証を重視。 |
 | `chronicle` | ユーザー画面と最近の作業履歴を使った文脈補完。 | Chronicle が有効な環境専用。 |
 | `ci-cd` | GitHub Actions などの CI/CD 設計・修正・調査。 | workflow YAML とログ調査向け。 |
-| `claude-code` | Claude Code CLI に相談する workflow。 | 明示的に Claude Code 相談を求められた時に使う。 |
-| `codex` | Codex CLI に相談する workflow。 | 明示的に Codex 相談を求められた時に使う。 |
 | `colab-mcp` | Google Colab と local MCP agent の接続設定・トラブルシュート。 | Google 公式 colab-mcp 用。 |
 | `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
 | `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |

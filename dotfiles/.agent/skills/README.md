@@ -35,14 +35,13 @@ Do not manually copy external skill trees without recording provenance and revie
 
 | Skill | Purpose | Notes |
 |---|---|---|
+| `agent-cli-consult` | Consult an external agent CLI (Codex CLI / Claude Code CLI) for review, debugging, and analysis. | Use only when the user explicitly asks for a CLI consultation. |
 | `agent-job-scheduler` | Queue, inspect, retry, and cancel long non-interactive jobs for multiple agent CLIs. | Larger skill with an internal app, README, and pytest coverage. |
 | `alphaxiv-paper-lookup` | Summarize, compare, and extract implementation details from arXiv / alphaxiv papers. | Paper research workflow. |
 | `api-design` | Design and review REST APIs, OpenAPI specs, versioning, auth, and error responses. | Links to `eng-practices`. |
 | `auto-debugger` | Investigate errors, stack traces, and failing tests. | Emphasizes reproduction, hypotheses, and verification before fixing. |
 | `chronicle` | Use screen history and recent desktop context to disambiguate user requests. | Only for environments where Chronicle is enabled. |
 | `ci-cd` | Design, edit, and debug CI/CD workflows such as GitHub Actions. | Workflow YAML and log investigation. |
-| `claude-code` | Consult Claude Code CLI. | Use only when the user explicitly asks for Claude Code consultation. |
-| `codex` | Consult Codex CLI. | Use only when the user explicitly asks for Codex consultation. |
 | `colab-mcp` | Set up and troubleshoot Google Colab MCP connections. | For Google's official colab-mcp flow. |
 | `compatibility-safety` | Avoid unrequested compatibility layers, aliases, silent fallbacks, and default-value fallbacks. | Use before adding compatibility behavior or legacy paths. |
 | `database-dev` | Design and review schemas, queries, indexes, migrations, and database performance. | Covers SQL and NoSQL work. |

@@ -20,11 +20,11 @@ description: コマンドが見つからない、shell が command not found を
 ## 手順
 
 1. `command -v <command>` で本当に未導入か確認する。
-2. project-local 優先。必要なら `direnv exec . <command> <args>`。
+2. project-local 優先。direnv 採用プロジェクト(`command -v direnv` が通り `.envrc` がある場合)のみ `direnv exec . <command> <args>`。
 3. `config/mise/config.toml` にある tool は `mise exec <tool>@<version> -- <command> <args>`。
-4. nixpkgs の ad-hoc command は `, <command> <args>`。
-5. package 名が分かる場合は `nix run nixpkgs#<package> -- <args>`。
-6. 最後に `nix shell nixpkgs#<package> --command <command> <args>`。
+4. package 名が分かる場合は `nix run nixpkgs#<package> -- <args>`。
+5. 最後に `nix shell nixpkgs#<package> --command <command> <args>`。
+6. comma が導入済みの環境(`command -v ,` が通る場合)だけ `, <command> <args>` も使える。
 
 ## 安全弁
 
@@ -38,4 +38,4 @@ description: コマンドが見つからない、shell が command not found を
 
 ## Examples
 
-`mise exec 'pipx:markitdown' -- markitdown --version`, `, jq --version`.
+`mise exec 'pipx:markitdown' -- markitdown --version`, `nix run nixpkgs#jq -- --version`.

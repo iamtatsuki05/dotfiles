@@ -7,7 +7,8 @@
 3. [非同期パターン](#非同期パターン)
 4. [DI（依存性注入）](#di依存性注入)
 5. [設定管理](#設定管理)
-6. [バリデーション](#バリデーション)
+6. [型パターン](#型パターン)
+7. [バリデーション](#バリデーション)
 
 ## デザインパターン
 
@@ -536,9 +537,71 @@ class Config {
 export const config = Config.getInstance();
 ```
 
+## 型パターン
+
+### ユーティリティ型
+
+```typescript
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  age: number;
+}
+
+// Partial: すべてのプロパティをオプショナルに
+type UpdateUser = Partial<User>;
+
+// Required: すべてのプロパティを必須に
+type RequiredUser = Required<User>;
+
+// Pick: 特定のプロパティのみ抽出
+type UserPreview = Pick<User, 'id' | 'name'>;
+
+// Omit: 特定のプロパティを除外
+type UserWithoutAge = Omit<User, 'age'>;
+
+// Record: キーと値の型を指定
+type UserMap = Record<string, User>;
+
+// Readonly: すべてのプロパティを読み取り専用に
+type ImmutableUser = Readonly<User>;
+```
+
+### 型ガード（型述語）
+
+```typescript
+interface Dog {
+  kind: 'dog';
+  bark(): void;
+}
+
+interface Cat {
+  kind: 'cat';
+  meow(): void;
+}
+
+type Pet = Dog | Cat;
+
+// 型述語（Type Predicate）
+function isDog(pet: Pet): pet is Dog {
+  return pet.kind === 'dog';
+}
+
+function handlePet(pet: Pet): void {
+  if (isDog(pet)) {
+    pet.bark();  // TypeScriptはpetがDogだと認識
+  } else {
+    pet.meow();
+  }
+}
+```
+
 ## バリデーション
 
 ### Zod
+
+以下は Zod v3 系の記法。v3 と v4 で API が一部異なるため、プロジェクトの依存バージョンを確認してから書く。
 
 ```typescript
 import { z } from 'zod';

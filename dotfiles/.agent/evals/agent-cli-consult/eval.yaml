@@ -1,7 +1,7 @@
-name: claude-code-eval
+name: agent-cli-consult-eval
 description: |
-  Smoke evaluation suite for the claude-code skill.
-skill: claude-code
+  Smoke evaluation suite for the agent-cli-consult skill.
+skill: agent-cli-consult
 version: "1.0"
 
 config:
@@ -12,10 +12,10 @@ config:
   model: claude-sonnet-4.6
 
 metrics:
-  - name: claude_code_response
+  - name: agent_cli_consult_response
     weight: 1.0
     threshold: 0.8
-    description: Did the skill accept a Claude Code consultation task?
+    description: Did the skill accept an external agent CLI consultation task?
 
 graders:
   - type: code

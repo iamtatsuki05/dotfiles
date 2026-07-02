@@ -201,7 +201,7 @@ flagged = [r for r in results if r.ok and r.output.group in dangerous_groups]
 
 ## トラブルシューティング
 
-- **`magika: command not found`** → `pipx install magika` でインストール。PATH に `~/.local/bin` が含まれているか確認（`export PATH="$HOME/.local/bin:$PATH"`）。
+- **`magika: command not found`** → まず `mise exec 'pipx:magika' -- magika` などの ad-hoc 実行（SKILL.md 冒頭参照）。永続インストール（`pipx install magika`）はユーザー確認後に行い、PATH に `~/.local/bin` が含まれているか確認する。
 - **`pip` でインストールしたのに使えない** → `python3 -m magika` で実行できるか試す。または `pipx install magika` を使う。
 - **識別結果が `unknown` になる** → ファイルが非常に小さい・空・暗号化されているなどが原因の可能性がある。`--output-score` でスコアを確認する。
 - **精度を上げたい** → `PredictionMode.HIGH_CONFIDENCE` を使うと閾値が上がり、不確かな場合は `unknown` を返すようになる。

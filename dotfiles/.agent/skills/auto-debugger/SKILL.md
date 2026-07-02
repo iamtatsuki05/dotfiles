@@ -1,6 +1,6 @@
 ---
 name: auto-debugger
-description: "Use when the user provides an error, failing test, stack trace, build/runtime failure, or asks to debug, fix this error, investigate a bug, or explain why something fails across any language or framework."
+description: "Use when the user provides an error, failing test, stack trace, build/runtime failure, or asks to debug, fix this error, investigate a bug, or explain why something fails across any language or framework. For hard-to-reproduce bugs or performance regressions, combine with mattpocock/diagnose."
 ---
 
 # Auto Debugger
@@ -32,6 +32,7 @@ description: "Use when the user provides an error, failing test, stack trace, bu
 コードを読んだ後、問題箇所の仮説を立て、printデバッグスクリプトで検証する。
 
 **仮説立案:**
+- 先に「1コマンドで成否が分かる再現方法」を確保する。再現が不安定・困難な bug や性能退行では、`mattpocock/diagnose` skill の方法論（フィードバックループ構築、反証可能な複数仮説）を併用する
 - エラーの種類・発生箇所から疑わしい箇所をリストアップ（複数可）
 - 優先度: スタックトレースの失敗行 → 呼び出し元 → 入力データ → 設定値
 - エラー種別ごとの調査ポイントは `references/error-patterns.md` を参照

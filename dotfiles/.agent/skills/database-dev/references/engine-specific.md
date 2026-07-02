@@ -104,6 +104,43 @@ VALUES ('test@example.com', 'Test User')
 ON CONFLICT DO NOTHING;
 ```
 
+### updated_at 自動更新トリガー
+
+```sql
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+```
+
+### パフォーマンス監視
+
+```sql
+-- スロークエリ確認（pg_stat_statements 拡張が必要）
+-- PostgreSQL 13+ のカラム名。12 以前は mean_time / total_time
+SELECT query, calls, mean_exec_time, total_exec_time
+FROM pg_stat_statements
+ORDER BY mean_exec_time DESC
+LIMIT 10;
+
+-- テーブル統計
+SELECT relname, seq_scan, idx_scan, n_live_tup
+FROM pg_stat_user_tables
+ORDER BY seq_scan DESC;
+
+-- インデックス使用状況
+SELECT indexrelname, idx_scan, idx_tup_read
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0;  -- 未使用インデックス
+```
+
 ## MySQL
 
 ### エンジン選択
@@ -177,6 +214,21 @@ ALTER TABLE logs ADD PARTITION (
 SHOW SLAVE STATUS\G
 ```
 
+### パフォーマンス監視
+
+```sql
+-- スロークエリログ有効化
+SET GLOBAL slow_query_log = 'ON';
+SET GLOBAL long_query_time = 1;
+
+-- 実行統計（performance_schema）
+-- クエリキャッシュ（Qcache）は MySQL 8.0 で削除済み
+SELECT DIGEST_TEXT, COUNT_STAR, AVG_TIMER_WAIT
+FROM performance_schema.events_statements_summary_by_digest
+ORDER BY AVG_TIMER_WAIT DESC
+LIMIT 10;
+```
+
 ## SQLite
 
 ### 特徴と制限
@@ -220,6 +272,27 @@ COMMIT;
 
 ## MongoDB
 
+### ドキュメント設計（埋め込み vs 参照）
+
+```javascript
+// 埋め込み（1対少、頻繁にアクセス）
+{
+  _id: ObjectId("..."),
+  name: "John",
+  addresses: [
+    { type: "home", city: "Tokyo" },
+    { type: "work", city: "Osaka" }
+  ]
+}
+
+// 参照（1対多、独立してアクセス）
+// users collection
+{ _id: ObjectId("user1"), name: "John" }
+
+// orders collection
+{ _id: ObjectId("order1"), user_id: ObjectId("user1"), total: 1000 }
+```
+
 ### インデックス戦略
 
 ```javascript
@@ -234,6 +307,15 @@ db.users.createIndex(
   { email: 1 },
   { unique: true, sparse: true }  // nullは無視
 );
+
+// 部分インデックス
+db.orders.createIndex(
+  { created_at: 1 },
+  { partialFilterExpression: { status: "pending" } }
+);
+
+// テキストインデックス
+db.products.createIndex({ name: "text", description: "text" });
 
 // インデックス使用状況
 db.orders.aggregate([{ $indexStats: {} }]);

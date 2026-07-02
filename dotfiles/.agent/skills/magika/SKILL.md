@@ -19,17 +19,17 @@ magika --version
 
 **インストールされていない場合:**
 
-インストールは環境変更を伴うため、ユーザーに確認してから実行する。
+global install はせず、まず `missing-tools` skill の方針に沿って ad-hoc 実行を試す。
 
 ```bash
-# CLIツールとして使う場合（推奨）
-pipx install magika
+# mise の pipx backend で一時実行（推奨）
+mise exec 'pipx:magika' -- magika --version
 
-# Python ライブラリとしても使う場合
-pip install magika
+# nixpkgs の ad-hoc 実行
+nix run nixpkgs#magika -- --version
 ```
 
-> `pipx` が使えない場合は `pip install magika` を使用する。`pip` が見つからない場合は `pip3` または `python3 -m pip` を試す。
+永続インストール（`pipx install magika` / `pip install magika`）は環境変更を伴うため、ユーザーに確認してから実行する。
 
 ---
 
@@ -126,7 +126,7 @@ for r in results:
 ### 単一ファイルの種別を調べる
 
 1. `magika --version` でインストールを確認
-2. 未インストールなら `pipx install magika` を案内し、実行前にユーザー承認を取る
+2. 未インストールなら `mise exec 'pipx:magika' -- magika` などの ad-hoc 実行を優先し、永続インストールはユーザー承認後に行う
 3. `magika --json <ファイル>` で識別
 4. 結果の `output.label` / `output.description` をユーザーにわかりやすく報告
 

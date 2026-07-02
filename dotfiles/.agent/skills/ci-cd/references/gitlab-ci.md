@@ -2,11 +2,48 @@
 
 ## 目次
 
-1. [基本構文](#基本構文)
-2. [パイプライン設計](#パイプライン設計)
-3. [キャッシュとアーティファクト](#キャッシュとアーティファクト)
-4. [環境とデプロイ](#環境とデプロイ)
-5. [高度な機能](#高度な機能)
+1. [クイックスタート](#クイックスタート)
+2. [基本構文](#基本構文)
+3. [パイプライン設計](#パイプライン設計)
+4. [キャッシュとアーティファクト](#キャッシュとアーティファクト)
+5. [環境とデプロイ](#環境とデプロイ)
+6. [高度な機能](#高度な機能)
+
+## クイックスタート
+
+test → build の最小構成。
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  NODE_VERSION: "20"
+
+test:
+  stage: test
+  image: node:${NODE_VERSION}
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - node_modules/
+  script:
+    - npm ci
+    - npm test
+
+build:
+  stage: build
+  image: node:${NODE_VERSION}
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+```
 
 ## 基本構文
 

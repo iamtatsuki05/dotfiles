@@ -1,6 +1,6 @@
 ---
 name: prompt-tuner
-description: "Use when the user asks to improve, tune, optimize, evaluate, or rewrite an LLM prompt, system prompt, user template, instruction, prompt tuning setup, or prompt optimization workflow."
+description: "Use when the user asks to improve, tune, or rewrite an LLM prompt that is executed against a model API (system prompt, user template, few-shot setup) with a run-evaluate-diagnose-fix loop. For agent-facing instructions (skill, slash command, CLAUDE.md section) use empirical-prompt-tuning; for Codex /goal prompts use goal-prompt-builder."
 ---
 
 # Prompt Tuner
