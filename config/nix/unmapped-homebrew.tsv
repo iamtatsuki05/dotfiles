@@ -8,6 +8,7 @@ tap	jakehilborn/jakehilborn	homebrew-tap-not-managed-by-nix
 tap	lyraphase/pcloud	homebrew-tap-not-managed-by-nix
 tap	microsoft/git	homebrew-tap-not-managed-by-nix
 tap	modularml/packages	homebrew-tap-not-managed-by-nix
+tap	stablyai/orca	homebrew-tap-not-managed-by-nix
 cask	1password	requires-/Applications-install
 cask	affinity	no-nixpkg-mapping
 cask	amazon-photos	no-nixpkg-mapping
@@ -40,6 +41,7 @@ cask	popclip	no-nixpkg-mapping
 cask	qtspim	nix-package-is-linux-only
 cask	sensei	no-nixpkg-mapping
 cask	sourcetree	no-nixpkg-mapping
+cask	stablyai/orca/orca	no-nixpkg-mapping
 cask	steermouse	no-nixpkg-mapping
 cask	superset	no-nixpkg-mapping
 cask	superwhisper	no-nixpkg-mapping
