@@ -1,32 +1,32 @@
 model:
-  default: kimi-k2.6
+  default: kimi-k2.7-code
   provider: opencode-go
 terminal:
   backend: local
   cwd: .
   timeout: 180
   env_passthrough:
-  - DEVIN_API_KEY
-  - OPENCODE_API_KEY
-  - OPENCODE_GO_API_KEY
+    - DEVIN_API_KEY
+    - OPENCODE_API_KEY
+    - OPENCODE_GO_API_KEY
 hooks_auto_accept: true
 hooks:
   pre_llm_call:
-  - matcher: .*
-    command: ~/.hermes/agent-hooks/agent_context_reminder.sh
-    timeout: 10
+    - matcher: .*
+      command: ~/.hermes/agent-hooks/agent_context_reminder.sh
+      timeout: 10
   post_llm_call:
-  - matcher: .*
-    command: ~/.hermes/agent-hooks/agent_turn_done_notify.sh
-    timeout: 5
+    - matcher: .*
+      command: ~/.hermes/agent-hooks/agent_turn_done_notify.sh
+      timeout: 5
   pre_tool_call:
-  - matcher: read_file|write_file|patch|terminal
-    command: ~/.hermes/agent-hooks/secret-protection.sh
-    timeout: 5
+    - matcher: read_file|write_file|patch|terminal
+      command: ~/.hermes/agent-hooks/secret-protection.sh
+      timeout: 5
   post_tool_call:
-  - matcher: write_file|patch
-    command: ~/.hermes/agent-hooks/jupytext_sync.sh
-    timeout: 30
+    - matcher: write_file|patch
+      command: ~/.hermes/agent-hooks/jupytext_sync.sh
+      timeout: 30
 tool_output:
   max_bytes: 50000
   max_lines: 2000
@@ -35,7 +35,7 @@ mcp_servers:
   codex:
     command: codex
     args:
-    - mcp-server
+      - mcp-server
   deepwiki:
     url: https://mcp.deepwiki.com/mcp
   devin:
@@ -45,14 +45,14 @@ mcp_servers:
   colab-mcp:
     command: uvx
     args:
-    - git+https://github.com/googlecolab/colab-mcp
+      - git+https://github.com/googlecolab/colab-mcp
   notion:
     url: https://mcp.notion.com/mcp
     auth: oauth
   playwright:
     command: bunx
     args:
-    - '@playwright/mcp@latest'
+      - '@playwright/mcp@latest'
 onboarding:
   seen:
     openclaw_residue_cleanup: true
