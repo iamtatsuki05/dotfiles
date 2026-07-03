@@ -34,6 +34,8 @@ test_support_matrix_documents_managed_agents() {
   assert_contains "$SUPPORT_MATRIX" "scripts/waza_eval_cli_agent.sh"
   assert_contains "$SUPPORT_MATRIX" "scripts/agent/waza_eval_cli_agent.sh"
   assert_contains "$SUPPORT_MATRIX" "agent-job-scheduler"
+  assert_contains "$SUPPORT_MATRIX" "github:ogulcancelik/herdr"
+  assert_contains "$SUPPORT_MATRIX" "terminal multiplexer"
 }
 
 test_review_agent_code_supports_matrix_agents() {

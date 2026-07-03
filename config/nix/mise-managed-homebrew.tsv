@@ -1,6 +1,7 @@
 # kind	name	mise tool
 brew	claude-code	claude-code
 brew	codex	codex
+brew	herdr	github:ogulcancelik/herdr
 brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	hermes	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	opencode	opencode

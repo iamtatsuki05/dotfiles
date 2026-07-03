@@ -17,6 +17,7 @@ chezmoi = "latest"
 # ai
 codex = "latest"
 claude-code = "latest"
+"github:ogulcancelik/herdr" = "latest"
 opencode = "latest"
 "pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"
 "npm:@github/copilot" = "latest"

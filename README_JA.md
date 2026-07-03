@@ -182,7 +182,7 @@ mise run package-update -- --shell bash
 mise run package-update -- --with-gui-apps
 ```
 
-`mise run package-update` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。macOS で Homebrew 管理の GUI fallback app が定義されている場合、既定では CLI Nix profile を適用し、GUI fallback app の更新は行いません。GUI fallback app も更新したいときだけ `--with-gui-apps` を明示してください。`--with-gui-apps` 付きでは `brew update` も実行し、[config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) に宣言された Homebrew formula / cask を upgrade します。重いので、通常は Nix 管理の tool だけなら `mise run nix-update`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-update`、`mise` 管理の tool だけなら `mise run mise-update` を使ってください。旧名の `nix-mise-upgrade`、`nix-upgrade`、`nixpkgs-upgrade`、`mise-upgrade` などは alias として残しています。`codex`、`claude-code`、`copilot`、`cursor-agent`、`hermes`、`opencode`、`devin` などの AI CLI は `mise` 管理です。Antigravity CLI は Homebrew Cask `antigravity` として GUI package set で管理し、`agy` binary もそこから提供されます。`node@22` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
+`mise run package-update` は `nix flake update`、`scripts/nix_install.sh`、`mise` config 同期、`mise upgrade` をまとめて実行します。macOS で Homebrew 管理の GUI fallback app が定義されている場合、既定では CLI Nix profile を適用し、GUI fallback app の更新は行いません。GUI fallback app も更新したいときだけ `--with-gui-apps` を明示してください。`--with-gui-apps` 付きでは `brew update` も実行し、[config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) に宣言された Homebrew formula / cask を upgrade します。重いので、通常は Nix 管理の tool だけなら `mise run nix-update`、`nixpkgs` だけ触りたいなら `mise run nixpkgs-update`、`mise` 管理の tool だけなら `mise run mise-update` を使ってください。旧名の `nix-mise-upgrade`、`nix-upgrade`、`nixpkgs-upgrade`、`mise-upgrade` などは alias として残しています。`codex`、`claude-code`、`copilot`、`cursor-agent`、`hermes`、`opencode`、`devin` などの AI CLI は `mise` 管理です。Herdr も agent pane を束ねる runtime / terminal multiplexer として `mise` 管理です。Antigravity CLI は Homebrew Cask `antigravity` として GUI package set で管理し、`agy` binary もそこから提供されます。`node@22` のように major line 自体を上げたい場合は、先に `config/mise/config.toml` を明示的に変更してください。
 この script は記事の `nix flake lock --update-input ...` 方式に寄せており、`nixpkgs` / `home-manager` / `nix-darwin` を個別更新できます。実行中は段階ベースの progress bar を出すので、今どのフェーズか分かります。
 macOS で Homebrew が未導入でも、GUI fallback entry だけが残っている場合は、この task は CLI Nix profile にフォールバックして Nix 管理の CLI tool を更新します。
 
@@ -257,7 +257,7 @@ zsh scripts/setup_git_hooks.sh
 
 AI agent 関連ファイルは [dotfiles/.agent](dotfiles/.agent) にまとめています。共通 prompt は `dotfiles/.agent/AGENTS.md` で管理し、リポジトリルートには `AGENTS.md` symlink を置きません。
 
-管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`antigravity-cli`、`hermes`、`opencode`、`openclaw`、`grok` です。CLI 本体は可能な範囲で `mise` から導入し、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。Antigravity CLI は Homebrew Cask `antigravity-cli` として管理し、`agy` binary もそこから提供されます。
+管理対象の CLI agent は `codex`、`claude-code`、`copilot`、`cursor-agent`、`devin`、`antigravity-cli`、`hermes`、`opencode`、`openclaw`、`grok` です。CLI 本体は可能な範囲で `mise` から導入し、agent 別設定・MCP・hooks・skills・Waza eval suite は `dotfiles/.agent/` で管理します。Herdr は support matrix 上の canonical agent ではなく、agent pane を束ねる runtime として `mise` 管理します。Antigravity CLI は Homebrew Cask `antigravity-cli` として管理し、`agy` binary もそこから提供されます。
 
 ```bash
 zsh dotfiles/.agent/sync.sh

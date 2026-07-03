@@ -19,7 +19,7 @@ Agent CLI を内部で呼び出すコードやツールの対応状況は [AGENT
 - `openclaw`
 - `grok`
 
-CLI 本体は可能な範囲で `mise` から導入します。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
+CLI 本体は可能な範囲で `mise` から導入します。Herdr も `mise` で導入しますが、canonical agent ではなく terminal multiplexer / agent runtime として扱います。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
 
 ## 構成
 
@@ -41,6 +41,21 @@ zsh dotfiles/.agent/sync.sh
 ```
 
 `sync.sh` は `scripts/setup_agent_files.sh` を呼びます。各 tool home への symlink を作り、必要な agent 固有 env file を `~/.config/shell/secrets.env` から生成します。
+
+## Herdr
+
+Herdr 本体は `mise` の `github:ogulcancelik/herdr` で導入します。公式 Herdr skill は upstream license と local safety overlay 付きで `skills/herdr/` に vendoring しています。
+
+Herdr の integration installer は各 agent の config home を直接変更します。`sync.sh` はそれらの home をこの repo へ symlink するため、live home に対して installer を実行すると tracked config を直接汚す可能性があります。まず scratch home に生成し、差分を確認してから、必要な生成物だけをこの repo の管理ファイルとして取り込んでください。
+
+```bash
+scratch_home="$(mktemp -d)"
+mkdir -p "$scratch_home/codex"
+CODEX_HOME="$scratch_home/codex" herdr integration install codex
+find "$scratch_home" -maxdepth 3 -type f -print
+```
+
+他の integration (`claude`, `copilot`, `devin`, `opencode`, `hermes`, `cursor`) も、対象 agent 側の documented config-home 変数を scratch home に向けて確認します。生成物を review した後、意図した変更だけを `dotfiles/.agent/apps/*` に反映し、必要なら `zsh dotfiles/.agent/sync.sh` を再実行してください。
 
 ## ファイル対応表
 
