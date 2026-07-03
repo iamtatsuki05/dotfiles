@@ -160,6 +160,33 @@
       "provenance_note": "MIT license copied into the vendored skill directory. Local SKILL.md narrows the upstream description to Japanese reports and assignments for safer Codex triggering; instruction body remains unchanged. Upstream README attribution is intentionally not vendored as runtime skill content."
     },
     {
+      "id": "herdr",
+      "description": "Herdr agent skill for controlling Herdr-managed workspaces, tabs, and panes from inside a Herdr pane.",
+      "repository": "https://github.com/ogulcancelik/herdr.git",
+      "branch": "master",
+      "pinned_commit": "dbc45f6306bda3eee681d73a14b48ffbb39f3fcc",
+      "local_tree_sha256": "e17348d6fb663aaa07e1040c20a6c258a4a263e8b9d3ba61fd4944132e904e32",
+      "mappings": [
+        {
+          "source_path": "SKILL.md",
+          "local_path": "dotfiles/.agent/skills/herdr/SKILL.md"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/herdr/LICENSE"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "dbc45f6306bda3eee681d73a14b48ffbb39f3fcc",
+        "last_reviewed_at": "2026-07-02T17:26:08+00:00",
+        "review_report": ".agent/work/sessions/2026-07-03-014454-herdr-introduction-codex/subagents/security-review-herdr.md"
+      },
+      "source_url": "https://github.com/ogulcancelik/herdr/tree/dbc45f6306bda3eee681d73a14b48ffbb39f3fcc",
+      "provenance_note": "Herdr is dual-licensed under AGPL-3.0-or-later or a commercial license. LICENSE is copied into the vendored skill directory. Local SKILL.md keeps the upstream instructions and adds a 2026-07-03 modification notice plus a small safety overlay for pane-output trust, explicit user intent before cross-pane control, and approval before external-agent spawning."
+    },
+    {
       "id": "stop-ai-slop-jp",
       "description": "Japanese AI-slop prose review and rewrite skill vendored into the shared agent skill tree.",
       "repository": "https://github.com/iKora128/stop-ai-slop-jp.git",

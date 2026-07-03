@@ -19,7 +19,7 @@ Managed agents:
 - `openclaw`
 - `grok`
 
-The tools themselves are installed by `mise` where available. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
+The tools themselves are installed by `mise` where available. Herdr is also installed by `mise`, but it is treated as a terminal multiplexer / agent runtime rather than a canonical agent. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
 
 ## Layout
 
@@ -41,6 +41,21 @@ zsh dotfiles/.agent/sync.sh
 ```
 
 `sync.sh` delegates to `scripts/setup_agent_files.sh`. It creates symlinks into tool homes and generates agent-specific env files from `~/.config/shell/secrets.env`.
+
+## Herdr
+
+Herdr itself is installed by `mise` via `github:ogulcancelik/herdr`. The official Herdr skill is vendored under `skills/herdr/` with the upstream license and a local safety overlay.
+
+Herdr integration installers mutate each agent's config home directly. Because `sync.sh` symlinks those homes back into this repository, do not run the installers against the live homes unless you intentionally want tracked config files to change. Generate into a scratch home first, inspect the diff, and then model the required generated files in this repository:
+
+```bash
+scratch_home="$(mktemp -d)"
+mkdir -p "$scratch_home/codex"
+CODEX_HOME="$scratch_home/codex" herdr integration install codex
+find "$scratch_home" -maxdepth 3 -type f -print
+```
+
+Use the same scratch-home pattern with the target agent's documented config-home variable for other integrations (`claude`, `copilot`, `devin`, `opencode`, `hermes`, `cursor`). Only after reviewing the generated files should you copy the intended changes into `dotfiles/.agent/apps/*` and re-run `zsh dotfiles/.agent/sync.sh`.
 
 ## Config Map
 

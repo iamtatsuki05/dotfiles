@@ -85,6 +85,7 @@ skills/
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
 | `mattpocock-skills` | `mattpocock/skills` | `mattpocock/` | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。 |
 | `superpowers` | `obra/superpowers` | `superpowers/` | TDD、parallel agent dispatch、skill writing の workflow skill。 |
+| `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と AGPL / commercial dual license notice を同梱。 |
 
 ### mattpocock group
 

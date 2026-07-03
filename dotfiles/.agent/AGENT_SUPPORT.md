@@ -17,6 +17,8 @@
 | `openclaw` | `openclaw` / `npm:openclaw` | OpenClaw |
 | `grok` | `grok` / `npm:@xai-official/grok` | Grok CLI (xAI) |
 
+Herdr は agent を束ねる terminal multiplexer / runtime であり、ここでいう canonical agent ではありません。CLI は `mise` の `github:ogulcancelik/herdr` で管理し、Herdr 用 agent skill は `dotfiles/.agent/skills/herdr/` に置きます。
+
 ## Internal Call Sites
 
 | Code / tool | Supported agents | Notes |

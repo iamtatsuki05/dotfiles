@@ -110,6 +110,7 @@ EOF
 # kind	name	mise tool
 brew	claude-code	claude-code
 brew	codex	codex
+brew	herdr	github:ogulcancelik/herdr
 brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
 brew	opencode	opencode
 cask	claude-code@latest	claude-code
@@ -141,6 +142,7 @@ brew "gnu-sed"
 brew "mise"
 brew "claude-code"
 brew "codex"
+brew "herdr"
 brew "hermes-agent"
 brew "opencode"
 brew "private-tool"
@@ -201,6 +203,7 @@ EOF
   assert_not_contains "$repo/config/nix/package-names.nix" '"gemini-cli"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"claude-code"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"codex"'
+  assert_not_contains "$repo/config/nix/package-names.nix" '"herdr"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"hermes-agent"'
   assert_not_contains "$repo/config/nix/package-names.nix" '"opencode"'
   assert_contains "$repo/config/nix/gui-common-package-names.nix" '"slack"'
@@ -215,12 +218,14 @@ EOF
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "gemini-cli"
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "claude-code"
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "codex"
+  assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "herdr"
   assert_contains "$repo/config/nix/migrated-brew-casks.txt" "slack"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "claude-code@latest"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "codex"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "cursor-cli"
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	claude-code	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	codex	managed-by-mise:codex'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	herdr	managed-by-mise:github:ogulcancelik/herdr'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	hermes-agent	managed-by-mise:pipx:git+https://github.com/NousResearch/hermes-agent.git'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	opencode	managed-by-mise:opencode'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	claude-code@latest	managed-by-mise:claude-code'
@@ -2592,6 +2597,7 @@ test_setup_git_hooks_generates_executable_hooks_with_valid_zsh_shebang() {
 test_ai_cli_tools_are_managed_by_mise() {
   assert_contains "$MISE_CONFIG" 'codex = "latest"'
   assert_contains "$MISE_CONFIG" 'claude-code = "latest"'
+  assert_contains "$MISE_CONFIG" '"github:ogulcancelik/herdr" = "latest"'
   assert_not_contains "$MISE_CONFIG" 'gemini-cli = "latest"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
@@ -3090,6 +3096,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" '[tools."http:cursor-agent"]'
   assert_contains "$MISE_CONFIG" 'https://downloads.cursor.com/lab/{{ version }}/{{ os(macos="darwin", linux="linux") }}/{{ arch(x64="x64", arm64="arm64") }}/agent-cli-package.tar.gz'
   assert_contains "$MISE_CONFIG" 'opencode = "latest"'
+  assert_contains "$MISE_CONFIG" '"github:ogulcancelik/herdr" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:markitdown" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:google-colab-cli" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
