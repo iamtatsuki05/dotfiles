@@ -112,25 +112,51 @@ lines.extend(
         "- 作業内容に合う最小限の方法で検証し、未検証事項を報告する。コードなら lint/test/build、文書や資料なら事実・体裁・リンク、ブラウザ操作なら表示や状態を確認する。",
         "- 複数ファイル、共有ロジック、重要文書、セキュリティ、本番影響、データ損失リスクを含む変更では、最終回答前に read-only reviewer を入れる。",
         "- notebook は paired jupytext の .py を編集し、.ipynb を直接編集しない。",
-        "- 最終回答は原則として簡潔な日本語にし、必要に応じて変更範囲、検証結果、残リスクを含める。",
     ]
+)
+
+if normalized_event not in {"SubagentStart", "SubagentStop"}:
+    lines.append(
+        "- 大きめの作業の区切りやユーザー修正フィードバックの対応後は、retrospective-codify で学びの棚卸し (skill 新規作成・使用 skill / AGENTS.md の改善提案) を短く提案する。書き出しは承認後のみ、不要と言われた session では繰り返さない。"
+    )
+
+lines.append(
+    "- 最終回答は原則として簡潔な日本語にし、必要に応じて変更範囲、検証結果、残リスクを含める。"
 )
 
 context = "\n".join(lines)
 
-print(
-    json.dumps(
-        {
-            "context": context,
+# Claude Code / Codex は正規イベント名を送る。Codex は stdout を厳密な schema で
+# パースし、未知のトップレベルキーがあると hook が Failed になるため、正規イベント名の
+# ときは hookSpecificOutput だけを出力する (Claude Code も同じ形式を受理する)。
+# エイリアスイベント名で呼ぶ他エージェント向けには従来の互換キーを維持する。
+strict_events = {
+    "SessionStart",
+    "UserPromptSubmit",
+    "PostToolUse",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+}
+
+if event in strict_events:
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": normalized_event,
             "additionalContext": context,
-            "additional_context": context,
-            "prependContext": context,
-            "hookSpecificOutput": {
-                "hookEventName": normalized_event,
-                "additionalContext": context,
-            }
+        }
+    }
+else:
+    output = {
+        "context": context,
+        "additionalContext": context,
+        "additional_context": context,
+        "prependContext": context,
+        "hookSpecificOutput": {
+            "hookEventName": normalized_event,
+            "additionalContext": context,
         },
-        ensure_ascii=False,
-    )
-)
+    }
+
+print(json.dumps(output, ensure_ascii=False))
 '

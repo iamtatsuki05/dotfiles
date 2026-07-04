@@ -143,7 +143,7 @@
 
 ## session 内のファイル
 
-- session directory には、必要に応じて `plan.md`、`changes.md`、`verification.md`、`handoff.md`、`subagents/` を置いてください。小さい調査や1ファイル程度の低リスク修正では、`changes.md` だけでも構いません。
+- session directory には、必要に応じて `plan.md`、`changes.md`、`verification.md`、`feedback.md`、`handoff.md`、`subagents/` を置いてください。小さい調査や1ファイル程度の低リスク修正では、`changes.md` だけでも構いません。
 - `plan.md` には目的、制約、対象ファイル、完了条件を短く書いてください。`changes.md` には何を変えたかと理由、`verification.md` には実行した検証、未検証事項、残リスクを書いてください。
 - `handoff.md` は中断や別 session への引き継ぎが必要な場合だけ作成してください。差分、issue、PR、ADR、検証ログに既にある内容を重複コピーせず、参照先と次に見るべき順序を中心に書いてください。
 - `CONTEXT.md` や ADR は有用ですが、repo が明示的に採用していない限り repo 直下へ作成しないでください。用語整理や設計判断のメモは、まず該当 session directory 内に置いてください。恒久化する場合は、なぜ残すのかと後から参照する読者を明確にしたうえで、ユーザー確認を取ってください。
@@ -159,7 +159,8 @@
 ## 記録内容と報告
 
 - session、wiki、prompt、skill、policy などの成果物は、repo 内や home 配下など、ユーザーが後から読める場所に残してください。ただし、秘密情報、個人情報、外部送信内容、生ログ、巨大ファイルの丸ごと保存は、session にも wiki にも行わないでください。必要な場合は最小限のメモか元 artifact への参照に留めてください。
-- 失敗、手戻り、誤った仮定、検証漏れは、再発防止に使える形で `changes.md` または `verification.md` に要約してください。同じ失敗が再発しそうな場合は、prompt、hook、skill、test、lint、schema のどれに昇格すべきかを検討してください。
+- 失敗、手戻り、誤った仮定、検証漏れは、再発防止に使える形で `changes.md` または `verification.md` に要約してください。ユーザーの修正フィードバックに対応したら、その都度 session の `feedback.md` に指摘と対応を 1 行追記してください。
+- 大きめの作業の完了報告後、またはユーザーの修正フィードバックへの対応後は、`retrospective-codify` skill で学びの棚卸し(skill の新規作成・使用した skill や `AGENTS.md` の改善提案)を短く提案してください。書き出しはユーザー承認後だけ行い、同一 session で不要と言われたら繰り返さないでください。
 - 検証のしやすさは対象で異なります。コーディングは filesystem、shell、git で再現・検証しやすい一方、wiki、ブラウザ、GUI、外部サービスは意味の確認や外部状態に依存します。検証できた範囲と未検証事項を分けて記録してください。
 - 最終報告では、ログへの参照だけで済ませず、変更点、影響範囲、検証結果、未検証事項をユーザーに直接伝えてください。
 
