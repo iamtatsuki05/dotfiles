@@ -490,15 +490,25 @@ import sys
 payload = json.load(sys.stdin)
 hook_output = payload["hookSpecificOutput"]
 assert hook_output["hookEventName"] == "UserPromptSubmit"
-assert payload["context"] == hook_output["additionalContext"]
-assert payload["additionalContext"] == hook_output["additionalContext"]
-assert payload["additional_context"] == hook_output["additionalContext"]
-assert payload["prependContext"] == hook_output["additionalContext"]
+# Codex は stdout を厳密な schema でパースするため、正規イベント名では互換キーを出さない契約
+assert set(payload.keys()) == {"hookSpecificOutput"}, sorted(payload.keys())
 context = hook_output["additionalContext"]
 assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
 assert "CHANGES.md" not in context
+'
+
+  # copilot CLI はイベント名フィールドを送らないため、payload の形から推定し互換キーで出力する
+  output="$(printf '%s\n' '{"sessionId":"x","timestamp":1,"cwd":"'"$REPO_ROOT"'","prompt":"implement this"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  print -r -- "$output" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+assert "リポジトリ hook リマインダー:" in payload["additionalContext"]
+assert payload["context"] == payload["additionalContext"]
 '
 
   output="$(printf '%s\n' '{"hook_event_name":"pre_llm_call","cwd":"'"$REPO_ROOT"'","user_message":"implement this"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
@@ -539,7 +549,7 @@ import json
 import sys
 
 payload = json.load(sys.stdin)
-context = payload["additional_context"]
+context = payload["hookSpecificOutput"]["additionalContext"]
 assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 assert "/dotfiles/.agent/work/sessions" in context
 assert "CHANGES.md" not in context
@@ -551,8 +561,9 @@ import json
 import sys
 
 payload = json.load(sys.stdin)
-assert "/dotfiles/.agent/work/sessions" in payload["additional_context"]
-assert "CHANGES.md" not in payload["additional_context"]
+context = payload["hookSpecificOutput"]["additionalContext"]
+assert "/dotfiles/.agent/work/sessions" in context
+assert "CHANGES.md" not in context
 '
 
   rm -rf "$repo"
