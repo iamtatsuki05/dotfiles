@@ -7,5 +7,9 @@
       "command(git push --force)",
       "command(git push --force-with-lease)"
     ]
-  }
+  },
+  "trustedWorkspaces": [
+    "/Users/tatsuki",
+    "/Users/tatsuki/src/dotfiles"
+  ]
 }

@@ -22,15 +22,17 @@ event = (
     or payload.get("type")
     or payload.get("hook")
 )
-if not isinstance(event, str):
-    sys.exit(0)
 
 event_aliases = {
     "sessionStart": "SessionStart",
+    "session_start": "SessionStart",
     "beforeSubmitPrompt": "UserPromptSubmit",
     "userPromptSubmitted": "UserPromptSubmit",
+    "user_prompt_submitted": "UserPromptSubmit",
     "postToolUse": "PostToolUse",
+    "post_tool_use": "PostToolUse",
     "afterFileEdit": "PostToolUse",
+    "PreInvocation": "BeforeAgent",
     "stop": "Stop",
     "subagentStop": "SubagentStop",
     "pre_llm_call": "BeforeModel",
@@ -38,7 +40,20 @@ event_aliases = {
     "before_prompt_build": "BeforeAgent",
     "agent_turn_prepare": "BeforeAgent",
 }
-normalized_event = event_aliases.get(event, event)
+
+if isinstance(event, str):
+    normalized_event = event_aliases.get(event, event)
+else:
+    # copilot CLI (0.0.3xx 系) はイベント名フィールドを送らないため、payload の形から推定する。
+    # 推定イベントは strict 出力の対象外 (event が str でないため後段で互換キー出力になる)。
+    if "initialPrompt" in payload or payload.get("source"):
+        event = None
+        normalized_event = "SessionStart"
+    elif "prompt" in payload:
+        event = None
+        normalized_event = "UserPromptSubmit"
+    else:
+        sys.exit(0)
 
 if normalized_event not in {
     "BeforeAgent",
