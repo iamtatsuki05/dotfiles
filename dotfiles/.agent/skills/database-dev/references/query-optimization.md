@@ -1,5 +1,16 @@
 # クエリ最適化詳細ガイド
 
+## 目次
+
+- [EXPLAINの読み方](#explainの読み方)
+- [インデックス詳細](#インデックス詳細)
+- [ジョインの最適化](#ジョインの最適化)
+- [サブクエリの最適化](#サブクエリの最適化)
+- [ページネーション最適化](#ページネーション最適化)
+- [ロック最適化](#ロック最適化)
+- [統計情報](#統計情報)
+- [パラレルクエリ](#パラレルクエリ)
+
 ## EXPLAINの読み方
 
 ### PostgreSQL EXPLAIN出力
@@ -67,7 +78,7 @@ CREATE INDEX idx_orders_date ON orders(created_at);
 ### GINインデックス
 
 ```sql
--- 全文検索
+-- あいまい検索（trigram）。LIKE 中間一致にも効く
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX idx_products_name_gin ON products USING gin(name gin_trgm_ops);
 

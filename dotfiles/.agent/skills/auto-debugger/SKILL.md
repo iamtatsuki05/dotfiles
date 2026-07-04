@@ -35,22 +35,11 @@ description: "Use when the user provides an error, failing test, stack trace, bu
 - 先に「1コマンドで成否が分かる再現方法」を確保する。再現が不安定・困難な bug や性能退行では、`mattpocock/diagnose` skill の方法論（フィードバックループ構築、反証可能な複数仮説）を併用する
 - エラーの種類・発生箇所から疑わしい箇所をリストアップ（複数可）
 - 優先度: スタックトレースの失敗行 → 呼び出し元 → 入力データ → 設定値
-- エラー種別ごとの調査ポイントは `references/error-patterns.md` を参照
+- 見落としやすい gotcha と横断的な調査手順は `references/error-patterns.md` を参照
 
 **printデバッグスクリプトの作成・実行:**
-```python
-# 例: 変数の値・型・フローを確認するデバッグスクリプト
-# 本番コードは変更せず、独立したスクリプトとして作成する
-import sys
-sys.path.insert(0, '.')
 
-# 問題の関数を直接呼び出して中間値を出力
-from module import target_function
-
-print(f"[DEBUG] input: {input_data!r}")
-result = target_function(input_data)
-print(f"[DEBUG] result: {result!r}")
-```
+本番コードは変更せず、問題の関数を直接呼び出す独立スクリプトを作成する。入力・中間値・戻り値を `[DEBUG]` プレフィックス付きで出力し、値・型・実行フローを確認する。
 
 デバッグ補助ファイルは、既存の一時ディレクトリ、`tmp/`、またはプロジェクトのテスト用 scratch 領域に置く。恒久的な成果物でない場合は修正完了後に削除するか、削除できない理由を報告する。
 
@@ -86,21 +75,9 @@ print(f"[DEBUG] result: {result!r}")
 - 既存テストファイルがある場合はそこに追記する
 - テストは失敗するケース（バグ再現）と成功するケース（修正後の期待動作）の両方を含める
 
-```python
-# 例: バグを再現するテストケース
-def test_bug_fix_description_of_the_original_bug():
-    # バグが発生していた入力・条件を再現
-    input_data = ...
-    result = target_function(input_data)
-    assert result == expected  # 修正後の期待値
-```
-
 **テストの実行:**
-```bash
-pytest path/to/test_file.py  # Python
-go test ./...                 # Go
-npm test                      # Node.js
-```
+
+プロジェクトの既存テストコマンド（pytest / go test / npm test 等、CI 設定や README から特定する）で、追加したテストと既存テストの両方を実行する。
 
 テスト基盤がない、外部サービスが必要、または再現条件を自動化できない場合は、代替検証（最小再現コマンド、型チェック、lint、手動確認手順）を実行し、未検証の範囲を明示する。
 
@@ -128,13 +105,9 @@ npm test                      # Node.js
 類似のパターンが他にも潜んでいる可能性がある場合のみ記載
 ```
 
-## 修正を PR として提出する場合（eng-practices）
+## 修正を PR として提出する場合
 
-ユーザー報告だけで完結せず、修正を PR/CL として出す場合は `eng-practices` スキルの共通原則を併用する。
-
-- **最小 CL**: 修正は最小スコープに保つ。調査中に見つけた別 bug は別 issue/TODO に切り、同 PR に混ぜない。
-- **リグレッションテスト同梱**: Phase 4 で作ったテストは必ず同 PR に入れる。
-- **PR description に Why と再現条件**: 「何の bug を直したか」「再現条件・影響範囲」「根本原因」「採用しなかった修正案」を本文に書く。`Bug fix` だけのタイトルは避け、`Fix race in user-token cache by guarding refresh with mutex` のように具体的にする。
+最小 CL、具体的なタイトル、Why・再現条件を書く description などの共通原則は `eng-practices` スキルを参照。Phase 4 で作ったリグレッションテストは必ず同じ PR に含める。
 
 ## 自律デバッグのガイドライン
 
@@ -146,4 +119,4 @@ npm test                      # Node.js
 
 ## リファレンス
 
-- **エラーパターン別の調査手順**: `references/error-patterns.md` — RuntimeError, TypeError, ImportError, ネットワークエラー等の対処法
+- **エラーパターン別の調査メモ**: `references/error-patterns.md` — 見落としやすい gotcha、横断的な調査手順・判断基準

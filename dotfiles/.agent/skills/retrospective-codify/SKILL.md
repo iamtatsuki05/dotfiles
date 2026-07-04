@@ -64,24 +64,7 @@ description: "Use near the end of a task when the user asks to preserve learning
 
 ## 分類判定
 
-```dot
-digraph classify {
-    "機械的に検出可能？" [shape=diamond];
-    "毎回適用すべき短い指示？" [shape=diamond];
-    "複数ステップの手順や判断を伴う？" [shape=diamond];
-    "ast-grep ルール / lint" [shape=box];
-    "CLAUDE.md ルール" [shape=box];
-    "skill" [shape=box];
-    "メモに留める" [shape=box];
-
-    "機械的に検出可能？" -> "ast-grep ルール / lint" [label="yes"];
-    "機械的に検出可能？" -> "毎回適用すべき短い指示？" [label="no"];
-    "毎回適用すべき短い指示？" -> "CLAUDE.md ルール" [label="yes"];
-    "毎回適用すべき短い指示？" -> "複数ステップの手順や判断を伴う？" [label="no"];
-    "複数ステップの手順や判断を伴う？" -> "skill" [label="yes"];
-    "複数ステップの手順や判断を伴う？" -> "メモに留める" [label="no"];
-}
-```
+上から順に判定する(機械的に検出可能 → 常時適用の短い指示 → 手順・判断を伴う → いずれでもない)。
 
 | 判定軸 | 出力先 | 例 |
 |---|---|---|

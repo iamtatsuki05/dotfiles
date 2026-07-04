@@ -5,7 +5,7 @@ description: "Use when the user asks to design or modify database schemas, queri
 
 # データベース開発スキル
 
-データベース設計、クエリ最適化、マイグレーション、パフォーマンス改善を効率的に行うためのガイド。
+データベース設計、クエリ最適化、migration、パフォーマンス改善を効率的に行うためのガイド。
 
 ## 実装前の必須確認
 
@@ -14,7 +14,7 @@ description: "Use when the user asks to design or modify database schemas, queri
 確認項目:
 - DBエンジン: PostgreSQL, MySQL, SQLite, MongoDB等
 - ORMの有無: SQLAlchemy, Prisma, TypeORM, ActiveRecord等
-- マイグレーションツール: Alembic, Flyway, Knex, Prisma Migrate等
+- migration ツール: Alembic, Flyway, Knex, Prisma Migrate等
 - 既存のスキーマ定義ファイル
 - 対象環境: local / dev / staging / production
 - データ量、許容ロック時間、バックアップ/rollback 方針
@@ -25,57 +25,13 @@ description: "Use when the user asks to design or modify database schemas, queri
 
 ### 正規化レベル
 
-```
-第1正規形 (1NF): 繰り返しグループを排除、原子値のみ
-第2正規形 (2NF): 1NF + 部分関数従属を排除
-第3正規形 (3NF): 2NF + 推移的関数従属を排除
-BCNF: すべての決定項が候補キー
-```
+実務では3NFまでを目標とし、パフォーマンス要件に応じた意図的な非正規化は理由を記録する。各正規形の定義・変換例・非正規化パターンは [references/normalization.md](references/normalization.md) を参照。
 
-実務では3NFまでを目標とし、パフォーマンス要件に応じて意図的に非正規化する。
+### テーブル設計とリレーション
 
-### テーブル設計の基本
-
-```sql
--- PostgreSQL例
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'inactive', 'suspended')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-`updated_at` の自動更新は ORM/アプリ層かトリガーで行う。PostgreSQL のトリガー実装例は [references/engine-specific.md](references/engine-specific.md) を参照。
-
-### リレーション設計
-
-```sql
--- 1対多
-CREATE TABLE orders (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    total_amount DECIMAL(10, 2) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 多対多（中間テーブル）
-CREATE TABLE product_categories (
-    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-    PRIMARY KEY (product_id, category_id)
-);
-
--- 自己参照（階層構造）
-CREATE TABLE categories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(100) NOT NULL,
-    parent_id UUID REFERENCES categories(id) ON DELETE SET NULL
-);
-```
+- 制約（NOT NULL, UNIQUE, FK, CHECK）はアプリ層任せにせず DB 層で守る。
+- `updated_at` の自動更新は ORM/アプリ層かトリガーで行う。PostgreSQL のトリガー実装例は [references/engine-specific.md](references/engine-specific.md) を参照。
+- 多対多は中間テーブル + 複合主キー。FK の `ON DELETE`（CASCADE / SET NULL / RESTRICT）は業務上の親子関係で選び、無条件に CASCADE にしない。
 
 ### 型の選択指針
 
@@ -89,130 +45,42 @@ CREATE TABLE categories (
 
 ## インデックス設計
 
-### 基本原則
-
-```sql
--- 単一カラムインデックス
-CREATE INDEX idx_users_email ON users(email);
-
--- 複合インデックス（左端から使われる）
-CREATE INDEX idx_orders_user_created ON orders(user_id, created_at DESC);
-
--- 部分インデックス（条件付き）
-CREATE INDEX idx_orders_pending ON orders(created_at)
-    WHERE status = 'pending';
-
--- カバリングインデックス（INCLUDE）
-CREATE INDEX idx_orders_user_covering ON orders(user_id)
-    INCLUDE (total_amount, status);
-```
-
 ### インデックス選択の判断基準
 
-- WHERE句で頻繁に使用するカラム
-- JOIN条件のカラム
-- ORDER BY / GROUP BYのカラム
-- カーディナリティが高いカラム優先
-- 更新頻度とのトレードオフを考慮
+- WHERE句で頻繁に使用するカラム、JOIN条件、ORDER BY / GROUP BYのカラム
+- 複合インデックスは左端カラムからしか使われない。等価条件を左、範囲条件を右に置く
+- カーディナリティが高いカラム優先。書き込み頻度とのトレードオフを考慮
+- 特定条件の行だけ検索するなら部分インデックス、SELECT 列まで含めるならカバリング（INCLUDE）を検討
+
+インデックスタイプ別（B-tree / GIN / GiST / BRIN）の使い分けと実例は [references/query-optimization.md](references/query-optimization.md) を参照。
 
 ## クエリ最適化
 
-### EXPLAIN分析
+### EXPLAIN のチェックポイント
 
-```sql
--- PostgreSQL
-EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
-SELECT u.name, COUNT(o.id) as order_count
-FROM users u
-LEFT JOIN orders o ON u.id = o.user_id
-WHERE u.status = 'active'
-GROUP BY u.id, u.name
-ORDER BY order_count DESC
-LIMIT 10;
-```
+`EXPLAIN (ANALYZE, BUFFERS)` で以下を確認する:
 
-チェックポイント:
 - **Seq Scan**: 大きなテーブルでは要注意
 - **Nested Loop**: 内側のテーブルが大きい場合は非効率
 - **Sort**: メモリ不足でディスクソートになっていないか
-- **Rows**: 推定値と実際値の乖離
+- **Rows**: 推定値と実際値の乖離（乖離が大きければ `ANALYZE` で統計情報を更新）
 
-### N+1問題の検出と解決
+ノードタイプ別の読み方、ジョイン・サブクエリ・ページネーションの最適化は [references/query-optimization.md](references/query-optimization.md) を参照。
 
-```sql
--- NG: N+1クエリ
--- 1. SELECT * FROM users;
--- 2. SELECT * FROM orders WHERE user_id = ?; (N回)
+### インデックスが効かない・非自明なパターン
 
--- OK: JOINで1クエリに
-SELECT u.*, o.*
-FROM users u
-LEFT JOIN orders o ON u.id = o.user_id;
-
--- OK: サブクエリで集計
-SELECT u.*, (
-    SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id
-) as order_count
-FROM users u;
-
--- ORM使用時はEager Loading設定を確認
-```
-
-### よくある最適化パターン
-
-```sql
--- NG: 関数でインデックスが効かない
-SELECT * FROM users WHERE LOWER(email) = 'test@example.com';
-
--- OK: 関数インデックス or アプリ側で正規化
-CREATE INDEX idx_users_email_lower ON users(LOWER(email));
-
--- NG: OR条件でインデックスが効きにくい
-SELECT * FROM orders WHERE status = 'pending' OR status = 'processing';
-
--- OK: INに書き換え
-SELECT * FROM orders WHERE status IN ('pending', 'processing');
-
--- NG: LIKE前方一致以外
-SELECT * FROM users WHERE name LIKE '%田中%';
-
--- OK: 全文検索を使用（PostgreSQL）
-CREATE INDEX idx_users_name_gin ON users USING gin(name gin_trgm_ops);
-SELECT * FROM users WHERE name LIKE '%田中%';
-```
+- カラムに関数を適用した条件（`LOWER(email) = ...` 等）にはインデックスが効かない。関数インデックスを作るか、アプリ側で正規化して保存する。
+- `LIKE '%キーワード%'` の中間一致は B-tree では効かない。PostgreSQL ではあいまい検索（trigram）を使う: `CREATE EXTENSION pg_trgm` が前提で、`USING gin(col gin_trgm_ops)` のインデックスを作成する。
+- N+1 はループ内クエリの発火が典型。JOIN か集計サブクエリで 1 クエリにまとめ、ORM 使用時は Eager Loading 設定を確認する。
 
 ## トランザクション設計
 
-### 分離レベル
+- デフォルト分離レベルは PostgreSQL が READ COMMITTED、MySQL (InnoDB) が REPEATABLE READ で異なる。
+- REPEATABLE READ での Phantom Read は MySQL では起こり得るが、PostgreSQL では snapshot isolation により発生しない。エンジンをまたぐ移植時に前提を確認する。
+- デッドロック回避: 複数行・複数テーブルをロックする処理は常に同じ順序でロックを取得し、`lock_timeout` を設定する。
+- トランザクションは短く保ち、外部 API 呼び出し等を中に含めない。
 
-```sql
--- PostgreSQL
-BEGIN;
-SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
--- 処理
-COMMIT;
-```
-
-| レベル | Dirty Read | Non-repeatable Read | Phantom Read |
-|--------|------------|---------------------|--------------|
-| READ UNCOMMITTED | あり | あり | あり |
-| READ COMMITTED | なし | あり | あり |
-| REPEATABLE READ | なし | なし | あり(MySQL)/なし(PG) |
-| SERIALIZABLE | なし | なし | なし |
-
-### デッドロック回避
-
-```sql
--- 常に同じ順序でロックを取得
-BEGIN;
-SELECT * FROM accounts WHERE id = 1 FOR UPDATE;
-SELECT * FROM accounts WHERE id = 2 FOR UPDATE;
--- 処理
-COMMIT;
-
--- タイムアウト設定
-SET lock_timeout = '5s';
-```
+ロックの種類、`SKIP LOCKED` によるキュー処理などは [references/query-optimization.md](references/query-optimization.md) の「ロック最適化」を参照。
 
 ## マイグレーション
 
@@ -258,7 +126,7 @@ Small CL、Why の残し方、テスト同梱などの共通原則は `eng-pract
 - スキーマに適切な制約（NOT NULL, UNIQUE, FK, CHECK）があるか
 - インデックスが適切に設定されているか
 - N+1クエリが発生していないか
-- マイグレーションがロールバック可能か
+- migration がロールバック可能か
 - 本番データ量でのパフォーマンステスト
 - migration dry-run、テストDBへの適用、`EXPLAIN` / `EXPLAIN ANALYZE` の確認ができたか
 - 最終報告に変更内容、互換性影響、lock/rollback の見通し、実行した検証、未検証リスクを含める
@@ -269,5 +137,5 @@ Small CL、Why の残し方、テスト同梱などの共通原則は `eng-pract
 
 - **正規化とモデリング**: [references/normalization.md](references/normalization.md)
 - **クエリ最適化詳細**: [references/query-optimization.md](references/query-optimization.md)
-- **安全なマイグレーション実例**: [references/migrations.md](references/migrations.md)
+- **安全な migration 実例**: [references/migrations.md](references/migrations.md)
 - **各DBエンジン固有のTips（監視SQL、MongoDB実例を含む）**: [references/engine-specific.md](references/engine-specific.md)

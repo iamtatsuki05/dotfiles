@@ -30,18 +30,7 @@ mise exec 'pipx:markitdown' -- markitdown --version
 
 ## 対応フォーマット
 
-| フォーマット              | 備考                                       |
-|---------------------------|--------------------------------------------|
-| PDF (`.pdf`)              | テキスト抽出                               |
-| Word (`.docx`)            | テキスト・見出し構造を保持                 |
-| PowerPoint (`.pptx`)      | スライドごとにセクション化                 |
-| Excel (`.xlsx`, `.csv`)   | テーブル形式で変換                         |
-| HTML (`.html`, URL)       | ページコンテンツを抽出                     |
-| 画像 (`.png`, `.jpg` 等)  | `[all]` インストール時に OCR で文字抽出   |
-| 音声 (`.mp3`, `.wav` 等)  | `[all]` インストール時に文字起こし         |
-| Jupyter Notebook (`.ipynb`) | セルとアウトプットを変換                 |
-| JSON / XML                | 構造化テキストとして変換                   |
-| ZIP                       | 内包ファイルを一括変換                     |
+PDF / Word / PowerPoint / Excel・CSV / HTML・URL / Jupyter Notebook / JSON・XML / ZIP（内包ファイルを一括変換）に対応する。画像の OCR と音声の文字起こしは `[all]` インストール時のみ利用できる。
 
 ## 使い方
 

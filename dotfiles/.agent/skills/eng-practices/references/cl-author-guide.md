@@ -2,6 +2,13 @@
 
 Google eng-practices の CL Author Guide の 3 章（Small CLs / Writing Good CL Descriptions / Handling Reviewer Comments）を、Claude Code エージェントが PR を作る・更新する際に直接使う形に整理する。
 
+## 目次
+
+- [Small CLs](#small-cls) — サイズ目安、分割の方針、分割できないとき
+- [Writing Good CL Descriptions](#writing-good-cl-descriptions) — 構造テンプレート、タイトル、悪い例と直し方、Why を残す例
+- [Handling Reviewer Comments](#handling-reviewer-comments) — 受け取り方、反映の進め方、「後で直す」の扱い
+- [関連](#関連)
+
 ## Small CLs
 
 ### サイズ目安

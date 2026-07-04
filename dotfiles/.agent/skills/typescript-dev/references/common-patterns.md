@@ -9,6 +9,7 @@
 5. [設定管理](#設定管理)
 6. [型パターン](#型パターン)
 7. [バリデーション](#バリデーション)
+8. [エラーハンドリングパターン](#エラーハンドリングパターン)
 
 ## デザインパターン
 
@@ -671,4 +672,40 @@ const dateRangeSchema = z
     message: 'End date must be after start date',
     path: ['endDate'],
   });
+```
+
+## エラーハンドリングパターン
+
+### カスタムエラー
+
+```typescript
+// name を設定しないとログやシリアライズ時に 'Error' としか表示されない
+class ValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly field: string,
+  ) {
+    super(message);
+    this.name = 'ValidationError';
+  }
+}
+```
+
+### 外部呼び出しの文脈付き再throw
+
+```typescript
+async function fetchData<T>(url: string): Promise<T> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
+    return await response.json() as T;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Fetch failed (${url}): ${error.message}`, { cause: error });
+    }
+    throw error;
+  }
+}
 ```

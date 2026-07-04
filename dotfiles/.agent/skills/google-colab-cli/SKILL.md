@@ -14,8 +14,9 @@ description: "Use when installing, authenticating, account switching, troublesho
 ## DO NOT USE FOR:
 
 - Browser-notebook MCP workflows; use `colab-mcp`.
-- GPU/TPU, OAuth, Drive mount, or session creation before account/resource confirmation.
 - `colab update --install` unless explicitly requested.
+
+Account/resource confirmation must come first: do not start GPU/TPU, OAuth, Drive mount, or session creation before the checks in Auth and Examples.
 
 ## Install
 

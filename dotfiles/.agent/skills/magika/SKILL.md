@@ -7,7 +7,7 @@ description: "Use when the user asks to identify file types, verify whether an e
 
 ## Overview
 
-Google製のAI駆動型ファイルタイプ検出ツール。従来のマジックバイト（ファイルシグネチャ）ベースと異なり、ディープラーニングモデルで200以上のコンテンツタイプを高精度（平均 ~99%）・高速（~5ms/ファイル）に識別する。
+Google 製の deep learning ベースのファイルタイプ識別 CLI。従来のマジックバイト（ファイルシグネチャ）ベースと異なり、ファイル内容からコンテンツタイプを識別する。
 
 ## インストール確認と手順
 
@@ -97,27 +97,7 @@ magika --format '%p\t%l\t%s' ./uploads/*
 
 ## Python API での利用
 
-```python
-from magika import Magika
-
-m = Magika()
-
-# ファイルパスで識別
-result = m.identify_path("./unknown_file")
-print(result.output.label)        # 例: "python"
-print(result.output.mime_type)    # 例: "text/x-python"
-print(result.output.group)        # 例: "code"
-print(result.score)               # 例: 0.99
-
-# バイト列で識別（ファイルシステムに依存しない）
-result = m.identify_bytes(b"#!/usr/bin/env python3\nprint('hello')")
-print(result.output.label)
-
-# 複数ファイルを一括識別（効率的）
-results = m.identify_paths(["a.txt", "b.bin", "c.unknown"])
-for r in results:
-    print(r.path, r.output.label)
-```
+バッチ処理や pipeline 組み込みで CLI が不向きなときは Python API を使う。例と API 詳細は [references/commands.md](references/commands.md) を参照。
 
 ---
 

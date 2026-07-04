@@ -11,7 +11,13 @@ description: "Use when the user asks to inspect or operate Google Calendar, Driv
 
 ## 前提条件：認証状態の確認
 
-作業前に必ず認証状態を確認する。
+作業前に `gws` コマンドの存在と認証状態を確認する。
+
+```bash
+command -v gws
+```
+
+`gws` が見つからない場合は、`missing-tools` skill の手順で一時実行または導入を確認する。
 
 ```bash
 gws auth status
@@ -48,16 +54,9 @@ gws calendar +agenda --tomorrow
 
 # 今週の予定（表形式）
 gws calendar +agenda --week --format table
-
-# N日分
-gws calendar +agenda --days 7
-
-# 特定カレンダーのみ
-gws calendar +agenda --today --calendar 'Work'
-
-# タイムゾーン指定
-gws calendar +agenda --week --timezone Asia/Tokyo
 ```
+
+`--days`・`--calendar`・`--timezone` などの絞り込みは [references/commands.md](references/commands.md) の +agenda オプション表を参照。
 
 ### 予定の作成（+insert）
 
@@ -174,34 +173,15 @@ gws gmail +send \
   --subject 'ご連絡' \
   --body 'お世話になっております。'
 
-# CC / BCC
-gws gmail +send \
-  --to alice@example.com \
-  --cc bob@example.com \
-  --subject '共有' \
-  --body '内容をご確認ください。'
-
-# 添付ファイル
-gws gmail +send \
-  --to alice@example.com \
-  --subject '報告書' \
-  --body 'ご査収ください。' \
-  -a report.pdf
-
-# HTML メール
-gws gmail +send \
-  --to alice@example.com \
-  --subject 'お知らせ' \
-  --body '<b>重要</b>なお知らせです。' \
-  --html
-
-# 下書き保存
+# 下書き保存（送信前確認に有効）
 gws gmail +send \
   --to alice@example.com \
   --subject '下書き' \
   --body '確認後に送信予定' \
   --draft
 ```
+
+CC/BCC・添付（`-a`）・HTML メールなどのオプションは [references/commands.md](references/commands.md) の +send オプション表を参照。
 
 ### 返信（+reply）
 

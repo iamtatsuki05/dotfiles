@@ -206,6 +206,61 @@ resource "aws_rds_cluster_instance" "main" {
 }
 ```
 
+### シークレット管理（Secrets Manager 連携）
+
+```hcl
+data "aws_secretsmanager_secret_version" "db_credentials" {
+  secret_id = var.db_secret_id
+}
+
+locals {
+  db_credentials = jsondecode(data.aws_secretsmanager_secret_version.db_credentials.secret_string)
+}
+
+resource "aws_db_instance" "main" {
+  identifier = "${var.project_name}-db"
+
+  username = local.db_credentials.username
+  password = local.db_credentials.password
+
+  # 注意: ignore_changes は差分検出を止めるだけで、password は state に平文で保存される。
+  # state 自体の保護（S3 backend の encrypt、state へのアクセス制御）と、
+  # ephemeral values（Terraform 1.10+）や secrets manager 参照を優先する。
+  lifecycle {
+    ignore_changes = [password]
+  }
+}
+```
+
+### S3 の暗号化とパブリックアクセスブロック
+
+```hcl
+resource "aws_s3_bucket" "main" {
+  bucket = var.bucket_name
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
+  bucket = aws_s3_bucket.main.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = var.kms_key_id
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "main" {
+  bucket = aws_s3_bucket.main.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+```
+
 ---
 
 ## Google Cloud (GCP)

@@ -189,9 +189,9 @@ def calculate_discount(
 
 ## クラス設計
 
-### Pydantic BaseModel（原則）
+### Pydantic BaseModel
 
-データクラスにはPydantic BaseModelを原則使用する。バリデーション、シリアライゼーション、型安全性を提供。
+Pydantic が既にプロジェクトで採用されている、または外部入力の検証が必要な場合に使う。バリデーション、シリアライゼーション、型安全性を提供する。単純な内部データ構造には dataclass で十分なことが多く、不用意に導入しない。
 
 ```python
 from pydantic import BaseModel, Field, field_validator

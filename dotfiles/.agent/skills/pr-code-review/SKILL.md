@@ -37,40 +37,25 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 ## Step 2: コードレビュー観点
 
-以下の観点からコードをレビューする。詳細は[references/review-guidelines.md](references/review-guidelines.md)を参照。
+以下の観点からコードをレビューする。
 
 ### 2.1 セキュリティ
-- 入力値バリデーション
-- インジェクション脆弱性（SQL、XSS、コマンド）
-- 認証・認可の実装
-- 機密情報の取り扱い
+入力検証、インジェクション（SQL / XSS / コマンド / パス）、認証・認可、機密情報の取り扱い。
 
 ### 2.2 パフォーマンス
-- N+1クエリ問題
-- 不要なループや計算
-- メモリ効率
-- 非同期処理の適切な使用
+N+1 クエリ、不要なループ・計算、メモリ効率、非同期処理の使い方。
 
 ### 2.3 可読性・保守性
-- 命名規則の一貫性
-- 関数・クラスの責務分離
-- コメントの適切さ
-- コードの重複
+命名の一貫性、責務分離、コメント（Why）、コードの重複。
 
 ### 2.4 エラーハンドリング
-- 例外処理の適切さ
-- エラーメッセージの明確さ
-- リソースのクリーンアップ
+例外処理の粒度、例外の握りつぶし、エラーメッセージ、リソースのクリーンアップ。
 
 ### 2.5 テスト
-- テストカバレッジ
-- エッジケースの考慮
-- テストの可読性
+変更部分のカバレッジ、エッジケース、テストの独立性・可読性。
 
 ### 2.6 言語・フレームワーク固有のベストプラクティス
-- 言語のイディオム
-- フレームワークの規約
-- 型安全性
+言語イディオム、フレームワーク規約、型安全性。該当言語の `python-dev` / `go-dev` / `typescript-dev` 等のスキルがあればその規約に従う。
 
 ### 2.7 エンジニアリング作法（eng-practices）
 
@@ -87,12 +72,15 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 
 以下のテンプレートに従ってレビューレポートを作成する。
 
-重大度の基準（カテゴリ別の具体例は [references/review-guidelines.md](references/review-guidelines.md) の「指摘の重要度分類」）:
+重大度の基準:
 - Critical: マージ前に直すべき correctness / security / data loss / production regression
-- Warning: 修正または明確な説明が必要なリスク
-- Suggestion: 品質改善だが、マージ可否を直接左右しない提案
+- Warning: 修正または明確な説明が必要なリスク（潜在バグ、性能問題、テスト不足など）
+- Suggestion: 品質改善だが、マージ可否を直接左右しない提案（可読性、スタイル、リファクタ案）
 
-指摘は必ずファイル・行・理由・影響・修正方針を含める。好みだけの指摘は避ける。
+eng-practices のコメントラベルとの対応:
+- Critical → `Critical:`、Warning → `Warning:`、Suggestion → `Nit:` / `Optional:` / `FYI:`
+
+指摘は必ずファイル・行・理由・影響・修正方針を含める。好みだけの指摘は避ける。報告前に、各指摘の file:line を PR の diff と突き合わせて実在することを確認する。
 
 ```markdown
 # PR Code Review Report
@@ -165,7 +153,7 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 ## レビュアー運用
 
 - 応答速度・分割依頼の判断は 2.7 の Speed / Navigate に従う。
-- 「Critical / Warning / Suggestion」の severity は eng-practices のコメントラベル（`Critical:` / `Warning:` / `Nit:` / `Optional:` / `FYI:`）と整合させる。レビュアー側・著者側の作法や小さい CL の閾値は `eng-practices` スキルに集約してある。
+- severity と eng-practices ラベルの対応は Step 3 の対応表に従う。レビュアー側・著者側の作法や小さい CL の閾値は `eng-practices` スキルに集約してある。
 
 ## 使用例
 
@@ -178,8 +166,9 @@ URLから`owner/repo`と`PR番号`を抽出する（例: `https://github.com/own
 1. ghコマンドでPR情報とdiffを取得
 2. 変更されたファイルを分析
 3. 各観点からレビューを実施
-4. レビューレポートをマークダウンファイルとして出力
-5. レビュー結果のサマリーをユーザーに報告
+4. 指摘の file:line を diff と突き合わせてから報告する
+5. レビューレポートをマークダウンファイルとして出力
+6. レビュー結果のサマリーをユーザーに報告
 
 ## 注意事項
 
