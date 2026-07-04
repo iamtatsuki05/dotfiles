@@ -30,7 +30,7 @@ description: "Use when the user wants to queue, inspect, retry, cancel, or run l
 
 ## 基本フロー
 
-1. まず [README.md](/Users/tatsuki/src/dotfiles/dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/README.md) と [usage.md](/Users/tatsuki/src/dotfiles/dotfiles/.agent/skills/agent-job-scheduler/references/usage.md) を見て、対象 Agent と `workdir` が妥当か確認する。
+1. まず [README.md](apps/agent-job-scheduler/README.md) と [usage.md](references/usage.md) を見て、対象 Agent と `workdir` が妥当か確認する。
 2. ジョブ追加時は `enqueue` を使う。
 3. 状態確認は `status` を使う。
 4. 単発で消化を進めたいときは `run-once` を使う。
@@ -75,5 +75,5 @@ dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/scripts/inst
 - 直接実行より enqueue を優先し、ユーザーの意図しない即時変更を避ける。
 - `install_launch_agent.sh` は既定では `launchctl bootstrap` まで行う。生成だけしたい場合は `--no-load` を使う。
 - allowlist enforcement を有効にする場合は、先に必要な `workdir` を登録してから切り替える。
-- `apps/agent-job-scheduler/` が、この skill の canonical な app 実装です。
+- `apps/agent-job-scheduler/` が、この skill の canonical な app 実装です。skill 配下だけで完結して辿れること、実装の置き場所と skill の参照先を一致させることが理由です。
 - skill の挙動確認は `dotfiles/.agent/evals/agent-job-scheduler/` の Waza suite と app 側 pytest を併用する。

@@ -70,23 +70,7 @@ done
 
 ### Python API
 
-```python
-from markitdown import MarkItDown
-
-md = MarkItDown()
-
-# ファイル変換
-result = md.convert("report.pdf")
-print(result.text_content)
-
-# URL 変換
-result = md.convert("https://example.com")
-print(result.text_content)
-
-# 変換結果をファイルに保存
-with open("output.md", "w") as f:
-    f.write(result.text_content)
-```
+基本例は SKILL.md の「Python API での変換」を参照。URL もファイルパスと同様に `md.convert("https://example.com")` で変換でき、結果は `result.text_content` から取り出す。
 
 ## インストールバリアント
 

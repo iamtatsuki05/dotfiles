@@ -165,12 +165,12 @@ bundle audit
 - レビュー専用依頼では、勝手に修正しない。修正まで求められた場合だけ最小変更で対応する。
 - 誤検知、要確認、実害ありを分けて記載する。
 - 最終報告には対象範囲、実行した検索/ツール、検出件数、値をマスクした findings、未確認範囲を含める。
-- セキュリティ指摘の severity（Critical / High / Medium / Low）は、`eng-practices` の `comment-writing.md` のラベル（`Critical:` / `Warning:` / `Nit:` 等）と整合させる。Critical/High は必ず修正必須として伝え、Low は `Optional:` 相当として扱う。
+- severity と eng-practices ラベルの対応: Critical/High → `Critical:`（修正必須）、Medium → `Warning:`（修正または理由の説明が必要）、Low → `Nit:` / `Optional:`。pr-code-review スキルの対応表と同じ方針。
 - 指摘の書き方（理由を添える、人ではなくコードに焦点を当てる、コード自体で直せる場合は説明より修正を優先する）は `eng-practices` スキル参照。
 
 ## リファレンス
 
 詳細なチェックリストが必要な場合:
 
-- **OWASP Top 10詳細**: [references/owasp-checklist.md](references/owasp-checklist.md)
+- **OWASP Top 10 チェックリスト**（2021 版ベース。最新版のカテゴリ変更にも注意）: [references/owasp-checklist.md](references/owasp-checklist.md)
 - **言語別パターン**: [references/language-specific.md](references/language-specific.md)

@@ -270,6 +270,37 @@ class Service {
 }
 ```
 
+### インターフェース実装と抽象クラス
+
+```typescript
+// インターフェースの実装
+interface Logger {
+  log(message: string): void;
+  error(message: string): void;
+}
+
+class ConsoleLogger implements Logger {
+  log(message: string): void {
+    console.log(`[LOG] ${message}`);
+  }
+
+  error(message: string): void {
+    console.error(`[ERROR] ${message}`);
+  }
+}
+
+// 抽象クラス（共通実装 + 抽象メソッド）
+abstract class BaseRepository<T> {
+  abstract findById(id: string): Promise<T | null>;
+  abstract save(entity: T): Promise<T>;
+
+  async exists(id: string): Promise<boolean> {
+    const entity = await this.findById(id);
+    return entity !== null;
+  }
+}
+```
+
 ## ESLint/Biomeルール対応
 
 ### @typescript-eslint/no-explicit-any

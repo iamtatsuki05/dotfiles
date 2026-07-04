@@ -37,7 +37,6 @@ description: "Use when the user asks to create, rewrite, evaluate, or tighten a 
    - その後に、参照先、作業範囲、制約、checkpoint、検証コマンド、進捗ログ、停止/確認条件を続ける。
    - 不足情報や仮定がある場合も、別見出しの Notes を作らず、goal prompt 内の「前提」または「確認が必要な条件」に短く含める。
    - テストや確認コマンドが不明な場合は、まず既存の README、package scripts、CI、Makefile、task runner を調べてから選ぶよう指示する。
-   - 公式 URL は goal prompt 内に入れない。公式ガイドは、プロンプト作成中に `/goal` の仕様や推奨形式が気になった場合の確認先としてだけ使う。
 
 4. **出力前に締める**
    - 完了条件が「頑張る」「改善する」だけになっていないか確認する。
