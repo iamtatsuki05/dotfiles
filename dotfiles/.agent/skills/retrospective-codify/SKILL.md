@@ -1,6 +1,6 @@
 ---
 name: retrospective-codify
-description: "Use near the end of a task when the user asks to preserve learnings, turn a mistake into a rule, create/update a skill, add a lint rule, or when repeated trial-and-error produced a reusable lesson."
+description: "Use near the end of a task when the user asks to preserve learnings, turn a mistake into a rule, create/update a skill, add a lint rule, or when repeated trial-and-error produced a reusable lesson. Also propose proactively after finishing substantial work or after acting on user corrections and feedback during the session."
 ---
 
 # Retrospective Codify
@@ -10,12 +10,23 @@ description: "Use near the end of a task when the user asks to preserve learning
 ## いつ使うか
 
 - タスク完了直前、またはユーザーから「学びを残して」「ルール化して」と指示されたとき
+- **指示がなくても自分から提案する場面**: 大きめの作業の完了報告をした直後、またはユーザーの修正フィードバック（やり直し指示、方針訂正、誤りの指摘）に対応し終えたとき。棚卸しは 3〜5 行の短い提案から始め、ユーザーが乗らなければ引き下がる
 - 試行錯誤の末に解にたどり着いたとき（初手で詰まった、誤った仮説を立てた、ドキュメント不足で時間を溶かした 等）
 - 同種のタスクを将来また行う可能性があるとき
 
 使わない場面:
 - 一発で通った単純なタスク（抽出する学びがない）
 - プロジェクト固有の一回限りの対応（コミットメッセージで十分）
+- 同一セッションで既に棚卸しを提案し、ユーザーが不要と答えた後（新しい学びが出た場合を除く）
+
+## セッション中のフィードバック収集
+
+棚卸しの材料は終盤にまとめて思い出すのではなく、ラリーの中で随時記録する。
+
+- ユーザーから修正フィードバックを受けて対応したら、その都度 session directory の `feedback.md` に 1 行追記する: `- <ユーザーの指摘の要旨> → <とった対応>（<自分の当初の想定との差>）`
+- 自分の手戻り（誤った仮説、検証漏れ、skill の記述が古い/誤っていた等）は `feedback.md` ではなく、従来どおり `changes.md` / `verification.md` に残す（`feedback.md` はユーザー指摘専用）
+- session directory を作っていない小さな作業では省略してよい（記憶ベースで棚卸しする）
+- 棚卸し時は `feedback.md` と `changes.md` / `verification.md` の失敗記録を入力として使う
 
 ## ワークフロー
 
@@ -71,6 +82,7 @@ description: "Use near the end of a task when the user asks to preserve learning
 | コード/設定の構文レベルで検出可能 | `ast-grep` ルール または既存 linter 設定 | "`Array.from(set).length` を使うな、`set.size` を使え" |
 | 短く、常時適用、判断を伴わない | `CLAUDE.md`（user global / project） | "pnpm は v10 以上を使う" |
 | 手順・文脈判断・テンプレが必要 | 新規 skill または既存 skill への追記 | "MoonBit の C binding を書く手順" |
+| 今回使った skill / AGENTS.md の記述が誤り・古い・誤誘導だった | 該当ファイルの修正提案 | "skill の コマンド例が現行 CLI と不一致" |
 | プロジェクト固有で一回限り | 採用しない（コミットメッセージ / PR 説明に留める） | — |
 
 **ast-grep を優先する原則**: 静的に検出可能なものはプロンプトやドキュメントに書かず、必ず `ast-grep` ルールにする（ユーザーの global ルール）。
@@ -151,6 +163,7 @@ description: Use when <具体的な状況> / <症状>
 - [lint] <ルール名>: <1 行>（artifact: <path>, 学び N 由来）
 - [skill 追記] <既存 skill 名>: <1 行>（学び N 由来）
 - [skill 新規] <skill 名>: <1 行>（学び N 由来）
+- [修正] <使用した skill 名 / AGENTS.md>: <誤り・古い記述の修正 1 行>（学び N 由来）
 - [rule] CLAUDE.md（global/project）: <1 行>（学び N 由来）
 
 重複検出（提案不要）:

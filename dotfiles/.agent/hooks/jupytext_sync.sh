@@ -50,6 +50,8 @@ while IFS= read -r file_path; do
 
     ipynb_path="${file_path%.py}.ipynb"
     if [[ -f "$ipynb_path" ]]; then
-        jupytext --sync "$file_path" 2>/dev/null
+        # Codex は hook の stdout を JSON として厳密パースするため、
+        # jupytext のログを stdout に流さない。
+        jupytext --sync "$file_path" >/dev/null 2>&1
     fi
 done <<< "$file_paths"
