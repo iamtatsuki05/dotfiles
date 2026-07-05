@@ -13,6 +13,8 @@ UTILITY SKILL. 互換レイヤ、alias、silent fallback、default fallback、le
 - missing config / env / arg を default で補いたくなった。
 - 古い path、古い API、別名、互換 wrapper を残すか迷った。
 - 「念のため」「利用者がいるかも」だけで分岐を増やしそう。
+- 要求された実行経路(runner、backend、ライブラリ)が失敗し、非等価な代替へ切り替えたくなった。
+- 削除・刷新リファクタで legacy 定数、互換 default、旧 wrapper を残しそう。
 
 ## DO NOT USE FOR (互換動作が正当なケース):
 
@@ -31,6 +33,7 @@ UTILITY SKILL. 互換レイヤ、alias、silent fallback、default fallback、le
 ## RULES
 
 - 根拠のない alias、fallback、legacy path、default 値補完は足さない。
+- 要求された経路が失敗しても、非等価な代替(別 runner・別実装での近似)へ silent に切り替えない。切り替えるなら先にユーザーへ明示して確認する。
 - 安全に続行できない状態は、静かに補正せず明確なエラーにする。
 - `os.getenv(..., default)`、空文字 default、場当たり的な代替 path で設定不足を隠さない。
 - 根拠が読めない場合は、推測で互換レイヤを作らず確認する。
