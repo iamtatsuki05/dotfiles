@@ -39,6 +39,7 @@ description: "Use when the user asks to create, rewrite, evaluate, or tighten a 
    - テストや確認コマンドが不明な場合は、まず既存の README、package scripts、CI、Makefile、task runner を調べてから選ぶよう指示する。
 
 4. **出力前に締める**
+   - prompt 全体を必要最小限の長さに抑える。長すぎる goal は Codex の入力上限(目安 4,000 字)で拒否されたり途中で切れたりするため、詳細は参照ファイルへ逃がして本文は要点だけにする。
    - 完了条件が「頑張る」「改善する」だけになっていないか確認する。
    - checkpoint ごとに検証があるか確認する。
    - 失敗時の次アクションと、ユーザーへ戻す条件が入っているか確認する。

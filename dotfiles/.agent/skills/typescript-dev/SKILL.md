@@ -76,6 +76,7 @@ TypeScript では特に、`any` や型アサーションを使う箇所に理由
 ## コード品質チェック
 
 実装後に確認:
+- 公開 API・Props・型を変更した場合、呼び出し元、stories、unit/e2e テストを同じ変更で同期したか（同期漏れは tsc の全体実行で連鎖エラーとして現れる）
 - tsc --noEmit を通過するか（型チェック）
 - eslint / biome check を通過するか
 - prettier --check を通過するか（フォーマット）
