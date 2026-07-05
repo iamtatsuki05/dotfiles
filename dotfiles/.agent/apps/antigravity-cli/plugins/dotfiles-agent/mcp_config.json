@@ -15,8 +15,7 @@
       "env": {}
     },
     "notion": {
-      "type": "http",
-      "url": "https://mcp.notion.com/mcp"
+      "serverUrl": "https://mcp.notion.com/mcp"
     },
     "playwright": {
       "command": "bunx",
@@ -26,19 +25,16 @@
       "env": {}
     },
     "deepwiki": {
-      "type": "http",
-      "url": "https://mcp.deepwiki.com/mcp"
+      "serverUrl": "https://mcp.deepwiki.com/mcp"
     },
     "devin": {
-      "type": "http",
-      "url": "https://mcp.devin.ai/mcp",
       "headers": {
         "Authorization": "Bearer ${DEVIN_API_KEY}"
-      }
+      },
+      "serverUrl": "https://mcp.devin.ai/mcp"
     },
     "figma": {
-      "type": "http",
-      "url": "https://mcp.figma.com/mcp"
+      "serverUrl": "https://mcp.figma.com/mcp"
     }
   }
 }
