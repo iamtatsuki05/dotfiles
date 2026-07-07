@@ -86,7 +86,10 @@ Updates write security review reports under `dotfiles/.agent/work/skill-upstream
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
 | `mattpocock-skills` | `mattpocock/skills` | `mattpocock/` | Design questioning, diagnosis, prototyping, handoff, and architecture review skills. |
 | `superpowers` | `obra/superpowers` | `superpowers/` | Workflow skills for TDD, parallel agent dispatch, and skill writing. |
+| `report-skills` | `mizuamedesu/ReportSkills` | `report-skills/` | Japanese report and academic assignment writing skill. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied AGPL/commercial dual-license notice. |
+| `stop-ai-slop-jp` | `iKora128/stop-ai-slop-jp` | `stop-ai-slop-jp/` | Japanese AI-slop prose review and rewrite skill. |
+| `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | English prose review skill for removing predictable AI writing patterns. |
 
 ### Matt Pocock Group
 

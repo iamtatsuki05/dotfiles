@@ -20,12 +20,13 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 7"
+  assert_contains_text "$output" "registered upstream skills: 8"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
   assert_contains_text "$output" "modern-web-guidance"
   assert_contains_text "$output" "herdr"
+  assert_contains_text "$output" "stop-slop"
 }
 
 test_updates_accepts_fixture_ls_remote_output() {
@@ -123,7 +124,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit modern-web-guidance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
       --latest-commit report-skills=cccccccccccccccccccccccccccccccccccccccc \
       --latest-commit herdr=7777777777777777777777777777777777777777 \
-      --latest-commit stop-ai-slop-jp=9999999999999999999999999999999999999999
+      --latest-commit stop-ai-slop-jp=9999999999999999999999999999999999999999 \
+      --latest-commit stop-slop=1212121212121212121212121212121212121212
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -140,6 +142,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 7777777777777777777777777777777777777777"
   assert_contains_text "$output" "Skill ID: stop-ai-slop-jp"
   assert_contains_text "$output" "candidate_commit: 9999999999999999999999999999999999999999"
+  assert_contains_text "$output" "Skill ID: stop-slop"
+  assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -154,6 +158,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed report-skills" > "$report_dir/report-skills.md"
   print -r -- "reviewed herdr" > "$report_dir/herdr.md"
   print -r -- "reviewed stop-ai-slop-jp" > "$report_dir/stop-ai-slop-jp.md"
+  print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -168,7 +173,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit modern-web-guidance=3333333333333333333333333333333333333333 \
       --latest-commit report-skills=4444444444444444444444444444444444444444 \
       --latest-commit herdr=6666666666666666666666666666666666666666 \
-      --latest-commit stop-ai-slop-jp=5555555555555555555555555555555555555555
+      --latest-commit stop-ai-slop-jp=5555555555555555555555555555555555555555 \
+      --latest-commit stop-slop=1212121212121212121212121212121212121212
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -185,6 +191,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_contains_text "$output" "stop-ai-slop-jp: plan update"
   assert_contains_text "$output" "candidate=5555555555555555555555555555555555555555"
+  assert_contains_text "$output" "stop-slop: plan update"
+  assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -254,7 +262,8 @@ EOF'
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit report-skills=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
-      --latest-commit stop-ai-slop-jp=8888888888888888888888888888888888888888
+      --latest-commit stop-ai-slop-jp=8888888888888888888888888888888888888888 \
+      --latest-commit stop-slop=1212121212121212121212121212121212121212
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -264,6 +273,7 @@ EOF'
   assert_contains_text "$output" "report-skills: review approved"
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "stop-ai-slop-jp: review approved"
+  assert_contains_text "$output" "stop-slop: review approved"
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
@@ -274,6 +284,8 @@ EOF'
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_contains_text "$output" "herdr: plan update"
   assert_contains_text "$output" "candidate=9999999999999999999999999999999999999999"
+  assert_contains_text "$output" "stop-slop: plan update"
+  assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
   assert_not_contains_text "$output" "manifest updated"
 }
 
@@ -307,7 +319,8 @@ PY
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit report-skills=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
-      --latest-commit stop-ai-slop-jp=8888888888888888888888888888888888888888
+      --latest-commit stop-ai-slop-jp=8888888888888888888888888888888888888888 \
+      --latest-commit stop-slop=1212121212121212121212121212121212121212
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -332,6 +345,7 @@ PY
   assert_contains_text "$output" "report-skills: review approved"
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "stop-ai-slop-jp: review approved"
+  assert_contains_text "$output" "stop-slop: review approved"
 }
 
 test_update_blocks_when_agent_review_does_not_approve() {
@@ -357,7 +371,8 @@ EOF'
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit report-skills=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
-      --latest-commit stop-ai-slop-jp=8888888888888888888888888888888888888888 2>&1
+      --latest-commit stop-ai-slop-jp=8888888888888888888888888888888888888888 \
+      --latest-commit stop-slop=1212121212121212121212121212121212121212 2>&1
   )"
   local exit_status=$?
   set -e

@@ -85,7 +85,10 @@ skills/
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
 | `mattpocock-skills` | `mattpocock/skills` | `mattpocock/` | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。 |
 | `superpowers` | `obra/superpowers` | `superpowers/` | TDD、parallel agent dispatch、skill writing の workflow skill。 |
+| `report-skills` | `mizuamedesu/ReportSkills` | `report-skills/` | 日本語レポート・授業課題向けの文章作成 skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と AGPL / commercial dual license notice を同梱。 |
+| `stop-ai-slop-jp` | `iKora128/stop-ai-slop-jp` | `stop-ai-slop-jp/` | 日本語の AI 調文章を校閲・書き換える skill。 |
+| `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語 prose から AI らしい定型表現を取り除く文章校閲 skill。 |
 
 ### mattpocock group
 

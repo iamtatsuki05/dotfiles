@@ -216,6 +216,37 @@
       },
       "source_url": "https://github.com/iKora128/stop-ai-slop-jp/tree/main",
       "provenance_note": "MIT license copied into the vendored skill directory. Upstream SKILL.md and references are vendored without local instruction changes; README and CHANGELOG are intentionally excluded from the loadable skill."
+    },
+    {
+      "id": "stop-slop",
+      "description": "English AI-slop prose review and rewrite skill vendored into the shared agent skill tree.",
+      "repository": "https://github.com/hardikpandya/stop-slop.git",
+      "branch": "main",
+      "pinned_commit": "8da1f030185bdfe8471220585162991eaeb970e9",
+      "local_tree_sha256": "5c38306d82c1bbf5f9515f12f4211c12b5f6bb33e2eee74bab51043eef0c44a7",
+      "mappings": [
+        {
+          "source_path": "SKILL.md",
+          "local_path": "dotfiles/.agent/skills/stop-slop/SKILL.md"
+        },
+        {
+          "source_path": "references",
+          "local_path": "dotfiles/.agent/skills/stop-slop/references"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/stop-slop/LICENSE"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "8da1f030185bdfe8471220585162991eaeb970e9",
+        "last_reviewed_at": "2026-07-06T14:13:31+00:00",
+        "review_report": ".agent/work/sessions/2026-07-06-230928-stop-slop-skill-codex/subagents/security-review-stop-slop.md"
+      },
+      "source_url": "https://github.com/hardikpandya/stop-slop/tree/8da1f030185bdfe8471220585162991eaeb970e9",
+      "provenance_note": "MIT license copied into the vendored skill directory. Upstream SKILL.md and references are vendored without local instruction changes; README and CHANGELOG are intentionally excluded from the loadable skill."
     }
   ]
 }
