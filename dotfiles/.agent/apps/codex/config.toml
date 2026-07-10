@@ -22,14 +22,13 @@ ignore_patterns = [
   "dotfiles/.agent/changes/",
   "dotfiles/.agent/work/"
 ]
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 hide_agent_reasoning = true
 network_access = true
 web_search = "live"
 disable_response_storage = true
 # for http header
 rmcp_client = true
-notify = ["bash", "-lc", "afplay /System/Library/Sounds/Ping.aiff"]
 personality = "pragmatic"
 service_tier = "fast"
 
@@ -114,9 +113,6 @@ enabled = true
 [plugins."pdf@openai-primary-runtime"]
 enabled = true
 
-[plugins."browser@openai-bundled"]
-enabled = true
-
 [plugins."chrome@openai-bundled"]
 enabled = true
 
@@ -124,6 +120,15 @@ enabled = true
 enabled = true
 
 [plugins."template-creator@openai-primary-runtime"]
+enabled = true
+
+[plugins."sites@openai-bundled"]
+enabled = true
+
+[plugins."visualize@openai-bundled"]
+enabled = true
+
+[plugins."browser@openai-bundled"]
 enabled = true
 
 [memories]
