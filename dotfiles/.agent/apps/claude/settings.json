@@ -79,6 +79,11 @@
     ]
   },
   "model": "claude-fable-5[1m]",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "hooks": {
     "SessionStart": [
       {
