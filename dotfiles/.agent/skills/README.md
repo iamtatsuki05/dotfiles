@@ -49,6 +49,7 @@ Do not manually copy external skill trees without recording provenance and revie
 | `go-dev` | Implement, test, and review Go code, modules, concurrency, and interfaces. | Links to `eng-practices`. |
 | `goal-prompt-builder` | Create durable Codex `/goal` prompts. | Clarifies durable objectives and verification conditions. |
 | `gws` | Operate Google Calendar, Drive, Gmail, and Tasks through the `gws` CLI. | Be conservative around external actions. |
+| `html-preview-review` | Render verified agent results as safe, self-contained local HTML for visual review. | The main agent presents the artifact after required independent review. |
 | `kimi-webbridge` | Control the user's real browser through a local daemon. | For logged-in browser sessions and real-site interaction. |
 | `magika` | Identify file types and verify whether extensions match file contents. | Magika CLI workflow. |
 | `markdown-docs` | Create, edit, review, and lint README and Markdown documentation. | This README is also covered by this skill. |

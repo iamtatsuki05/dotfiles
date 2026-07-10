@@ -1,0 +1,49 @@
+id: html-preview-review-implementation-notes-artifact-002
+name: Render Material Implementation Notes Artifact
+description: |
+  Verifies the generated workspace files, semantic field separation, note ordering, and static HTML safety.
+
+tags:
+  - html
+  - review
+  - implementation-notes
+  - artifact
+
+inputs:
+  prompt: "このevaluation workspace自体がprivateなOS一時directoryです。workspace rootにreview.jsonとindex.htmlを生成してください。objective=`replace the legacy parser`; changed fileは`parser.py`（summary=`streaming parserへ置換`, evidence=`+ parse_stream(input)`）と`test_parser.py`（summary=`streaming parserの回帰テスト`, evidence=`+ test_large_input()`）。verificationはcommand=`pytest tests/test_parser.py`, status=`passed`, summary=`12 passed`。findings=[]、remaining_risks=[]、visualizations=[]。repository=`/work/example`, revision=`abc123-dirty`。implementation_notesはdecision=`仕様にmemory要件がないためstreaming方式を選択`; deviation=`明示されたmigration要件により旧error codeを1 release維持`; tradeoff=`runtime dependencyを避けるため高速なnative extensionを不採用`; open-question=`旧error codeの削除releaseをユーザーが確認する必要がある`。repo-local rendererを使い、upload・server起動・外部asset追加はしないでください。"
+  context:
+    artifact_type: completed agent result
+
+expected:
+  output_contains:
+    - "index.html"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 10
+
+graders:
+  - type: file
+    name: validates_generated_review_artifact
+    config:
+      must_exist: ["review.json", "index.html"]
+      content_patterns:
+        - path: "review.json"
+          must_match:
+            - '"implementation_notes"\s*:'
+            - '"kind"\s*:\s*"decision"'
+            - '"kind"\s*:\s*"deviation"'
+            - '"kind"\s*:\s*"tradeoff"'
+            - '"kind"\s*:\s*"open-question"'
+            - '"findings"\s*:\s*\[\s*\]'
+            - '"remaining_risks"\s*:\s*\[\s*\]'
+        - path: "index.html"
+          must_match:
+            - 'class="implementation-note note-open-question"'
+            - 'class="implementation-note note-deviation"'
+            - 'class="implementation-note note-tradeoff"'
+            - 'class="implementation-note note-decision"'
+            - '>1</strong><span>未解決事項</span>'
+          must_not_match:
+            - '<script'
+            - 'https?://'

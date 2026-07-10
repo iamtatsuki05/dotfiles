@@ -55,6 +55,7 @@
   - セキュリティ、本番影響、データ損失リスク、個人情報、外部送信
   - 長い作業(多くのファイル・工程にまたがる、または複数の subagent を使った作業)
 - 小さい文言修正、1ファイル程度の低リスク変更、単純な調査回答では省略して構いません。
+- ユーザーが HTML / preview review を求めた場合、または視覚的レビューが特に有効な成果物では、main agent が必要な検証と reviewer 指摘の採否判断を終えた後に `html-preview-review` skill を使い、`.agent/work/sessions/<session>/artifacts/html-preview-review/` に private HTML を保存して提示してください。reviewer に最終判断、skill の実行、成果物の外部公開を任せないでください。
 
 # プロンプト解釈とツール利用
 
@@ -140,7 +141,7 @@
 
 ## session directory
 
-- 現在の作業ディレクトリに `$PWD/.agent` が存在する場合は、作業ログを `$PWD/.agent/work/` 配下に残してください。このディレクトリは作業用のローカルな記録であり、Git 管理対象にしません(commit しないでください)。ユーザーが読む最終成果物は `.agent/work/` 配下に置かず、依頼で指定された場所か repo 内の適切な場所に置いてください。
+- 現在の作業ディレクトリに `$PWD/.agent` が存在する場合は、作業ログを `$PWD/.agent/work/` 配下に残してください。このディレクトリは作業用のローカルな記録であり、Git 管理対象にしません(commit しないでください)。ユーザーが読む最終成果物は `.agent/work/` 配下に置かず、依頼で指定された場所か repo 内の適切な場所に置いてください。`html-preview-review` の private artifact はこの原則の例外とし、前述の active session 配下へ置いてください。
 - repo の状態を変える作業や引き継ぎ情報が必要な作業では、`$PWD/.agent/work/sessions/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/` を新規作成してください。読み取りだけの単純な質問応答では省略して構いません。
   - `<agent-id>` には実行中の agent 種別を使います。例: `.agent/work/sessions/2026-05-23-171230-agent-worklog-prompt-codex/`(slug が `agent-worklog-prompt`、agent-id が `codex`)。
   - 同名の directory が既に存在する場合は上書きせず、短い乱数や連番を付けて別名で作成してください。

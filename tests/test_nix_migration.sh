@@ -658,6 +658,7 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     goal-prompt-builder
     google-colab-cli
     gws
+    html-preview-review
     magika
     markdown-docs
     markitdown

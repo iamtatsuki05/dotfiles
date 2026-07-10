@@ -124,6 +124,35 @@ sync_link_specs() {
   done < <("$spec_function")
 }
 
+require_shared_skill_link() {
+  local dst="$1"
+
+  if [[ -L "$dst" && "$dst" -ef "$AGENT_DIR/skills" ]]; then
+    return 0
+  fi
+
+  echo "ERROR: required shared skill link was not created: $dst -> $AGENT_DIR/skills" >&2
+  return 1
+}
+
+preflight_required_shared_skill_link() {
+  local dst="$1"
+  local -a entries
+
+  if [[ -L "$dst" || ! -e "$dst" || -f "$dst" ]]; then
+    return 0
+  fi
+  if [[ -d "$dst" ]]; then
+    entries=("$dst"/*(DN))
+    if (( ${#entries} == 0 )); then
+      return 0
+    fi
+  fi
+
+  echo "ERROR: required shared skill link is blocked by existing path: $dst" >&2
+  return 1
+}
+
 shared_link_specs() {
   local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 
@@ -151,7 +180,11 @@ shared_link_specs() {
 }
 
 sync_shared_files() {
+  preflight_required_shared_skill_link "$HOME/.codex/skills"
+  preflight_required_shared_skill_link "$HOME/.claude/skills"
   sync_link_specs shared_link_specs
+  require_shared_skill_link "$HOME/.codex/skills"
+  require_shared_skill_link "$HOME/.claude/skills"
 }
 
 sync_hook_files_from_dir() {
