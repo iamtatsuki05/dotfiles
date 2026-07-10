@@ -1,0 +1,4 @@
+interface:
+  display_name: "HTML Preview Review"
+  short_description: "Render safe local HTML review artifacts"
+  default_prompt: "Use $html-preview-review to render this completed agent result as a safe local HTML review."

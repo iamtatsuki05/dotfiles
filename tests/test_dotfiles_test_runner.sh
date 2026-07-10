@@ -35,6 +35,7 @@ create_runner_fixture() {
 
   write_fixture_zsh_script "$repo/main.sh" "main"
   write_fixture_zsh_script "$repo/scripts/helper.sh" "helper"
+  write_fixture_zsh_script "$repo/tests/test_agent_html_preview_review.sh" "unit:html-preview-review"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
   write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"
   write_fixture_zsh_script "$repo/tests/test_agent_skill_upstreams.sh" "unit:skill-upstreams"
@@ -55,6 +56,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "run_syntax_checks"
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
+  assert_contains "$TEST_RUNNER" "tests/test_agent_html_preview_review.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_support_matrix.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_skill_upstreams.sh"
@@ -117,6 +119,7 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$repo/tests/run.sh" --skip-chezmoi > "$output"
 
   assert_output_contains "$output" "unit:agent"
+  assert_output_contains "$output" "unit:html-preview-review"
   assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"
   assert_output_contains "$output" "unit:nix"

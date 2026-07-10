@@ -1,0 +1,64 @@
+id: html-preview-review-implementation-notes-001
+name: Preserve Material Implementation Notes
+description: |
+  Checks that the skill keeps implementation history distinct from reviewer findings and remaining risks.
+
+tags:
+  - html
+  - review
+  - implementation-notes
+
+inputs:
+  prompt: "完了したparser変更をHTML reviewにしてください。objective=`replace the legacy parser`; changed fileは`parser.py`（summary=`streaming parserへ置換`, evidence=`+ parse_stream(input)`）と`test_parser.py`（summary=`streaming parserの回帰テスト`, evidence=`+ test_large_input()`）。verificationはcommand=`pytest tests/test_parser.py`, status=`passed`, summary=`12 passed`。reviewer findingsはありません。repository=`/work/example`, revision=`abc123-dirty`。実装中のdecisionは仕様にmemory要件がないためstreaming方式を選択、deviationは明示されたmigration要件により旧error codeを1 release維持、tradeoffはruntime dependencyを避けるため高速なnative extensionを不採用、open questionは旧error codeの削除releaseをユーザーが確認する必要がある、です。4件は専用のimplementation_notesへ格納し、findings=[]とremaining_risks=[]を維持してください。rendererでindex.htmlを生成し、そのpathを返してください。"
+  context:
+    artifact_type: completed agent result
+
+expected:
+  output_contains:
+    - "HTML"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: uses_dedicated_note_field
+    type: text
+    config:
+      regex_match:
+        - "implementation_notes"
+  - name: keeps_findings_empty
+    type: text
+    config:
+      regex_match:
+        - '(?i)findings\s*[:=]\s*\[\]'
+  - name: keeps_remaining_risks_empty
+    type: text
+    config:
+      regex_match:
+        - '(?i)remaining_risks\s*[:=]\s*\[\]'
+  - name: reports_rendered_artifact
+    type: text
+    config:
+      regex_match:
+        - '(?i)(index\.html|file://)'
+  - name: preserves_decision
+    type: text
+    config:
+      regex_match:
+        - "(?i)(decision|設計判断|判断)"
+  - name: preserves_deviation
+    type: text
+    config:
+      regex_match:
+        - "(?i)(deviation|逸脱)"
+  - name: preserves_tradeoff
+    type: text
+    config:
+      regex_match:
+        - "(?i)(tradeoff|トレードオフ)"
+  - name: surfaces_open_question
+    type: text
+    config:
+      regex_match:
+        - "(?i)(open question|未解決)"

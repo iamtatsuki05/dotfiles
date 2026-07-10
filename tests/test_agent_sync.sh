@@ -208,6 +208,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_not_exists "$repo/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
   assert_symlink_target "$home_dir/.claude/CLAUDE.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.claude/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
@@ -349,6 +350,64 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_file "$home_dir/.openclaw/.env"
   assert_contains "$home_dir/.openclaw/.env" 'DEVIN_API_KEY=test-key'
   assert_contains "$home_dir/.openclaw/.env" 'OPENCODE_API_KEY=opencode-test-key'
+
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_fails_when_required_claude_skill_link_conflicts() {
+  local repo
+  local home_dir
+  local output
+  local exit_status
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.claude/skills"
+  print -r -- 'keep' > "$home_dir/.claude/skills/local-skill.txt"
+
+  set +e
+  output="$(HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" 2>&1)"
+  exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected required Claude skill link conflict to fail"
+  assert_contains_text "$output" "required shared skill link"
+  assert_file "$home_dir/.claude/skills/local-skill.txt"
+  assert_not_exists "$home_dir/.codex/skills"
+  assert_not_exists "$home_dir/.claude/CLAUDE.md"
+
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts() {
+  local repo
+  local home_dir
+  local output
+  local exit_status
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.codex/skills"
+  print -r -- 'keep' > "$home_dir/.codex/skills/local-skill.txt"
+
+  set +e
+  output="$(HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" 2>&1)"
+  exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected required Codex skill link conflict to fail"
+  assert_contains_text "$output" "required shared skill link"
+  assert_file "$home_dir/.codex/skills/local-skill.txt"
+  assert_not_exists "$home_dir/.claude/skills"
+  assert_not_exists "$home_dir/.codex/AGENTS.md"
 
   rm -rf "$repo" "$home_dir"
 }
@@ -571,6 +630,8 @@ assert "CHANGES.md" not in context
 
 main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
+  test_agent_sync_fails_when_required_claude_skill_link_conflicts
+  test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts
   test_agent_sync_uses_declarative_link_specs
   test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink

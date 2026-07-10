@@ -37,6 +37,7 @@ evals/<skill>/
 | `go-dev` | Go debugging and review behavior. |
 | `goal-prompt-builder` | `/goal` prompt construction, language handling, and refusal behavior. |
 | `gws` | Google Workspace CLI inspection behavior. |
+| `html-preview-review` | Safe local HTML review generation and viewer routing. |
 | `magika` | File type identification. |
 | `markdown-docs` | Markdown review, proofreading, and restructuring. |
 | `markitdown` | Conversion-to-Markdown routing. |

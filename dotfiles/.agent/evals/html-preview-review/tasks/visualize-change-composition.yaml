@@ -1,0 +1,39 @@
+id: html-preview-review-visualization-001
+name: Visualize Review Evidence Selectively
+description: |
+  Checks that the skill chooses a bounded visualization only when it improves understanding and preserves exact evidence.
+
+tags:
+  - html
+  - review
+  - visualization
+
+inputs:
+  prompt: "実装3ファイル、テスト2ファイル、文書1ファイルの数量はbar graph、実装からテスト、read-only review、HTML previewまでの流れはflow diagramにし、正確な数値も表で確認できるHTML reviewにしてください。検証結果は command=`zsh tests/test_agent_html_preview_review.sh`, status=`passed`, summary=`focused test passed` と、command=`read-only review`, status=`passed`, summary=`重大な問題なし` です。"
+  context:
+    artifact_type: completed agent result
+
+expected:
+  output_contains:
+    - "HTML"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 8
+
+graders:
+  - name: selects_bar_visualization
+    type: text
+    config:
+      regex_match:
+        - "(?i)(bar|棒グラフ)"
+  - name: selects_flow_visualization
+    type: text
+    config:
+      regex_match:
+        - "(?i)(flow|フロー)"
+  - name: preserves_exact_evidence
+    type: text
+    config:
+      regex_match:
+        - "(?i)(table|表|exact|正確|数値)"

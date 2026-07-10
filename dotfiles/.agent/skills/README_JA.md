@@ -48,6 +48,7 @@ skills/
 | `go-dev` | Go 実装、テスト、並行処理、interface、module 周り。 | `eng-practices` と連携。 |
 | `goal-prompt-builder` | Codex `/goal` 用の長期作業 prompt を作る。 | durable objective と検証条件を固める。 |
 | `gws` | Google Calendar / Drive / Gmail / Tasks を `gws` CLI で扱う。 | 外部操作は確認を重視。 |
+| `html-preview-review` | 検証済みの Agent 実行結果を、安全な自己完結型 local HTML にして視覚レビューする。 | 必要な独立レビュー後、main agent が成果物を提示する。 |
 | `kimi-webbridge` | ユーザーの実ブラウザを local daemon 経由で操作する。 | ログイン済み browser session が必要な作業向け。 |
 | `magika` | ファイル種別の判定、拡張子と中身の確認。 | Magika CLI 用。 |
 | `markdown-docs` | README、技術文書、校閲、Markdown 整形。 | この README もこの skill の対象。 |
