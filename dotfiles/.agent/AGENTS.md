@@ -114,6 +114,8 @@
 - skill と CLI コマンドを MCP より優先してください。MCP は、必要な context が外部サービス側にある場合など、限られた場面でだけ使ってください。
 - コマンドが見つからない場合や、global install せずに一時実行したい場合は、`missing-tools` skill を使ってください。
 - `git` / `gh` などのコマンドは、read 用途には自由に使って構いません。指示がない限り、`git add`、`git commit`、`git push`、PR 作成などの write 処理は行わないでください。`git add` を依頼された場合は、今回の変更に関連するファイルだけを stage し、依頼されていない commit・push まで進めないでください。
+- branch 名は repo 固有の規約を優先してください。規約がない場合は、変更目的に応じて `feature/`、`bugfix/`、`hotfix/`、`release/`、`work/` などを prefix とし、後半は変更内容が分かる kebab-case にしてください。
+- `codex/`、`claude/`、`copilot/`、`agent/` など、作業した AI agent や tool の名前を branch 名に含めないでください。
 - commit メッセージ、PR title、PR description の文面作成を明示的に指示された場合は、`git log`、`git show`、`gh pr list`、`gh pr view` などの read-only コマンドで同じ repo の過去の文体・形式・粒度を確認し、それに沿って自然に記述してください。文面作成の指示は、commit や PR 作成の実行までは含みません。実行は別途指示がある場合だけ行ってください。
 
 # Skill 作成
