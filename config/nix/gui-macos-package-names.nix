@@ -6,7 +6,6 @@
   "daisydisk"
   "dotfiles.hermes-desktop"
   "iterm2"
-  "karabiner-elements"
   "keycastr"
   "mas"
   "notion-app"

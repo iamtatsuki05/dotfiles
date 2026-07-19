@@ -29,6 +29,7 @@ cask	ghostty	nix-package-is-linux-only
 cask	google-drive	no-nixpkg-mapping
 cask	google-japanese-ime	no-nixpkg-mapping
 cask	hhkb-studio	no-nixpkg-mapping
+cask	karabiner-elements	requires-macos-pkg-and-background-services
 cask	macfuse	no-nixpkg-mapping
 cask	microsoft-office	no-nixpkg-mapping
 cask	motu-m-series	no-nixpkg-mapping

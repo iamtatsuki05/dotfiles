@@ -346,6 +346,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"codex"'
   assert_not_contains "$NIX_PACKAGE_NAMES_FILE" '"gemini-cli"'
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'
+  assert_not_contains "$NIX_GUI_MACOS_PACKAGE_NAMES_FILE" '"karabiner-elements"'
   assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'firefox\tfirefox\tcommon'
   assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'zed\tzed-editor\tlinux'
 
@@ -373,6 +374,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$MIGRATED_CASKS_FILE" "claude-code@latest"
   assert_not_contains "$MIGRATED_CASKS_FILE" "codex"
   assert_not_contains "$MIGRATED_CASKS_FILE" "zed"
+  assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask\tkarabiner-elements\trequires-macos-pkg-and-background-services'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	codex	managed-by-mise:codex'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	zed	nix-package-is-linux-only'
@@ -390,6 +392,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"affinity-photo"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"background-music"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"karabiner-elements"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"tailscale-app"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"yoink"'

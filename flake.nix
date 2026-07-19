@@ -43,10 +43,37 @@
       forAllSystems = f:
         lib.genAttrs systems (system: f system);
 
+      vscodeRipgrepOverlay = final: prev:
+        let
+          brokenRipgrepPath = "Contents/Resources/app/node_modules/@vscode/ripgrep-universal";
+          actualRipgrepPath = "Contents/Resources/app/node_modules.asar.unpacked/@vscode/ripgrep-universal";
+        in
+        lib.optionalAttrs prev.stdenv.hostPlatform.isDarwin {
+          vscode =
+            if prev.vscode.version != "1.129.1" then
+              prev.vscode
+            else
+              prev.vscode.overrideAttrs (oldAttrs:
+                let
+                  originalPostPatch = oldAttrs.postPatch or "";
+                in
+                {
+                  postPatch =
+                    assert lib.assertMsg
+                      (lib.hasInfix brokenRipgrepPath originalPostPatch)
+                      "vscode 1.129.1 no longer needs the local ripgrep path fix";
+                    lib.replaceStrings
+                      [ brokenRipgrepPath ]
+                      [ actualRipgrepPath ]
+                      originalPostPatch;
+                });
+        };
+
       mkPkgs = system:
         import nixpkgs {
           inherit system;
           config.allowUnfree = true;
+          overlays = [ vscodeRipgrepOverlay ];
         };
 
       homeDirectoryFor = system:
@@ -83,6 +110,7 @@
             ./config/nix/darwin
             home-manager.darwinModules.home-manager
             {
+              nixpkgs.overlays = [ vscodeRipgrepOverlay ];
               home-manager.useGlobalPkgs = true;
               home-manager.useUserPackages = true;
               home-manager.backupFileExtension = homeManagerBackupExtension;

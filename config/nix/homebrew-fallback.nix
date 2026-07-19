@@ -46,6 +46,7 @@
     "google-japanese-ime"
     "hhkb-studio"
     "iriunwebcam"
+    "karabiner-elements"
     "macfuse"
     "minecraft"
     # microsoft-office already installs OneDrive and conflicts with the standalone onedrive cask.
