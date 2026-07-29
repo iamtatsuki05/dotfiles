@@ -649,12 +649,14 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
   local task_files
 
   skills=(
+    agent-cli-consult
+    agent-job-scheduler
     alphaxiv-paper-lookup
     api-design
     auto-debugger
     ci-cd
-    claude-code
-    codex
+    colab-mcp
+    compatibility-safety
     database-dev
     empirical-prompt-tuning
     go-dev
@@ -665,6 +667,7 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     magika
     markdown-docs
     markitdown
+    missing-tools
     pr-code-review
     prompt-tuner
     python-dev
@@ -757,7 +760,8 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_PACKAGES_MODULE" 'lib.getName pkg'
 
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.enable = true'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.completionInit'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.oh-my-zsh.enable = true'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'lib.mkOrder 550'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" '/opt/homebrew/share/zsh/site-functions/_brew'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'PROMPT_MACHINE_EMOJI'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'prompt-machine-emoji'
@@ -1673,7 +1677,7 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.enable = true'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'dotfiles-shell-common.sh'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'zcompdump-$ZSH_VERSION'
+  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.oh-my-zsh.enable = true'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'HOMEBREW_PREFIX'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'brew shellenv'
   assert_contains "$APPLY_UPDATES_SCRIPT" 'setup_agent_files.sh'
@@ -2769,7 +2773,11 @@ EOF
   cat > "$bin_dir/brew" <<'EOF'
 #!/usr/bin/env zsh
 set -euo pipefail
-exit 0
+if [[ "${1:-}" == "info" ]]; then
+  cat <<'JSON'
+{"casks":[{"token":"anki","full_token":"anki","auto_updates":false}]}
+JSON
+fi
 EOF
 
   chmod +x \
