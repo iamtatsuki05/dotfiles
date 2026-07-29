@@ -23,7 +23,7 @@
   "Perplexity" = 6714467650;
   "Pieoneer" = 6739781207;
   "Prime Video" = 545519333;
-  "RunCat" = 1429033973;
+  "RunCat Neo" = 6757801838;
   "ScreenPointer" = 1368204906;
   "Speedtest" = 1153157709;
   "Steam Link" = 1246969117;
