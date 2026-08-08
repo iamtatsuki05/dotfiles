@@ -15,6 +15,7 @@ English version: [README.md](README.md)
 | `waza_eval_*.sh` | Waza / agent eval entrypoint の互換 wrapper。 |
 | `agent_skill_upstreams.py` | 外部 skill update と security review manifest の管理 tool。 |
 | `setup_agent_files.sh` | AI agent config、hook、skill、pet sync の canonical script。 |
+| `setup_hermes_agent.sh` | upstream が pip/PyPI と Homebrew 配布を廃止したため、Hermes Agent を公式 shell installer で導入・更新する script。 |
 
 ## 更新ルール
 

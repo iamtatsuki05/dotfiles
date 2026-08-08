@@ -111,7 +111,7 @@ EOF
 brew	claude-code	claude-code
 brew	codex	codex
 brew	herdr	github:ogulcancelik/herdr
-brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
+brew	hermes-agent	external:scripts/setup_hermes_agent.sh
 brew	opencode	opencode
 cask	claude-code@latest	claude-code
 cask	codex	codex
@@ -226,7 +226,8 @@ EOF
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	claude-code	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	codex	managed-by-mise:codex'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	herdr	managed-by-mise:github:ogulcancelik/herdr'
-  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	hermes-agent	managed-by-mise:pipx:git+https://github.com/NousResearch/hermes-agent.git'
+  assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	hermes-agent	managed-externally:scripts/setup_hermes_agent.sh'
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"hermes-agent"'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	opencode	managed-by-mise:opencode'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	codex	managed-by-mise:codex'
@@ -3111,11 +3112,16 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" '"github:ogulcancelik/herdr" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:markitdown" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:google-colab-cli" = "latest"'
-  assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
+  assert_not_contains "$MISE_CONFIG" 'pipx:git+https://github.com/NousResearch/hermes-agent.git'
+  assert_contains "$MISE_CONFIG" '[tasks.hermes-setup]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/setup_hermes_agent.sh"'
+  assert_contains "$MISE_CONFIG" '[tasks.hermes-update]'
+  assert_contains "$MISE_CONFIG" 'alias = "hermes-upgrade"'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only hermes"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'
   assert_not_contains "$MISE_CONFIG" '"npm:@desplega.ai/agent-swarm" = "latest"'
-  assert_contains "$MISE_CONFIG" 'mysql = "8.0"'
+  assert_contains "$MISE_CONFIG" 'mysql = "8.0.34"'
   assert_contains "$MISE_CONFIG" 'sqlite = "3.51"'
   assert_contains "$MISE_CONFIG" 'redis = "8.2"'
   assert_contains "$NIX_PACKAGE_NAMES_FILE" '"pkg-config"'

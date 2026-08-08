@@ -1,9 +1,9 @@
-# kind	name	mise tool
+# kind	name	mise tool (or external:<installer> when neither Nix nor mise owns it)
 brew	claude-code	claude-code
 brew	codex	codex
 brew	herdr	github:ogulcancelik/herdr
-brew	hermes-agent	pipx:git+https://github.com/NousResearch/hermes-agent.git
-brew	hermes	pipx:git+https://github.com/NousResearch/hermes-agent.git
+brew	hermes-agent	external:scripts/setup_hermes_agent.sh
+brew	hermes	external:scripts/setup_hermes_agent.sh
 brew	opencode	opencode
 cask	claude-code@latest	claude-code
 cask	codex	codex
