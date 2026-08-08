@@ -383,7 +383,13 @@ parse_brewfile() {
 
     mise_tool="${MISE_TOOL_BY_HOMEBREW_KEY["$kind:$name"]:-}"
     if [[ -n "$mise_tool" ]]; then
-      append_unmapped "$kind" "$name" "managed-by-mise:$mise_tool"
+      # An "external:" value marks a package that neither Nix nor mise installs,
+      # so the report names the actual installer instead of claiming mise owns it.
+      if [[ "$mise_tool" == external:* ]]; then
+        append_unmapped "$kind" "$name" "managed-externally:${mise_tool#external:}"
+      else
+        append_unmapped "$kind" "$name" "managed-by-mise:$mise_tool"
+      fi
       continue
     fi
 

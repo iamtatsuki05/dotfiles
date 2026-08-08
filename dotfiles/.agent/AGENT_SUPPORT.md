@@ -12,10 +12,12 @@
 | `cursor` | `cursor-agent` / `http:cursor-agent` | Cursor Agent |
 | `devin` | `devin` / `http:devin` | Devin CLI |
 | `antigravity` | `agy` / `brew cask: antigravity-cli` | Antigravity CLI |
-| `hermes` | `hermes` / `pipx:git+https://github.com/NousResearch/hermes-agent.git` | Hermes Agent |
+| `hermes` | `hermes` / `scripts/setup_hermes_agent.sh` (公式 shell installer) | Hermes Agent |
 | `opencode` | `opencode` / `opencode` | opencode |
 | `openclaw` | `openclaw` / `npm:openclaw` | OpenClaw |
 | `grok` | `grok` / `npm:@xai-official/grok` | Grok CLI (xAI) |
+
+Hermes Agent は upstream が 2026-07-22 に pip/PyPI と Homebrew 配布を廃止したため、`mise` ではなく公式 shell installer 経由で管理します。導入は `mise run hermes-setup`、更新は `mise run hermes-update` です。
 
 Herdr は agent を束ねる terminal multiplexer / runtime であり、ここでいう canonical agent ではありません。CLI は `mise` の `github:ogulcancelik/herdr` で管理し、Herdr 用 agent skill は `dotfiles/.agent/skills/herdr/` に置きます。
 

@@ -19,7 +19,8 @@ codex = "latest"
 claude-code = "latest"
 "github:ogulcancelik/herdr" = "latest"
 opencode = "latest"
-"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"
+# hermes は upstream が pip/PyPI と Homebrew 配布を廃止したため mise 管理外。
+# 導入/更新は mise run hermes-setup / hermes-update (公式 installer + hermes update)。
 "npm:@github/copilot" = "latest"
 "npm:openclaw" = "latest"
 "npm:@xai-official/grok" = "latest"
@@ -28,7 +29,10 @@ docker-cli = "latest"
 docker-compose = "latest"
 kubectl = "latest"
 k9s = "latest"
-mysql = "8.0"
+# asdf-mysql plugin は macOS 向け tarball を datacharmer/dbdeployer の
+# tarball_list.json から引くため、Darwin/arm64 の最新は 8.0.34 で止まっている。
+# "8.0" のままだと mise が 8.0.46 を選び、URL が見つからず install が失敗する。
+mysql = "8.0.34"
 sqlite = "3.51"
 redis = "8.2"
 terraform = "latest"
@@ -105,6 +109,11 @@ run = "zsh scripts/setup_agent_files.sh"
 description = "Kimi WebBridgeのlocal serviceとagent skillを設定"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_kimi_webbridge.sh"
+
+[tasks.hermes-setup]
+description = "Hermes Agentを公式installerで導入"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/setup_hermes_agent.sh"
 
 [tasks.waza-check]
 description = "Wazaでmarkdown-docs skillをcheck"
@@ -231,9 +240,15 @@ description = "mise管理toolを更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh --only mise"
 
+[tasks.hermes-update]
+alias = "hermes-upgrade"
+description = "Hermes Agentだけを更新"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/update_managed_versions.sh --only hermes"
+
 [tasks.package-update]
 alias = "nix-mise-upgrade"
-description = "Nix/mise管理toolをまとめて更新"
+description = "Nix/mise/Hermes管理toolをまとめて更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh"
 

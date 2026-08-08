@@ -37,7 +37,7 @@ Options:
   --shell zsh|bash        Shell to use for repository helper scripts. Default: zsh.
   --profile full|cli      Select setup profile. macOS defaults to full; Linux defaults to cli.
   --cli-only              Alias for --profile cli.
-  --only all|lock|nix|mise
+  --only all|lock|nix|mise|hermes
                           Limit the update flow. Default: all.
   --nix-input all|nixpkgs|home-manager|nix-darwin
                           Limit the flake input updated by the Nix step. Default: all.
@@ -49,10 +49,12 @@ Default flow:
   2. applies the updated Nix configuration
   3. syncs home/.chezmoitemplates/mise-config.toml and ~/.config/mise/config.toml
   4. upgrades mise-managed tools within the configured release lines
+  5. updates Hermes Agent, which ships outside Nix and mise
 
 Use --only lock to update flake.lock only.
 Use --only nix to update flake.lock and apply Nix only.
 Use --only mise to sync mise config and upgrade mise-managed tools only.
+Use --only hermes to update Hermes Agent only.
 Use --nix-input nixpkgs to update only nixpkgs before applying.
 EOF
 }
@@ -623,7 +625,7 @@ parse_args() {
       --only)
         shift
         if ((! $#)); then
-          echo "ERROR: --only requires all, lock, nix, or mise" >&2
+          echo "ERROR: --only requires all, lock, nix, mise, or hermes" >&2
           return 1
         fi
         UPDATE_SCOPE="$1"
@@ -674,11 +676,11 @@ parse_args() {
   fi
 
   case "$UPDATE_SCOPE" in
-    all|lock|nix|mise)
+    all|lock|nix|mise|hermes)
       ;;
     *)
       echo "ERROR: unsupported update scope: $UPDATE_SCOPE" >&2
-      echo "Choose one of: all, lock, nix, mise" >&2
+      echo "Choose one of: all, lock, nix, mise, hermes" >&2
       return 1
       ;;
   esac
@@ -695,6 +697,11 @@ parse_args() {
 
   if [[ "$UPDATE_SCOPE" == "mise" && "$NIX_INPUT" != "all" ]]; then
     echo "ERROR: --nix-input cannot be used with --only mise" >&2
+    return 1
+  fi
+
+  if [[ "$UPDATE_SCOPE" == "hermes" && "$NIX_INPUT" != "all" ]]; then
+    echo "ERROR: --nix-input cannot be used with --only hermes" >&2
     return 1
   fi
 
@@ -791,6 +798,11 @@ run_mise_update_flow() {
   update_mise_versions
 }
 
+run_hermes_update_flow() {
+  start_step "Updating Hermes Agent, which ships outside Nix and mise"
+  run_repo_script "setup_hermes_agent.sh" --update-only
+}
+
 initialize_progress() {
   SHOW_PROGRESS="${DOTFILES_SHOW_PROGRESS:-1}"
 
@@ -805,8 +817,11 @@ initialize_progress() {
     mise)
       TOTAL_STEPS=3
       ;;
+    hermes)
+      TOTAL_STEPS=1
+      ;;
     all)
-      TOTAL_STEPS=5
+      TOTAL_STEPS=6
       should_update_homebrew_fallback_packages && TOTAL_STEPS=$((TOTAL_STEPS + 1))
       ;;
   esac
@@ -844,6 +859,9 @@ main() {
     mise)
       run_mise_update_flow
       ;;
+    hermes)
+      run_hermes_update_flow
+      ;;
     all)
       start_step "Updating flake.lock ($nix_input_description)"
       update_nix_lockfile
@@ -854,6 +872,7 @@ main() {
         update_homebrew_fallback_packages
       fi
       run_mise_update_flow
+      run_hermes_update_flow
       ;;
   esac
 

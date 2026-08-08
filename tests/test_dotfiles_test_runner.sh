@@ -41,6 +41,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_agent_skill_upstreams.sh" "unit:skill-upstreams"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_migration.sh" "unit:chezmoi"
   write_fixture_zsh_script "$repo/tests/test_dotfiles_test_runner.sh" "unit:runner"
+  write_fixture_zsh_script "$repo/tests/test_hermes_agent_setup.sh" "unit:hermes"
   write_fixture_zsh_script "$repo/tests/test_nix_migration.sh" "unit:nix"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_source_state.sh" "source-state"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_rendered_home.sh" "chezmoi-render-test-ran"
@@ -60,6 +61,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_support_matrix.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_skill_upstreams.sh"
+  assert_contains "$TEST_RUNNER" "tests/test_hermes_agent_setup.sh"
   assert_contains "$LEGACY_TEST_RUNNER" "tests/run.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
@@ -210,7 +212,11 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" '"github:ogulcancelik/herdr" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:markitdown" = "latest"'
   assert_contains "$MISE_CONFIG" '"pipx:google-colab-cli" = "latest"'
-  assert_contains "$MISE_CONFIG" '"pipx:git+https://github.com/NousResearch/hermes-agent.git" = "latest"'
+  assert_not_contains "$MISE_CONFIG" 'pipx:git+https://github.com/NousResearch/hermes-agent.git'
+  assert_contains "$MISE_CONFIG" "[tasks.hermes-setup]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/setup_hermes_agent.sh"'
+  assert_contains "$MISE_CONFIG" "[tasks.hermes-update]"
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only hermes"'
   assert_contains "$MISE_CONFIG" '"npm:@github/copilot" = "latest"'
   assert_contains "$MISE_CONFIG" '"npm:openclaw" = "latest"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
