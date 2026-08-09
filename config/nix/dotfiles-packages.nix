@@ -188,10 +188,15 @@ in
       direnv = pkgs.direnv.overrideAttrs (_: {
         doCheck = false;
       });
-    }).overrideAttrs (_: {
-      doCheck = false;
-      nativeCheckInputs = [ ];
-    });
+    }).overrideAttrs
+      (prev: {
+        doCheck = false;
+        nativeCheckInputs = [ ];
+        # Upstream nixpkgs supplies cmake only through nativeCheckInputs, which the
+        # default doCheck = true happens to add to the build environment. Clearing
+        # them here would leave the libz-ng-sys build script without cmake.
+        nativeBuildInputs = prev.nativeBuildInputs ++ [ pkgs.cmake ];
+      });
 
   z = pkgs.stdenvNoCC.mkDerivation rec {
     pname = "z";
