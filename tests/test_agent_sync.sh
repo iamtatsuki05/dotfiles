@@ -174,10 +174,6 @@ url = "https://mcp.figma.com/mcp"
 type = "http"
 enabled = true
 
-[mcp_servers.colab-mcp]
-command = "uvx"
-args = ["git+https://github.com/googlecolab/colab-mcp"]
-enabled = true
 EOF
 }
 
@@ -318,7 +314,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.devin]'
   assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.notion]'
   assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.figma]'
-  assert_contains "$home_dir/.grok/config.toml" '[mcp_servers.colab-mcp]'
+  assert_not_contains "$home_dir/.grok/config.toml" '[mcp_servers.colab-mcp]'
   assert_contains "$home_dir/.grok/config.toml" 'command = "bunx"'
   assert_contains "$home_dir/.grok/config.toml" 'command = "codex"'
   assert_contains "$home_dir/.grok/config.toml" 'url = "https://mcp.deepwiki.com/mcp"'
@@ -628,8 +624,22 @@ assert "CHANGES.md" not in context
   rm -rf "$repo"
 }
 
+test_colab_mcp_is_absent_from_managed_agent_assets() {
+  local search_output
+
+  search_output="$(grep -R -n -E 'colab-mcp|googlecolab/colab-mcp' \
+    "$REPO_ROOT/dotfiles/.agent/apps" \
+    "$REPO_ROOT/dotfiles/.agent/skills" \
+    "$REPO_ROOT/dotfiles/.agent/evals" || true)"
+
+  [[ -z "$search_output" ]] || fail "expected colab-mcp to be absent from managed agent assets:\n$search_output"
+  assert_not_exists "$REPO_ROOT/dotfiles/.agent/skills/colab-mcp"
+  assert_not_exists "$REPO_ROOT/dotfiles/.agent/evals/colab-mcp"
+}
+
 main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
+  test_colab_mcp_is_absent_from_managed_agent_assets
   test_agent_sync_fails_when_required_claude_skill_link_conflicts
   test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts
   test_agent_sync_uses_declarative_link_specs

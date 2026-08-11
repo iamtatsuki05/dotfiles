@@ -41,7 +41,6 @@ skills/
 | `auto-debugger` | エラー、stack trace、失敗テストの原因調査と修正。 | 実装前に再現・仮説・検証を重視。 |
 | `chronicle` | ユーザー画面と最近の作業履歴を使った文脈補完。 | Chronicle が有効な環境専用。 |
 | `ci-cd` | GitHub Actions などの CI/CD 設計・修正・調査。 | workflow YAML とログ調査向け。 |
-| `colab-mcp` | Google Colab と local MCP agent の接続設定・トラブルシュート。 | Google 公式 colab-mcp 用。 |
 | `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
 | `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |
 | `eng-practices` | code review、CL/PR 説明、small CL、review comment 作法。 | Google eng-practices を repo 向けに要約した共通 skill。 |

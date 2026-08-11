@@ -656,7 +656,6 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     api-design
     auto-debugger
     ci-cd
-    colab-mcp
     compatibility-safety
     database-dev
     empirical-prompt-tuning

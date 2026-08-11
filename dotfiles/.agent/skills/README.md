@@ -42,7 +42,6 @@ Do not manually copy external skill trees without recording provenance and revie
 | `auto-debugger` | Investigate errors, stack traces, and failing tests. | Emphasizes reproduction, hypotheses, and verification before fixing. |
 | `chronicle` | Use screen history and recent desktop context to disambiguate user requests. | Only for environments where Chronicle is enabled. |
 | `ci-cd` | Design, edit, and debug CI/CD workflows such as GitHub Actions. | Workflow YAML and log investigation. |
-| `colab-mcp` | Set up and troubleshoot Google Colab MCP connections. | For Google's official colab-mcp flow. |
 | `compatibility-safety` | Avoid unrequested compatibility layers, aliases, silent fallbacks, and default-value fallbacks. | Use before adding compatibility behavior or legacy paths. |
 | `database-dev` | Design and review schemas, queries, indexes, migrations, and database performance. | Covers SQL and NoSQL work. |
 | `eng-practices` | Code review standards, CL/PR descriptions, small CLs, and review comment etiquette. | Repo-oriented summary of Google eng-practices. |
