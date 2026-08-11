@@ -19,6 +19,11 @@ in
   system.activationScripts.postActivation.text = lib.mkAfter ''
     sudo --user=${username} -- mkdir -p ${lib.escapeShellArg screenshotsDirectory}
 
+    # Disable the redesigned cursor indicators handled by CursorUIViewService.
+    /bin/mkdir -p /Library/Preferences/FeatureFlags/Domain
+    /usr/bin/defaults write /Library/Preferences/FeatureFlags/Domain/UIKit.plist \
+      redesigned_text_cursor -dict-add Enabled -bool false
+
     if /usr/sbin/networksetup -listallnetworkservices | /usr/bin/grep -qx 'Wi-Fi'; then
       current_wifi_dns="$(
         /usr/sbin/networksetup -getdnsservers Wi-Fi 2>/dev/null \
