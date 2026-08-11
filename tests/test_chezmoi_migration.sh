@@ -20,6 +20,9 @@ create_fake_chezmoi() {
     print -r -- "print -r -- \"DOTFILES_PROFILE=\${DOTFILES_PROFILE:-}\" >> ${(qqq)log_file}"
     print -r -- "print -r -- \"DOTFILES_REPO_ROOT=\${DOTFILES_REPO_ROOT:-}\" >> ${(qqq)log_file}"
     print -r -- "print -r -- \"\$*\" >> ${(qqq)log_file}"
+    print -r -- 'if [[ "$*" == *" verify "* && "${FAKE_CHEZMOI_VERIFY_EXIT_STATUS:-0}" != "0" ]]; then'
+    print -r -- '  exit "$FAKE_CHEZMOI_VERIFY_EXIT_STATUS"'
+    print -r -- 'fi'
   } > "$bin_dir/chezmoi"
   chmod +x "$bin_dir/chezmoi"
 }
@@ -96,6 +99,76 @@ test_chezmoi_apply_uses_repo_source_in_dry_run() {
 
   assert_contains "$log_file" "-S $repo apply -n -v --no-tty"
   assert_contains "$log_file" "DOTFILES_PROFILE=$expected_profile"
+
+  rm -rf "$repo"
+}
+
+test_chezmoi_verify_reports_deployed_state_without_writing() {
+  local repo
+  local bin_dir
+  local log_file
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  log_file="$repo/chezmoi.log"
+  create_chezmoi_source_repo "$repo"
+  create_fake_chezmoi "$bin_dir" "$log_file"
+
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --verify >/dev/null
+
+  assert_contains "$log_file" "-S $repo verify --no-tty --refresh-externals=never"
+  assert_contains "$log_file" "DOTFILES_PROFILE=cli"
+
+  rm -rf "$repo"
+}
+
+test_chezmoi_verify_lists_drift_and_preserves_failure_status() {
+  local repo
+  local bin_dir
+  local log_file
+  local exit_status
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  log_file="$repo/chezmoi.log"
+  create_chezmoi_source_repo "$repo"
+  create_fake_chezmoi "$bin_dir" "$log_file"
+
+  exit_status=0
+  FAKE_CHEZMOI_VERIFY_EXIT_STATUS=1 PATH="$bin_dir:$PATH" \
+    "$TEST_ZSH_BIN" "$APPLY_SCRIPT" --repo-root "$repo" --cli-only --verify >/dev/null || exit_status=$?
+
+  (( exit_status == 1 )) || fail "expected --verify to preserve chezmoi drift status"
+  assert_contains "$log_file" "-S $repo verify --no-tty --refresh-externals=never"
+  assert_contains "$log_file" "-S $repo status --no-tty --refresh-externals=never"
+
+  rm -rf "$repo"
+}
+
+test_chezmoi_verify_rejects_mutating_modes() {
+  local repo
+  local bin_dir
+  local log_file
+  local output_file
+  local exit_status
+  repo="$(mktemp -d)"
+  bin_dir="$repo/bin"
+  log_file="$repo/chezmoi.log"
+  output_file="$repo/output.log"
+  create_chezmoi_source_repo "$repo"
+  create_fake_chezmoi "$bin_dir" "$log_file"
+
+  exit_status=0
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" \
+    --repo-root "$repo" --verify --dry-run >"$output_file" 2>&1 || exit_status=$?
+  (( exit_status != 0 )) || fail "expected --verify with --dry-run to fail"
+  assert_output_contains "$output_file" "ERROR: --verify cannot be combined with --dry-run or --mark-default"
+  assert_not_exists "$log_file"
+
+  exit_status=0
+  PATH="$bin_dir:$PATH" "$TEST_ZSH_BIN" "$APPLY_SCRIPT" \
+    --repo-root "$repo" --verify --mark-default >"$output_file" 2>&1 || exit_status=$?
+  (( exit_status != 0 )) || fail "expected --verify with --mark-default to fail"
+  assert_output_contains "$output_file" "ERROR: --verify cannot be combined with --dry-run or --mark-default"
+  assert_not_exists "$log_file"
 
   rm -rf "$repo"
 }
@@ -220,6 +293,9 @@ test_chezmoi_apply_falls_back_to_home_local_bin_when_not_on_path() {
 
 main() {
   test_chezmoi_apply_uses_repo_source_in_dry_run
+  test_chezmoi_verify_reports_deployed_state_without_writing
+  test_chezmoi_verify_lists_drift_and_preserves_failure_status
+  test_chezmoi_verify_rejects_mutating_modes
   test_chezmoi_apply_can_mark_chezmoi_as_default_manager
   test_chezmoi_dry_run_does_not_write_default_manager_marker
   test_chezmoi_apply_passes_profile_to_templates

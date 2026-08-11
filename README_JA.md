@@ -84,14 +84,19 @@ sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
 
 zsh scripts/chezmoi_apply.sh --dry-run
 zsh scripts/chezmoi_apply.sh --mark-default
+# 適用後の状態を変更せずに確認
+zsh scripts/chezmoi_apply.sh --verify
 # macOS で CLI-only にしたい場合:
 zsh scripts/chezmoi_apply.sh --cli-only --mark-default
 # または
 mise run chezmoi-diff
 mise run chezmoi-apply
+mise run chezmoi-status
 ```
 
 `--mark-default` は `~/.config/dotfiles/manager` に `chezmoi` を書き込み、選択した profile を `~/.config/dotfiles/profile` に保存します。このリポジトリの Git pull hook は `chezmoi apply` を実行します。従来のコピー方式へのフォールバックはありません。
+
+`--verify` と `chezmoi-status` はホームを書き換えません。管理対象が一致すれば終了コード 0、差分があれば 1 を返すため、適用漏れの確認や CI の gate に使えます。
 
 ## dotfiles のテスト
 

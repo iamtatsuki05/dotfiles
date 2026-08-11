@@ -14,16 +14,19 @@ REPO_ROOT="$DEFAULT_REPO_ROOT"
 MANAGER_FILE="$XDG_CONFIG_HOME/dotfiles/manager"
 PROFILE_FILE="$DEFAULT_PROFILE_FILE"
 DRY_RUN=0
+VERIFY=0
 MARK_DEFAULT=0
 
 usage() {
   cat <<EOF
 Usage:
   zsh scripts/chezmoi_apply.sh [--dry-run]
+  zsh scripts/chezmoi_apply.sh --verify
   zsh scripts/chezmoi_apply.sh --mark-default
 
 Options:
   --dry-run            Show the chezmoi apply plan without writing home files.
+  --verify             Exit 1 when deployed home files differ, without writing them.
   --mark-default       Mark chezmoi as the default dotfiles manager for this machine.
   --profile full|cli   Select setup profile for templates.
   --cli-only           Shortcut for --profile cli.
@@ -40,6 +43,9 @@ parse_args() {
     case "$1" in
       --dry-run)
         DRY_RUN=1
+        ;;
+      --verify)
+        VERIFY=1
         ;;
       --mark-default)
         MARK_DEFAULT=1
@@ -107,6 +113,11 @@ parse_args() {
     shift
   done
 
+  if (( VERIFY && (DRY_RUN || MARK_DEFAULT) )); then
+    echo "ERROR: --verify cannot be combined with --dry-run or --mark-default" >&2
+    return 1
+  fi
+
   REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 
   if [[ -z "$DOTFILES_PROFILE" ]]; then
@@ -167,22 +178,22 @@ run_chezmoi() {
 
   if command -v chezmoi >/dev/null 2>&1; then
     DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" chezmoi "$@"
-    return 0
+    return $?
   fi
 
   if home_chezmoi_bin="$(home_local_chezmoi_command)"; then
     DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" "$home_chezmoi_bin" "$@"
-    return 0
+    return $?
   fi
 
   if mise_chezmoi_bin="$(mise_chezmoi_command)"; then
     DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" "$mise_chezmoi_bin" "$@"
-    return 0
+    return $?
   fi
 
   if has_mise_command; then
     DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" mise exec chezmoi@latest -- chezmoi "$@"
-    return 0
+    return $?
   fi
 
   print_chezmoi_missing_error
@@ -217,7 +228,15 @@ mark_default_manager() {
 }
 
 apply_chezmoi() {
-  if (( DRY_RUN )); then
+  if (( VERIFY )); then
+    local verify_status=0
+    run_chezmoi -S "$REPO_ROOT" verify --no-tty --refresh-externals=never || verify_status=$?
+    if (( verify_status == 0 )); then
+      return 0
+    fi
+    run_chezmoi -S "$REPO_ROOT" status --no-tty --refresh-externals=never || true
+    return "$verify_status"
+  elif (( DRY_RUN )); then
     run_chezmoi -S "$REPO_ROOT" apply -n -v --no-tty
   else
     run_chezmoi -S "$REPO_ROOT" apply --force -v --no-tty

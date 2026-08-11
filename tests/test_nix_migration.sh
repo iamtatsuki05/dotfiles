@@ -1668,6 +1668,8 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_contains "$MAIN_SCRIPT" 'install_homebrew.sh'
   assert_contains "$MAIN_SCRIPT" '--profile "$profile"'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply]'
+  assert_contains "$MISE_CONFIG" '[tasks.chezmoi-status]'
+  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/chezmoi_apply.sh --verify"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/nix_install.sh --cli-only"'
   assert_not_contains "$MISE_CONFIG" '[tasks.nix-apply-cli]'
   assert_contains "$MISE_CONFIG" '[tasks.nix-apply-with-gui-apps]'
