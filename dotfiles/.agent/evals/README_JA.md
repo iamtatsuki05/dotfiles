@@ -30,7 +30,6 @@ evals/<skill>/
 | `api-design` | API review と設計 feedback。 |
 | `auto-debugger` | stack trace や失敗コードからの debugging。 |
 | `ci-cd` | CI workflow review。 |
-| `colab-mcp` | Colab MCP の安全な setup / troubleshoot。 |
 | `compatibility-safety` | 互換、alias、fallback の追加判断。 |
 | `database-dev` | database diagnosis と query review。 |
 | `empirical-prompt-tuning` | prompt tuning workflow の品質。 |

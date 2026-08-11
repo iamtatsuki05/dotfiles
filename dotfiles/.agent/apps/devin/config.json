@@ -56,13 +56,6 @@
         "Authorization": "Bearer ${DEVIN_API_KEY}"
       }
     },
-    "colab-mcp": {
-      "command": "uvx",
-      "args": [
-        "git+https://github.com/googlecolab/colab-mcp"
-      ],
-      "env": {}
-    },
     "notion": {
       "url": "https://mcp.notion.com/mcp",
       "transport": "http"

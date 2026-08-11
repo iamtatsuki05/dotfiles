@@ -33,8 +33,3 @@ enabled = true
 url = "https://mcp.figma.com/mcp"
 type = "http"
 enabled = true
-
-[mcp_servers.colab-mcp]
-command = "uvx"
-args = [ "git+https://github.com/googlecolab/colab-mcp" ]
-enabled = true

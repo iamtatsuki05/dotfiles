@@ -7,13 +7,6 @@
       ],
       "env": {}
     },
-    "colab-mcp": {
-      "command": "uvx",
-      "args": [
-        "git+https://github.com/googlecolab/colab-mcp"
-      ],
-      "env": {}
-    },
     "notion": {
       "serverUrl": "https://mcp.notion.com/mcp"
     },

@@ -30,7 +30,6 @@ evals/<skill>/
 | `api-design` | API review and design feedback. |
 | `auto-debugger` | Debugging from stack traces and failing code. |
 | `ci-cd` | CI workflow review. |
-| `colab-mcp` | Safe Colab MCP setup and troubleshooting. |
 | `compatibility-safety` | Compatibility, alias, and fallback discipline. |
 | `database-dev` | Database diagnosis and query review. |
 | `empirical-prompt-tuning` | Prompt tuning workflow quality. |

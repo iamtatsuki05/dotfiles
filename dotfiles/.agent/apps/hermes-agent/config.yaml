@@ -42,10 +42,6 @@ mcp_servers:
     url: https://mcp.devin.ai/mcp
     headers:
       Authorization: Bearer ${DEVIN_API_KEY}
-  colab-mcp:
-    command: uvx
-    args:
-      - git+https://github.com/googlecolab/colab-mcp
   notion:
     url: https://mcp.notion.com/mcp
     auth: oauth
