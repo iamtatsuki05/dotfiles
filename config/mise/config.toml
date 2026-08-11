@@ -94,6 +94,11 @@ description = "chezmoi source stateを適用"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/chezmoi_apply.sh"
 
+[tasks.chezmoi-status]
+description = "chezmoi管理対象と展開済みホームの一致を確認"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/chezmoi_apply.sh --verify"
+
 [tasks.dotfiles-test]
 alias = "test-dotfiles"
 description = "dotfilesの全体テストを実行"

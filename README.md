@@ -85,14 +85,19 @@ sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
 
 zsh scripts/chezmoi_apply.sh --dry-run
 zsh scripts/chezmoi_apply.sh --mark-default
+# Verify deployed state without changing home files.
+zsh scripts/chezmoi_apply.sh --verify
 # On macOS CLI-only machines:
 zsh scripts/chezmoi_apply.sh --cli-only --mark-default
 # or
 mise run chezmoi-diff
 mise run chezmoi-apply
+mise run chezmoi-status
 ```
 
 `--mark-default` writes `~/.config/dotfiles/manager` with `chezmoi` and stores the selected profile in `~/.config/dotfiles/profile`. Git pull hooks installed by this repo run `chezmoi apply`; there is no legacy dotfile-copy fallback.
+
+`--verify` and `chezmoi-status` do not modify home files. They exit with status 0 when every managed target matches and 1 when drift exists, so they can gate local checks or CI without applying changes.
 
 ## Testing dotfiles
 
