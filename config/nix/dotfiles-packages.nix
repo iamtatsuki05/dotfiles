@@ -104,6 +104,52 @@ in
       };
     };
 
+  rancher-desktop =
+    let
+      version = "1.24.0";
+      sourceBySystem = {
+        aarch64-darwin = {
+          fileName = "Rancher.Desktop-${version}-mac.aarch64.zip";
+          hash = "sha512-IIZMgsQuAby1la8TF/XwSfQMtsZzisZRQRU/9GQ3sET4JOcO+Ar2Uvp+YDsMLg3jJtJuyJmHk2kvxekanV9bzA==";
+        };
+        x86_64-darwin = {
+          fileName = "Rancher.Desktop-${version}-mac.x86_64.zip";
+          hash = "sha512-pNXR4RTaKjz7yiu4vt6YQYaMZZFfHrK3zRbWG5IwrA7h2Qt8Sob4Wl6GU0nc+EZl0UkFnbKwmqR7qXQ7mwtXsg==";
+        };
+      };
+      source = sourceBySystem.${stdenv.hostPlatform.system};
+    in
+    pkgs.stdenvNoCC.mkDerivation {
+      pname = "rancher-desktop";
+      inherit version;
+
+      src = pkgs.fetchurl {
+        url = "https://github.com/rancher-sandbox/rancher-desktop/releases/download/v${version}/${source.fileName}";
+        inherit (source) hash;
+      };
+
+      nativeBuildInputs = [ pkgs.unzip ];
+      dontUnpack = true;
+      dontBuild = true;
+      dontFixup = true;
+
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/Applications" unpacked
+        unzip -q "$src" -d unpacked
+        cp -R "unpacked/Rancher Desktop.app" "$out/Applications/"
+        runHook postInstall
+      '';
+
+      meta = {
+        description = "Kubernetes and container management on the desktop";
+        homepage = "https://rancherdesktop.io/";
+        license = lib.licenses.asl20;
+        platforms = darwinOnly;
+        sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
+      };
+    };
+
   mactop = pkgs.mactop.overrideAttrs (old: {
     doCheck = false;
     doInstallCheck = false;
