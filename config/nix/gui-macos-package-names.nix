@@ -5,6 +5,7 @@
   "blackhole"
   "daisydisk"
   "dotfiles.hermes-desktop"
+  "dotfiles.rancher-desktop"
   "iterm2"
   "keycastr"
   "mas"

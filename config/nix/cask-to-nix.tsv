@@ -23,6 +23,7 @@ ngrok	ngrok	common
 notion	notion-app	macos
 orbstack	orbstack	macos
 qtspim	qtspim	linux
+rancher	dotfiles.rancher-desktop	macos
 raycast	raycast	macos
 rectangle-pro	rectangle-pro	macos
 slack	slack	common

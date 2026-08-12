@@ -123,6 +123,7 @@ EOF
 slack	slack	common
 alacritty	alacritty	common
 ghostty	ghostty	linux
+rancher	dotfiles.rancher-desktop	macos
 raycast	raycast	macos
 EOF
 
@@ -152,6 +153,7 @@ cask "claude-code@latest"
 cask "codex"
 cask "cursor-cli"
 cask "ghostty"
+cask "rancher"
 cask "raycast"
 cask "private-app"
 mas "Affinity Photo", id: 824183456
@@ -214,12 +216,14 @@ EOF
   assert_not_contains "$repo/config/nix/gui-common-package-names.nix" '"codex"'
   assert_contains "$repo/config/nix/gui-linux-package-names.nix" '"ghostty"'
   assert_contains "$repo/config/nix/gui-macos-package-names.nix" '"raycast"'
+  assert_contains "$repo/config/nix/gui-macos-package-names.nix" '"dotfiles.rancher-desktop"'
   assert_contains "$repo/config/nix/migrated-brew-formulae.txt" "gnu-sed"
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "gemini-cli"
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "claude-code"
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "codex"
   assert_not_contains "$repo/config/nix/migrated-brew-formulae.txt" "herdr"
   assert_contains "$repo/config/nix/migrated-brew-casks.txt" "slack"
+  assert_contains "$repo/config/nix/migrated-brew-casks.txt" "rancher"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "claude-code@latest"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "codex"
   assert_not_contains "$repo/config/nix/migrated-brew-casks.txt" "cursor-cli"
@@ -234,6 +238,7 @@ EOF
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	cursor-cli	managed-by-mise:cursor-agent'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'brew	private-tool'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	private-app'
+  assert_not_contains "$repo/config/nix/unmapped-homebrew.tsv" $'cask	rancher	'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'vscode	example.extension'
   assert_contains "$repo/config/nix/unmapped-homebrew.tsv" $'uv	claude-monitor'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"example/tap"'
@@ -244,6 +249,7 @@ EOF
   assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"codex"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"ghostty"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"private-app"'
+  assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"rancher"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" '"affinity-photo"'
   assert_contains "$repo/config/nix/homebrew-fallback.nix" 'trustedCasks = ['
   assert_not_contains "$repo/config/nix/homebrew-fallback.nix" '"removed-app"'
@@ -318,6 +324,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
     "alt-tab-macos"
     "betterdisplay"
     "daisydisk"
+    "dotfiles.rancher-desktop"
     "iterm2"
     "mas"
     "raycast"
@@ -349,6 +356,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$NIX_GUI_COMMON_PACKAGE_NAMES_FILE" '"claude-code"'
   assert_not_contains "$NIX_GUI_MACOS_PACKAGE_NAMES_FILE" '"karabiner-elements"'
   assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'firefox\tfirefox\tcommon'
+  assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'rancher\tdotfiles.rancher-desktop\tmacos'
   assert_contains "$REPO_ROOT/config/nix/cask-to-nix.tsv" $'zed\tzed-editor\tlinux'
 
   for nix_attr in "${common_gui_attrs[@]}"; do
@@ -376,6 +384,7 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$MIGRATED_CASKS_FILE" "codex"
   assert_not_contains "$MIGRATED_CASKS_FILE" "zed"
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask\tkarabiner-elements\trequires-macos-pkg-and-background-services'
+  assert_not_contains "$UNMAPPED_HOMEBREW_FILE" $'cask\trancher\t'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	claude-code@latest	managed-by-mise:claude-code'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	codex	managed-by-mise:codex'
   assert_contains "$UNMAPPED_HOMEBREW_FILE" $'cask	zed	nix-package-is-linux-only'
@@ -394,6 +403,8 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"background-music"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"ghostty"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"karabiner-elements"'
+  assert_contains "$HOMEBREW_FALLBACK_FILE" '"docker-desktop"'
+  assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"rancher"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"messenger"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"tailscale-app"'
   assert_not_contains "$HOMEBREW_FALLBACK_FILE" '"yoink"'
@@ -407,6 +418,9 @@ test_repository_migration_moves_available_formulae_and_gui_apps_to_nix() {
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"adpyke.codesnap"'
   assert_contains "$HOMEBREW_FALLBACK_FILE" 'unsupportedUvPackages = ['
   assert_contains "$HOMEBREW_FALLBACK_FILE" '"claude-monitor"'
+  assert_contains "$DOTFILES_PACKAGES_FILE" 'pname = "rancher-desktop"'
+  assert_contains "$DOTFILES_PACKAGES_FILE" 'Rancher.Desktop-${version}-mac.aarch64.zip'
+  assert_contains "$DOTFILES_PACKAGES_FILE" 'Rancher.Desktop-${version}-mac.x86_64.zip'
   assert_file "$MAS_APPS_FILE"
   assert_not_contains "$MAS_APPS_FILE" '"Messenger"'
   assert_contains "$MAS_APPS_FILE" '"Xcode" = 497799835;'
