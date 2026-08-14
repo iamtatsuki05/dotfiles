@@ -162,7 +162,8 @@
   "enabledPlugins": {
     "agent-sdk-dev@claude-code-plugins": true
   },
-  "effortLevel": "xhigh",
+  "effortLevel": "high",
+  "switchModelsOnFlag": false,
   "skipDangerousModePermissionPrompt": true,
   "autoCompactEnabled": false,
   "co_authored_commits": true,
