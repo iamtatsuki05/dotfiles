@@ -57,6 +57,7 @@ skills/
 | `python-dev` | Python 実装、pytest、typing、Pydantic、packaging。 | `eng-practices` と連携。 |
 | `retrospective-codify` | 作業終盤に学びを rule / skill / lint へ codify する。 | 繰り返しミスの恒久化向け。 |
 | `security-check` | secret leak、injection、auth、OWASP 観点の security review。 | 高リスク変更では明示的に使う。 |
+| `shaping-japanese-longform` | 事実やドラマを作らず、日本語の長文記事、エッセイ、解説の構成を整える。 | 対象についての内容と文書の進行実況を分け、問いと根拠の対応を点検する。 |
 | `terraform-dev` | Terraform / OpenTofu の module、state、plan、security。 | infra 変更向け。 |
 | `typescript-dev` | TypeScript / TSX、Vitest/Jest、Zod、ESLint/Biome。 | frontend / Node 実装向け。 |
 

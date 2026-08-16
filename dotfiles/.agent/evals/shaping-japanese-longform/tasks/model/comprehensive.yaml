@@ -1,0 +1,49 @@
+id: shaping-japanese-longform-comprehensive-001
+name: Revise Long-form While Preserving Boundaries
+description: |
+  Checks evidence-preserving restructuring, unresolved state, citations, and
+  the procedure non-application boundary in one suite-graded response.
+
+tags:
+  - japanese
+  - longform
+  - evidence
+  - negative
+
+inputs:
+  prompt: |
+    以下の3件を処理し、`【長文】`、`【未解決】`、`【手順】` の順に返してください。
+    原文にない評価、因果、感情、問い、結論は追加しないでください。引用、URL、脚注を保持してください。
+
+    【長文】は、事実と数値を変えずに推敲してください。
+
+    OCRモデルの総合正解率は88%だった。縦書きページは61%、ルビ付きページは54%だった。総合値だけでは、どの種類のページで失敗しているか分からない。[評価表](https://example.com/ocr-eval)[^1]
+
+    ここまでで、総合値だけを見る問題が分かった。次にページ種別ごとの結果を見る。縦書きでは行の順序を誤る例が多かった。ルビ付きでは本文とルビを同じ行として出力する例が多かった。
+
+    総合正解率は、モデル全体の変化を一つの値で追う用途には使える。ただし、改善箇所を決めるには、ページ種別ごとの値と失敗例を合わせて確認する必要がある。
+
+    次は、縦書きページの失敗例を確認する。
+
+    [^1]: 50ページの評価結果。
+
+    【未解決】は、未測定事項と未確定の結論を保持して推敲してください。
+
+    音声モデルのGPU使用率は90%だった。データ待ち時間はまだ測定していない。処理時間の原因が計算かデータ供給かは、現時点では判断できない。
+
+    ここまでで測定結果を確認した。次に原因を考える。追加測定後に原因を判断する。
+
+    【手順】は skill の適用対象かを、見出し直後の単独行に「対象外」または「対象」と明記してください。対象外なら順序、意味、条件、コマンドを変えずに読みやすくしてください。
+
+    1. `uv sync` を実行する。
+    2. `uv run pytest` を実行する。
+    3. テストが通ったら `uv run ruff check .` を実行する。
+  context:
+    document_type: mixed-evaluation
+    language: Japanese
+
+expected:
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 4

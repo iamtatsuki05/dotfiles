@@ -58,6 +58,7 @@ Do not manually copy external skill trees without recording provenance and revie
 | `python-dev` | Implement, test, and debug Python, pytest, typing, Pydantic, and packaging work. | Links to `eng-practices`. |
 | `retrospective-codify` | Turn repeated lessons into rules, skills, or lint checks near the end of a task. | For codifying repeated mistakes. |
 | `security-check` | Review secret leaks, injection, auth, and OWASP-style risks. | Use explicitly for high-risk changes. |
+| `shaping-japanese-longform` | Revise long-form Japanese articles, essays, and explanations without inventing facts or drama. | Separates subject-matter content from document-progress narration and checks question/evidence links. |
 | `terraform-dev` | Work on Terraform / OpenTofu modules, state, plans, imports, and security. | Infrastructure changes. |
 | `typescript-dev` | Implement, test, and debug TypeScript / TSX, Vitest/Jest, Zod, and ESLint/Biome work. | Frontend and Node work. |
 

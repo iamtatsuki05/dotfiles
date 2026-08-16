@@ -687,6 +687,7 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     python-dev
     retrospective-codify
     security-check
+    shaping-japanese-longform
     terraform-dev
     typescript-dev
   )
