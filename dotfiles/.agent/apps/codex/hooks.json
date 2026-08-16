@@ -31,6 +31,16 @@
             "command": "~/.codex/hooks/jupytext_sync.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/japanese_prose_lint.sh --hook-agent codex",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

@@ -38,8 +38,9 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/devin" \
     "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent" \
     "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks" \
+    "$repo/dotfiles/.agent/apps/hermes-agent/plugins/japanese-prose-lint" \
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
-    "$repo/dotfiles/.agent/apps/openclaw" \
+    "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint" \
     "$repo/dotfiles/.agent/apps/grok" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills" \
@@ -49,11 +50,13 @@ create_agent_fixture_repo() {
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   print -r -- '# hooks docs' > "$repo/dotfiles/.agent/hooks/README.md"
   print -r -- '# hooks docs ja' > "$repo/dotfiles/.agent/hooks/README_JA.md"
   chmod +x "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  chmod +x "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   chmod +x "$repo/scripts/setup_agent_files.sh" "$repo/dotfiles/.agent/sync.sh"
@@ -114,6 +117,7 @@ EOF
   print -r -- 'export const SecretProtection = async () => ({})' > "$repo/dotfiles/.agent/apps/opencode/plugins/secret-protection.js"
   print -r -- 'export const AgentContextReminder = async () => ({})' > "$repo/dotfiles/.agent/apps/opencode/plugins/agent-context-reminder.js"
   print -r -- 'export const AgentTurnDoneNotify = async () => ({ event: async ({ event }) => { if (event.type === "session.idle") return } })' > "$repo/dotfiles/.agent/apps/opencode/plugins/agent-turn-done-notify.js"
+  print -r -- 'export const JapaneseProseLint = async () => ({})' > "$repo/dotfiles/.agent/apps/opencode/plugins/japanese-prose-lint.js"
   cat > "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml" <<'EOF'
 hooks_auto_accept: true
 hooks:
@@ -136,9 +140,13 @@ mcp_servers:
 EOF
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
   chmod +x "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
+  print -r -- 'name: japanese-prose-lint' > "$repo/dotfiles/.agent/apps/hermes-agent/plugins/japanese-prose-lint/plugin.yaml"
+  print -r -- 'def register(ctx): pass' > "$repo/dotfiles/.agent/apps/hermes-agent/plugins/japanese-prose-lint/__init__.py"
   cat > "$repo/dotfiles/.agent/apps/openclaw/openclaw.json" <<'EOF'
 {"agents":{"defaults":{"workspace":"~/.openclaw/workspace","skipBootstrap":true}},"tools":{"profile":"coding"},"hooks":{"internal":{"enabled":true,"entries":{"bootstrap-extra-files":{"enabled":true,"paths":["AGENTS.md"]}}}},"mcp":{"servers":{"playwright":{"command":"bunx","args":["@playwright/mcp@latest"]}}}}
 EOF
+  print -r -- '{"id":"japanese-prose-lint"}' > "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint/openclaw.plugin.json"
+  print -r -- 'export default {}' > "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint/index.js"
   cat > "$repo/dotfiles/.agent/apps/grok/config.toml" <<'EOF'
 [cli]
 installer = "npm"
@@ -206,6 +214,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.claude/CLAUDE.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.claude/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.claude/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.claude/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_not_exists "$home_dir/.claude/hooks/README.md"
@@ -217,6 +226,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.copilot/copilot-instructions.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.copilot/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.copilot/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.copilot/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$home_dir/.copilot/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.copilot/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_symlink_target "$home_dir/.copilot/settings.json" "$repo/dotfiles/.agent/apps/copilot/settings.json"
@@ -234,6 +244,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$xdg_config_home/devin/config.json" "$repo/dotfiles/.agent/apps/devin/config.json"
   assert_symlink_target "$xdg_config_home/devin/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$xdg_config_home/devin/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$xdg_config_home/devin/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$xdg_config_home/devin/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$xdg_config_home/devin/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$xdg_config_home/devin/config.json" '"mcpServers"'
@@ -253,6 +264,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$home_dir/.gemini/antigravity-cli/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$home_dir/.gemini/antigravity-cli/settings.json" '"enableTerminalSandbox"'
   assert_contains "$home_dir/.gemini/antigravity-cli/plugins/dotfiles-agent/plugin.json" '"dotfiles-agent"'
@@ -264,6 +276,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.cursor/hooks.json" "$repo/dotfiles/.agent/apps/cursor/hooks.json"
   assert_symlink_target "$home_dir/.cursor/mcp.json" "$repo/dotfiles/.agent/apps/cursor/mcp.json"
   assert_symlink_target "$home_dir/.cursor/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.cursor/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$home_dir/.cursor/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.cursor/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$home_dir/.cursor/cli-config.json" '"permissions"'
@@ -274,12 +287,14 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$xdg_config_home/opencode/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$xdg_config_home/opencode/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$xdg_config_home/opencode/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$xdg_config_home/opencode/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$xdg_config_home/opencode/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$xdg_config_home/opencode/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_symlink_target "$xdg_config_home/opencode/opencode.json" "$repo/dotfiles/.agent/apps/opencode/opencode.json"
   assert_symlink_target "$xdg_config_home/opencode/plugins" "$repo/dotfiles/.agent/apps/opencode/plugins"
   assert_file "$xdg_config_home/opencode/plugins/agent-context-reminder.js"
   assert_file "$xdg_config_home/opencode/plugins/agent-turn-done-notify.js"
+  assert_file "$xdg_config_home/opencode/plugins/japanese-prose-lint.js"
   assert_contains "$xdg_config_home/opencode/plugins/agent-turn-done-notify.js" 'session.idle'
   assert_contains "$xdg_config_home/opencode/opencode.json" '"mcp"'
   assert_contains "$xdg_config_home/opencode/opencode.json" '"permission"'
@@ -287,6 +302,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.hermes/skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.hermes/config.yaml" "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.hermes/agent-hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
+  assert_symlink_target "$home_dir/.hermes/plugins/japanese-prose-lint" "$repo/dotfiles/.agent/apps/hermes-agent/plugins/japanese-prose-lint"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/secret-protection.sh" "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks/secret-protection.sh"
@@ -299,12 +316,15 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.openclaw/openclaw.json" "$repo/dotfiles/.agent/apps/openclaw/openclaw.json"
   assert_symlink_target "$home_dir/.openclaw/workspace/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.openclaw/workspace/skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.openclaw/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
+  assert_symlink_target "$home_dir/.openclaw/extensions/japanese-prose-lint" "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint"
   assert_contains "$home_dir/.openclaw/openclaw.json" '"workspace"'
   assert_contains "$home_dir/.openclaw/openclaw.json" '"bootstrap-extra-files"'
   assert_contains "$home_dir/.openclaw/openclaw.json" '"mcp"'
   assert_symlink_target "$home_dir/.grok/config.toml" "$repo/dotfiles/.agent/apps/grok/config.toml"
   assert_symlink_target "$home_dir/.grok/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.grok/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_symlink_target "$home_dir/.grok/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_symlink_target "$home_dir/.grok/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.grok/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   assert_contains "$home_dir/.grok/config.toml" 'installer = "npm"'
@@ -323,6 +343,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.codex/config.toml" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_symlink_target "$home_dir/.codex/hooks.json" "$repo/dotfiles/.agent/apps/codex/hooks.json"
   assert_symlink_target "$home_dir/.codex/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.codex/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_contains "$home_dir/.codex/hooks.json" '"SessionStart"'
   assert_contains "$home_dir/.codex/hooks.json" '"UserPromptSubmit"'
   assert_contains "$home_dir/.codex/hooks.json" 'agent_context_reminder.sh'

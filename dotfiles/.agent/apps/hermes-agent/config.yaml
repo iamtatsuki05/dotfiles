@@ -59,6 +59,7 @@ agent:
 plugins:
   enabled:
     - orca-status
+    - japanese-prose-lint
 _config_version: 33
 
 # ── Security ──────────────────────────────────────────────────────────

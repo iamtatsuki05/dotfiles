@@ -51,6 +51,12 @@
         "type": "command",
         "bash": "zsh \"$HOME/.copilot/hooks/jupytext_sync.sh\"",
         "timeoutSec": 30
+      },
+      {
+        "type": "command",
+        "matcher": "create|edit",
+        "bash": "zsh \"$HOME/.copilot/hooks/japanese_prose_lint.sh\" --hook-agent copilot",
+        "timeoutSec": 10
       }
     ]
   }

@@ -120,6 +120,16 @@
             "command": "~/.config/devin/hooks/jupytext_sync.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.config/devin/hooks/japanese_prose_lint.sh --hook-agent devin",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },

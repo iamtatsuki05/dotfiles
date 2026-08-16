@@ -23,6 +23,18 @@
       "watch": true
     }
   },
+  "plugins": {
+    "load": {
+      "paths": [
+        "~/.openclaw/extensions/japanese-prose-lint"
+      ]
+    },
+    "entries": {
+      "japanese-prose-lint": {
+        "enabled": true
+      }
+    }
+  },
   "hooks": {
     "internal": {
       "enabled": true,

@@ -42,6 +42,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_chezmoi_migration.sh" "unit:chezmoi"
   write_fixture_zsh_script "$repo/tests/test_dotfiles_test_runner.sh" "unit:runner"
   write_fixture_zsh_script "$repo/tests/test_hermes_agent_setup.sh" "unit:hermes"
+  write_fixture_zsh_script "$repo/tests/test_japanese_prose_lint.sh" "unit:japanese-prose-lint"
   write_fixture_zsh_script "$repo/tests/test_nix_migration.sh" "unit:nix"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_source_state.sh" "source-state"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_rendered_home.sh" "chezmoi-render-test-ran"
@@ -62,6 +63,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "tests/test_agent_support_matrix.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_skill_upstreams.sh"
   assert_contains "$TEST_RUNNER" "tests/test_hermes_agent_setup.sh"
+  assert_contains "$TEST_RUNNER" "tests/test_japanese_prose_lint.sh"
   assert_contains "$LEGACY_TEST_RUNNER" "tests/run.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
@@ -124,6 +126,7 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:html-preview-review"
   assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"
+  assert_output_contains "$output" "unit:japanese-prose-lint"
   assert_output_contains "$output" "unit:nix"
   assert_output_contains "$output" "source-state"
   assert_output_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"

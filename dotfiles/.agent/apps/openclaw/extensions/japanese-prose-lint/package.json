@@ -1,0 +1,6 @@
+{
+  "name": "japanese-prose-lint",
+  "private": true,
+  "type": "module",
+  "main": "index.js"
+}

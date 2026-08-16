@@ -138,6 +138,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/jupytext_sync.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/japanese_prose_lint.sh --hook",
+            "timeout": 10
           }
         ]
       }

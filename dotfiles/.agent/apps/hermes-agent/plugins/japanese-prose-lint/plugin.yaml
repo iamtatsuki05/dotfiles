@@ -1,0 +1,5 @@
+name: japanese-prose-lint
+version: 1.0.0
+description: "Return Japanese prose lint findings to the agent after document writes."
+hooks:
+  - transform_tool_result
