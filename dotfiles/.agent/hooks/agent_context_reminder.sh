@@ -136,7 +136,7 @@ if normalized_event not in {"SubagentStart", "SubagentStop"}:
     )
 
 lines.append(
-    "- 最終回答は原則として簡潔な日本語にし、必要に応じて変更範囲、検証結果、残リスクを含める。"
+    "- 最終回答は日本語にし、必要に応じて変更範囲、検証結果、残リスクを含める。"
 )
 
 context = "\n".join(lines)
