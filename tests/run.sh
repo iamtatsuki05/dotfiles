@@ -89,6 +89,7 @@ run_unit_tests() {
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_migration.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_dotfiles_test_runner.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_hermes_agent_setup.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_japanese_prose_lint.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_nix_migration.sh"
 }
 

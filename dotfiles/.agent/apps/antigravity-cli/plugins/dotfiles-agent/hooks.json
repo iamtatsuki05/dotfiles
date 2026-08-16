@@ -15,6 +15,11 @@
           {
             "type": "command",
             "command": "~/.gemini/antigravity-cli/hooks/jupytext_sync.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.gemini/antigravity-cli/hooks/japanese_prose_lint.sh --hook-agent antigravity",
+            "timeout": 10
           }
         ]
       }

@@ -1,0 +1,10 @@
+{
+  "id": "japanese-prose-lint",
+  "name": "Japanese Prose Lint",
+  "description": "Return Japanese prose lint findings after document writes.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

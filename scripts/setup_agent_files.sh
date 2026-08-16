@@ -213,6 +213,7 @@ common_hook_target_dirs() {
   print -r -- "$xdg_config_home/devin/hooks"
   print -r -- "$xdg_config_home/opencode/hooks"
   print -r -- "$HOME/.hermes/agent-hooks"
+  print -r -- "$HOME/.openclaw/hooks"
   print -r -- "$HOME/.grok/hooks"
 }
 
@@ -270,8 +271,14 @@ tool_config_link_specs() {
   print -r -- "$APPS_DIR/grok/config.toml"$'\t'"$HOME/.grok/config.toml"
 }
 
+agent_plugin_link_specs() {
+  print -r -- "$APPS_DIR/hermes-agent/plugins/japanese-prose-lint"$'\t'"$HOME/.hermes/plugins/japanese-prose-lint"
+  print -r -- "$APPS_DIR/openclaw/extensions/japanese-prose-lint"$'\t'"$HOME/.openclaw/extensions/japanese-prose-lint"
+}
+
 sync_tool_configs() {
   sync_link_specs tool_config_link_specs
+  sync_link_specs agent_plugin_link_specs
 }
 
 write_env_file_from_secrets() {

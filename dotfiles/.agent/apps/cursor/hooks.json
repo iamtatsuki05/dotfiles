@@ -14,6 +14,11 @@
     "postToolUse": [
       {
         "command": "zsh \"$HOME/.cursor/hooks/agent_context_reminder.sh\""
+      },
+      {
+        "command": "zsh \"$HOME/.cursor/hooks/japanese_prose_lint.sh\" --hook-agent cursor",
+        "matcher": "Write",
+        "timeout": 10
       }
     ],
     "stop": [
