@@ -1,7 +1,7 @@
 name: superpowers-test-driven-development-eval
 description: |
-  Smoke evaluation suite for the superpowers:test-driven-development skill.
-skill: "superpowers:test-driven-development"
+  Smoke evaluation suite for the test-driven-development skill.
+skill: "test-driven-development"
 version: "1.0"
 
 config:

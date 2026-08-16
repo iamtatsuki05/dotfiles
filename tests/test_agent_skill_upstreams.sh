@@ -223,6 +223,124 @@ test_apply_update_accepts_specific_commit() {
   rm -f "$review_report"
 }
 
+test_apply_update_applies_declared_text_replacements() {
+  local sandbox
+  local fake_bin
+  local fixture_repo
+  local target_rel
+  local manifest
+  local review_report
+  local output
+
+  sandbox="$(mktemp -d "$REPO_ROOT/.agent/work/skill-update-replacements.XXXXXX")"
+  fake_bin="$sandbox/bin"
+  fixture_repo="$sandbox/upstream"
+  target_rel="${sandbox#$REPO_ROOT/}/installed-skill"
+  manifest="$sandbox/upstreams.json"
+  review_report="$sandbox/review.md"
+
+  mkdir -p "$fake_bin" "$fixture_repo/skill" "$REPO_ROOT/$target_rel"
+  cat > "$fixture_repo/skill/SKILL.md" <<'EOF'
+Use superpowers:test-driven-development before editing.
+See superpowers:test-driven-development for the RED-GREEN loop.
+EOF
+  cp "$fixture_repo/skill/SKILL.md" "$REPO_ROOT/$target_rel/SKILL.md"
+  cat > "$fake_bin/git" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+if [[ "$1" == clone ]]; then
+  destination="${@[-1]}"
+  mkdir -p "$destination"
+  cp -R "$FAKE_UPSTREAM_ROOT"/. "$destination"
+fi
+EOF
+  chmod +x "$fake_bin/git"
+  cat > "$manifest" <<EOF
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "fixture",
+      "repository": "https://github.com/example/fixture.git",
+      "branch": "main",
+      "pinned_commit": "1111111111111111111111111111111111111111",
+      "local_tree_sha256": "unused-before-update",
+      "mappings": [
+        {
+          "source_path": "skill",
+          "local_path": "$target_rel"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "$target_rel/SKILL.md",
+          "old": "superpowers:test-driven-development",
+          "new": "test-driven-development",
+          "expected_count": 2
+        }
+      ]
+    }
+  ]
+}
+EOF
+  print -r -- "reviewed fixture" > "$review_report"
+
+  output="$(
+    PATH="$fake_bin:$PATH" FAKE_UPSTREAM_ROOT="$fixture_repo" python3 "$SCRIPT" \
+      --manifest "$manifest" apply-update \
+      --id fixture \
+      --commit 2222222222222222222222222222222222222222 \
+      --review-report "$review_report" \
+      --security-reviewed
+  )"
+
+  assert_contains_text "$output" "apply local text replacement"
+  assert_contains_text "$(cat "$REPO_ROOT/$target_rel/SKILL.md")" "Use test-driven-development before editing."
+  assert_not_contains_text "$(cat "$REPO_ROOT/$target_rel/SKILL.md")" "superpowers:"
+  assert_contains_text "$(python3 "$SCRIPT" --manifest "$manifest" check)" "local_tree_sha256=ok"
+
+  perl -0pi -e 's/"expected_count": 2/"expected_count": 3/' "$manifest"
+  print -r -- "preserve existing target" > "$REPO_ROOT/$target_rel/SKILL.md"
+  set +e
+  output="$(
+    PATH="$fake_bin:$PATH" FAKE_UPSTREAM_ROOT="$fixture_repo" python3 "$SCRIPT" \
+      --manifest "$manifest" apply-update \
+      --id fixture \
+      --commit 3333333333333333333333333333333333333333 \
+      --review-report "$review_report" \
+      --security-reviewed 2>&1
+  )"
+  local exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected replacement count mismatch to fail"
+  assert_contains_text "$output" "expected 3 occurrences"
+  assert_contains_text "$(cat "$REPO_ROOT/$target_rel/SKILL.md")" "preserve existing target"
+
+  perl -0pi -e 's/"expected_count": 3/"expected_count": 2/' "$manifest"
+  cp "$fixture_repo/skill/SKILL.md" "$sandbox/outside.md"
+  unlink "$fixture_repo/skill/SKILL.md"
+  ln -s "$sandbox/outside.md" "$fixture_repo/skill/SKILL.md"
+  set +e
+  output="$(
+    PATH="$fake_bin:$PATH" FAKE_UPSTREAM_ROOT="$fixture_repo" python3 "$SCRIPT" \
+      --manifest "$manifest" apply-update \
+      --id fixture \
+      --commit 4444444444444444444444444444444444444444 \
+      --review-report "$review_report" \
+      --security-reviewed 2>&1
+  )"
+  exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected symlink replacement source to fail"
+  assert_contains_text "$output" "symlink"
+  assert_contains_text "$(cat "$sandbox/outside.md")" "superpowers:test-driven-development"
+  assert_contains_text "$(cat "$REPO_ROOT/$target_rel/SKILL.md")" "preserve existing target"
+
+  rm -rf "$sandbox"
+}
+
 test_security_prompt_contains_required_review_points() {
   local output
   output="$(
@@ -452,6 +570,7 @@ main() {
   test_security_prompt_all_generates_prompts_for_registered_skills
   test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill
   test_apply_update_accepts_specific_commit
+  test_apply_update_applies_declared_text_replacements
   test_security_prompt_contains_required_review_points
   test_update_defaults_to_all_latest_and_runs_agent_review_before_dry_run_apply
   test_update_reviews_all_skills_in_parallel

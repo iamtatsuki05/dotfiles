@@ -10,14 +10,13 @@ This directory is the shared skill tree for Codex-compatible agents and Waza eva
 ```text
 skills/
 ├── .system/                 # OpenAI bundled / system skill
-├── <skill>/                 # repo-local skill
-├── mattpocock/<skill>/      # vendored external skill group
-├── superpowers/<skill>/     # vendored external skill group
+├── <skill>/                 # repo-local / vendored skill
 ├── upstreams.json           # external skill manifest
 └── review-prompts/          # upstream review prompt templates
 ```
 
 Each directory with a `SKILL.md` is one loadable skill.
+For discovery compatibility, every regular skill lives at the flat path `skills/<name>/SKILL.md`, regardless of provenance.
 `references/`, `scripts/`, `agents/`, and `assets/` are supporting files scoped to that skill.
 
 ## Ownership Types
@@ -79,13 +78,15 @@ They use the same shape as repo-local skills, but their origin is Codex / OpenAI
 
 These external skills are registered in `upstreams.json`.
 Updates write security review reports under `dotfiles/.agent/work/skill-upstream-reviews/`.
+Declare flat-layout-specific reference changes in `local_text_replacements`.
+An update fails before overwriting local files if a source match count differs from `expected_count`.
 
 | Group | Upstream | Local path | Contents |
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | Japanese skill for iteratively improving agent instructions through executor feedback. |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
-| `mattpocock-skills` | `mattpocock/skills` | `mattpocock/` | Design questioning, diagnosis, prototyping, handoff, and architecture review skills. |
-| `superpowers` | `obra/superpowers` | `superpowers/` | Workflow skills for TDD, parallel agent dispatch, and skill writing. |
+| `mattpocock-skills` | `mattpocock/skills` | `diagnose/`, `grill-me/`, etc. | Design questioning, diagnosis, prototyping, handoff, and architecture review skills. Each skill includes the upstream LICENSE. |
+| `superpowers` | `obra/superpowers` | `dispatching-parallel-agents/`, `test-driven-development/`, `writing-skills/` | Workflow skills for TDD, parallel agent dispatch, and skill writing. |
 | `report-skills` | `mizuamedesu/ReportSkills` | `report-skills/` | Japanese report and academic assignment writing skill. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied AGPL/commercial dual-license notice. |
 | `stop-ai-slop-jp` | `iKora128/stop-ai-slop-jp` | `stop-ai-slop-jp/` | Japanese AI-slop prose review and rewrite skill. |

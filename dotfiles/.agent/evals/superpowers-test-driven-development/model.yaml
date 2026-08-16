@@ -1,7 +1,7 @@
 name: superpowers-test-driven-development-model-eval
 description: |
-  Model-backed quality evaluation for the superpowers:test-driven-development skill.
-skill: "superpowers:test-driven-development"
+  Model-backed quality evaluation for the test-driven-development skill.
+skill: "test-driven-development"
 version: "1.0"
 
 config:

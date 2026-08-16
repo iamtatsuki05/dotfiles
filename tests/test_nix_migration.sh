@@ -708,15 +708,15 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
   done
 
   superpower_eval_dirs=(
-    superpowers-dispatching-parallel-agents "superpowers:dispatching-parallel-agents"
-    superpowers-test-driven-development "superpowers:test-driven-development"
-    superpowers-writing-skills "superpowers:writing-skills"
+    superpowers-dispatching-parallel-agents "dispatching-parallel-agents"
+    superpowers-test-driven-development "test-driven-development"
+    superpowers-writing-skills "writing-skills"
   )
 
   for eval_dir skill in "${(@kv)superpower_eval_dirs}"; do
     eval_file="$WAZA_EVAL_ROOT/$eval_dir/eval.yaml"
     model_file="$WAZA_EVAL_ROOT/$eval_dir/model.yaml"
-    assert_file "$REPO_ROOT/dotfiles/.agent/skills/superpowers/${eval_dir#superpowers-}/SKILL.md"
+    assert_file "$REPO_ROOT/dotfiles/.agent/skills/${eval_dir#superpowers-}/SKILL.md"
     assert_contains "$eval_file" "name: $eval_dir-eval"
     assert_contains "$eval_file" "skill: \"$skill\""
     assert_contains "$eval_file" "executor: mock"
@@ -726,6 +726,19 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     task_files=("$WAZA_EVAL_ROOT/$eval_dir"/tasks/*.yaml(N))
     (( ${#task_files[@]} > 0 )) || fail "expected at least one task yaml for Waza eval skill: $skill"
   done
+}
+
+test_agent_skills_use_flat_discovery_paths() {
+  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+  local skill_file
+  local relative_path
+
+  while IFS= read -r skill_file; do
+    relative_path="${skill_file#$skills_root/}"
+    [[ "$relative_path" == */*/* ]] || continue
+    [[ "$relative_path" == .* ]] && continue
+    fail "agent skill must live at skills/<name>/SKILL.md: $relative_path"
+  done < <(find "$skills_root" -type f -name SKILL.md -print | sort)
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
@@ -3215,6 +3228,7 @@ main() {
   test_waza_cli_agent_eval_script_preserves_cli_failure_status
   test_waza_cli_agent_eval_script_grades_successful_cli_output
   test_waza_eval_suites_cover_all_regular_agent_skills
+  test_agent_skills_use_flat_discovery_paths
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager

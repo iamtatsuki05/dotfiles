@@ -8,19 +8,39 @@
       "repository": "https://github.com/obra/superpowers.git",
       "branch": "main",
       "pinned_commit": "f2cbfbefebbfef77321e4c9abc9e949826bea9d7",
-      "local_tree_sha256": "cc48cf1c6e44234e7cc7105eb6eb5f129d1e8e06f146d0f94b4320d9c9e33321",
+      "local_tree_sha256": "ca941a22707c1fecf391e78fc72ed19a1ee586ef44ac9cc9ae57b187bf119021",
       "mappings": [
         {
           "source_path": "skills/dispatching-parallel-agents",
-          "local_path": "dotfiles/.agent/skills/superpowers/dispatching-parallel-agents"
+          "local_path": "dotfiles/.agent/skills/dispatching-parallel-agents"
         },
         {
           "source_path": "skills/test-driven-development",
-          "local_path": "dotfiles/.agent/skills/superpowers/test-driven-development"
+          "local_path": "dotfiles/.agent/skills/test-driven-development"
         },
         {
           "source_path": "skills/writing-skills",
-          "local_path": "dotfiles/.agent/skills/superpowers/writing-skills"
+          "local_path": "dotfiles/.agent/skills/writing-skills"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/writing-skills/SKILL.md",
+          "old": "superpowers:test-driven-development",
+          "new": "test-driven-development",
+          "expected_count": 3
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/writing-skills/SKILL.md",
+          "old": "superpowers:systematic-debugging",
+          "new": "systematic-debugging",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/writing-skills/testing-skills-with-subagents.md",
+          "old": "superpowers:test-driven-development",
+          "new": "test-driven-development",
+          "expected_count": 1
         }
       ],
       "security_review": {
@@ -30,7 +50,7 @@
         "last_reviewed_at": "2026-05-10T14:18:12+00:00",
         "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260510T141626Z/superpowers.md"
       },
-      "provenance_note": "既存取り込み後に manifest を追加したため、pinned_commit は取り込み時期に近い upstream commit の記録であり、byte-identical とは限らない。"
+      "provenance_note": "既存取り込み後に manifest を追加したため、pinned_commit は取り込み時期に近い upstream commit の記録であり、byte-identical とは限らない。Skill は flat discovery root 直下へ配置し、skill 間参照も namespace なしの名前へ変更している。"
     },
     {
       "id": "empirical-prompt-tuning",
@@ -38,11 +58,25 @@
       "repository": "https://github.com/mizchi/skills.git",
       "branch": "main",
       "pinned_commit": "1e40906d470624f60cfbff7895ba5c7e68893a00",
-      "local_tree_sha256": "c6d82f85d4957d41d05ac2f286fbba0e8cdb4dd8596fbb4d21530ee355391356",
+      "local_tree_sha256": "fb37d5c63fb796d1113c76faa5530639ad388ec6e6dcc62ab69282c248c555fd",
       "mappings": [
         {
           "source_path": "empirical-prompt-tuning/SKILL-ja.md",
           "local_path": "dotfiles/.agent/skills/empirical-prompt-tuning/SKILL.md"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/empirical-prompt-tuning/SKILL.md",
+          "old": "superpowers:writing-skills",
+          "new": "writing-skills",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/empirical-prompt-tuning/SKILL.md",
+          "old": "superpowers:dispatching-parallel-agents",
+          "new": "dispatching-parallel-agents",
+          "expected_count": 1
         }
       ],
       "security_review": {
@@ -52,7 +86,8 @@
         "last_reviewed_at": "2026-05-10T14:18:14+00:00",
         "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260510T141626Z/empirical-prompt-tuning.md"
       },
-      "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning"
+      "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning",
+      "provenance_note": "関連 skill への参照は flat discovery root で認識される namespace なしの名前へ変更している。"
     },
     {
       "id": "mattpocock-skills",
@@ -60,39 +95,63 @@
       "repository": "https://github.com/mattpocock/skills.git",
       "branch": "main",
       "pinned_commit": "b8be62ffacb0118fa3eaa29a0923c87c8c11985c",
-      "local_tree_sha256": "6e320950281ff63f5ddd3e70dd6192977c48c1ef18f362a98376c4ba473dafc8",
+      "local_tree_sha256": "e6391ef57ce61d615d7a96bfd860104f4a80dd63329e84d79b5466a57fed1599",
       "mappings": [
         {
-          "source_path": "LICENSE",
-          "local_path": "dotfiles/.agent/skills/mattpocock/LICENSE"
+          "source_path": "skills/productivity/grill-me",
+          "local_path": "dotfiles/.agent/skills/grill-me"
         },
         {
-          "source_path": "skills/productivity/grill-me",
-          "local_path": "dotfiles/.agent/skills/mattpocock/grill-me"
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/grill-me/LICENSE"
         },
         {
           "source_path": "skills/productivity/handoff",
-          "local_path": "dotfiles/.agent/skills/mattpocock/handoff"
+          "local_path": "dotfiles/.agent/skills/handoff"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/handoff/LICENSE"
         },
         {
           "source_path": "skills/engineering/grill-with-docs",
-          "local_path": "dotfiles/.agent/skills/mattpocock/grill-with-docs"
+          "local_path": "dotfiles/.agent/skills/grill-with-docs"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/grill-with-docs/LICENSE"
         },
         {
           "source_path": "skills/engineering/diagnose",
-          "local_path": "dotfiles/.agent/skills/mattpocock/diagnose"
+          "local_path": "dotfiles/.agent/skills/diagnose"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/diagnose/LICENSE"
         },
         {
           "source_path": "skills/engineering/zoom-out",
-          "local_path": "dotfiles/.agent/skills/mattpocock/zoom-out"
+          "local_path": "dotfiles/.agent/skills/zoom-out"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/zoom-out/LICENSE"
         },
         {
           "source_path": "skills/engineering/prototype",
-          "local_path": "dotfiles/.agent/skills/mattpocock/prototype"
+          "local_path": "dotfiles/.agent/skills/prototype"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/prototype/LICENSE"
         },
         {
           "source_path": "skills/engineering/improve-codebase-architecture",
-          "local_path": "dotfiles/.agent/skills/mattpocock/improve-codebase-architecture"
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/LICENSE"
         }
       ],
       "security_review": {
@@ -103,7 +162,7 @@
         "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260523T060046Z/mattpocock-skills.md"
       },
       "source_url": "https://github.com/mattpocock/skills/tree/main",
-      "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys were removed from the vendored handoff and zoom-out SKILL.md files without changing the instruction body."
+      "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys were removed from the vendored handoff and zoom-out SKILL.md files without changing the instruction body. Skills are installed directly under the flat discovery root, and the upstream LICENSE is copied into every vendored skill directory so attribution survives independent discovery and updates."
     },
     {
       "id": "modern-web-guidance",

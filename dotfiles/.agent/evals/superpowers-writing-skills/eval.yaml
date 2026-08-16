@@ -1,7 +1,7 @@
 name: superpowers-writing-skills-eval
 description: |
-  Smoke evaluation suite for the superpowers:writing-skills skill.
-skill: "superpowers:writing-skills"
+  Smoke evaluation suite for the writing-skills skill.
+skill: "writing-skills"
 version: "1.0"
 
 config:

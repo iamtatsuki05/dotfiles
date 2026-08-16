@@ -110,6 +110,46 @@ def resolve_repo_path(path: str) -> Path:
     return resolved
 
 
+def mapping_for_local_path(skill: dict[str, Any], local_path: str) -> dict[str, str]:
+    target = resolve_repo_path(local_path)
+    candidates: list[tuple[int, dict[str, str]]] = []
+    for mapping in skill["mappings"]:
+        mapped_path = resolve_repo_path(mapping["local_path"])
+        if target == mapped_path or mapped_path in target.parents:
+            candidates.append((len(mapped_path.parts), mapping))
+    if not candidates:
+        raise UpstreamError(f"{skill['id']}: local path is not covered by a mapping: {local_path}")
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def validate_local_text_replacements(skill: dict[str, Any]) -> None:
+    replacements = skill.get("local_text_replacements", [])
+    if not isinstance(replacements, list):
+        raise UpstreamError(f"{skill['id']}: local_text_replacements must be a list")
+    for replacement in replacements:
+        if not isinstance(replacement, dict):
+            raise UpstreamError(f"{skill['id']}: local text replacement must be an object")
+        local_path = replacement.get("local_path")
+        old = replacement.get("old")
+        new = replacement.get("new")
+        expected_count = replacement.get("expected_count")
+        if not isinstance(local_path, str):
+            raise UpstreamError(f"{skill['id']}: local text replacement requires local_path")
+        if not isinstance(old, str) or not old:
+            raise UpstreamError(f"{skill['id']}: local text replacement requires non-empty old text")
+        if not isinstance(new, str) or not new:
+            raise UpstreamError(f"{skill['id']}: local text replacement requires non-empty new text")
+        if old == new:
+            raise UpstreamError(f"{skill['id']}: local text replacement old and new must differ")
+        if not isinstance(expected_count, int) or isinstance(expected_count, bool) or expected_count < 1:
+            raise UpstreamError(f"{skill['id']}: local text replacement expected_count must be positive")
+        target = resolve_repo_path(local_path)
+        if not target.is_file():
+            raise UpstreamError(f"{skill['id']}: local text replacement target is not a file: {local_path}")
+        mapping_for_local_path(skill, local_path)
+
+
 def validate_skill(skill: dict[str, Any], seen_ids: set[str]) -> None:
     skill_id = skill.get("id")
     if not isinstance(skill_id, str) or not skill_id:
@@ -148,6 +188,8 @@ def validate_skill(skill: dict[str, Any], seen_ids: set[str]) -> None:
         resolved = resolve_repo_path(local_path)
         if not resolved.exists():
             raise UpstreamError(f"{skill_id}: local_path does not exist: {local_path}")
+
+    validate_local_text_replacements(skill)
 
 
 def validate_manifest(data: dict[str, Any]) -> None:
@@ -309,6 +351,94 @@ def tree_sha256(paths: list[Path]) -> str:
     return digest.hexdigest()
 
 
+def replacement_source_path(
+    checkout: Path,
+    skill: dict[str, Any],
+    replacement: dict[str, Any],
+) -> Path:
+    mapping = mapping_for_local_path(skill, replacement["local_path"])
+    mapped_local_path = resolve_repo_path(mapping["local_path"])
+    replacement_local_path = resolve_repo_path(replacement["local_path"])
+    source_path = checkout / mapping["source_path"]
+    if replacement_local_path == mapped_local_path:
+        return source_path
+    if not source_path.is_dir():
+        raise UpstreamError(
+            f"{skill['id']}: replacement target is below a file mapping: {replacement['local_path']}"
+        )
+    return source_path / replacement_local_path.relative_to(mapped_local_path)
+
+
+def require_regular_checkout_file(
+    checkout: Path,
+    source_path: Path,
+    skill_id: str,
+    local_path: str,
+) -> None:
+    try:
+        relative_source = source_path.relative_to(checkout)
+    except ValueError as exc:
+        raise UpstreamError(f"{skill_id}: replacement source escapes checkout: {local_path}") from exc
+
+    current = checkout
+    for part in relative_source.parts:
+        current /= part
+        if current.is_symlink():
+            raise UpstreamError(f"{skill_id}: replacement source contains a symlink: {local_path}")
+
+    try:
+        resolved_checkout = checkout.resolve(strict=True)
+        resolved_source = source_path.resolve(strict=True)
+        resolved_source.relative_to(resolved_checkout)
+    except (FileNotFoundError, ValueError) as exc:
+        raise UpstreamError(f"{skill_id}: replacement source escapes checkout: {local_path}") from exc
+    if not resolved_source.is_file():
+        raise UpstreamError(f"{skill_id}: replacement source is not a regular file: {local_path}")
+
+
+def apply_local_text_replacements(skill: dict[str, Any], checkout: Path) -> None:
+    for replacement in skill.get("local_text_replacements", []):
+        source_path = replacement_source_path(checkout, skill, replacement)
+        require_regular_checkout_file(
+            checkout,
+            source_path,
+            skill["id"],
+            replacement["local_path"],
+        )
+        text = source_path.read_text(encoding="utf-8")
+        actual_count = text.count(replacement["old"])
+        expected_count = replacement["expected_count"]
+        if actual_count != expected_count:
+            raise UpstreamError(
+                f"{skill['id']}: expected {expected_count} occurrences in "
+                f"{replacement['local_path']}, found {actual_count}"
+            )
+        source_path.write_text(
+            text.replace(replacement["old"], replacement["new"]),
+            encoding="utf-8",
+        )
+        print(
+            f"apply local text replacement {replacement['local_path']} "
+            f"count={expected_count}"
+        )
+
+
+def verify_local_text_replacements(skill: dict[str, Any]) -> None:
+    for replacement in skill.get("local_text_replacements", []):
+        target = resolve_repo_path(replacement["local_path"])
+        text = target.read_text(encoding="utf-8")
+        if replacement["old"] in text:
+            raise UpstreamError(
+                f"{skill['id']}: stale text remains in {replacement['local_path']}: "
+                f"{replacement['old']}"
+            )
+        if text.count(replacement["new"]) < replacement["expected_count"]:
+            raise UpstreamError(
+                f"{skill['id']}: replacement text missing from {replacement['local_path']}: "
+                f"{replacement['new']}"
+            )
+
+
 def read_review_prompt_template(path: Path) -> Template:
     try:
         return Template(path.read_text(encoding="utf-8"))
@@ -327,6 +457,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     print(f"registered upstream skills: {len(data['skills'])}")
     for skill in data["skills"]:
+        verify_local_text_replacements(skill)
         local_paths = [resolve_repo_path(mapping["local_path"]) for mapping in skill["mappings"]]
         actual_sha = tree_sha256(local_paths)
         recorded_sha = skill.get("local_tree_sha256")
@@ -680,6 +811,7 @@ def cmd_apply_update(args: argparse.Namespace) -> int:
     for skill, candidate_commit, review_report in plans:
         with tempfile.TemporaryDirectory(prefix="agent-skill-upstream-") as tmp:
             checkout = clone_at_commit(skill, candidate_commit, Path(tmp))
+            apply_local_text_replacements(skill, checkout)
             for mapping in skill["mappings"]:
                 src = checkout / mapping["source_path"]
                 dst = resolve_repo_path(mapping["local_path"])
