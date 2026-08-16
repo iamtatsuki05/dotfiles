@@ -1,0 +1,21 @@
+id: shaping-japanese-longform-smoke-001
+name: Accept Japanese Long-form Revision
+description: |
+  Confirms that the skill accepts a Japanese long-form editing request.
+
+tags:
+  - japanese
+  - longform
+  - smoke
+
+inputs:
+  prompt: "日本語の長い解説文について、事実を保った構成修正の方針を示してください。"
+  context:
+    document_type: explanatory-article
+    language: Japanese
+
+expected:
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 4

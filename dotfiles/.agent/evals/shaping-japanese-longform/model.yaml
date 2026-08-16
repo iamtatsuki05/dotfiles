@@ -1,0 +1,55 @@
+name: shaping-japanese-longform-model-eval
+description: |
+  Model-backed quality evaluation for Japanese long-form restructuring,
+  evidence preservation, and non-application boundaries.
+skill: shaping-japanese-longform
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: japanese_longform_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response preserve source facts and the document's intended state?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 20"
+  - type: text
+    name: preserves_required_content
+    config:
+      regex_match:
+        - '(?s)\A【長文】.*【未解決】.*【手順】'
+        - "OCRモデルの総合正解率は88%"
+        - "縦書きページ(?:の正解率)?は61%"
+        - "ルビ付きページ(?:の正解率)?は54%"
+        - "行の順序"
+        - "本文とルビを同じ行"
+        - "総合正解率.*モデル全体の変化"
+        - "GPU使用率は90%"
+        - "データ待ち時間.*(?:まだ|未測定|測定していない).*(?:現時点.*(?:判断|特定).*(?:できない|未確定)|(?:判断|特定).*(?:できない|未確定))"
+        - "https://example.com/ocr-eval"
+        - '\[\^1\]'
+        - '\[\^1\]: 50ページの評価結果。'
+        - '(?s)【手順】[[:space:]]*対象外[[:space:]]*1\. .*uv sync.*2\. .*uv run pytest.*3\. テストが通ったら.*uv run ruff check'
+  - type: text
+    name: rejects_invention_and_progress_narration
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+        - "ここまでで|次(?:は|に)、?縦書きページの失敗例を確認する"
+        - "54%.*(?:低い|とどまった|不十分|課題|問題)"
+        - "原因は(?:計算|データ供給)(?:だ|である|だった)|(?:計算|データ供給)(?:が|こそ)(?:原因|ボトルネック)|(?:計算|データ供給)による"
+        - "対象外ではない"
+
+tasks:
+  - "tasks/model/comprehensive.yaml"

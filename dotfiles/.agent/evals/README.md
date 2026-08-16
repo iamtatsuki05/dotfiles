@@ -46,6 +46,7 @@ evals/<skill>/
 | `python-dev` | Python debugging and typing behavior. |
 | `retrospective-codify` | Turning repeated lessons into durable rules. |
 | `security-check` | Security review findings. |
+| `shaping-japanese-longform` | Japanese long-form structure, evidence preservation, and non-application boundaries. |
 | `superpowers-*` | Vendored Superpowers workflow skills. |
 | `terraform-dev` | Terraform plan and module review. |
 | `typescript-dev` | TypeScript / Zod debugging. |

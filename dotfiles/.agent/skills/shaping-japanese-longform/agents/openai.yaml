@@ -1,0 +1,4 @@
+interface:
+  display_name: "日本語長文の構成"
+  short_description: "日本語の長文記事や解説で構成と根拠のつながりを整える"
+  default_prompt: "Use $shaping-japanese-longform to revise this Japanese long-form draft without inventing facts or drama."
