@@ -1,7 +1,7 @@
 name: superpowers-dispatching-parallel-agents-model-eval
 description: |
-  Model-backed quality evaluation for the superpowers:dispatching-parallel-agents skill.
-skill: "superpowers:dispatching-parallel-agents"
+  Model-backed quality evaluation for the dispatching-parallel-agents skill.
+skill: "dispatching-parallel-agents"
 version: "1.0"
 
 config:

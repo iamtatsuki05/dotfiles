@@ -1,7 +1,7 @@
 name: superpowers-dispatching-parallel-agents-eval
 description: |
-  Smoke evaluation suite for the superpowers:dispatching-parallel-agents skill.
-skill: "superpowers:dispatching-parallel-agents"
+  Smoke evaluation suite for the dispatching-parallel-agents skill.
+skill: "dispatching-parallel-agents"
 version: "1.0"
 
 config:

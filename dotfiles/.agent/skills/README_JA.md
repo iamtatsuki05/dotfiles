@@ -10,14 +10,13 @@ English version: [README.md](README.md)
 ```text
 skills/
 ├── .system/                 # OpenAI bundled / system skill
-├── <skill>/                 # repo-local skill
-├── mattpocock/<skill>/      # vendored external skill group
-├── superpowers/<skill>/     # vendored external skill group
+├── <skill>/                 # repo-local / vendored skill
 ├── upstreams.json           # external skill manifest
 └── review-prompts/          # upstream review prompt templates
 ```
 
 `SKILL.md` を持つディレクトリが、agent に読み込ませる 1 skill の単位です。
+通常の skill は discovery 互換性のため、由来にかかわらず必ず `skills/<name>/SKILL.md` のフラットな配置にします。
 `references/`、`scripts/`、`agents/`、`assets/` は、その skill だけで使う補助資料です。
 
 ## 管理区分
@@ -78,13 +77,15 @@ skills/
 
 `upstreams.json` に登録された外部 skill です。
 更新時は security review report を `dotfiles/.agent/work/skill-upstream-reviews/` に残します。
+flat layout 用の局所的な参照変更は `local_text_replacements` に宣言します。
+更新元の一致件数が `expected_count` と異なる場合、上書き前に失敗します。
 
 | Group | Upstream | Local path | 内容 |
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
-| `mattpocock-skills` | `mattpocock/skills` | `mattpocock/` | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。 |
-| `superpowers` | `obra/superpowers` | `superpowers/` | TDD、parallel agent dispatch、skill writing の workflow skill。 |
+| `mattpocock-skills` | `mattpocock/skills` | `diagnose/`、`grill-me/` など | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。各 skill に upstream LICENSE を同梱。 |
+| `superpowers` | `obra/superpowers` | `dispatching-parallel-agents/`、`test-driven-development/`、`writing-skills/` | TDD、parallel agent dispatch、skill writing の workflow skill。 |
 | `report-skills` | `mizuamedesu/ReportSkills` | `report-skills/` | 日本語レポート・授業課題向けの文章作成 skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と AGPL / commercial dual license notice を同梱。 |
 | `stop-ai-slop-jp` | `iKora128/stop-ai-slop-jp` | `stop-ai-slop-jp/` | 日本語の AI 調文章を校閲・書き換える skill。 |

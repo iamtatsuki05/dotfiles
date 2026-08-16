@@ -186,6 +186,6 @@ description: Use when <具体的な状況> / <症状>
 
 ## 関連 skill
 
-- `superpowers:writing-skills` — 新規 skill を書くときのテンプレと TDD フロー
+- `writing-skills` — 新規 skill を書くときのテンプレと TDD フロー
 - `ast-grep-practice` — lint ルール化する場合の書き方とテスト（導入されている環境のみ）
 - `update-config` — settings.json / permissions の変更が必要な場合

@@ -1,7 +1,7 @@
 name: superpowers-writing-skills-model-eval
 description: |
-  Model-backed quality evaluation for the superpowers:writing-skills skill.
-skill: "superpowers:writing-skills"
+  Model-backed quality evaluation for the writing-skills skill.
+skill: "writing-skills"
 version: "1.0"
 
 config:
