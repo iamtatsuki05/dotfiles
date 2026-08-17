@@ -88,9 +88,8 @@ An update fails before overwriting local files if a source match count differs f
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
 | `mattpocock-skills` | `mattpocock/skills` | `diagnose/`, `grill-me/`, etc. | Design questioning, diagnosis, prototyping, handoff, and architecture review skills. Each skill includes the upstream LICENSE. |
 | `superpowers` | `obra/superpowers` | `dispatching-parallel-agents/`, `test-driven-development/`, `writing-skills/` | Workflow skills for TDD, parallel agent dispatch, and skill writing. Each skill includes the upstream MIT LICENSE. |
-| `report-skills` | `mizuamedesu/ReportSkills` | `report-skills/` | Japanese report and academic assignment writing skill. |
+| `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied Apache-2.0 license. |
-| `stop-ai-slop-jp` | `iKora128/stop-ai-slop-jp` | `stop-ai-slop-jp/` | Japanese AI-slop prose review and rewrite skill. |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | English prose review skill for removing predictable AI writing patterns. |
 
 ### Matt Pocock Group

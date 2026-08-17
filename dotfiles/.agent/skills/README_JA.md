@@ -87,9 +87,8 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
 | `mattpocock-skills` | `mattpocock/skills` | `diagnose/`、`grill-me/` など | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `dispatching-parallel-agents/`、`test-driven-development/`、`writing-skills/` | TDD、parallel agent dispatch、skill writing の workflow skill。各 skill に upstream の MIT LICENSE を同梱。 |
-| `report-skills` | `mizuamedesu/ReportSkills` | `report-skills/` | 日本語レポート・授業課題向けの文章作成 skill。 |
+| `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
-| `stop-ai-slop-jp` | `iKora128/stop-ai-slop-jp` | `stop-ai-slop-jp/` | 日本語の AI 調文章を校閲・書き換える skill。 |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語 prose から AI らしい定型表現を取り除く文章校閲 skill。 |
 
 ### mattpocock group
