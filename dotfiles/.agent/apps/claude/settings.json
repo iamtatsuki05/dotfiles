@@ -141,7 +141,7 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/japanese_prose_lint.sh --hook",
+            "command": "~/.claude/hooks/japanese_prose_lint.sh --hook-agent claude",
             "timeout": 10
           }
         ]
@@ -168,9 +168,9 @@
     "agent-sdk-dev@claude-code-plugins": true
   },
   "effortLevel": "high",
-  "switchModelsOnFlag": false,
   "skipDangerousModePermissionPrompt": true,
   "autoCompactEnabled": false,
+  "switchModelsOnFlag": false,
   "co_authored_commits": true,
   "BASH_DEFAULT_TIMEOUT_MS": 600000,
   "BASH_MAX_TIMEOUT_MS": 600000,
