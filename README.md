@@ -272,6 +272,37 @@ mise run waza-eval-model -- --agent all --dry-run
 
 See [dotfiles/.agent/README.md](dotfiles/.agent/README.md) for the file map, sync behavior, ignore rules, hooks, and Waza evaluation commands.
 
+### Multiple Claude Code accounts
+
+Terminal-only Claude Code accounts are selected with `claude setup-token` and `claude-account`. Use setup-token for every profile rather than mixing it with `/login`, because an environment token takes precedence over the account shown by the saved login state.
+
+Switch the active Claude account in the browser before generating each setup-token. Do not write the generated token to a shell configuration file. Paste it only into the Keychain prompt opened by `claude-account add`.
+
+```bash
+claude setup-token
+claude-account add personal
+
+claude setup-token
+claude-account add work
+```
+
+List profiles and start Claude Code as follows:
+
+```bash
+claude-account list
+claude-account personal
+claude-account work --model opus
+claude-account personal -p "ok"
+```
+
+Setup-tokens are stored in macOS Keychain under the `dotfiles.claude-account.setup-token` service. They are not written to Git-managed files or `~/.config/shell/secrets.env`. Only profile names are recorded in `~/.config/claude-account/profiles`.
+
+The wrapper removes API keys, custom base URLs, and Bedrock, Vertex, or Foundry selectors from the Claude Code child process. It stops before launch when user, project, or file-based managed settings contain the same authentication overrides or an `apiKeyHelper`. Immediately before the real session, it verifies that `claude auth status` selected the setup-token and Anthropic's first-party endpoint.
+
+The authentication-changing `--settings` and `--setting-sources` flags are not supported. The wrapper also rejects `--bare`, which does not read setup-tokens, and hides `/login` and `/logout` in the resulting session. Setup-tokens cannot use Remote Control or the usage/profile APIs. Running `claude` directly bypasses profile selection, so use `claude-account <profile>` consistently. See the [official Claude Code authentication documentation](https://code.claude.com/docs/en/authentication) for setup-token lifetime and scope.
+
+Keep the existing `/login` session until every profile has been registered and checked. Afterward, use setup-token profiles exclusively. There is an [unresolved macOS report](https://github.com/anthropics/claude-code/issues/37512) that a process using `CLAUDE_CODE_OAUTH_TOKEN` can remove the normal login Keychain entry when it exits. Do not use this workflow with the VS Code extension or Remote Control.
+
 ## API keys and secrets
 
 Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).

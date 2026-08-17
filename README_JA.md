@@ -271,6 +271,37 @@ mise run waza-eval-model -- --agent all --dry-run
 
 ファイル対応表、同期内容、ignore、hooks、Waza 評価コマンドは [dotfiles/.agent/README_JA.md](dotfiles/.agent/README_JA.md) を参照してください。
 
+### Claude Code の複数アカウント
+
+ターミナル版 Claude Code のアカウントは、`claude setup-token` と `claude-account` で切り替えます。通常の `/login` と setup-token を混在させると、画面上のアカウントと実際の実行アカウントが食い違うため、複数アカウント運用では全アカウントを setup-token に揃えます。
+
+最初に、ブラウザで対象の Claude アカウントへ切り替えてから setup-token を発行します。発行された token は shell の設定ファイルへ書かず、`claude-account add` の Keychain prompt に貼り付けてください。
+
+```bash
+claude setup-token
+claude-account add personal
+
+claude setup-token
+claude-account add work
+```
+
+登録済み profile の確認と起動は次のとおりです。
+
+```bash
+claude-account list
+claude-account personal
+claude-account work --model opus
+claude-account personal -p "ok"
+```
+
+setup-token は macOS Keychain の `dotfiles.claude-account.setup-token` service に保存されます。Git 管理ファイルと `~/.config/shell/secrets.env` には保存しません。profile 名だけを `~/.config/claude-account/profiles` に記録します。
+
+`claude-account` は、API key、custom base URL、Bedrock、Vertex、Foundry など、setup-token より優先される認証設定を Claude Code の子プロセスから除外します。検査可能な user・project・file-based managed settings に同種の設定や `apiKeyHelper` があれば、別アカウントでの実行を避けるため起動前に停止します。実行直前にも `claude auth status` を検査し、setup-token と Anthropic の first-party endpoint が選ばれていることを確認します。
+
+認証経路を変えられる `--settings` と `--setting-sources`、setup-token を読まない `--bare` は利用できません。起動後に認証を切り替えないよう、`/login` と `/logout` も非表示にします。setup-token では Remote Control と usage/profile API を利用できません。通常の `claude` を直接実行した場合は profile 選択を通らないため、複数アカウント運用では必ず `claude-account <profile>` を使ってください。setup-token の有効期間と制約は [Claude Code の公式認証ドキュメント](https://code.claude.com/docs/en/authentication) を参照してください。
+
+全 profile の登録と疎通確認が終わるまでは、既存の `/login` session を残して構いません。疎通確認後は `/login` と setup-token を併用せず、setup-token に統一してください。macOS 版 Claude Code には、`CLAUDE_CODE_OAUTH_TOKEN` を使った終了時に通常 login の Keychain 項目が消えるという[未解決報告](https://github.com/anthropics/claude-code/issues/37512)があります。VS Code extension や Remote Control と併用する場合は、この方式を使わないでください。
+
 ## API キーの管理
 
 ローカルの秘密情報は `~/.config/shell/secrets.env`（gitignore 済み）で管理します。
