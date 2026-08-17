@@ -340,7 +340,13 @@ def tree_sha256(paths: list[Path]) -> str:
             files = [root]
             base = root.parent
         else:
-            files = sorted(path for path in root.rglob("*") if path.is_file())
+            files = sorted(
+                path
+                for path in root.rglob("*")
+                if path.is_file()
+                and "__pycache__" not in path.relative_to(root).parts
+                and path.suffix not in {".pyc", ".pyo"}
+            )
             base = root
         for file_path in files:
             rel = file_path.relative_to(base).as_posix()
