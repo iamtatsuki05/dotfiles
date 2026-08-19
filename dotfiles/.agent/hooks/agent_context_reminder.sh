@@ -130,6 +130,11 @@ lines.extend(
     ]
 )
 
+if normalized_event == "UserPromptSubmit":
+    lines.append(
+        "- 独立した副タスクが2件以上なら、出力依存と共有状態の競合がないことを確認し、最初の待機前に同じ wave でまとめて起動する。依存または競合が1つでもあれば直列にする。2件なら2体、3件以上なら3〜5体とし、結果を揃えて一度だけ統合する。"
+    )
+
 if normalized_event not in {"SubagentStart", "SubagentStop"}:
     lines.append(
         "- 大きめの作業の区切りやユーザー修正フィードバックの対応後は、retrospective-codify で学びの棚卸し (skill 新規作成・使用 skill / AGENTS.md の改善提案) を短く提案する。書き出しは承認後のみ、不要と言われた session では繰り返さない。"
