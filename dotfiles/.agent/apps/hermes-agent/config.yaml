@@ -60,7 +60,7 @@ plugins:
   enabled:
     - orca-status
     - japanese-prose-lint
-_config_version: 33
+_config_version: 37
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,
