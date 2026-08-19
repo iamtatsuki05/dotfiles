@@ -11,17 +11,6 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.codex/hooks/agent_context_reminder.sh"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": ".*",
