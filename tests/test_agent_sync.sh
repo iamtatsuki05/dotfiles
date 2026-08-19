@@ -554,6 +554,24 @@ test_agent_sync_wrapper_delegates_to_setup_script() {
   assert_contains "$SYNC_SCRIPT" '--repo-root "$REPO_ROOT"'
 }
 
+test_retrospective_codify_requires_cross_session_recurrence() {
+  local skill_file="$REPO_ROOT/dotfiles/.agent/skills/retrospective-codify/SKILL.md"
+
+  assert_contains "$skill_file" '直近30日'
+  assert_contains "$skill_file" '3回以上'
+  assert_contains "$skill_file" '2つ以上の session'
+  assert_contains "$skill_file" '同一 session 内の反復回数だけでは'
+  assert_contains "$skill_file" '恒久化候補にしない'
+  assert_contains "$skill_file" 'ユーザーが明示的に恒久化を依頼した場合'
+  assert_contains "$skill_file" '再発条件だけを適用しない'
+  assert_contains "$skill_file" '検索キーの抽出は省略しない'
+  assert_contains "$skill_file" 'session directory 名の先頭にある `YYYY-MM-DD`'
+  assert_contains "$skill_file" '同じ原因と対処の組'
+  assert_contains "$skill_file" '再発: <発生回数>回 / <session 数> sessions'
+  assert_contains "$skill_file" '採用候補が空なら'
+  assert_not_contains "$skill_file" '.learnings/'
+}
+
 test_agent_context_reminder_hook_outputs_valid_json_context() {
   local output
 
@@ -572,7 +590,20 @@ context = hook_output["additionalContext"]
 assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
+assert "最初の待機前" in context
+assert "1つでもあれば直列" in context
 assert "CHANGES.md" not in context
+'
+
+  output="$(printf '%s\n' '{"hook_event_name":"SubagentStart","cwd":"'"$REPO_ROOT"'"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  print -r -- "$output" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+hook_output = payload["hookSpecificOutput"]
+assert hook_output["hookEventName"] == "SubagentStart"
+assert "最初の待機前" not in hook_output["additionalContext"]
 '
 
   # copilot CLI はイベント名フィールドを送らないため、payload の形から推定し互換キーで出力する
@@ -668,6 +699,7 @@ main() {
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
   test_claude_completion_notification_uses_stop_hook
   test_agent_sync_wrapper_delegates_to_setup_script
+  test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
   test_agent_context_reminder_detects_managed_dotfiles_agent_dir
   echo "agent sync tests passed"

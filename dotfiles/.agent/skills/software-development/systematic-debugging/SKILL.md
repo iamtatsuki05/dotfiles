@@ -1,10 +1,7 @@
 ---
 name: systematic-debugging
 description: "4-phase root cause debugging: understand bugs before fixing."
-version: 1.1.0
-author: Hermes Agent (adapted from obra/superpowers)
 license: MIT
-platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [debugging, troubleshooting, problem-solving, root-cause, investigation]
@@ -34,6 +31,8 @@ If you haven't completed Phase 1, you cannot propose fixes.
 The feedback loop is the debugging work. Before reading code to build a theory, create or identify a **tight** command that can go red on the user's exact symptom and green when the bug is fixed. A tight loop is fast, deterministic, agent-runnable, and specific enough to catch this bug — not merely "doesn't crash".
 
 When a clean repro is hard, spend disproportionate effort building the loop. Guessing without a red-capable loop is the failure mode this skill exists to prevent.
+
+When a flaky asynchronous test waits for elapsed time instead of an observable state, read [condition-based-waiting.md](condition-based-waiting.md) before proposing a timeout change. For event histories, capture a baseline cursor or count before starting the operation so stale observations cannot satisfy the wait.
 
 ## When to Use
 

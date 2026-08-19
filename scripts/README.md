@@ -14,6 +14,7 @@ This directory contains setup, migration, update, sync, and test helper scripts 
 | `*_install.sh` | Installation and apply entrypoints for Nix, Homebrew, MAS, and rootless Nix variants. |
 | `waza_eval_*.sh` | Compatibility wrappers for Waza / agent eval entrypoints. |
 | `agent_skill_upstreams.py` | External skill update and security review manifest tool. |
+| `analyze_agent_delegation.py` | Aggregates Codex subagent dispatch and observed-overlap metrics without emitting prompt, response, tool-argument, or tool-output content. |
 | `setup_agent_files.sh` | Canonical AI agent config, hook, skill, and pet sync script. |
 | `setup_hermes_agent.sh` | Installs or updates Hermes Agent through its official shell installer, because upstream dropped pip/PyPI and Homebrew distribution. |
 

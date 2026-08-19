@@ -1,0 +1,44 @@
+name: superpowers-brainstorming-model-eval
+description: Model-backed evaluation for routing requests by design scope.
+skill: "brainstorming"
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: scope_routing_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response choose proportionate processes without inventing authority?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 100"
+  - type: text
+    name: names_all_paths
+    config:
+      regex_match:
+        - "(?i)spike"
+        - "(?i)bounded"
+        - "(?i)architectural"
+  - type: text
+    name: preserves_bounded_autonomy
+    config:
+      regex_match:
+        - "(?i)(bounded|help).*(additional approval|approval).*(not required|unnecessary)|(?:additional approval|approval).*(not required|unnecessary).*(bounded|help)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/route-three-request-shapes.yaml"

@@ -8,7 +8,7 @@
       "repository": "https://github.com/obra/superpowers.git",
       "branch": "main",
       "pinned_commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
-      "local_tree_sha256": "de0f33bbd9b6e5e0b32a77be90096c7d97a61514470215d79a2c81fa6555e443",
+      "local_tree_sha256": "8707b3c107fb8e54def5a90cee17410b1415d1916f1a3b34157a5315d3bee6d3",
       "mappings": [
         {
           "source_path": "skills/dispatching-parallel-agents",
@@ -33,6 +33,18 @@
         {
           "source_path": "LICENSE",
           "local_path": "dotfiles/.agent/skills/writing-skills/LICENSE"
+        },
+        {
+          "source_path": "skills/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/LICENSE"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/brainstorming/LICENSE"
         }
       ],
       "local_text_replacements": [
@@ -77,16 +89,52 @@
           "old": "behavior (superpowers:writing-skills); prose",
           "new": "behavior (writing-skills); prose",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "old": "await waitFor(() => getResult() !== undefined);",
+          "new": "await waitFor(() => getResult() !== undefined, 'result');",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "old": "| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'))` |\n| Wait for state | `waitFor(() => machine.state === 'ready')` |\n| Wait for count | `waitFor(() => items.length >= 5)` |\n| Wait for file | `waitFor(() => fs.existsSync(path))` |\n| Complex condition | `waitFor(() => obj.ready && obj.value > 10)` |",
+          "new": "| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'), 'DONE event')` |\n| Wait for state | `waitFor(() => machine.state === 'ready', 'ready state')` |\n| Wait for count | `waitFor(() => items.length >= 5, 'five items')` |\n| Wait for file | `waitFor(() => fs.existsSync(path), 'output file')` |\n| Complex condition | `waitFor(() => obj.ready && obj.value > 10, 'ready value above 10')` |",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "old": "    if (result) return result;",
+          "new": "    if (result !== undefined && result !== null && result !== false) return result;",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "old": "See `condition-based-waiting-example.ts` in this directory for complete implementation with domain-specific helpers (`waitForEvent`, `waitForEventCount`, `waitForEventMatch`) from actual debugging session.",
+          "new": "Capture a baseline cursor or count before starting the operation when the observable state retains history; otherwise stale events can satisfy the wait. Adapt the generic pattern to the repository's existing test utilities rather than copying a domain-specific helper.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "old": "await waitForEvent(manager, 'TOOL_STARTED'); // First: wait for condition",
+          "new": "await waitForEvent(manager, threadId, 'TOOL_STARTED'); // First: wait for condition",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "old": "## Real-World Impact\n\nFrom debugging session (2025-10-03):\n- Fixed 15 flaky tests across 3 files\n- Pass rate: 60% → 100%\n- Execution time: 40% faster\n- No more race conditions",
+          "new": "## Historical upstream report\n\nThe upstream document reports a 2025 debugging session with fewer flaky tests and faster execution. Treat those figures as historical context, not as a guarantee for the current repository; measure the local test before and after the change.",
+          "expected_count": 1
         }
       ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
         "last_reviewed_commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
-        "last_reviewed_at": "2026-08-16T07:19:12+00:00",
-        "review_report": ".agent/work/sessions/2026-08-16-155706-update-external-skills-codex/superpowers-approval.md"
+        "last_reviewed_at": "2026-08-19T09:04:10+00:00",
+        "review_report": ".agent/work/sessions/2026-08-19-173400-superpowers-five-codex/superpowers-systematic-approval.md"
       },
-      "provenance_note": "Skills are installed directly under the flat discovery root. Namespace-qualified skill references are deterministically rewritten to flat names. The unchanged upstream MIT LICENSE is copied into every vendored skill directory. Local replacements also preserve CommonJS compatibility for render-graphs.js and require explicit authorization before paid external API micro-tests."
+      "provenance_note": "Three skills are installed directly under the flat discovery root. The existing systematic-debugging skill receives the pinned condition-based-waiting reference, and the local Three Paths brainstorming router retains the upstream MIT LICENSE. Namespace-qualified references are rewritten to flat names. Local replacements preserve CommonJS compatibility, require authorization before paid API micro-tests, correct the waiting examples, exclude the Lace-specific helper, and mark upstream performance figures as historical."
     },
     {
       "id": "empirical-prompt-tuning",

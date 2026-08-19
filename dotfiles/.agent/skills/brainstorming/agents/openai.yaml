@@ -1,0 +1,4 @@
+interface:
+  display_name: "Brainstorming Router"
+  short_description: "Route ideas by scope before implementation"
+  default_prompt: "Use $brainstorming to classify this request and choose the lightest safe design process."

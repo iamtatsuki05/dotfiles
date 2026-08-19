@@ -274,34 +274,42 @@ See [dotfiles/.agent/README.md](dotfiles/.agent/README.md) for the file map, syn
 
 ### Multiple Claude Code accounts
 
-Terminal-only Claude Code accounts are selected with `claude setup-token` and `claude-account`. Use setup-token for every profile rather than mixing it with `/login`, because an environment token takes precedence over the account shown by the saved login state.
+`claude-account` uses the single full-scope `claude auth login` credential in macOS Keychain. The redesigned command does not read setup-tokens because they cannot fetch Fable plan entitlements and mixing them with full login can corrupt the shared Keychain.
 
-Switch the active Claude account in the browser before generating each setup-token. Do not write the generated token to a shell configuration file. Paste it only into the Keychain prompt opened by `claude-account add`.
+Before registering or switching an account, exit every Claude Code session with `/exit` or `Ctrl+D`. Sessions started by `claude-account` hold a shared lock for their full lifetime, while `auth-login` requires a non-blocking exclusive lock. Plain `claude` processes are detected separately. The shared credential is not changed while either kind of session remains.
 
 ```bash
-claude setup-token
-claude-account add personal
+pgrep -fl claude
+# Continue only after no Claude process remains.
 
-claude setup-token
-claude-account add work
+claude-account auth-login cierpa
+# Select the cierpa Claude account in the browser.
 ```
 
-List profiles and start Claude Code as follows:
+After login, the command stores only a SHA-256 fingerprint derived from the email and organization ID, plus the subscription type, in `~/.config/claude-account/login-profiles.json` with mode 600. It does not store either identity value. The same email in another organization is treated as a different identity, and choosing a different account for an existing profile fails without replacing the mapping.
+
+List registered profiles and identify the one selected by the shared login:
 
 ```bash
 claude-account list
-claude-account personal
-claude-account work --model opus
-claude-account personal -p "ok"
 ```
 
-Setup-tokens are stored in macOS Keychain under the `dotfiles.claude-account.setup-token` service. They are not written to Git-managed files or `~/.config/shell/secrets.env`. Only profile names are recorded in `~/.config/claude-account/profiles`.
+Normal launches and resumes proceed only when the shared login identity matches the requested profile:
 
-The wrapper removes API keys, custom base URLs, and Bedrock, Vertex, or Foundry selectors from the Claude Code child process. It stops before launch when user, project, or file-based managed settings contain the same authentication overrides or an `apiKeyHelper`. Immediately before the real session, it verifies that `claude auth status` selected the setup-token and Anthropic's first-party endpoint.
+```bash
+claude-account cierpa --model fable
 
-The authentication-changing `--settings` and `--setting-sources` flags are not supported. The wrapper also rejects `--bare`, which does not read setup-tokens, and hides `/login` and `/logout` in the resulting session. Setup-tokens cannot use Remote Control or the usage/profile APIs. Running `claude` directly bypasses profile selection, so use `claude-account <profile>` consistently. See the [official Claude Code authentication documentation](https://code.claude.com/docs/en/authentication) for setup-token lifetime and scope.
+claude-account cierpa \
+  --resume <session-id> \
+  --model fable \
+  --dangerously-skip-permissions
+```
 
-Keep the existing `/login` session until every profile has been registered and checked. Afterward, use setup-token profiles exclusively. There is an [unresolved macOS report](https://github.com/anthropics/claude-code/issues/37512) that a process using `CLAUDE_CODE_OAUTH_TOKEN` can remove the normal login Keychain entry when it exits. Do not use this workflow with the VS Code extension or Remote Control.
+To switch profiles, exit every Claude process and run `auth-login` again. macOS cannot keep independent full-login credentials per profile, so browser login is required on each switch.
+
+The wrapper removes API keys, custom endpoints, and Bedrock, Vertex, or Foundry selectors. It fails closed when settings contain `apiKeyHelper` or authentication environment overrides. `--bare`, `--settings`, and `--setting-sources` are unsupported, and `/login` and `/logout` are hidden after launch. Do not use plain `claude` or `claude-auto`, because they bypass profile identity verification.
+
+Legacy setup-tokens remain in macOS Keychain but are not read by the new CLI. The old `add`, `add-token`, and `token` commands were removed without compatibility aliases. See [Anthropic issue #79360](https://github.com/anthropics/claude-code/issues/79360) for the false Fable usage-credit gate with setup-tokens and the [official authentication documentation](https://code.claude.com/docs/en/authentication) for the macOS Keychain model.
 
 ## API keys and secrets
 

@@ -1,0 +1,33 @@
+id: superpowers-brainstorming-routing-001
+name: Route three request shapes
+description: Checks proportionate routing for bounded, exploratory, and architectural work.
+
+tags:
+  - superpowers
+  - brainstorming
+  - scope
+
+inputs:
+  prompt: |
+    In a mature repository, classify and briefly route each request before implementation:
+    1. Replace one existing CLI help sentence with exact supplied wording.
+    2. Measure whether a candidate browser API meets an unknown performance target.
+    3. Add an authentication subsystem whose mechanism, data model, and migration are undecided.
+    State when another user decision is needed and what durable artifact, if any, each path produces.
+  context:
+    repository_state: mature
+
+expected:
+  output_contains:
+    - "classify"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: accepts_routing_task
+    type: text
+    config:
+      regex_match:
+        - "(?i)(classify|request)"

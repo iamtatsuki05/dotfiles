@@ -15,7 +15,7 @@ codebase-inspection:29f67c87df868dd08e76c57b86c7a5c6
 codex:8822d280c3de7ad5827937b83afa0a88
 comfyui:700ead7d0161a9793a746a3a98c28671
 competitor-news-monitor:1fe587a5a000cd68ca8b9742b2c2df9b
-computer-use:6a448ee59410cdf50fa2dfc498a54fbd
+computer-use:aca681aed20bf2b9c4625011fb037db0
 design-md:91a8976ef5d37db2451721db9c2b93da
 document-to-action-items:f907465e394bca1e4429654d6601d050
 docx:468e95706c97eff3304c23428bc04ece
@@ -33,7 +33,7 @@ github-pr-workflow:3bb8d7a68a7a3c8c4f609cd7def72442
 github-repo-management:7d78b8bf0888a3bf9cfef81a3340f98a
 google-workspace:5f448efe3d7035e45306a4f78340d3ef
 grounded-citations:8b34553af88444ca0aa96a57a45954ae
-hermes-agent:6ee2d09e36e50957ea350f1d7b69a557
+hermes-agent:df5bb5455994a6aabb72262921445ea5
 hermes-agent-skill-authoring:6440929f71296991a7ee29bd4908c2d3
 himalaya:d215ffaa3c1aecbc68a326e45d6927c8
 huggingface-hub:1e5932fb1742a0424d04a29a4c4e09d0
@@ -72,7 +72,7 @@ songsee:644dc0f267b6661a3df6c76ce80d7f1f
 songwriting-and-ai-music:3be4030c70ead6ca8d5db04c7cbcc3b7
 spike:0b76b37925814313d06f4eb399f06be0
 systematic-debugging:ade713194187690041c4dc11747e62c8
-teams-meeting-pipeline:aa8327d5e998e8e4cfddcfaf5df7f7a0
+teams-meeting-pipeline:2c717e4674f7b3f9a4909a41272d22c9
 test-driven-development:a67bd4cb658ed7c123b7440376d9302c
 touchdesigner-mcp:984a47f37d592c3ba9f0adb053c7bb58
 weekly-review-planning:5c8b6b42dd004e269df5a67dfdc8e30f

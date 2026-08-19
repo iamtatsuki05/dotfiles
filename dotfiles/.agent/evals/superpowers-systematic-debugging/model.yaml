@@ -1,0 +1,48 @@
+name: superpowers-systematic-debugging-model-eval
+description: Model-backed evaluation for replacing arbitrary waits in flaky tests.
+skill: "systematic-debugging"
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: copilot-sdk
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: condition_waiting_quality
+    weight: 1.0
+    threshold: 0.8
+    description: Did the response wait for observable state with a bounded diagnostic timeout?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 100"
+  - type: text
+    name: waits_for_observable_condition
+    config:
+      regex_match:
+        - "(?i)(observable|condition|event|future|promise|poll|wait(?:for| until))"
+        - "(?i)(timeout|deadline|finite|bounded)"
+  - type: text
+    name: rejects_sleep_increase_as_fix
+    config:
+      regex_match:
+        - "(?i)(sleep|fixed delay).*(not|do not|don't|instead|replace|increase)"
+  - type: text
+    name: avoids_stale_observations
+    config:
+      regex_match:
+        - "(?i)(baseline|cursor|prior|previous|stale|existing).*(event|result|count|state)|(?:event|result|count|state).*(baseline|cursor|prior|previous|stale|existing)"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/replace-fixed-sleep.yaml"
