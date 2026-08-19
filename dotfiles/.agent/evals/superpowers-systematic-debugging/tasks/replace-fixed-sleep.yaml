@@ -1,0 +1,31 @@
+id: superpowers-systematic-debugging-waiting-001
+name: Replace fixed sleep in a flaky test
+description: Checks that fixed delays are replaced by an observable bounded wait.
+
+tags:
+  - superpowers
+  - debugging
+  - flaky-test
+
+inputs:
+  prompt: |
+    A CI test fails about once in 1,000 runs. It starts asynchronous work, sleeps for 50 ms, and then checks an event history for `result`; that history may contain a matching event from setup. A teammate proposes increasing the sleep to 500 ms. Production code is out of scope. Give the minimal test-side fix, including how to avoid accepting prior events, verification, and timeout behavior.
+  context:
+    change_type: bugfix
+
+expected:
+  output_contains:
+    - "timeout"
+  outcomes:
+    - type: task_completed
+  behavior:
+    max_tool_calls: 6
+
+graders:
+  - name: uses_condition_waiting
+    type: text
+    config:
+      regex_match:
+        - "(?i)(condition|event|future|promise|poll|wait(?:for| until))"
+        - "(?i)(timeout|deadline|finite|bounded)"
+        - "(?i)(baseline|cursor|prior|previous|stale|existing)"

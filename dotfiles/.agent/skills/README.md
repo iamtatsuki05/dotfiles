@@ -87,7 +87,7 @@ An update fails before overwriting local files if a source match count differs f
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | Japanese skill for iteratively improving agent instructions through executor feedback. |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
 | `mattpocock-skills` | `mattpocock/skills` | `diagnose/`, `grill-me/`, etc. | Design questioning, diagnosis, prototyping, handoff, and architecture review skills. Each skill includes the upstream LICENSE. |
-| `superpowers` | `obra/superpowers` | `dispatching-parallel-agents/`, `test-driven-development/`, `writing-skills/` | Workflow skills for TDD, parallel agent dispatch, and skill writing. Each skill includes the upstream MIT LICENSE. |
+| `superpowers` | `obra/superpowers` | `brainstorming/`, `dispatching-parallel-agents/`, `software-development/systematic-debugging/`, `test-driven-development/`, `writing-skills/` | Five selected workflow areas. Three skills are vendored directly; systematic debugging keeps the richer local skill with pinned upstream waiting references, and brainstorming is a minimal local Three Paths router. |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied Apache-2.0 license. |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | English prose review skill for removing predictable AI writing patterns. |
@@ -108,9 +108,13 @@ An update fails before overwriting local files if a source match count differs f
 
 | Skill | Purpose |
 |---|---|
+| `brainstorming` | Route feasibility probes, bounded changes, and architectural work without adding an automatic approval gate, server, or telemetry. |
 | `dispatching-parallel-agents` | Decide when independent tasks should be split across parallel agents. |
+| `systematic-debugging` | Keep the local root-cause workflow and load pinned condition-based waiting guidance for flaky asynchronous tests. |
 | `test-driven-development` | Anchor feature and bugfix implementation in TDD. |
 | `writing-skills` | Support skill creation, editing, and verification workflows. |
+
+`brainstorming` intentionally adapts only the upstream Three Paths idea. It does not vendor the upstream visual companion, background server, telemetry, automatic design commits, or universal approval gate.
 
 ## Local-Only / Ignored Skills
 

@@ -273,34 +273,49 @@ mise run waza-eval-model -- --agent all --dry-run
 
 ### Claude Code の複数アカウント
 
-ターミナル版 Claude Code のアカウントは、`claude setup-token` と `claude-account` で切り替えます。通常の `/login` と setup-token を混在させると、画面上のアカウントと実際の実行アカウントが食い違うため、複数アカウント運用では全アカウントを setup-token に揃えます。
+`claude-account` は、macOS Keychain にある単一の full-scope `claude auth login` credentialを使います。setup-tokenはFableのplan entitlementを取得できず、full loginと併用すると共有Keychainを壊す未解決bugもあるため、新しい`claude-account`はsetup-tokenを読みません。
 
-最初に、ブラウザで対象の Claude アカウントへ切り替えてから setup-token を発行します。発行された token は shell の設定ファイルへ書かず、`claude-account add` の Keychain prompt に貼り付けてください。
+初回登録またはアカウント切替の前に、すべてのClaude Code sessionを`/exit`または`Ctrl+D`で終了します。`claude-account`から起動したsessionは共有lockを保持し、`auth-login`は排他lockを取得できない場合に即座に停止します。通常の`claude`で起動したprocessも検出し、1件でも残っていれば共有credentialを切り替えません。
 
 ```bash
-claude setup-token
-claude-account add personal
+pgrep -fl claude
+# Claude processが表示されなくなってから実行
 
-claude setup-token
-claude-account add work
+claude-account auth-login cierpa
+# browserでcierpaのClaudeアカウントを選択
 ```
 
-登録済み profile の確認と起動は次のとおりです。
+login成功後、`claude-account`はemailやorganization IDの値を保存せず、両者から作ったSHA-256 fingerprintとsubscription種別だけを`~/.config/claude-account/login-profiles.json`へmode 600で保存します。同じemailでもorganizationが違えば別identityとして扱い、既存profileのmappingを上書きせず停止します。
+
+登録済みprofileと、現在の共有loginが指すprofileを確認します。
 
 ```bash
 claude-account list
-claude-account personal
-claude-account work --model opus
-claude-account personal -p "ok"
 ```
 
-setup-token は macOS Keychain の `dotfiles.claude-account.setup-token` service に保存されます。Git 管理ファイルと `~/.config/shell/secrets.env` には保存しません。profile 名だけを `~/.config/claude-account/profiles` に記録します。
+通常起動とresumeでは、共有login identityが指定profileと一致する場合だけClaude Codeを起動します。Fable sessionもこの経路を使います。
 
-`claude-account` は、API key、custom base URL、Bedrock、Vertex、Foundry など、setup-token より優先される認証設定を Claude Code の子プロセスから除外します。検査可能な user・project・file-based managed settings に同種の設定や `apiKeyHelper` があれば、別アカウントでの実行を避けるため起動前に停止します。実行直前にも `claude auth status` を検査し、setup-token と Anthropic の first-party endpoint が選ばれていることを確認します。
+```bash
+claude-account cierpa --model fable
 
-認証経路を変えられる `--settings` と `--setting-sources`、setup-token を読まない `--bare` は利用できません。起動後に認証を切り替えないよう、`/login` と `/logout` も非表示にします。setup-token では Remote Control と usage/profile API を利用できません。通常の `claude` を直接実行した場合は profile 選択を通らないため、複数アカウント運用では必ず `claude-account <profile>` を使ってください。setup-token の有効期間と制約は [Claude Code の公式認証ドキュメント](https://code.claude.com/docs/en/authentication) を参照してください。
+claude-account cierpa \
+  --resume <session-id> \
+  --model fable \
+  --dangerously-skip-permissions
+```
 
-全 profile の登録と疎通確認が終わるまでは、既存の `/login` session を残して構いません。疎通確認後は `/login` と setup-token を併用せず、setup-token に統一してください。macOS 版 Claude Code には、`CLAUDE_CODE_OAUTH_TOKEN` を使った終了時に通常 login の Keychain 項目が消えるという[未解決報告](https://github.com/anthropics/claude-code/issues/37512)があります。VS Code extension や Remote Control と併用する場合は、この方式を使わないでください。
+別profileへ切り替えるときも、すべてのClaude processを終了してから`auth-login`を実行します。macOSではfull-login credentialをprofileごとに同時保存できないため、browser loginは切替のたびに必要です。
+
+```bash
+# 1. 全Claude sessionを終了
+claude-account auth-login pfn
+# 2. browserでpfn accountを選択
+claude-account pfn --resume <session-id> --model fable
+```
+
+`claude-account`はAPI key、custom endpoint、Bedrock、Vertex、Foundryなどの別認証経路を子processから除外します。検査可能なsettingsに`apiKeyHelper`や認証用`env`があればfail closedにします。`--bare`、`--settings`、`--setting-sources`は利用できず、起動後の`/login`と`/logout`も非表示にします。通常の`claude`や`claude-auto`はprofile identity検査を通らないため、複数アカウント運用では使いません。
+
+旧setup-tokenはmacOS Keychainに残りますが、新しいCLIからは参照しません。旧`add`、`add-token`、`token`コマンドは互換aliasを残さず削除しました。setup-tokenでFableがusage creditsと誤判定される問題は[Anthropic issue #79360](https://github.com/anthropics/claude-code/issues/79360)、macOS Keychainの制約は[公式認証ドキュメント](https://code.claude.com/docs/en/authentication)を参照してください。
 
 ## API キーの管理
 

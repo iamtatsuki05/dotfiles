@@ -86,7 +86,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
 | `mattpocock-skills` | `mattpocock/skills` | `diagnose/`、`grill-me/` など | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。各 skill に upstream LICENSE を同梱。 |
-| `superpowers` | `obra/superpowers` | `dispatching-parallel-agents/`、`test-driven-development/`、`writing-skills/` | TDD、parallel agent dispatch、skill writing の workflow skill。各 skill に upstream の MIT LICENSE を同梱。 |
+| `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語 prose から AI らしい定型表現を取り除く文章校閲 skill。 |
@@ -107,9 +107,13 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 
 | Skill | 用途 |
 |---|---|
+| `brainstorming` | feasibility probe、bounded change、architectural work を分類する。自動承認 gate、server、telemetry は追加しない。 |
 | `dispatching-parallel-agents` | 独立した複数タスクを並列 agent に分ける判断を助ける。 |
+| `systematic-debugging` | 既存の root-cause workflow を維持し、flaky な非同期テストでは固定 upstream の条件待ち資料を読む。 |
 | `test-driven-development` | feature / bugfix 実装前に TDD の進め方を固定する。 |
 | `writing-skills` | skill 作成・編集・検証の workflow を支援する。 |
+
+`brainstorming` は upstream の Three Paths の考え方だけを local 向けに調整しています。upstream の visual companion、background server、telemetry、設計文書の自動 commit、全作業への一律承認 gate は導入しません。
 
 ## local-only / ignored skill
 

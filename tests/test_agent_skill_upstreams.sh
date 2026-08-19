@@ -118,6 +118,40 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   assert_contains "$skills_root/herdr/LICENSE" 'Apache License'
 }
 
+test_superpowers_selection_has_five_non_conflicting_workflows() {
+  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+  local eval_root="$REPO_ROOT/dotfiles/.agent/evals"
+  local manifest_text
+  manifest_text="$(cat "$MANIFEST")"
+
+  assert_file "$skills_root/dispatching-parallel-agents/SKILL.md"
+  assert_file "$skills_root/test-driven-development/SKILL.md"
+  assert_file "$skills_root/writing-skills/SKILL.md"
+  assert_file "$skills_root/software-development/systematic-debugging/SKILL.md"
+  assert_file "$skills_root/brainstorming/SKILL.md"
+  assert_file "$skills_root/brainstorming/LICENSE"
+
+  assert_file "$skills_root/software-development/systematic-debugging/condition-based-waiting.md"
+  assert_file "$skills_root/software-development/systematic-debugging/LICENSE"
+  assert_not_exists "$skills_root/software-development/systematic-debugging/condition-based-waiting-example.ts"
+  assert_contains_text "$manifest_text" '"source_path": "skills/systematic-debugging/condition-based-waiting.md"'
+  assert_contains_text "$manifest_text" '"local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md"'
+  assert_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'Capture a baseline cursor or count before starting the operation'
+  assert_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'Historical upstream report'
+  assert_not_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'await waitFor(() => getResult() !== undefined);'
+
+  assert_not_exists "$skills_root/brainstorming/scripts/server.cjs"
+  assert_not_exists "$skills_root/brainstorming/scripts/start-server.sh"
+  assert_not_contains "$skills_root/brainstorming/SKILL.md" 'docs/superpowers/specs'
+  assert_not_contains "$skills_root/brainstorming/SKILL.md" 'git commit'
+  cmp -s "$skills_root/brainstorming/LICENSE" "$skills_root/software-development/systematic-debugging/LICENSE" || fail "Superpowers adapted-skill LICENSE copies differ"
+
+  assert_file "$eval_root/superpowers-systematic-debugging/model.yaml"
+  assert_file "$eval_root/superpowers-systematic-debugging/tasks/replace-fixed-sleep.yaml"
+  assert_file "$eval_root/superpowers-brainstorming/model.yaml"
+  assert_file "$eval_root/superpowers-brainstorming/tasks/route-three-request-shapes.yaml"
+}
+
 test_updates_accepts_fixture_ls_remote_output() {
   local output
   output="$(
@@ -642,6 +676,7 @@ main() {
   test_tree_hash_ignores_generated_python_bytecode
   test_manifest_tracks_current_upstream_skill_paths
   test_reviewed_updates_preserve_local_security_and_compatibility_overlays
+  test_superpowers_selection_has_five_non_conflicting_workflows
   test_updates_accepts_fixture_ls_remote_output
   test_security_prompt_accepts_commit_alias
   test_security_prompt_accepts_registered_review_agent
