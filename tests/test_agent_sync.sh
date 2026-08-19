@@ -74,7 +74,7 @@ EOF
 {"autoUpdate":false,"respectGitignore":true,"allowedUrls":["github.com"],"hooks":{"sessionStart":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\""}],"userPromptSubmitted":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_context_reminder.sh\""}],"agentStop":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/agent_turn_done_notify.sh\"","timeoutSec":5}],"postToolUse":[{"type":"command","bash":"zsh \"$HOME/.copilot/hooks/jupytext_sync.sh\""}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/codex/hooks.json" <<'EOF'
-{"hooks":{"SessionStart":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/agent_context_reminder.sh"}]}],"UserPromptSubmit":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/agent_context_reminder.sh"}]}],"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/jupytext_sync.sh"}]}]}}
+{"hooks":{"SessionStart":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/agent_context_reminder.sh"}]}],"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"~/.codex/hooks/jupytext_sync.sh"}]}]}}
 EOF
   cat > "$repo/dotfiles/.agent/apps/codex/config.toml" <<'EOF'
 model = "gpt-5.4"
@@ -345,7 +345,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.codex/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.codex/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_contains "$home_dir/.codex/hooks.json" '"SessionStart"'
-  assert_contains "$home_dir/.codex/hooks.json" '"UserPromptSubmit"'
+  assert_not_contains "$home_dir/.codex/hooks.json" '"UserPromptSubmit"'
   assert_contains "$home_dir/.codex/hooks.json" 'agent_context_reminder.sh'
   assert_not_contains "$home_dir/.codex/config.toml" '[history]'
   assert_contains "$home_dir/.codex/config.toml" '[features]'
@@ -549,6 +549,88 @@ assert any(command.endswith("/agent_turn_done_notify.sh") or command == "~/.clau
 PY
 }
 
+test_static_context_is_not_reinjected_on_every_claude_and_codex_prompt() {
+  python3 - \
+    "$REPO_ROOT/dotfiles/.agent/apps/claude/settings.json" \
+    "$REPO_ROOT/dotfiles/.agent/apps/codex/hooks.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+claude = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+codex = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+claude_hooks = claude.get("hooks", {})
+codex_hooks = codex.get("hooks", {})
+assert "UserPromptSubmit" not in claude_hooks
+assert "UserPromptSubmit" not in codex_hooks
+assert "SessionStart" in claude_hooks
+assert "SessionStart" in codex_hooks
+assert "SubagentStart" in claude_hooks
+PY
+}
+
+test_claude_stop_hook_contract_covers_completion_and_safety_boundaries() {
+  python3 - "$REPO_ROOT/dotfiles/.agent/apps/claude/settings.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+settings = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+prompts = [
+    hook.get("prompt", "")
+    for entry in settings.get("hooks", {}).get("Stop", [])
+    for hook in entry.get("hooks", [])
+    if hook.get("type") == "prompt"
+]
+assert len(prompts) == 1, prompts
+prompt = prompts[0]
+assert "検証が未実施、失敗、または不十分" in prompt
+assert "残リスクだけを記載していても" in prompt
+assert "stop_hook_active" in prompt
+assert "実行中の background job、subagent、reviewer" in prompt
+assert "コード、設定、文書、データ、browser、外部操作を含む依頼作業" in prompt
+assert "外部操作の readback または結果確認" in prompt
+assert "送信、公開、外部反映を依頼されていない draft-only の文案" in prompt
+assert "危険または合理的な疑いが未解決" in prompt
+assert "stop_hook_active が true でも" in prompt
+assert "stop_hook_active は (1) と (2) を解除しません" in prompt
+assert "現在の turn で待機、検証、readback、修正により解消できる" in prompt
+assert "ユーザー入力または外部状態の変化がなければ進められず" in prompt
+assert "重大な未解決安全問題" in prompt
+assert "セキュリティ、権限変更、個人情報、課金、法的・契約的問題、prompt injection" in prompt
+PY
+}
+
+test_codex_subagent_default_uses_high_effort() {
+  python3 - "$REPO_ROOT/dotfiles/.agent/apps/codex/config.toml" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+config = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert config["agents"]["default_subagent_model"] == "gpt-5.6-luna"
+assert config["agents"]["default_subagent_reasoning_effort"] == "high"
+assert config["agents"]["max_concurrent_threads_per_session"] == 16
+PY
+}
+
+test_agent_prompt_separates_task_boundary_triggers_from_signals() {
+  local agents_file="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
+
+  assert_contains "$agents_file" '目的、成果物、または repository が変わる依頼'
+  assert_contains "$agents_file" '別 task と短い handoff を提案'
+  assert_contains "$agents_file" '同じ長期 goal の再開'
+  assert_contains "$agents_file" 'message 数や compaction 回数だけでは分割しない'
+}
+
+test_agent_prompt_probes_shared_causes_before_parallel_dispatch() {
+  local agents_file="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
+
+  assert_contains "$agents_file" '共通原因の probe を main agent または1体で先に実施'
+  assert_contains "$agents_file" '結果を確認してから後続を分岐'
+}
+
 test_agent_sync_wrapper_delegates_to_setup_script() {
   assert_contains "$SYNC_SCRIPT" 'scripts/setup_agent_files.sh'
   assert_contains "$SYNC_SCRIPT" '--repo-root "$REPO_ROOT"'
@@ -698,6 +780,11 @@ main() {
   test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
   test_claude_completion_notification_uses_stop_hook
+  test_static_context_is_not_reinjected_on_every_claude_and_codex_prompt
+  test_claude_stop_hook_contract_covers_completion_and_safety_boundaries
+  test_codex_subagent_default_uses_high_effort
+  test_agent_prompt_separates_task_boundary_triggers_from_signals
+  test_agent_prompt_probes_shared_causes_before_parallel_dispatch
   test_agent_sync_wrapper_delegates_to_setup_script
   test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
