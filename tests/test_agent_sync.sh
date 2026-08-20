@@ -672,6 +672,8 @@ context = hook_output["additionalContext"]
 assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
+assert "checkpoint.md" in context
+assert "まとまった変更や検証" in context
 assert "最初の待機前" in context
 assert "1つでもあれば直列" in context
 assert "CHANGES.md" not in context
