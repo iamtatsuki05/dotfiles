@@ -602,7 +602,7 @@ assert "セキュリティ、権限変更、個人情報、課金、法的・契
 PY
 }
 
-test_codex_subagent_default_uses_high_effort() {
+test_codex_subagent_default_matches_configured_max_contract() {
   python3 - "$REPO_ROOT/dotfiles/.agent/apps/codex/config.toml" <<'PY'
 import sys
 import tomllib
@@ -610,8 +610,8 @@ from pathlib import Path
 
 config = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert config["agents"]["default_subagent_model"] == "gpt-5.6-luna"
-assert config["agents"]["default_subagent_reasoning_effort"] == "high"
-assert config["agents"]["max_concurrent_threads_per_session"] == 16
+assert config["agents"]["default_subagent_reasoning_effort"] == "max"
+assert config["agents"]["max_concurrent_threads_per_session"] == 100
 PY
 }
 
