@@ -83,7 +83,8 @@
       "Bash(chown:*)"
     ]
   },
-  "model": "claude-fable-5[1m]",
+  "model": "claude-fable-5",
+  "outputStyle": "Concise",
   "hooks": {
     "SessionStart": [
       {
