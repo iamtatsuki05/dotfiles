@@ -153,17 +153,18 @@
 ## session directory
 
 - 現在の作業ディレクトリに `$PWD/.agent` が存在する場合は、作業ログを `$PWD/.agent/work/` 配下に残してください。このディレクトリは作業用のローカルな記録であり、Git 管理対象にしません(commit しないでください)。ユーザーが読む最終成果物は `.agent/work/` 配下に置かず、依頼で指定された場所か repo 内の適切な場所に置いてください。`html-preview-review` の private artifact はこの原則の例外とし、前述の active session 配下へ置いてください。
-- repo の状態を変える作業や引き継ぎ情報が必要な作業では、`$PWD/.agent/work/sessions/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/` を新規作成してください。読み取りだけの単純な質問応答では省略して構いません。
+- repo の状態を変える作業や引き継ぎ情報が必要な作業では、`$PWD/.agent/work/sessions/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/` を新規作成し、同時に `checkpoint.md` へ現在地を書いてください。読み取りだけの単純な質問応答では省略して構いません。
   - `<agent-id>` には実行中の agent 種別を使います。例: `.agent/work/sessions/2026-05-23-171230-agent-worklog-prompt-codex/`(slug が `agent-worklog-prompt`、agent-id が `codex`)。
   - 同名の directory が既に存在する場合は上書きせず、短い乱数や連番を付けて別名で作成してください。
-- 作業開始時は、`$PWD/.agent/work/sessions/` が存在する場合だけ、関連しそうな最新 session とユーザー依頼に近い session を確認してください。存在しない場合は既存 session の確認を省略してください。続き作業では、`handoff.md`、`changes.md`、`verification.md`、未完了項目の順に読み、現在の `git status` と突き合わせてください。
+- 作業開始時は、`$PWD/.agent/work/sessions/` が存在する場合だけ、関連しそうな最新 session とユーザー依頼に近い session を確認してください。存在しない場合は既存 session の確認を省略してください。続き作業では、`checkpoint.md`、存在する場合は `handoff.md`、`changes.md`、`verification.md`、現在の `git status` / `git diff`、関連する focused test の順に確認してください。
 - subagent、parallel agent、reviewer を使う場合は、メインの agent が session directory を作り、subagent ごとに `subagents/<role>-<timestamp>.md` など重複しない出力先を指定してください。subagent には既存ログの削除・上書きや最終判断を任せないでください。
 
 ## session 内のファイル
 
-- session directory には、必要に応じて `plan.md`、`changes.md`、`verification.md`、`feedback.md`、`handoff.md`、`subagents/` を置いてください。小さい調査や1ファイル程度の低リスク修正では、`changes.md` だけでも構いません。
+- session directory には `checkpoint.md` を置き、必要に応じて `plan.md`、`changes.md`、`verification.md`、`feedback.md`、`handoff.md`、`subagents/` を置いてください。
+- `checkpoint.md` には目的、現在地、未完了、次の1〜3手、変更ファイル、最後に通った検証、background job・外部操作の状態を短く書き、まとまった変更や検証が終わるたびに更新してください。tool callごとの生ログは残さないでください。
 - `plan.md` には目的、制約、対象ファイル、完了条件を短く書いてください。`changes.md` には何を変えたかと理由、`verification.md` には実行した検証、未検証事項、残リスクを書いてください。
-- `handoff.md` は中断や別 session への引き継ぎが必要な場合だけ作成してください。差分、issue、PR、ADR、検証ログに既にある内容を重複コピーせず、参照先と次に見るべき順序を中心に書いてください。
+- `handoff.md` は計画的に別 agent・別 sessionへ引き継ぐ場合だけ作成してください。突発的なusage limitやmodel limitでは直近の`checkpoint.md`を引き継ぎ元とします。差分、issue、PR、ADR、検証ログに既にある内容を重複コピーせず、参照先と次に見るべき順序を中心に書いてください。
 - `CONTEXT.md` や ADR は有用ですが、repo が明示的に採用していない限り repo 直下へ作成しないでください。用語整理や設計判断のメモは、まず該当 session directory 内に置いてください。恒久化する場合は、なぜ残すのかと後から参照する読者を明確にしたうえで、ユーザー確認を取ってください。
 
 ## local wiki
