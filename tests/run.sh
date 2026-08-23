@@ -81,9 +81,11 @@ run_syntax_checks() {
 }
 
 run_unit_tests() {
-  log_step "Running shell unit tests"
+  log_step "Running unit tests"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_delegation_analysis.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_html_preview_review.sh"
+  python3 "$REPO_ROOT/tests/test_agent_team.py"
+  python3 "$REPO_ROOT/tests/test_agent_team_mcp.py"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_sync.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_support_matrix.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_skill_upstreams.sh"

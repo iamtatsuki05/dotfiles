@@ -395,6 +395,47 @@
       },
       "source_url": "https://github.com/hardikpandya/stop-slop/tree/8da1f030185bdfe8471220585162991eaeb970e9",
       "provenance_note": "MIT license copied into the vendored skill directory. Upstream SKILL.md and references are vendored without local instruction changes; README and CHANGELOG are intentionally excluded from the loadable skill."
+    },
+    {
+      "id": "eli5",
+      "description": "Anthropic community skill for dead-simple picture-based HTML explanations.",
+      "repository": "https://github.com/anthropics/claude-plugins-community.git",
+      "branch": "main",
+      "pinned_commit": "f4c9452f5ca091f1be7064d9faab1b001ea21645",
+      "local_tree_sha256": "babc2347f7b8b4ce5bf9d29cc699e31e2e9227607f959507f71988475c592924",
+      "mappings": [
+        {
+          "source_path": "eli5/skills/eli5/SKILL.md",
+          "local_path": "dotfiles/.agent/skills/eli5/SKILL.md"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/eli5/LICENSE"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/eli5/SKILL.md",
+          "old": "description: Explain a topic like I'm a 5 year old. Use when the user types /eli5 <topic> or asks for a dead-simple picture explainer of how something works.",
+          "new": "description: Explain a topic like I'm a 5 year old. Use when the user types /eli5 TOPIC or asks for a dead-simple picture explainer of how something works.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/eli5/SKILL.md",
+          "old": "# eli5\n\nExplain like I'm someone who knows nothing about this topic, using a HTML artifact with big pictures and few words.",
+          "new": "# eli5\n\nLocal modification notice: Tatsuki's dotfiles project replaced the angle-bracket topic placeholder in the frontmatter on 2026-08-23 for Codex skill-schema compatibility; the instruction itself is unchanged from the pinned upstream commit.\n\nExplain like I'm someone who knows nothing about this topic, using a HTML artifact with big pictures and few words.",
+          "expected_count": 1
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "f4c9452f5ca091f1be7064d9faab1b001ea21645",
+        "last_reviewed_at": "2026-08-23T09:57:28+00:00",
+        "review_report": ".agent/work/sessions/2026-08-23-185513-install-eli5-skill-codex/upstream-security-review.md"
+      },
+      "source_url": "https://github.com/anthropics/claude-plugins-community/tree/f4c9452f5ca091f1be7064d9faab1b001ea21645/eli5/skills/eli5",
+      "provenance_note": "The upstream instruction is preserved. The angle-bracket topic placeholder in frontmatter is rewritten to TOPIC because the Codex skill schema rejects angle brackets, and the file carries an Apache-2.0 modification notice. The repository LICENSE is copied byte-for-byte. Plugin metadata and README are excluded because the shared flat skill tree only needs the loadable skill and its license."
     }
   ]
 }
