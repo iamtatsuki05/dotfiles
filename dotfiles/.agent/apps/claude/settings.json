@@ -83,8 +83,7 @@
       "Bash(chown:*)"
     ]
   },
-  "model": "claude-fable-5",
-  "outputStyle": "Concise",
+  "model": "claude-fable-5[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -159,6 +158,7 @@
   },
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
+  "autoMemoryEnabled": false,
   "autoCompactEnabled": false,
   "switchModelsOnFlag": false,
   "co_authored_commits": true,
