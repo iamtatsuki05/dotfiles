@@ -102,9 +102,34 @@ class AgentTeamMcpTest(unittest.TestCase):
                     "run_id": "run_1",
                     "main_terminal": "term_main",
                     "role_specs": {
-                        "planner": {"provider": "claude", "transport": "acp", "model": "fable", "effort": "high", "permission": "read-only", "instructions": "planner snapshot", "execution": "background", "adapter_id": "claude-acp-0.70.0"},
-                        "worker": {"provider": "codex", "transport": "direct", "model": "gpt-5.6-sol", "effort": "medium", "permission": "workspace-write", "instructions": "worker snapshot", "execution": "tui_direct"},
-                        "reviewer": {"provider": "codex", "transport": "direct", "model": "gpt-5.6-sol", "effort": "high", "permission": "read-only", "instructions": "reviewer snapshot", "execution": "tui_direct"},
+                        "planner": {
+                            "provider": "claude",
+                            "transport": "acp",
+                            "model": "fable",
+                            "effort": "high",
+                            "permission": "read-only",
+                            "instructions": "planner snapshot",
+                            "execution": "background",
+                            "adapter_id": "claude-acp-0.70.0",
+                        },
+                        "worker": {
+                            "provider": "codex",
+                            "transport": "direct",
+                            "model": "gpt-5.6-sol",
+                            "effort": "medium",
+                            "permission": "workspace-write",
+                            "instructions": "worker snapshot",
+                            "execution": "tui_direct",
+                        },
+                        "reviewer": {
+                            "provider": "codex",
+                            "transport": "direct",
+                            "model": "gpt-5.6-sol",
+                            "effort": "high",
+                            "permission": "read-only",
+                            "instructions": "reviewer snapshot",
+                            "execution": "tui_direct",
+                        },
                     },
                     "roles": {},
                 }
@@ -263,7 +288,9 @@ class AgentTeamMcpTest(unittest.TestCase):
         self.assertIn("term_main", worker)
         self.assertEqual(saved["roles"]["worker"]["dispatch_id"], "dispatch_1")
 
-    def test_acp_role_uses_bare_terminal_dispatch_then_atomic_assignment_and_send(self) -> None:
+    def test_acp_role_uses_bare_terminal_dispatch_then_atomic_assignment_and_send(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "project").mkdir()
@@ -324,11 +351,16 @@ class AgentTeamMcpTest(unittest.TestCase):
 
     def test_acp_dispatch_requires_explicit_false_injected_flag(self) -> None:
         for injected in ("true", "null", "missing"):
-            with self.subTest(injected=injected), tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                self.subTest(injected=injected),
+                tempfile.TemporaryDirectory() as temp_dir,
+            ):
                 root = Path(temp_dir)
                 (root / "project").mkdir()
                 fake_bin, log_path, state = self.make_fixture(root)
-                process = self.start_server(fake_bin, log_path, state, injected=injected)
+                process = self.start_server(
+                    fake_bin, log_path, state, injected=injected
+                )
                 try:
                     response = self.call(
                         process,
@@ -347,7 +379,9 @@ class AgentTeamMcpTest(unittest.TestCase):
             self.assertNotIn(["terminal", "send"], commands)
             self.assertEqual(saved["roles"], {})
 
-    def test_acp_release_closes_owned_terminal_and_prompt_for_already_released_dispatch(self) -> None:
+    def test_acp_release_closes_owned_terminal_and_prompt_for_already_released_dispatch(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "project").mkdir()
@@ -358,9 +392,7 @@ class AgentTeamMcpTest(unittest.TestCase):
             provider_private_root = Path(
                 tempfile.mkdtemp(prefix="agent-team-provider-")
             )
-            snapshot_root = Path(
-                tempfile.mkdtemp(prefix="agent-team-snapshot-")
-            )
+            snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
             saved = json.loads(state.read_text(encoding="utf-8"))
             saved["roles"] = {
                 "planner": {
@@ -519,7 +551,9 @@ class AgentTeamMcpTest(unittest.TestCase):
         self.assertEqual(saved["roles"], {})
         self.assertEqual(prompt_paths, [])
 
-    def test_direct_start_cleanup_attempts_all_resources_and_reports_each_error(self) -> None:
+    def test_direct_start_cleanup_attempts_all_resources_and_reports_each_error(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "project").mkdir()
@@ -542,9 +576,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                     return {"wait": {"satisfied": True}}
                 if args[:2] == ["terminal", "show"]:
                     return {
-                        "terminal": {
-                            "preview": "gpt-5.6-sol medium · ~/src/dotfiles"
-                        }
+                        "terminal": {"preview": "gpt-5.6-sol medium · ~/src/dotfiles"}
                     }
                 if args[:2] == ["orchestration", "worker-start"]:
                     return {
@@ -589,7 +621,9 @@ class AgentTeamMcpTest(unittest.TestCase):
             ],
         )
 
-    def test_direct_start_leaves_terminal_cleanup_to_successful_worker_stop(self) -> None:
+    def test_direct_start_leaves_terminal_cleanup_to_successful_worker_stop(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "project").mkdir()
@@ -612,9 +646,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                     return {"wait": {"satisfied": True}}
                 if args[:2] == ["terminal", "show"]:
                     return {
-                        "terminal": {
-                            "preview": "gpt-5.6-sol medium · ~/src/dotfiles"
-                        }
+                        "terminal": {"preview": "gpt-5.6-sol medium · ~/src/dotfiles"}
                     }
                 if args[:2] == ["orchestration", "worker-start"]:
                     return {
@@ -722,9 +754,7 @@ class AgentTeamMcpTest(unittest.TestCase):
 
     def test_identity_helper_rejects_untrusted_team_marker(self) -> None:
         with self.assertRaisesRegex(agent_team_mcp.ToolInputError, "identity"):
-            agent_team_mcp.acp_agent_command(
-                "team with spaces", "planner", "nonce1234"
-            )
+            agent_team_mcp.acp_agent_command("team with spaces", "planner", "nonce1234")
 
     def test_invalid_role_never_reaches_orca(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -813,7 +843,9 @@ class AgentTeamMcpTest(unittest.TestCase):
         self.assertIn("--peek", log[0])
         self.assertNotIn("--wait", log[0])
 
-    def test_save_does_not_recreate_state_removed_while_orca_operation_runs(self) -> None:
+    def test_save_does_not_recreate_state_removed_while_orca_operation_runs(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "project").mkdir()
@@ -961,7 +993,9 @@ class AgentTeamMcpTest(unittest.TestCase):
         self.assertTrue(after["roles"]["worker"]["completion_observed"])
         self.assertEqual(after["roles"]["worker"]["outcome"], "succeeded")
 
-    def test_agent_ready_rejects_loading_and_requires_configured_model_effort(self) -> None:
+    def test_agent_ready_rejects_loading_and_requires_configured_model_effort(
+        self,
+    ) -> None:
         spec = {"provider": "codex", "model": "gpt-5.6-sol", "effort": "medium"}
 
         self.assertFalse(
@@ -970,9 +1004,7 @@ class AgentTeamMcpTest(unittest.TestCase):
             )
         )
         self.assertFalse(
-            agent_team_mcp.agent_ready(
-                "OpenAI Codex model: gpt-5.6-sol high", spec
-            )
+            agent_team_mcp.agent_ready("OpenAI Codex model: gpt-5.6-sol high", spec)
         )
         self.assertTrue(
             agent_team_mcp.agent_ready(
@@ -985,7 +1017,9 @@ class AgentTeamMcpTest(unittest.TestCase):
             )
         )
 
-    def test_wait_for_agent_ready_polls_loading_until_tui_footer_is_configured(self) -> None:
+    def test_wait_for_agent_ready_polls_loading_until_tui_footer_is_configured(
+        self,
+    ) -> None:
         state = {
             "role_specs": {
                 "worker": {
@@ -1002,7 +1036,9 @@ class AgentTeamMcpTest(unittest.TestCase):
             }
         }
         with (
-            mock.patch.object(agent_team_mcp, "run_orca", side_effect=[loading, ready]) as run,
+            mock.patch.object(
+                agent_team_mcp, "run_orca", side_effect=[loading, ready]
+            ) as run,
             mock.patch.object(agent_team_mcp.time, "sleep"),
         ):
             agent_team_mcp.wait_for_agent_ready(

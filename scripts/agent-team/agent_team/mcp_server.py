@@ -128,9 +128,7 @@ def tools() -> list[dict[str, object]]:
             "description": "処理済みのOrca Delivery全体をacknowledgeします。",
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "delivery_id": {"type": "string", "minLength": 1}
-                },
+                "properties": {"delivery_id": {"type": "string", "minLength": 1}},
                 "required": ["delivery_id"],
                 "additionalProperties": False,
             },
@@ -174,9 +172,7 @@ def bounded_integer(
     return value
 
 
-def bounded_text(
-    arguments: dict[str, object], key: str, *, maximum: int
-) -> str:
+def bounded_text(arguments: dict[str, object], key: str, *, maximum: int) -> str:
     value = arguments.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ToolInputError(f"{key} must be a non-empty string")
@@ -265,7 +261,9 @@ def require_nested_string(
     return current
 
 
-def _observed_value(payload: dict[str, object], paths: tuple[tuple[str, ...], ...]) -> object:
+def _observed_value(
+    payload: dict[str, object], paths: tuple[tuple[str, ...], ...]
+) -> object:
     for path in paths:
         current: object = payload
         for key in path:
@@ -296,7 +294,9 @@ def validate_dispatch_response(
     for first, second, expected in checks:
         observed = _observed_value(response, (first, second))
         if observed is not None and observed != expected:
-            raise RuntimeError(f"{context} response identity does not match {first[-1]}")
+            raise RuntimeError(
+                f"{context} response identity does not match {first[-1]}"
+            )
     return dispatch_id
 
 
@@ -572,9 +572,7 @@ def _create_task(state: dict[str, object], role: str, text: str) -> str:
     return require_nested_string(task, ("task", "id"), "task-create")
 
 
-def _mark_task_failed(
-    state: dict[str, object], task_id: str, result: str
-) -> None:
+def _mark_task_failed(state: dict[str, object], task_id: str, result: str) -> None:
     run_orca(
         state,
         [
@@ -615,7 +613,9 @@ def start_background_role(
     model = spec.get("model")
     effort = spec.get("effort")
     instructions = spec.get("instructions")
-    if not all(isinstance(value, str) and value for value in (model, effort, instructions)):
+    if not all(
+        isinstance(value, str) and value for value in (model, effort, instructions)
+    ):
         raise ToolInputError(f"background role {role} has an invalid role spec")
     model = cast(str, model)
     effort = cast(str, effort)
@@ -695,9 +695,7 @@ def start_background_role(
         except (RuntimeError, TypeError):
             dispatch_record = dispatch.get("dispatch")
             candidate = (
-                dispatch_record.get("id")
-                if isinstance(dispatch_record, dict)
-                else None
+                dispatch_record.get("id") if isinstance(dispatch_record, dict) else None
             )
             if isinstance(candidate, str) and candidate:
                 dispatch_id = candidate
@@ -750,17 +748,48 @@ def start_background_role(
                 cleanup_errors.append(f"state rollback failed: {cleanup_error}")
         if dispatch_id is not None:
             try:
-                run_orca(state, ["orchestration", "worker-stop", "--dispatch", dispatch_id, "--json"])
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+                run_orca(
+                    state,
+                    [
+                        "orchestration",
+                        "worker-stop",
+                        "--dispatch",
+                        dispatch_id,
+                        "--json",
+                    ],
+                )
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"Dispatch cleanup failed: {cleanup_error}")
         if terminal_handle is not None:
             try:
-                run_orca(state, ["terminal", "close", "--terminal", terminal_handle, "--tab", "--json"])
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+                run_orca(
+                    state,
+                    [
+                        "terminal",
+                        "close",
+                        "--terminal",
+                        terminal_handle,
+                        "--tab",
+                        "--json",
+                    ],
+                )
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"terminal cleanup failed: {cleanup_error}")
         if prompt_path is not None:
             try:
-                remove_prompt_file(prompt_path, path.parent, role=role, launch_nonce=launch_nonce)
+                remove_prompt_file(
+                    prompt_path, path.parent, role=role, launch_nonce=launch_nonce
+                )
             except (RuntimeError, ToolInputError) as cleanup_error:
                 cleanup_errors.append(f"prompt cleanup failed: {cleanup_error}")
         if snapshot is not None:
@@ -774,8 +803,15 @@ def start_background_role(
             cleanup_errors.append(f"provider cleanup failed: {cleanup_error}")
         if task_id is not None:
             try:
-                _mark_task_failed(state, task_id, "agent-team background role startup failed")
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+                _mark_task_failed(
+                    state, task_id, "agent-team background role startup failed"
+                )
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"task cleanup failed: {cleanup_error}")
         if cleanup_errors:
             raise RuntimeError(
@@ -850,9 +886,7 @@ def start_acp_role(
         except (RuntimeError, TypeError):
             dispatch_record = dispatch.get("dispatch")
             candidate = (
-                dispatch_record.get("id")
-                if isinstance(dispatch_record, dict)
-                else None
+                dispatch_record.get("id") if isinstance(dispatch_record, dict) else None
             )
             if isinstance(candidate, str) and candidate:
                 dispatch_id = candidate
@@ -930,7 +964,12 @@ def start_acp_role(
                         "--json",
                     ],
                 )
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"Dispatch cleanup failed: {cleanup_error}")
         if terminal_handle is not None:
             try:
@@ -945,7 +984,12 @@ def start_acp_role(
                         "--json",
                     ],
                 )
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"terminal cleanup failed: {cleanup_error}")
         if prompt_path is not None:
             try:
@@ -961,10 +1005,17 @@ def start_acp_role(
             try:
                 remove_owned_tree(root)
             except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
-                cleanup_errors.append(f"background resource cleanup failed: {cleanup_error}")
+                cleanup_errors.append(
+                    f"background resource cleanup failed: {cleanup_error}"
+                )
         try:
             _mark_task_failed(state, task_id, "agent-team ACP role startup failed")
-        except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+        except (
+            RuntimeError,
+            TypeError,
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as cleanup_error:
             cleanup_errors.append(f"task cleanup failed: {cleanup_error}")
         if cleanup_errors:
             raise RuntimeError(
@@ -986,7 +1037,9 @@ def start_role(
             "agent-team processes one role at a time"
         )
     if state.get("pending_delivery_id") is not None:
-        raise ToolInputError("acknowledge the pending Orca Delivery before starting a role")
+        raise ToolInputError(
+            "acknowledge the pending Orca Delivery before starting a role"
+        )
     if role_execution(state, role) == "background":
         if role_spec(state, role).get("provider") == "claude":
             return start_acp_role(path, state, role, text)
@@ -1037,9 +1090,7 @@ def start_role(
         remaining_ms = max(0, int((startup_deadline - time.monotonic()) * 1_000))
         if remaining_ms < MIN_TIMEOUT_MS:
             raise RuntimeError(f"{role} agent did not finish loading before dispatch")
-        wait_for_agent_ready(
-            state, role, terminal_handle, timeout_ms=remaining_ms
-        )
+        wait_for_agent_ready(state, role, terminal_handle, timeout_ms=remaining_ms)
         worker = run_orca(
             state,
             [
@@ -1098,7 +1149,12 @@ def start_role(
                     ],
                 )
                 dispatch_stopped = True
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"Dispatch cleanup failed: {cleanup_error}")
         if terminal_handle is not None and (
             dispatch_id is None or not dispatch_stopped
@@ -1115,11 +1171,21 @@ def start_role(
                         "--json",
                     ],
                 )
-            except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
                 cleanup_errors.append(f"terminal cleanup failed: {cleanup_error}")
         try:
             _mark_task_failed(state, task_id, "agent-team role startup failed")
-        except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as cleanup_error:
+        except (
+            RuntimeError,
+            TypeError,
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as cleanup_error:
             cleanup_errors.append(f"task cleanup failed: {cleanup_error}")
         if cleanup_errors:
             raise RuntimeError(
@@ -1136,7 +1202,9 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         delivery_id = bounded_text(arguments, "delivery_id", maximum=256)
         pending_delivery_id = state.get("pending_delivery_id")
         if pending_delivery_id != delivery_id:
-            raise ToolInputError("delivery_id does not match the observed pending Delivery")
+            raise ToolInputError(
+                "delivery_id does not match the observed pending Delivery"
+            )
         result = run_orca(
             state,
             [
@@ -1180,9 +1248,7 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         text = bounded_text(arguments, "text", maximum=MAX_PROMPT_CHARS)
         return start_role(path, state, role, text)
     assignment = role_assignment(state, role)
-    dispatch_id = require_nested_string(
-        assignment, ("dispatch_id",), "role assignment"
-    )
+    dispatch_id = require_nested_string(assignment, ("dispatch_id",), "role assignment")
     if name == "role_get":
         return run_orca(
             state,
@@ -1196,7 +1262,9 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         )
     if name == "role_wait":
         if state.get("pending_delivery_id") is not None:
-            raise ToolInputError("acknowledge the pending Orca Delivery before waiting again")
+            raise ToolInputError(
+                "acknowledge the pending Orca Delivery before waiting again"
+            )
         timeout_ms = bounded_integer(
             arguments,
             "timeout_ms",
@@ -1229,7 +1297,10 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         messages = result.get("messages")
         if isinstance(messages, list):
             for message in messages:
-                if not isinstance(message, dict) or message.get("type") != "worker_done":
+                if (
+                    not isinstance(message, dict)
+                    or message.get("type") != "worker_done"
+                ):
                     continue
                 payload = message.get("payload")
                 if isinstance(payload, str):
@@ -1243,8 +1314,7 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
                     payload.get("taskId") == assignment.get("task_id")
                     and payload.get("dispatchId") == dispatch_id
                     and payload.get("outcome") in {"succeeded", "failed"}
-                    and worker_done_sender(message)
-                    == assignment.get("terminal_handle")
+                    and worker_done_sender(message) == assignment.get("terminal_handle")
                 ):
                     assignment["completion_observed"] = True
                     assignment["outcome"] = payload["outcome"]
@@ -1253,7 +1323,9 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         return result
     if name == "role_read":
         if assignment.get("completion_observed") is not True:
-            raise ToolInputError("role_read requires an observed worker_done for this Dispatch")
+            raise ToolInputError(
+                "role_read requires an observed worker_done for this Dispatch"
+            )
         lines = bounded_integer(
             arguments,
             "lines",
@@ -1275,7 +1347,9 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         )
     if name == "role_release":
         if assignment.get("completion_observed") is not True:
-            raise ToolInputError("role_release requires an observed worker_done for this Dispatch")
+            raise ToolInputError(
+                "role_release requires an observed worker_done for this Dispatch"
+            )
         if assignment.get("launcher_owned_terminal") is not True:
             raise ToolInputError(
                 "role release refuses a terminal whose ownership is unknown"
@@ -1298,7 +1372,11 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         terminal_handle = require_nested_string(
             assignment, ("terminal_handle",), "role assignment"
         )
-        if execution == "background" or transport == "acp" or release_state == "retained":
+        if (
+            execution == "background"
+            or transport == "acp"
+            or release_state == "retained"
+        ):
             run_orca(
                 state,
                 [
@@ -1320,7 +1398,9 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
             raw_prompt = assignment.get("prompt_path")
             nonce = assignment.get("launch_nonce")
             if not isinstance(raw_prompt, str) or not isinstance(nonce, str):
-                raise ToolInputError("ACP assignment is missing prompt cleanup identity")
+                raise ToolInputError(
+                    "ACP assignment is missing prompt cleanup identity"
+                )
             remove_prompt_file(
                 Path(raw_prompt),
                 Path(require_state_string(state, "state_path")).parent,

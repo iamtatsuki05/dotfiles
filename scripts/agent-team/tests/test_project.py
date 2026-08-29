@@ -79,7 +79,9 @@ class ProjectSmokeTest(unittest.TestCase):
     def test_copilot_path_collision_status_explains_runtime_preflight(self) -> None:
         with (
             mock.patch("agent_team.registry.shutil.which", return_value="/bin/copilot"),
-            mock.patch("agent_team.registry._github_copilot_identity", return_value=False),
+            mock.patch(
+                "agent_team.registry._github_copilot_identity", return_value=False
+            ),
         ):
             row = next(
                 item for item in status_rows() if item["harness_id"] == "copilot"
@@ -110,7 +112,10 @@ class ProjectSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "auto.*none"):
                 load_config(config)
             config.write_text(
-                copilot.replace('model = "auto"\neffort = "minimal"', 'model = "gpt-test"\neffort = "none"'),
+                copilot.replace(
+                    'model = "auto"\neffort = "minimal"',
+                    'model = "gpt-test"\neffort = "none"',
+                ),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ConfigError, "explicit.*none"):

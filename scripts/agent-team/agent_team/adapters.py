@@ -198,7 +198,9 @@ class ProcessRunner:
         except _ProcessOutputLimit as exc:
             assert process is not None
             _terminate_process_group(process)
-            raise ExecutionError("provider output exceeds the configured limit") from exc
+            raise ExecutionError(
+                "provider output exceeds the configured limit"
+            ) from exc
         except (OSError, UnicodeEncodeError) as exc:
             if process is not None and process.poll() is None:
                 _terminate_process_group(process)
@@ -452,7 +454,10 @@ def _preflight(
             )
         except (AdapterError, OSError):
             continue
-        if not _exact_version_present(observed, version) or marker.lower() not in observed.lower():
+        if (
+            not _exact_version_present(observed, version)
+            or marker.lower() not in observed.lower()
+        ):
             continue
         return AdapterSnapshot(adapter_id, version, resolved, observed, identity)
     raise AdapterError(
@@ -477,9 +482,7 @@ def _validate_snapshot(
 
 
 def _exact_version_present(output: str, version: str) -> bool:
-    return re.search(
-        rf"(?<![0-9]){re.escape(version)}(?![0-9])", output
-    ) is not None
+    return re.search(rf"(?<![0-9]){re.escape(version)}(?![0-9])", output) is not None
 
 
 def _validate_prompt(prompt: str) -> None:
@@ -574,7 +577,7 @@ class CopilotReadOnlyAdapter:
             prompt,
         ]
         if context.model != "auto" and context.effort != "none":
-            argv[argv.index("-p"):argv.index("-p")] = ["--effort", context.effort]
+            argv[argv.index("-p") : argv.index("-p")] = ["--effort", context.effort]
         return tuple(argv)
 
     def execute(
@@ -875,16 +878,12 @@ def _has_symlink_component(root: Path, relative: str) -> bool:
     return False
 
 
-def _read_source_bytes(
-    root: Path, relative: str, before: os.stat_result
-) -> bytes:
+def _read_source_bytes(root: Path, relative: str, before: os.stat_result) -> bytes:
     components = Path(relative).parts
     if not components:
         raise SnapshotError("snapshot source path is empty")
     directory_flags = (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     )
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     directory_fds: list[int] = []
@@ -912,9 +911,7 @@ def _read_source_bytes(
                 or opened.st_mode != before.st_mode
                 or opened.st_size != before.st_size
             ):
-                raise SnapshotError(
-                    f"workspace file changed while copying: {relative}"
-                )
+                raise SnapshotError(f"workspace file changed while copying: {relative}")
             chunks: list[bytes] = []
             size = 0
             while True:
@@ -932,9 +929,7 @@ def _read_source_bytes(
                 after.st_size != opened.st_size
                 or after.st_mtime_ns != opened.st_mtime_ns
             ):
-                raise SnapshotError(
-                    f"workspace file changed while copying: {relative}"
-                )
+                raise SnapshotError(f"workspace file changed while copying: {relative}")
             return b"".join(chunks)
         finally:
             os.close(file_fd)
@@ -964,10 +959,9 @@ def _remove_owned_tree(root: Path) -> None:
         identity_name = root.name.removesuffix("-ready")
     else:
         identity_name = root.name
-    if (
-        root.parent.resolve(strict=False) != temporary_parent
-        or not identity_name.startswith(allowed_prefixes)
-    ):
+    if root.parent.resolve(
+        strict=False
+    ) != temporary_parent or not identity_name.startswith(allowed_prefixes):
         raise SnapshotError(f"snapshot cleanup target is not launcher-owned: {root}")
     try:
         root_stat = root.lstat()
@@ -984,9 +978,7 @@ def _remove_owned_tree(root: Path) -> None:
             f"snapshot cleanup target is not an owned directory: {root}"
         )
     directory_flags = (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     )
     parent_fd: int | None = None
     root_fd: int | None = None
@@ -1014,9 +1006,7 @@ def _remove_owned_tree(root: Path) -> None:
 
 def _remove_owned_tree_fd(directory_fd: int) -> None:
     directory_flags = (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     )
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     with os.scandir(os.dup(directory_fd)) as entries:
@@ -1024,7 +1014,9 @@ def _remove_owned_tree_fd(directory_fd: int) -> None:
     for entry in entry_list:
         entry_stat = entry.stat(follow_symlinks=False)
         if entry_stat.st_uid != os.getuid():
-            raise SnapshotError(f"snapshot cleanup entry has unexpected owner: {entry.name}")
+            raise SnapshotError(
+                f"snapshot cleanup entry has unexpected owner: {entry.name}"
+            )
         if stat.S_ISLNK(entry_stat.st_mode):
             os.unlink(entry.name, dir_fd=directory_fd)
             continue

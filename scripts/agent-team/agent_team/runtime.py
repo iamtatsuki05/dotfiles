@@ -87,21 +87,29 @@ def _state_dir_stat(state_dir: Path) -> os.stat_result:
     try:
         directory_stat = state_dir.lstat()
     except OSError as exc:
-        raise RuntimeValidationError(f"state directory is unavailable: {state_dir}") from exc
+        raise RuntimeValidationError(
+            f"state directory is unavailable: {state_dir}"
+        ) from exc
     if stat.S_ISLNK(directory_stat.st_mode):
-        raise RuntimeValidationError(f"state directory must not be a symlink: {state_dir}")
+        raise RuntimeValidationError(
+            f"state directory must not be a symlink: {state_dir}"
+        )
     if not stat.S_ISDIR(directory_stat.st_mode):
-        raise RuntimeValidationError(f"state directory must be a directory: {state_dir}")
+        raise RuntimeValidationError(
+            f"state directory must be a directory: {state_dir}"
+        )
     if directory_stat.st_uid != os.getuid():
-        raise RuntimeValidationError(f"state directory owner is not the current user: {state_dir}")
+        raise RuntimeValidationError(
+            f"state directory owner is not the current user: {state_dir}"
+        )
     if stat.S_IMODE(directory_stat.st_mode) != 0o700:
-        raise RuntimeValidationError(f"state directory must have mode 0700: {state_dir}")
+        raise RuntimeValidationError(
+            f"state directory must have mode 0700: {state_dir}"
+        )
     return directory_stat
 
 
-def _prompt_path(
-    state_dir: Path, role: str, launch_nonce: str
-) -> Path:
+def _prompt_path(state_dir: Path, role: str, launch_nonce: str) -> Path:
     _require_role_nonce(role, launch_nonce, "prompt identity")
     return _absolute(state_dir) / f"prompt-{role}-{launch_nonce}.md"
 
@@ -133,9 +141,13 @@ def validate_prompt_file(
     try:
         raw_stat = raw_candidate.lstat()
     except OSError as exc:
-        raise RuntimeValidationError(f"ACP prompt is unavailable: {raw_candidate}") from exc
+        raise RuntimeValidationError(
+            f"ACP prompt is unavailable: {raw_candidate}"
+        ) from exc
     if stat.S_ISLNK(raw_stat.st_mode):
-        raise RuntimeValidationError(f"ACP prompt must not be a symlink: {raw_candidate}")
+        raise RuntimeValidationError(
+            f"ACP prompt must not be a symlink: {raw_candidate}"
+        )
     candidate = _canonical(raw_candidate)
     try:
         candidate.relative_to(state_dir)
@@ -144,13 +156,17 @@ def validate_prompt_file(
             "ACP prompt must stay directly in the state directory"
         ) from exc
     if candidate.parent != state_dir:
-        raise RuntimeValidationError("ACP prompt must stay directly in the state directory")
+        raise RuntimeValidationError(
+            "ACP prompt must stay directly in the state directory"
+        )
     if (role is None) != (launch_nonce is None):
         raise RuntimeValidationError("prompt identity must be complete")
     if role is not None and launch_nonce is not None:
         expected = _prompt_path(state_dir, role, launch_nonce)
         if candidate != expected:
-            raise RuntimeValidationError("ACP prompt path does not match its launch identity")
+            raise RuntimeValidationError(
+                "ACP prompt path does not match its launch identity"
+            )
     try:
         file_stat = candidate.lstat()
     except OSError as exc:
@@ -170,7 +186,9 @@ def create_prompt_file(
     try:
         state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     except OSError as exc:
-        raise RuntimeValidationError(f"could not create ACP state directory: {state_dir}") from exc
+        raise RuntimeValidationError(
+            f"could not create ACP state directory: {state_dir}"
+        ) from exc
     _state_dir_stat(state_dir)
     state_dir = _canonical(state_dir)
     path = _prompt_path(state_dir, role, launch_nonce)
@@ -189,7 +207,9 @@ def create_prompt_file(
     except OSError as exc:
         if fd is not None:
             os.close(fd)
-        raise RuntimeValidationError(f"could not create ACP prompt file: {path}") from exc
+        raise RuntimeValidationError(
+            f"could not create ACP prompt file: {path}"
+        ) from exc
     validate_prompt_file(path, state_dir, role=role, launch_nonce=launch_nonce)
     return path
 
@@ -222,7 +242,9 @@ def read_prompt_file(
         if len(data) > MAX_PROMPT_BYTES:
             raise RuntimeValidationError("ACP prompt exceeds byte limit")
     except OSError as exc:
-        raise RuntimeValidationError(f"could not read ACP prompt file: {candidate}") from exc
+        raise RuntimeValidationError(
+            f"could not read ACP prompt file: {candidate}"
+        ) from exc
     finally:
         if fd is not None:
             os.close(fd)
@@ -248,7 +270,9 @@ def remove_prompt_file(
     try:
         candidate.unlink()
     except OSError as exc:
-        raise RuntimeValidationError(f"could not remove ACP prompt file: {candidate}") from exc
+        raise RuntimeValidationError(
+            f"could not remove ACP prompt file: {candidate}"
+        ) from exc
 
 
 def build_role_command(
@@ -431,10 +455,7 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
         elif key != "version" and (not isinstance(value, str) or not value):
             raise RuntimeValidationError(f"agent-team state is missing {key}")
     state_path = state.get("state_path")
-    if (
-        not isinstance(state_path, str)
-        or _canonical(Path(state_path)) != path
-    ):
+    if not isinstance(state_path, str) or _canonical(Path(state_path)) != path:
         raise RuntimeValidationError("agent-team state path does not match its file")
     role_specs = state["role_specs"]
     assert isinstance(role_specs, dict)
@@ -509,7 +530,10 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
                     raise RuntimeValidationError(
                         f"agent-team state background assignment is missing {role}.{key}"
                     )
-            if assignment["execution"] != "background" or assignment["adapter_id"] != spec["adapter_id"]:
+            if (
+                assignment["execution"] != "background"
+                or assignment["adapter_id"] != spec["adapter_id"]
+            ):
                 raise RuntimeValidationError(
                     f"agent-team state background assignment identity does not match {role}"
                 )
@@ -564,8 +588,12 @@ def write_state(
             raise RuntimeValidationError(
                 f"agent-team state disappeared before save: {path}"
             ) from exc
-        if not stat.S_ISREG(existing_stat.st_mode) or stat.S_ISLNK(existing_stat.st_mode):
-            raise RuntimeValidationError(f"agent-team state is not a regular file: {path}")
+        if not stat.S_ISREG(existing_stat.st_mode) or stat.S_ISLNK(
+            existing_stat.st_mode
+        ):
+            raise RuntimeValidationError(
+                f"agent-team state is not a regular file: {path}"
+            )
         existing = (existing_stat.st_dev, existing_stat.st_ino)
     temporary = path.with_suffix(".tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -601,7 +629,9 @@ def write_state(
             pass
         if isinstance(exc, RuntimeValidationError):
             raise
-        raise RuntimeValidationError(f"could not write agent-team state: {path}") from exc
+        raise RuntimeValidationError(
+            f"could not write agent-team state: {path}"
+        ) from exc
 
 
 def read_state(path: Path) -> dict[str, object]:
@@ -615,7 +645,9 @@ def read_state(path: Path) -> dict[str, object]:
     if not stat.S_ISREG(file_stat.st_mode):
         raise RuntimeValidationError(f"agent-team state must be a regular file: {path}")
     if file_stat.st_uid != os.getuid():
-        raise RuntimeValidationError(f"agent-team state owner is not the current user: {path}")
+        raise RuntimeValidationError(
+            f"agent-team state owner is not the current user: {path}"
+        )
     if stat.S_IMODE(file_stat.st_mode) != 0o600:
         raise RuntimeValidationError(f"agent-team state must have mode 0600: {path}")
     flags = os.O_RDONLY
@@ -632,7 +664,9 @@ def read_state(path: Path) -> dict[str, object]:
             raise RuntimeValidationError("agent-team state changed during open")
         payload = _read_bounded_fd(fd, MAX_STATE_BYTES)
     except OSError as exc:
-        raise RuntimeValidationError(f"agent-team state is unavailable: {path}") from exc
+        raise RuntimeValidationError(
+            f"agent-team state is unavailable: {path}"
+        ) from exc
     finally:
         if fd is not None:
             os.close(fd)
@@ -652,7 +686,9 @@ def _state_tree_root(state_path: Path, state: dict[str, object]) -> Path:
     if not isinstance(state_value, str) or not isinstance(team_id, str) or not team_id:
         raise RuntimeValidationError("agent-team state is missing cleanup identity")
     if _canonical(Path(state_value)) != _canonical(raw_state_path):
-        raise RuntimeValidationError("agent-team state path does not match cleanup target")
+        raise RuntimeValidationError(
+            "agent-team state path does not match cleanup target"
+        )
     root = raw_state_path.parent
     _state_dir_stat(root)
     if root.name != team_id:
@@ -660,7 +696,9 @@ def _state_tree_root(state_path: Path, state: dict[str, object]) -> Path:
     try:
         state_stat = raw_state_path.lstat()
     except OSError as exc:
-        raise RuntimeValidationError(f"agent-team state is unavailable: {raw_state_path}") from exc
+        raise RuntimeValidationError(
+            f"agent-team state is unavailable: {raw_state_path}"
+        ) from exc
     if stat.S_ISLNK(state_stat.st_mode) or not stat.S_ISREG(state_stat.st_mode):
         raise RuntimeValidationError("agent-team state must be a regular file")
     if state_stat.st_uid != os.getuid() or stat.S_IMODE(state_stat.st_mode) != 0o600:
@@ -682,13 +720,13 @@ def _open_directory(path: Path) -> int:
         raise RuntimeValidationError(f"state path is not a directory: {path}")
     if directory_stat.st_uid != os.getuid():
         os.close(directory_fd)
-        raise RuntimeValidationError(f"state directory owner is not the current user: {path}")
+        raise RuntimeValidationError(
+            f"state directory owner is not the current user: {path}"
+        )
     return directory_fd
 
 
-def _open_child_directory(
-    parent_fd: int, name: str, expected: os.stat_result
-) -> int:
+def _open_child_directory(parent_fd: int, name: str, expected: os.stat_result) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -761,7 +799,9 @@ def _validate_state_tree_fd(directory_fd: int, relative: str = "") -> None:
             os.close(child_fd)
 
 
-def _open_validated_state_root(state_path: Path, state: dict[str, object]) -> tuple[Path, int, os.stat_result]:
+def _open_validated_state_root(
+    state_path: Path, state: dict[str, object]
+) -> tuple[Path, int, os.stat_result]:
     root = _state_tree_root(state_path, state)
     root_fd = _open_directory(root)
     try:
@@ -794,7 +834,9 @@ def _remove_state_tree_fd(directory_fd: int, relative: str = "") -> None:
             try:
                 os.unlink(entry.name, dir_fd=directory_fd)
             except OSError as exc:
-                raise RuntimeValidationError(f"could not remove state tree entry: {entry_name}") from exc
+                raise RuntimeValidationError(
+                    f"could not remove state tree entry: {entry_name}"
+                ) from exc
             continue
         if not stat.S_ISDIR(entry_stat.st_mode):
             raise RuntimeValidationError(
@@ -808,7 +850,9 @@ def _remove_state_tree_fd(directory_fd: int, relative: str = "") -> None:
         try:
             os.rmdir(entry.name, dir_fd=directory_fd)
         except OSError as exc:
-            raise RuntimeValidationError(f"could not remove state tree directory: {entry_name}") from exc
+            raise RuntimeValidationError(
+                f"could not remove state tree directory: {entry_name}"
+            ) from exc
 
 
 def remove_state_tree(state_path: Path, state: dict[str, object]) -> None:
