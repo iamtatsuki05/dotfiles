@@ -1,39 +1,23 @@
+"""Static Antigravity provenance and historical safety evidence.
+
+This module deliberately does not start ``agy`` or any other provider
+process.  The live ``-p/--print`` matrix remains a separate, approval-gated
+follow-up after a static identity and policy have been reviewed.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import json
-import platform
-import re
-from collections.abc import Iterable, Mapping, Sequence
+import os
+import stat
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Final, Literal, NamedTuple, NoReturn, cast
+from typing import Final, Literal, NoReturn
 
-from . import probe_receipts
-from .adapters import (
-    SAFE_ENV_KEYS,
-    FileIdentity,
-    ProcessResult,
-    ProcessRunner,
-    _identity,
-    _version_probe,
-    safe_environment,
-)
-from .probe_receipts import (
-    _PHASE_EVIDENCE,
-    BLOCKER_CODES,
-    CURRENT_SCHEMA_VERSION,
-    CleanupInventory,
-    ExecutableIdentity,
-    Judgment,
-    Manifest,
-    PhaseReceipt,
-    ProfileIdentity,
-    Receipt,
-    ReceiptValidationError,
-    ToolEvidence,
-    judge_profile,
-    required_phases_for_profile,
-)
+from .adapters import FileIdentity
+from .probe_receipts import CURRENT_SCHEMA_VERSION
 
 ANTIGRAVITY_EXECUTABLE: Final = Path("/opt/homebrew/bin/agy")
 ANTIGRAVITY_VERSION: Final = "1.1.22"
@@ -44,14 +28,18 @@ ANTIGRAVITY_SIGNING_IDENTITY: Final = (
     "Developer ID Application: Google LLC (EQHXZ8M8AV)"
 )
 ANTIGRAVITY_TEAM_ID: Final = "EQHXZ8M8AV"
-PROBE_REVISION: Final = "antigravity-probe-20260830-v1"
+PROBE_REVISION: Final = "antigravity-static-probe-20260830-v2"
 RAW_POLICY_ID: Final = "antigravity-raw-workspace-readonly-v1"
 SNAPSHOT_POLICY_ID: Final = "antigravity-snapshot-seatbelt-readonly-v1"
+
 ProbeProfile = Literal["raw-workspace", "snapshot"]
+RoleToken = Literal["planner", "reviewer"]
+SnapshotStatus = Literal["blocked", "not-run"]
+SnapshotReason = Literal["outer-sandbox-unverified", "provider-not-run"]
 
 
 class AntigravityProbeError(ValueError):
-    pass
+    """Raised when static Antigravity evidence is not pinned or safe."""
 
 
 def _fail(message: str) -> NoReturn:
@@ -59,15 +47,43 @@ def _fail(message: str) -> NoReturn:
 
 
 def _text(value: object, field: str) -> str:
-    return probe_receipts._text(value, field, allow_markers=True)
+    if not isinstance(value, str) or not value or len(value) > 4096:
+        _fail(f"{field} is invalid")
+    if any(
+        ord(char) < 0x20
+        or ord(char) == 0x7F
+        or 0xD800 <= ord(char) <= 0xDFFF
+        or ord(char) in {0x2028, 0x2029}
+        for char in value
+    ):
+        _fail(f"{field} contains a control character")
+    return value
 
 
-class DeviceIdentity(NamedTuple):
+def _sha256(value: object, field: str) -> str:
+    text = _text(value, field)
+    if len(text) != 64 or any(char not in "0123456789abcdef" for char in text):
+        _fail(f"{field} is not a lowercase SHA-256 digest")
+    return text
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceIdentity:
     os_name: str
     architecture: str
     kernel_release: str
     os_version: str
     model_identifier: str
+
+    def __post_init__(self) -> None:
+        for field, value in (
+            ("device.os_name", self.os_name),
+            ("device.architecture", self.architecture),
+            ("device.kernel_release", self.kernel_release),
+            ("device.os_version", self.os_version),
+            ("device.model_identifier", self.model_identifier),
+        ):
+            _text(value, field)
 
 
 EXPECTED_DEVICE_IDENTITY: Final = DeviceIdentity(
@@ -75,675 +91,477 @@ EXPECTED_DEVICE_IDENTITY: Final = DeviceIdentity(
 )
 
 
-class CodeSignature(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class CodeSignature:
+    """The verified leaf signer and Team ID, without raw ``codesign`` output."""
+
     identifier: str
     team_id: str
-    valid: bool
+
+    def __post_init__(self) -> None:
+        _text(self.identifier, "signature.identifier")
+        _text(self.team_id, "signature.team_id")
 
 
-EXPECTED_SIGNATURE: Final = (
-    ANTIGRAVITY_SIGNING_IDENTITY,
-    ANTIGRAVITY_TEAM_ID,
-    True,
+EXPECTED_SIGNATURE: Final = CodeSignature(
+    ANTIGRAVITY_SIGNING_IDENTITY, ANTIGRAVITY_TEAM_ID
 )
 
 
-class BinaryProvenance(NamedTuple):
-    executable: ExecutableIdentity
-    file_identity: FileIdentity
-    signature: CodeSignature
-    device_identity: DeviceIdentity
-
-
-def validate_binary_provenance(
+def _validate_pin_values(
     *,
-    path: Path,
+    executable_path: str,
     version: str,
-    identity: FileIdentity,
+    sha256: str,
     signature: CodeSignature,
     device_identity: DeviceIdentity,
-) -> BinaryProvenance:
-    if not (
-        isinstance(path, Path)
-        and path.is_absolute()
-        and path == ANTIGRAVITY_EXECUTABLE
-        and isinstance(identity, FileIdentity)
-        and identity.sha256 == ANTIGRAVITY_SHA256
-        and version == ANTIGRAVITY_VERSION
-        and isinstance(signature, CodeSignature)
-        and (signature.identifier, signature.team_id, signature.valid)
-        == EXPECTED_SIGNATURE
-        and isinstance(device_identity, DeviceIdentity)
-        and device_identity == EXPECTED_DEVICE_IDENTITY
-    ):
-        _fail("agy binary provenance is not pinned")
-    return BinaryProvenance(
-        ExecutableIdentity(str(path), version, identity.sha256),
-        identity,
-        signature,
-        device_identity,
-    )
-
-
-def _run_preflight(
-    runner: ProcessRunner,
-    argv: Sequence[str],
-    private_root: Path,
-) -> ProcessResult:
-    return runner.run(
-        argv,
-        cwd=private_root,
-        env=safe_environment(
-            "antigravity", home=private_root, private_root=private_root
-        ),
-        timeout_seconds=15,
-    )
-
-
-def _checked_identity(path: Path) -> FileIdentity:
-    if path.is_symlink():
-        _fail("pinned agy executable must not be a symlink")
-    return _identity(path)
-
-
-def preflight_binary(
-    *,
-    private_root: Path,
-    executable: Path = ANTIGRAVITY_EXECUTABLE,
-    runner: ProcessRunner | None = None,
-) -> BinaryProvenance:
-    if executable != ANTIGRAVITY_EXECUTABLE or not isinstance(private_root, Path):
-        _fail("agy preflight identity is not pinned")
-    if not private_root.is_absolute():
-        _fail("agy preflight private root must be absolute")
-    selected = runner if runner is not None else ProcessRunner()
-    identity = _checked_identity(executable)
-    version = _version_probe(
-        executable,
-        provider="antigravity",
-        private_root=private_root,
-        runner=selected,
-    )
+) -> None:
     if (
-        re.search(rf"(?<![0-9]){re.escape(ANTIGRAVITY_VERSION)}(?![0-9])", version)
-        is None
+        executable_path != str(ANTIGRAVITY_EXECUTABLE)
+        or version != ANTIGRAVITY_VERSION
+        or sha256 != ANTIGRAVITY_SHA256
+        or signature != EXPECTED_SIGNATURE
+        or device_identity != EXPECTED_DEVICE_IDENTITY
     ):
-        _fail("agy version probe did not report the pinned version")
-    verified = _run_preflight(
-        selected,
-        ("/usr/bin/codesign", "--verify", "--strict", str(executable)),
-        private_root,
-    )
-    if verified.returncode != 0:
-        _fail("agy code signature verification failed")
-    metadata = _run_preflight(
-        selected,
-        ("/usr/bin/codesign", "-dv", "--verbose=4", str(executable)),
-        private_root,
-    )
-    if metadata.returncode != 0:
-        _fail("agy code signature metadata probe failed")
-    fields = {
-        key: line.partition("=")[2].strip()
-        for line in metadata.stderr.splitlines()
-        for key in ("Authority", "TeamIdentifier")
-        if line.startswith(f"{key}=")
-    }
-    if (
-        fields.get("Authority") != ANTIGRAVITY_SIGNING_IDENTITY
-        or fields.get("TeamIdentifier") != ANTIGRAVITY_TEAM_ID
-    ):
-        _fail("agy code signature metadata does not match the pinned signer")
-    system, architecture = platform.system(), platform.machine()
-    os_version = platform.mac_ver()[0]
-    if (system, architecture) != ("Darwin", "arm64") or not os_version:
-        _fail("agy probe requires the audited Darwin arm64 host")
-    model = _run_preflight(
-        selected, ("/usr/sbin/sysctl", "-n", "hw.model"), private_root
-    )
-    if model.returncode != 0 or not model.stdout.strip():
-        _fail("macOS model identity probe failed")
-    return validate_binary_provenance(
-        path=executable,
-        version=ANTIGRAVITY_VERSION,
-        identity=identity,
-        signature=CodeSignature(fields["Authority"], fields["TeamIdentifier"], True),
-        device_identity=DeviceIdentity(
-            system, architecture, platform.release(), os_version, model.stdout.strip()
-        ),
-    )
+        _fail("agy static provenance is not pinned")
 
 
-def _executable(value: ExecutableIdentity) -> None:
-    if not isinstance(value, ExecutableIdentity) or (
-        value.path,
-        value.version,
-        value.sha256,
-    ) != (str(ANTIGRAVITY_EXECUTABLE), ANTIGRAVITY_VERSION, ANTIGRAVITY_SHA256):
-        _fail("agy command must use the pinned executable identity")
+def _validate_file_identity(identity: FileIdentity) -> None:
+    if not isinstance(identity, FileIdentity) or identity.sha256 != ANTIGRAVITY_SHA256:
+        _fail("agy same-fd file identity is not pinned")
+    for value in (identity.device, identity.inode, identity.size, identity.mtime_ns):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            _fail("agy same-fd file identity is invalid")
 
 
-def build_probe_argv(
-    *,
-    executable: ExecutableIdentity,
-    profile: ProbeProfile,
-    prompt: str,
-    model: str,
-    effort: Literal["low", "medium", "high"] = "low",
-) -> tuple[str, ...]:
-    _executable(executable)
-    if not isinstance(profile, str) or profile not in {"raw-workspace", "snapshot"}:
-        _fail(f"unsupported Antigravity probe profile: {profile!r}")
-    checked_prompt = _text(prompt, "agy prompt")
-    if not checked_prompt.strip():
-        _fail("agy prompt must not be empty")
-    checked_model = _text(model, "agy model")
-    if not isinstance(effort, str) or effort not in {"low", "medium", "high"}:
-        _fail("agy effort is invalid")
-    return (
-        str(ANTIGRAVITY_EXECUTABLE),
-        "--print",
-        checked_prompt,
-        "--mode",
-        "plan",
-        "--sandbox",
-        "--output-format",
-        "stream-json",
-        "--input-format",
-        "text",
-        "--disable-slash-commands",
-        "--print-timeout",
-        "90s",
-        "--model",
-        checked_model,
-        "--effort",
-        effort,
-    )
+@dataclass(frozen=True, slots=True)
+class StaticProvenance:
+    executable_path: str
+    version: str
+    sha256: str
+    signature: CodeSignature
+    device_identity: DeviceIdentity
+    file_identity: FileIdentity
 
-
-def build_probe_manifest(
-    *,
-    profile: ProbeProfile,
-    workspace: Path,
-    executable: ExecutableIdentity,
-    file_identity: FileIdentity,
-    argv: Sequence[str],
-    environment_allowlist: Sequence[str],
-) -> Manifest:
-    if not isinstance(profile, str) or profile not in {"raw-workspace", "snapshot"}:
-        _fail(f"unsupported Antigravity probe profile: {profile!r}")
-    selected = cast(ProbeProfile, profile)
-    if (
-        not isinstance(workspace, Path)
-        or not workspace.is_absolute()
-        or workspace.is_symlink()
-    ):
-        _fail("agy probe workspace must be a non-symlink absolute path")
-    _executable(executable)
-    if (
-        not isinstance(file_identity, FileIdentity)
-        or file_identity.sha256 != ANTIGRAVITY_SHA256
-    ):
-        _fail("agy manifest file identity is not pinned")
-    if not isinstance(argv, Sequence):
-        _fail("agy argv must be a sequence")
-    values = tuple(argv)
-    if len(values) != 17:
-        _fail("agy argv has an unsupported route or option")
-    if values != build_probe_argv(
-        executable=executable,
-        profile=selected,
-        prompt=values[2],
-        model=values[14],
-        effort=cast(Literal["low", "medium", "high"], values[16]),
-    ):
-        _fail("agy argv has an unsupported route or option")
-    names = tuple(environment_allowlist)
-    if (
-        any(not isinstance(name, str) for name in names)
-        or len(set(names)) != len(names)
-        or any(
-            name not in SAFE_ENV_KEYS and not name.startswith("LC_") for name in names
+    def __post_init__(self) -> None:
+        _validate_pin_values(
+            executable_path=self.executable_path,
+            version=self.version,
+            sha256=self.sha256,
+            signature=self.signature,
+            device_identity=self.device_identity,
         )
-    ):
-        _fail("agy environment allowlist is not closed")
-    digest = hashlib.sha256(
-        json.dumps(list(values), ensure_ascii=False, separators=(",", ":")).encode()
-    ).hexdigest()
-    return Manifest(
-        ProfileIdentity(
-            CURRENT_SCHEMA_VERSION,
-            "antigravity",
-            "read-only",
-            "darwin",
-            "arm64",
-            PROBE_REVISION,
-            executable,
-            digest,
-            "argv",
-            str(workspace.resolve(strict=False)),
-            names,
-            RAW_POLICY_ID if selected == "raw-workspace" else SNAPSHOT_POLICY_ID,
-        ),
-        required_phases_for_profile("read-only"),
-    )
+        _validate_file_identity(self.file_identity)
 
 
-class AntigravityProbeTargets(NamedTuple):
-    workspace: Path
-    normal: Path
-    outside: Path
-    symlink: Path
-    git: Path
-    secret: Path
-    local_url: str
-    external_url: str
-    process_marker: Path
+def validate_static_provenance(provenance: StaticProvenance) -> StaticProvenance:
+    """Return only a fully pinned static provenance object."""
 
-
-class ParsedAntigravityEvents(NamedTuple):
-    observations: tuple[ToolEvidence, ...]
-
-
-KNOWN_RAW_OUTSIDE_READ_EVIDENCE: Final = ToolEvidence(
-    "filesystem", "read", "outside", "allowed"
-)
-KNOWN_RAW_OUTSIDE_READ = ParsedAntigravityEvents((KNOWN_RAW_OUTSIDE_READ_EVIDENCE,))
-
-
-_ALLOWED: Final[frozenset[str]] = frozenset(
-    {"completed", "success", "succeeded", "ok", "allowed"}
-)
-_DENIED: Final[frozenset[str]] = frozenset(
-    {"error", "failed", "failure", "denied", "rejected", "blocked", "forbidden"}
-)
-_PATH_KEYS: Final[tuple[str, ...]] = ("file_path", "filePath", "path")
-_URL_KEYS: Final[tuple[str, ...]] = ("url", "uri")
-_COMMAND_KEYS: Final[tuple[str, ...]] = ("command", "cmd")
-_TOOL_SHAPES: Final[dict[str, tuple[str, str, tuple[str, ...]]]] = {
-    "read_file": ("filesystem", "read", _PATH_KEYS),
-    "write_file": ("filesystem", "write", _PATH_KEYS),
-    "write_to_file": ("filesystem", "write", _PATH_KEYS),
-    "replace_file_content": ("filesystem", "write", _PATH_KEYS),
-    "multi_replace_file_content": ("filesystem", "write", _PATH_KEYS),
-    "web_fetch": ("network", "connect", _URL_KEYS),
-    "run_command": ("process", "spawn", _COMMAND_KEYS),
-}
-_EVENT_TYPES: Final = ("tool_result", "tool_call")
-
-
-def _string(value: object, field: str) -> str:
-    if isinstance(value, str) and value:
-        return _text(value, f"tool event {field}")
-    _fail(f"tool event has no {field}")
-
-
-def _input(event: Mapping[str, object]) -> Mapping[str, object]:
-    value = event.get("parameters")
-    if isinstance(value, dict):
-        return value
-    raw = event.get("tool_call_args_json")
-    if isinstance(raw, str):
-        try:
-            decoded: object = json.loads(raw)
-        except (TypeError, ValueError) as exc:
-            raise AntigravityProbeError(
-                "tool call arguments are not valid JSON"
-            ) from exc
-        if isinstance(decoded, dict):
-            return decoded
-    _fail("tool event has no structured input")
-
-
-def _status(event: Mapping[str, object]) -> str | None:
-    value = event.get("status")
-    if isinstance(value, str) and value:
-        return value.lower()
-    error = event.get("tool_result_is_error")
-    if isinstance(error, bool):
-        return "error" if error else "success"
-    return None
-
-
-def _target(value: str, targets: AntigravityProbeTargets) -> str:
-    stripped = value.strip().rstrip("/")
-    if stripped == targets.local_url.rstrip("/"):
-        return "local-network"
-    if stripped == targets.external_url.rstrip("/"):
-        return "external-network"
-    cleaned = Path(value.strip().strip("\"'`").removeprefix("file://"))
-    for name, path in (
-        ("symlink", targets.symlink),
-        ("secret", targets.secret),
-        ("git", targets.git),
-        ("outside", targets.outside),
-        ("workspace", targets.normal),
-    ):
-        if cleaned in {path, path.absolute()}:
-            return name
-        try:
-            relative = path.absolute().relative_to(targets.workspace.absolute())
-        except ValueError:
-            continue
-        if cleaned in {relative, Path(f"./{relative}")}:
-            return name
-    if cleaned in {Path("."), targets.workspace}:
-        return "workspace"
-    _fail("tool event target is outside the declared probe matrix")
-
-
-def _evidence(
-    tool: str,
-    input_value: Mapping[str, object],
-    status: str,
-    targets: AntigravityProbeTargets,
-) -> ToolEvidence:
-    shape = _TOOL_SHAPES.get(tool)
-    if shape is None:
-        _fail(f"unsupported Antigravity provider tool: {tool}")
-    kind, operation, keys = shape
-    result = (
-        "allowed" if status in _ALLOWED else "denied" if status in _DENIED else None
-    )
-    if result is None:
-        _fail(f"unsupported Antigravity tool status: {status}")
-    value = _string(
-        next((input_value[key] for key in keys if key in input_value), None),
-        "target",
-    )
-    if kind == "process":
-        if not any(
-            marker in value for marker in ("sleep 6", targets.process_marker.name)
-        ):
-            _fail("process tool target is not the declared process probe")
-        target = "process"
-    else:
-        target = _target(value, targets)
-    if kind == "network" and target not in {"local-network", "external-network"}:
-        _fail("network tool target is not the declared network probe")
-    return ToolEvidence(kind, operation, target, result)
-
-
-def parse_antigravity_events(
-    raw: str, targets: AntigravityProbeTargets
-) -> ParsedAntigravityEvents:
-    if not isinstance(raw, str):
-        _fail("Antigravity output must be text")
-    observations: list[ToolEvidence] = []
-    completed: dict[str, ToolEvidence] = {}
-    pending: dict[str, tuple[str, Mapping[str, object]]] = {}
-    for line_number, line in enumerate(raw.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            value: object = json.loads(line)
-        except (TypeError, ValueError) as exc:
-            raise AntigravityProbeError(
-                f"Antigravity output line {line_number} is not JSON"
-            ) from exc
-        if not isinstance(value, dict):
-            _fail(f"Antigravity output line {line_number} must be an object")
-        event = cast(Mapping[str, object], value)
-        event_type = event.get("type")
-        if not isinstance(event_type, str) or event_type not in _EVENT_TYPES:
-            continue
-        status = _status(event)
-        call_value = event.get("tool_call_id") or event.get("call_id")
-        call_id = (
-            _text(call_value, "tool event call ID")
-            if isinstance(call_value, str) and call_value
-            else None
-        )
-        if status is None:
-            if event_type != "tool_call" or call_id is None:
-                _fail("terminal tool event has no status or call ID")
-            pending[call_id] = (
-                _string(event.get("tool_name"), "name").lower(),
-                _input(event),
-            )
-            continue
-        previous = pending.pop(call_id, None) if call_id is not None else None
-        value = event.get("tool_name")
-        tool = (
-            _text(value, "tool event name").lower()
-            if isinstance(value, str) and value
-            else previous[0]
-            if previous
-            else _fail("tool event has no name")
-        )
-        try:
-            input_value = _input(event)
-        except AntigravityProbeError:
-            if previous is None:
-                raise
-            input_value = previous[1]
-        item = _evidence(tool, input_value, status, targets)
-        if call_id is not None:
-            old = completed.get(call_id)
-            if old is not None and old != item:
-                _fail("one Antigravity tool call produced contradictory results")
-            if old is not None:
-                continue
-            completed[call_id] = item
-        observations.append(item)
-    if pending:
-        _fail("Antigravity tool call has no terminal result")
-    return ParsedAntigravityEvents(tuple(dict.fromkeys(observations)))
-
-
-_EXPECTED: Final = {
-    phase: tuple(ToolEvidence(*item) for item in values)
-    for phase, values in _PHASE_EVIDENCE.items()
-}
-_PERMITTED: Final = {
-    phase: expected
-    + tuple(
-        ToolEvidence(
-            item.tool,
-            item.operation,
-            item.target,
-            {"denied": "allowed", "allowed": "denied", "clean": "residual"}[
-                item.result
-            ],
-        )
-        for item in expected
-    )
-    for phase, expected in _EXPECTED.items()
-}
-
-
-def attest_phase(
-    phase_id: str,
-    evidence: Iterable[ToolEvidence],
-    *,
-    exit_code: int | None,
-    timed_out: bool = False,
-    cleanup: CleanupInventory | None = None,
-    strict: bool = True,
-) -> PhaseReceipt:
-    expected = _EXPECTED[phase_id]
-    observed = tuple(evidence)
-    if (
-        any(not isinstance(item, ToolEvidence) for item in observed)
-        or len(set(observed)) != len(observed)
-        or any(item not in _PERMITTED[phase_id] for item in observed)
-        or strict
-        and observed != expected
-    ):
-        raise ReceiptValidationError(
-            f"Antigravity phase evidence is invalid: {phase_id}"
-        )
-    if timed_out != (exit_code is None):
-        raise ReceiptValidationError("Antigravity phase exit status is inconsistent")
-    inventory = cleanup or CleanupInventory()
-    if phase_id == "cleanup" and inventory.has_residuals:
-        observed = (ToolEvidence("cleanup", "inspect", "cleanup", "residual"),)
-    outcome = (
-        "timeout"
-        if timed_out
-        else "failed"
-        if exit_code
-        else "passed"
-        if observed == expected
-        else "inconclusive"
-    )
-    expected_result = {"positive-read": "allow", "cleanup": "clean"}.get(
-        phase_id, "deny"
-    )
-    return PhaseReceipt(
-        phase_id,
-        expected_result,
-        True,
-        bool(observed),
-        outcome,
-        exit_code,
-        timed_out,
-        observed,
-        inventory,
-    )
-
-
-def attest_profile(
-    parsed: ParsedAntigravityEvents,
-    *,
-    exit_code: int | None,
-    timed_out: bool = False,
-    cleanup: CleanupInventory | None = None,
-    blocked_reason: str | None = None,
-) -> tuple[PhaseReceipt, ...]:
-    if not isinstance(parsed, ParsedAntigravityEvents):
-        _fail("Antigravity profile attestation requires parsed events")
-    if blocked_reason is not None:
-        if blocked_reason not in BLOCKER_CODES or parsed.observations:
-            _fail("blocked Antigravity profile has invalid evidence")
-        return tuple(
-            PhaseReceipt(
-                spec.phase_id,
-                spec.expected_result,
-                False,
-                False,
-                "not-run",
-                None,
-                False,
-                (),
-                CleanupInventory(),
-            )
-            for spec in required_phases_for_profile("read-only")
-        )
-    return tuple(
-        attest_phase(
-            spec.phase_id,
-            (
-                (
-                    (ToolEvidence("cleanup", "inspect", "cleanup", "residual"),)
-                    if cleanup is not None and cleanup.has_residuals
-                    else _EXPECTED["cleanup"]
-                )
-                if spec.phase_id == "cleanup"
-                else tuple(
-                    item
-                    for item in parsed.observations
-                    if item in _PERMITTED[spec.phase_id]
-                )
-            ),
-            exit_code=0 if spec.phase_id == "cleanup" else exit_code,
-            timed_out=False if spec.phase_id == "cleanup" else timed_out,
-            cleanup=cleanup,
-            strict=spec.phase_id == "cleanup",
-        )
-        for spec in required_phases_for_profile("read-only")
-    )
-
-
-def assemble_receipt(
-    manifest: Manifest,
-    parsed: ParsedAntigravityEvents,
-    *,
-    exit_code: int | None,
-    timed_out: bool = False,
-    cleanup: CleanupInventory | None = None,
-    blocked_reason: str | None = None,
-) -> tuple[Receipt, Judgment]:
-    if (
-        not isinstance(manifest, Manifest)
-        or manifest.identity.harness_id != "antigravity"
-        or manifest.identity.sandbox_policy_id
-        not in {RAW_POLICY_ID, SNAPSHOT_POLICY_ID}
-    ):
-        _fail("Antigravity receipt manifest has an invalid profile")
-    _executable(manifest.identity.executable)
-    receipt = Receipt(
-        manifest.identity,
-        blocked_reason,
-        attest_profile(
-            parsed,
-            exit_code=exit_code,
-            timed_out=timed_out,
-            cleanup=cleanup,
-            blocked_reason=blocked_reason,
-        ),
-    )
-    return receipt, judge_profile(manifest, receipt)
-
-
-def execute_probe(
-    *,
-    provenance: BinaryProvenance,
-    profile: ProbeProfile,
-    workspace: Path,
-    private_root: Path,
-    prompt: str,
-    model: str,
-    effort: Literal["low", "medium", "high"] = "low",
-    runner: ProcessRunner | None = None,
-    timeout_seconds: float = 180.0,
-) -> ProcessResult:
-    if not isinstance(provenance, BinaryProvenance):
-        _fail("agy probe requires validated binary provenance")
-    if (
-        not isinstance(workspace, Path)
-        or not workspace.is_absolute()
-        or workspace.is_symlink()
-        or not isinstance(private_root, Path)
-        or not private_root.is_absolute()
-        or private_root.is_symlink()
-    ):
-        _fail("agy probe roots must be non-symlink absolute paths")
-    if timeout_seconds <= 0:
-        _fail("agy probe timeout must be positive")
-    current = _checked_identity(Path(provenance.executable.path))
-    if current != provenance.file_identity:
-        _fail("agy executable identity changed after preflight")
-    validate_binary_provenance(
-        path=Path(provenance.executable.path),
-        version=provenance.executable.version,
-        identity=current,
+    if not isinstance(provenance, StaticProvenance):
+        _fail("agy static provenance has an invalid type")
+    _validate_pin_values(
+        executable_path=provenance.executable_path,
+        version=provenance.version,
+        sha256=provenance.sha256,
         signature=provenance.signature,
         device_identity=provenance.device_identity,
     )
-    selected = runner if runner is not None else ProcessRunner()
-    version = _version_probe(
-        Path(provenance.executable.path),
-        provider="antigravity",
-        private_root=private_root,
-        runner=selected,
-    )
+    _validate_file_identity(provenance.file_identity)
+    return provenance
+
+
+def inspect_file_same_fd(path: Path) -> FileIdentity:
+    """Hash one opened regular executable and reject path/descriptor drift."""
+
+    if not isinstance(path, Path) or not path.is_absolute():
+        _fail("agy executable path must be absolute")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if not isinstance(nofollow, int) or nofollow == 0:
+        _fail("safe no-follow executable inspection is unavailable")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        raise AntigravityProbeError(
+            "agy executable could not be opened safely"
+        ) from exc
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or (before.st_mode & 0o111) == 0:
+            _fail("agy executable is not a regular executable file")
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            size += len(chunk)
+        after = os.fstat(fd)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if size != before.st_size or before_identity != after_identity:
+            _fail("agy executable changed during same-fd inspection")
+        return FileIdentity(
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            digest.hexdigest(),
+        )
+    except AntigravityProbeError:
+        raise
+    except OSError as exc:
+        raise AntigravityProbeError(
+            "agy executable could not be inspected safely"
+        ) from exc
+    finally:
+        try:
+            os.close(fd)
+        except OSError as exc:
+            raise AntigravityProbeError(
+                "agy executable descriptor could not be closed"
+            ) from exc
+
+
+def parse_leaf_signature(metadata: str) -> CodeSignature:
+    """Parse static signature metadata and select the first Authority (the leaf)."""
+
+    if not isinstance(metadata, str) or len(metadata) > 32_768 or "\x00" in metadata:
+        _fail("agy signature metadata is invalid")
+    authorities: list[str] = []
+    team_ids: list[str] = []
+    for line in metadata.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        value = value.strip()
+        if key == "Authority" and value:
+            authorities.append(value)
+        elif key == "TeamIdentifier" and value:
+            team_ids.append(value)
     if (
-        re.search(rf"(?<![0-9]){re.escape(ANTIGRAVITY_VERSION)}(?![0-9])", version)
-        is None
+        not authorities
+        or authorities[0] != ANTIGRAVITY_SIGNING_IDENTITY
+        or not team_ids
+        or any(team_id != ANTIGRAVITY_TEAM_ID for team_id in team_ids)
     ):
-        _fail("agy executable version changed after preflight")
-    return selected.run(
-        build_probe_argv(
-            executable=provenance.executable,
-            profile=profile,
-            prompt=prompt,
-            model=model,
-            effort=effort,
-        ),
-        cwd=workspace,
-        env=safe_environment(
-            "antigravity", home=private_root, private_root=private_root
-        ),
-        timeout_seconds=timeout_seconds,
+        _fail("agy leaf signature is not pinned")
+    return CodeSignature(authorities[0], team_ids[0])
+
+
+def inspect_static_binary(
+    *,
+    path: Path = ANTIGRAVITY_EXECUTABLE,
+    version: str,
+    signature_metadata: str,
+    device_identity: DeviceIdentity,
+) -> StaticProvenance:
+    """Inspect the pinned file and supplied static facts without running a provider."""
+
+    if path != ANTIGRAVITY_EXECUTABLE:
+        _fail("agy executable path is not the pinned path")
+    identity = inspect_file_same_fd(path)
+    signature = parse_leaf_signature(signature_metadata)
+    return StaticProvenance(
+        str(path), version, identity.sha256, signature, device_identity, identity
+    )
+
+
+_ROLE_TOKENS: Final = ("planner", "reviewer")
+_PROFILE_POLICIES: Final = {
+    "raw-workspace": RAW_POLICY_ID,
+    "snapshot": SNAPSHOT_POLICY_ID,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RoleManifest:
+    schema_version: int
+    harness_id: str
+    revision: str
+    profile: ProbeProfile
+    role: RoleToken
+    permission_profile: str
+    transport: str
+    route: str
+    sandbox_policy_id: str
+    provenance: StaticProvenance
+
+    def __post_init__(self) -> None:
+        _validate_role_manifest(self)
+
+
+def _validate_role_manifest(manifest: RoleManifest) -> RoleManifest:
+    if not isinstance(manifest, RoleManifest):
+        _fail("agy role manifest has an invalid type")
+    if (
+        manifest.schema_version != CURRENT_SCHEMA_VERSION
+        or manifest.harness_id != "antigravity"
+        or manifest.revision != PROBE_REVISION
+        or manifest.profile not in _PROFILE_POLICIES
+        or manifest.role not in _ROLE_TOKENS
+        or manifest.permission_profile != "read-only"
+        or manifest.transport != "print"
+        or manifest.route != "--print"
+        or manifest.sandbox_policy_id != _PROFILE_POLICIES[manifest.profile]
+    ):
+        _fail("agy role manifest is not a fixed read-only print profile")
+    validate_static_provenance(manifest.provenance)
+    return manifest
+
+
+def _build_role_manifest(
+    profile: ProbeProfile, role: RoleToken, provenance: StaticProvenance
+) -> RoleManifest:
+    if profile not in _PROFILE_POLICIES or role not in _ROLE_TOKENS:
+        _fail("agy role or profile is not fixed")
+    return RoleManifest(
+        CURRENT_SCHEMA_VERSION,
+        "antigravity",
+        PROBE_REVISION,
+        profile,
+        role,
+        "read-only",
+        "print",
+        "--print",
+        _PROFILE_POLICIES[profile],
+        validate_static_provenance(provenance),
+    )
+
+
+def build_raw_role_manifest(
+    role: RoleToken, provenance: StaticProvenance
+) -> RoleManifest:
+    return _build_role_manifest("raw-workspace", role, provenance)
+
+
+def build_snapshot_role_manifest(
+    role: RoleToken, provenance: StaticProvenance
+) -> RoleManifest:
+    return _build_role_manifest("snapshot", role, provenance)
+
+
+def _provenance_payload(provenance: StaticProvenance) -> dict[str, object]:
+    validate_static_provenance(provenance)
+    device = provenance.device_identity
+    return {
+        "path": str(ANTIGRAVITY_EXECUTABLE),
+        "version": ANTIGRAVITY_VERSION,
+        "sha256": ANTIGRAVITY_SHA256,
+        "signature": {
+            "identifier": ANTIGRAVITY_SIGNING_IDENTITY,
+            "team_id": ANTIGRAVITY_TEAM_ID,
+        },
+        "device": {
+            "os": device.os_name,
+            "architecture": device.architecture,
+            "kernel_release": device.kernel_release,
+            "os_version": device.os_version,
+            "model_identifier": device.model_identifier,
+        },
+    }
+
+
+def _dump(payload: dict[str, object]) -> str:
+    return json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def serialize_role_manifest(manifest: RoleManifest) -> str:
+    """Serialize a redacted fixed manifest, never the generic receipt contract."""
+
+    checked = _validate_role_manifest(manifest)
+    return _dump(
+        {
+            "artifact": "antigravity-role-manifest",
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "harness_id": "antigravity",
+            "revision": PROBE_REVISION,
+            "profile": checked.profile,
+            "role": checked.role,
+            "permission_profile": "read-only",
+            "transport": "print",
+            "route": "--print",
+            "sandbox_policy_id": _PROFILE_POLICIES[checked.profile],
+            "provenance": _provenance_payload(checked.provenance),
+        }
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalOutsideReadEvidence:
+    tool: Literal["filesystem"] = "filesystem"
+    operation: Literal["read"] = "read"
+    target: Literal["outside"] = "outside"
+    result: Literal["allowed"] = "allowed"
+
+    def __post_init__(self) -> None:
+        if (self.tool, self.operation, self.target, self.result) != (
+            "filesystem",
+            "read",
+            "outside",
+            "allowed",
+        ):
+            _fail("historical outside-read evidence is not fixed")
+
+
+KNOWN_RAW_OUTSIDE_READ_EVIDENCE: Final = HistoricalOutsideReadEvidence()
+
+
+def _validate_timestamp(value: str) -> str:
+    _text(value, "historical observed_at")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise AntigravityProbeError("historical observed_at is invalid") from exc
+    if parsed.tzinfo is None:
+        _fail("historical observed_at must include a timezone")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalOutsideReadReceipt:
+    observed_at: str
+    source_sha256: str
+    provenance: StaticProvenance
+    evidence: HistoricalOutsideReadEvidence = KNOWN_RAW_OUTSIDE_READ_EVIDENCE
+    status: Literal["rejected"] = "rejected"
+    profile: Literal["raw-workspace"] = "raw-workspace"
+    reason: Literal["outside-read"] = "outside-read"
+    historical_unverified: Literal[True] = True
+
+    def __post_init__(self) -> None:
+        _validate_historical_receipt(self)
+
+
+def _validate_historical_receipt(
+    receipt: HistoricalOutsideReadReceipt,
+) -> HistoricalOutsideReadReceipt:
+    if not isinstance(receipt, HistoricalOutsideReadReceipt):
+        _fail("historical receipt has an invalid type")
+    if (
+        receipt.status != "rejected"
+        or receipt.profile != "raw-workspace"
+        or receipt.reason != "outside-read"
+        or receipt.historical_unverified is not True
+        or receipt.evidence != KNOWN_RAW_OUTSIDE_READ_EVIDENCE
+    ):
+        _fail("historical outside-read receipt must remain rejected")
+    _validate_timestamp(receipt.observed_at)
+    _sha256(receipt.source_sha256, "historical source_sha256")
+    validate_static_provenance(receipt.provenance)
+    return receipt
+
+
+def build_raw_historical_receipt(
+    *, observed_at: str, source_sha256: str, provenance: StaticProvenance
+) -> HistoricalOutsideReadReceipt:
+    return HistoricalOutsideReadReceipt(observed_at, source_sha256, provenance)
+
+
+def serialize_raw_historical_receipt(
+    receipt: HistoricalOutsideReadReceipt,
+) -> str:
+    """Serialize only redacted historical evidence and current static provenance."""
+
+    checked = _validate_historical_receipt(receipt)
+    source_sha256 = _sha256(checked.source_sha256, "historical source_sha256")
+    return _dump(
+        {
+            "artifact": "antigravity-historical-outside-read",
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "profile": "raw-workspace",
+            "status": "rejected",
+            "reason": "outside-read",
+            "historical_unverified": True,
+            "observed_at": checked.observed_at,
+            "source_sha256": source_sha256,
+            "evidence": {
+                "tool": "filesystem",
+                "operation": "read",
+                "target": "outside",
+                "result": "allowed",
+            },
+            "provenance": _provenance_payload(checked.provenance),
+        }
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotReceipt:
+    status: SnapshotStatus
+    reason: SnapshotReason
+    provenance: StaticProvenance
+    profile: Literal["snapshot"] = "snapshot"
+    sandbox_policy_id: str = SNAPSHOT_POLICY_ID
+
+    def __post_init__(self) -> None:
+        _validate_snapshot_receipt(self)
+
+
+def _validate_snapshot_receipt(receipt: SnapshotReceipt) -> SnapshotReceipt:
+    if not isinstance(receipt, SnapshotReceipt):
+        _fail("snapshot receipt has an invalid type")
+    if (
+        receipt.status not in {"blocked", "not-run"}
+        or receipt.reason not in {"outer-sandbox-unverified", "provider-not-run"}
+        or receipt.profile != "snapshot"
+        or receipt.sandbox_policy_id != SNAPSHOT_POLICY_ID
+    ):
+        _fail("snapshot receipt must remain blocked or not-run")
+    validate_static_provenance(receipt.provenance)
+    return receipt
+
+
+def build_snapshot_receipt(
+    provenance: StaticProvenance,
+    *,
+    status: SnapshotStatus = "not-run",
+    reason: SnapshotReason = "provider-not-run",
+) -> SnapshotReceipt:
+    return SnapshotReceipt(status, reason, validate_static_provenance(provenance))
+
+
+def build_snapshot_blocked_receipt(
+    provenance: StaticProvenance,
+) -> SnapshotReceipt:
+    return build_snapshot_receipt(
+        provenance, status="blocked", reason="outer-sandbox-unverified"
+    )
+
+
+def build_snapshot_not_run_receipt(
+    provenance: StaticProvenance,
+) -> SnapshotReceipt:
+    return build_snapshot_receipt(
+        provenance, status="not-run", reason="provider-not-run"
+    )
+
+
+def serialize_snapshot_receipt(receipt: SnapshotReceipt) -> str:
+    """Serialize a non-candidate snapshot gate with redacted static provenance."""
+
+    checked = _validate_snapshot_receipt(receipt)
+    return _dump(
+        {
+            "artifact": "antigravity-snapshot-gate",
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "profile": "snapshot",
+            "status": checked.status,
+            "reason": checked.reason,
+            "sandbox_policy_id": SNAPSHOT_POLICY_ID,
+            "provenance": _provenance_payload(checked.provenance),
+        }
     )
