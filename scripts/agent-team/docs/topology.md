@@ -121,6 +121,9 @@ format names raise `TopologyFormatError`; there is no implicit fallback.
 Rendering an invalid definition raises `TopologyValidationError` before any
 output is returned.
 
-This module is not integrated with config version 3, runtime state, CLI, MCP,
-Orca lifecycle, or the default team. Those integrations belong to later
-issues and must adapt this pure contract explicitly.
+Version-4 inspection already adapts this module through `agent-team teams`,
+`agent-team graph`, and `agent-team start --team ... --dry-run`. Those paths
+validate and render without starting a provider or creating runtime resources.
+Config version 3, runtime state, MCP, the Orca lifecycle, and the default team
+remain intentionally unconnected; later integration must adapt this pure
+contract explicitly.

@@ -68,9 +68,9 @@ topology moduleは `agent_team.registry` をimportせず、provider commandも�
 
 ## 検証契約
 
-`validate_team(definition, resolver)` は不変な `ValidationResult` を返します。
+`validate_team(definition, resolver)` の戻り値は不変な `ValidationResult` です。
 `errors` はcodeとmessageの順にソートするため、同じ入力から常に同じ結果になります。
-rendererは同じ順序のissueを持つ `TopologyValidationError` を、出力を返す前に送出します。
+rendererは同じ順序のissueを持つ `TopologyValidationError` を送出し、出力を返しません。
 
 検証ルールは次のとおりです。
 
@@ -112,5 +112,8 @@ resolverがlookup・I/O・timeoutなどの想定したoperational errorを返し
 `TopologyFormatError` になり、暗黙のfallbackはありません。不正なdefinitionをrenderしようと
 した場合も、出力を返す前に `TopologyValidationError` になります。
 
-このmoduleはconfig version 3、runtime state、CLI、MCP、Orca lifecycle、default teamへ統合していません。
-統合は後続Issueの責務とし、この純粋なcontractへ明示的に適応させます。
+version 4のinspectionでは、このmoduleを `agent-team teams`、`agent-team graph`、
+`agent-team start --team ... --dry-run` へ接続済みです。これらの経路はproviderを起動せず、
+runtime resourceも作らずに検証・描画します。config version 3、runtime state、MCP、
+Orca lifecycle、default teamには接続していません。後続の統合では、この純粋なcontractへ
+明示的に適応させる必要があります。
