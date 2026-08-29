@@ -202,7 +202,27 @@ from pathlib import Path
 import re
 import sys
 
-import yaml
+
+def parse_skill_metadata(text):
+    match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if not match:
+        return None
+
+    frontmatter = match.group(1)
+    name_match = re.search(r"^name:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    if not name_match:
+        return None
+    name = name_match.group(1)
+    if len(name) >= 2 and name[0] == name[-1] and name[0] in "'\"":
+        name = name[1:-1]
+
+    related_match = re.search(r"^\s*related_skills:\s*(\[.*\])\s*$", frontmatter, re.MULTILINE)
+    if not related_match:
+        return name, []
+    related_value = related_match.group(1)[1:-1].strip()
+    if not related_value:
+        return name, []
+    return name, [item.strip().strip("'\"") for item in related_value.split(",")]
 
 root = Path(sys.argv[1])
 by_name = defaultdict(list)
@@ -210,16 +230,11 @@ related = []
 for path in root.rglob("SKILL.md"):
     if ".system" in path.parts:
         continue
-    match = re.match(r"^---\n(.*?)\n---", path.read_text(encoding="utf-8"), re.DOTALL)
-    if not match:
+    parsed = parse_skill_metadata(path.read_text(encoding="utf-8"))
+    if parsed is None:
         continue
-    data = yaml.safe_load(match.group(1))
-    if not isinstance(data, dict) or not isinstance(data.get("name"), str):
-        continue
-    by_name[data["name"]].append(path)
-    metadata = data.get("metadata")
-    hermes = metadata.get("hermes") if isinstance(metadata, dict) else None
-    targets = hermes.get("related_skills", []) if isinstance(hermes, dict) else []
+    name, targets = parsed
+    by_name[name].append(path)
     related.append((path, targets))
 
 duplicates = {name: paths for name, paths in by_name.items() if len(paths) > 1}
