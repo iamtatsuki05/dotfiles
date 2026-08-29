@@ -339,6 +339,8 @@ def safe_environment(
         api_key = source_values.get("OPENCODE_API_KEY")
         if api_key:
             result["OPENCODE_API_KEY"] = api_key
+    elif provider == "antigravity":
+        pass
     else:
         raise AdapterError(f"unsupported background provider: {provider}")
     return result
