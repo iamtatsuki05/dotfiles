@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -10,7 +11,6 @@ from unittest import mock
 
 from agent_team import cursor_probe
 from agent_team.adapters import FileIdentity
-from agent_team.probe_receipts import Judgment
 
 
 def digest(path: Path) -> str:
@@ -31,8 +31,9 @@ def identity(path: Path) -> FileIdentity:
 def fixture_installation(
     root: Path,
     *,
+    symlink: bool = False,
     wrapper_text: str = "#!/bin/sh\necho 'Cursor Agent 2026.05.09-0afadcc'\n",
-) -> tuple[Path, Path, Path, cursor_probe.CursorInstallationPin]:
+) -> tuple[Path, cursor_probe.CursorInstallationPin]:
     home = root / "home"
     install_dir = (
         home / ".local/share/mise/installs/http-cursor-agent/2026.05.09-0afadcc"
@@ -42,27 +43,29 @@ def fixture_installation(
     bundle_dir.mkdir(parents=True)
     executable = install_dir / "cursor-agent"
     canonical = bundle_dir / "cursor-agent"
-    executable.write_text(wrapper_text, encoding="utf-8")
-    executable.chmod(0o755)
-    os.link(executable, canonical)
+    if symlink:
+        canonical.write_text(wrapper_text, encoding="utf-8")
+        canonical.chmod(0o755)
+        executable.symlink_to(canonical)
+    else:
+        executable.write_text(wrapper_text, encoding="utf-8")
+        executable.chmod(0o755)
+        os.link(executable, canonical)
     bundle = bundle_dir / "index.js"
     bundle.write_text("bundle", encoding="utf-8")
     node = bundle_dir / "node"
     node.write_text("node", encoding="utf-8")
     node.chmod(0o755)
-    private_root = root / "private"
-    private_root.mkdir(mode=0o700)
-    workspace = root / "workspace"
-    workspace.mkdir()
     pin = replace(
         cursor_probe.CURSOR_INSTALLATION_PIN,
         canonical_relative_path=".local/share/mise/http-tarballs/test-bundle/cursor-agent",
         bundle_relative_path=".local/share/mise/http-tarballs/test-bundle/index.js",
         node_relative_path=".local/share/mise/http-tarballs/test-bundle/node",
-        wrapper_sha256=digest(executable),
+        wrapper_sha256=digest(canonical),
         bundle_sha256=digest(bundle),
+        node_sha256=digest(node),
     )
-    return home, workspace, private_root, pin
+    return home, pin
 
 
 class CursorStaticProbeTest(unittest.TestCase):
@@ -71,28 +74,19 @@ class CursorStaticProbeTest(unittest.TestCase):
         root: Path,
         *,
         profile: cursor_probe.CursorProfile = "direct-plan",
-        pin: cursor_probe.CursorInstallationPin | None = None,
-        wrapper_text: str | None = None,
-    ) -> tuple[cursor_probe.CursorStaticReport, Path, Path, Path]:
-        home, workspace, private_root, fixture_pin = fixture_installation(
-            root, wrapper_text=wrapper_text or "#!/bin/sh\necho banner\n"
-        )
+        symlink: bool = False,
+    ) -> tuple[
+        cursor_probe.CursorStaticReport, Path, cursor_probe.CursorInstallationPin
+    ]:
+        home, pin = fixture_installation(root, symlink=symlink)
         with (
             mock.patch.object(Path, "home", return_value=home),
-            mock.patch.object(
-                cursor_probe,
-                "CURSOR_INSTALLATION_PIN",
-                pin or fixture_pin,
-            ),
+            mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
         ):
-            report = cursor_probe.static_probe(
-                profile,
-                workspace=workspace,
-                private_root=private_root,
-            )
-        return report, home, workspace, private_root
+            report = cursor_probe.static_probe(profile)
+        return report, home, pin
 
-    def test_production_pin_is_the_inventory_singleton(self) -> None:
+    def test_production_pin_contains_inventory_identity(self) -> None:
         pin = cursor_probe.CURSOR_INSTALLATION_PIN
 
         self.assertEqual(pin.version, "2026.05.09-0afadcc")
@@ -108,44 +102,58 @@ class CursorStaticProbeTest(unittest.TestCase):
             pin.bundle_sha256,
             "cbe95bd372a165cebd83658a293d844cae2dfddc7e1e0aef59e704d16d960257",
         )
+        self.assertEqual(
+            pin.node_sha256,
+            "336b5b3ebc5deb86df842102b20b6e4761605b7a667823e68dda7761b91a161b",
+        )
         self.assertEqual(pin.node_version, "v24.5.0")
 
-    def test_static_preflight_accepts_same_banner_without_executing_a_provider(
+    def test_static_preflight_checks_same_banner_files_without_provider_execution(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, _, private_root, pin = fixture_installation(root)
+            home, pin = fixture_installation(root)
             with (
                 mock.patch.object(Path, "home", return_value=home),
                 mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
             ):
-                observed = cursor_probe.static_preflight(private_root=private_root)
+                observed = cursor_probe.static_preflight()
 
             self.assertEqual(observed.wrapper_identity.sha256, pin.wrapper_sha256)
             self.assertEqual(observed.bundle_identity.sha256, pin.bundle_sha256)
-            self.assertEqual(observed.node_identity.size, 4)
+            self.assertEqual(observed.node_identity.sha256, pin.node_sha256)
 
-    def test_same_banner_with_wrong_wrapper_hash_fails_before_any_provider_call(
+    def test_same_banner_with_wrong_hash_fails_closed_before_any_version_command(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, _, private_root, pin = fixture_installation(root)
+            home, pin = fixture_installation(root)
             wrong_pin = replace(pin, wrapper_sha256="0" * 64)
             with (
                 mock.patch.object(Path, "home", return_value=home),
                 mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", wrong_pin),
                 self.assertRaises(cursor_probe.CursorStaticPreflightError),
             ):
-                cursor_probe.static_preflight(private_root=private_root)
+                cursor_probe.static_preflight()
 
-    def test_caller_cannot_select_an_alternate_binary_or_run_version_preflight(
-        self,
-    ) -> None:
+    def test_wrong_node_hash_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, _, private_root, pin = fixture_installation(root)
+            home, pin = fixture_installation(root)
+            wrong_pin = replace(pin, node_sha256="0" * 64)
+            with (
+                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", wrong_pin),
+                self.assertRaises(cursor_probe.CursorStaticPreflightError),
+            ):
+                cursor_probe.static_preflight()
+
+    def test_caller_cannot_select_an_alternate_binary_or_path_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home, pin = fixture_installation(root)
             alternate = root / "evil"
             alternate.write_text(
                 "#!/bin/sh\necho 'Cursor Agent 2026.05.09-0afadcc'\n", encoding="utf-8"
@@ -156,94 +164,110 @@ class CursorStaticProbeTest(unittest.TestCase):
                 mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
                 mock.patch("shutil.which", side_effect=AssertionError("PATH lookup")),
             ):
-                observed = cursor_probe.static_preflight(private_root=private_root)
+                observed = cursor_probe.static_preflight()
 
-            self.assertNotEqual(observed.executable_path, alternate)
+            self.assertNotEqual(observed.wrapper_path_sha256, digest(alternate))
             self.assertEqual(
-                observed.executable_path, home / pin.executable_relative_path
+                observed.wrapper_path_sha256,
+                hashlib.sha256(
+                    str(home / pin.executable_relative_path).encode("utf-8")
+                ).hexdigest(),
             )
 
     def test_direct_and_acp_reports_are_separate_and_only_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            direct, _, _, _ = self.run_static(root)
-            acp, _, _, _ = self.run_static(root / "acp", profile="acp")
+            direct, _, _ = self.run_static(Path(temp_dir))
+            acp, _, _ = self.run_static(Path(temp_dir) / "acp", profile="acp")
 
-        self.assertEqual(direct.judgment.status, "not-run")
-        self.assertEqual(acp.judgment.status, "not-run")
-        self.assertEqual(direct.judgment.reason_codes, ("phase-not-attempted",))
-        self.assertNotEqual(
-            direct.manifest.identity.prompt_transport,
-            acp.manifest.identity.prompt_transport,
-        )
-        self.assertNotEqual(
-            direct.manifest.identity.sandbox_policy_id,
-            acp.manifest.identity.sandbox_policy_id,
-        )
-        self.assertTrue(all(not phase.attempted for phase in direct.receipt.phases))
+        self.assertEqual(direct.status, "not-run")
+        self.assertEqual(acp.status, "not-run")
+        self.assertEqual(direct.reason_codes, ("phase-not-attempted",))
+        self.assertNotEqual(direct.prompt_transport, acp.prompt_transport)
+        self.assertNotEqual(direct.sandbox_policy_id, acp.sandbox_policy_id)
+        self.assertEqual(direct.required_phases, acp.required_phases)
+        self.assertTrue(all(outcome == "not-run" for outcome in direct.phase_outcomes))
 
-    def test_static_report_serializer_recomputes_forged_judgment_and_redacts_paths(
+    def test_public_report_has_no_generic_receipt_or_raw_paths_and_rejects_candidate_constructor(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            report, home, workspace, private_root = self.run_static(root)
+            report, home, _ = self.run_static(Path(temp_dir))
+            self.assertFalse(hasattr(report, "manifest"))
+            self.assertFalse(hasattr(report, "receipt"))
+            self.assertFalse(hasattr(report, "judgment"))
+            self.assertFalse(hasattr(report, "workspace"))
+            with self.assertRaises(cursor_probe.CursorStaticPreflightError):
+                replace(report, status="candidate")  # type: ignore[arg-type]
+            serialized = cursor_probe.serialize_static_report(report)
+
+        self.assertNotIn(str(home), serialized)
+        self.assertNotIn("candidate", serialized)
+        self.assertNotIn("<private-root>", serialized)
+
+    def test_serializer_recomputes_forged_identity_and_records_historical_auth(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report, home, pin = self.run_static(Path(temp_dir))
             forged = replace(
                 report,
-                judgment=Judgment("cursor", "read-only", "candidate", ()),
+                installation=replace(
+                    report.installation,
+                    wrapper_identity=replace(
+                        report.installation.wrapper_identity, sha256="0" * 64
+                    ),
+                ),
             )
             with (
                 mock.patch.object(Path, "home", return_value=home),
-                mock.patch.object(
-                    cursor_probe, "CURSOR_INSTALLATION_PIN", report.preflight.pin
-                ),
+                mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
             ):
                 serialized = cursor_probe.serialize_static_report(forged)
-                repeated = cursor_probe.serialize_static_report(report)
 
-        self.assertEqual(serialized, repeated)
-        self.assertNotIn("candidate", serialized)
-        self.assertNotIn(str(home), serialized)
-        self.assertNotIn(str(workspace), serialized)
-        self.assertNotIn(str(private_root), serialized)
-        self.assertNotIn("--force", serialized)
-        self.assertIn("authenticated-at-inventory", serialized)
-        self.assertIn("wrapper_sha256", serialized)
+        payload = json.loads(serialized)
+        self.assertEqual(payload["status"], "not-run")
+        self.assertEqual(payload["auth"]["status"], "historical-unverified")
+        self.assertEqual(payload["auth"]["observed_at"], "2026-08-29T18:51:06Z")
+        self.assertRegex(payload["auth"]["source_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(payload["installation"]["wrapper_sha256"], pin.wrapper_sha256)
 
-    def test_private_root_must_be_fresh_owner_only_and_non_symlink(self) -> None:
+    def test_public_auth_provenance_cannot_be_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report, _, _ = self.run_static(Path(temp_dir))
+
+            with self.assertRaises(cursor_probe.CursorStaticPreflightError):
+                replace(
+                    report,
+                    auth=replace(report.auth, source_sha256="0" * 64),
+                )
+
+    def test_private_root_argument_and_live_status_api_are_not_available(self) -> None:
+        with self.assertRaises(TypeError):
+            cursor_probe.static_preflight(private_root=Path("/tmp/private"))  # type: ignore[call-arg]
+        with self.assertRaises(TypeError):
+            cursor_probe.static_probe("direct-plan", workspace=Path("/tmp"))  # type: ignore[call-arg]
+        self.assertFalse(hasattr(cursor_probe, "CursorProbe"))
+        self.assertFalse(hasattr(cursor_probe, "evaluate_profile"))
+
+    def test_symlink_target_and_readlink_drift_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, _, private_root, pin = fixture_installation(root)
-            private_root.chmod(0o755)
+            home, pin = fixture_installation(root, symlink=True)
+            executable = home / pin.executable_relative_path
+            alternate = root / "alternate"
+            alternate.write_text("alternate", encoding="utf-8")
+            alternate.chmod(0o755)
             with (
                 mock.patch.object(Path, "home", return_value=home),
                 mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
-                self.assertRaises(cursor_probe.CursorStaticPreflightError),
             ):
-                cursor_probe.static_preflight(private_root=private_root)
+                first = cursor_probe.static_preflight()
+                executable.unlink()
+                executable.symlink_to(alternate)
+                with self.assertRaises(cursor_probe.CursorStaticPreflightError):
+                    cursor_probe.static_preflight()
 
-            private_root.chmod(0o700)
-            (private_root / "stale").write_text("stale", encoding="utf-8")
-            with (
-                mock.patch.object(Path, "home", return_value=home),
-                mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
-                self.assertRaises(cursor_probe.CursorStaticPreflightError),
-            ):
-                cursor_probe.static_preflight(private_root=private_root)
-
-    def test_bundle_and_canonical_wrapper_drift_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            home, _, private_root, pin = fixture_installation(root)
-            canonical = home / pin.canonical_relative_path
-            canonical.unlink()
-            canonical.write_text("different", encoding="utf-8")
-            with (
-                mock.patch.object(Path, "home", return_value=home),
-                mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
-                self.assertRaises(cursor_probe.CursorStaticPreflightError),
-            ):
-                cursor_probe.static_preflight(private_root=private_root)
+            self.assertEqual(first.wrapper_identity.sha256, pin.wrapper_sha256)
 
 
 if __name__ == "__main__":
