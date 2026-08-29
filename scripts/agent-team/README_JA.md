@@ -23,6 +23,8 @@ Agent Client Protocol経由の`acp`で動きます。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
 - [Direct background adapter](docs/background-adapters_JA.md)はCopilot/OpenCode向けread-only
   adapter実装、snapshot境界、復旧方法を説明します。
+- [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
+  保存やworkflow実行を含まないstate観測契約を説明します。
 
 現在の設定は次のとおりです。
 

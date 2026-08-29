@@ -24,6 +24,9 @@ linked reference documents when changing the implementation or configuration.
   ACP is not a sandbox.
 - [Direct background adapters](docs/background-adapters.md) documents the
   Copilot/OpenCode read-only adapter implementation, snapshot boundary, and recovery.
+- [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
+  `TaskSpec`, dependency order, and state observation contract without storage
+  or workflow execution.
 
 The current configuration uses this team:
 
