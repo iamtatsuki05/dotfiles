@@ -2,47 +2,103 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
+from agent_team import grok_probe
 from agent_team.grok_probe import (
     GROK_COMMIT,
     GROK_VERSION,
+    AuthMarkerStatus,
+    GrokBinaryResolver,
     GrokProbeError,
+    GrokProvenance,
+    GrokSignature,
     build_isolated_environment,
-    build_profile_command,
+    build_profile_manifest,
     offline_preflight,
     parse_grok_version,
-    prepare_bounded_command,
     serialize_grok_receipt,
     validate_grok_identity,
 )
+from agent_team.probe_receipts import Judgment
 
 _BANNER = f"grok {GROK_VERSION} ({GROK_COMMIT}) [alpha]"
+_FIXTURE_TEAM_ID = "FIXTURETEAM"
+_FIXTURE_CDHASH = "d" * 40
 
 
-def _write_executable(path: Path, banner: str) -> None:
-    path.write_text(
-        "#!/bin/sh\nprintf '%s\\n' " + repr(banner) + "\n",
-        encoding="utf-8",
+def _write_file(path: Path, content: str, *, executable: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    if executable:
+        path.chmod(0o755)
+
+
+def _fixture_tree(root: Path) -> tuple[Path, Path, Path, GrokProvenance]:
+    home = root / "home"
+    canonical_dir = home / ".grok" / "bin"
+    target = canonical_dir / "grok-1.0.13"
+    wrapper = (
+        home
+        / ".local"
+        / "share"
+        / "mise"
+        / "installs"
+        / "npm-xai-official-grok"
+        / GROK_VERSION
+        / "lib/node_modules/@xai-official/grok/bin/grok"
     )
-    path.chmod(0o755)
+    package = wrapper.parent.parent / "package.json"
+    install_root = wrapper.parents[5]
+    path_entry = install_root / "bin" / "grok"
+    _write_file(
+        target,
+        f"#!/bin/sh\nprintf '%s\\n' '{_BANNER}'\ntouch should-not-run\n",
+        executable=True,
+    )
+    _write_file(
+        wrapper,
+        f"#!/bin/sh\nprintf '%s\\n' '{_BANNER}'\ntouch should-not-run\n",
+        executable=True,
+    )
+    _write_file(package, '{"name":"@xai-official/grok","version":"1.0.13"}\n')
+    canonical_dir.mkdir(parents=True, exist_ok=True)
+    (home / ".grok" / "bin" / "grok").symlink_to(target.name)
+    path_entry.parent.mkdir(parents=True, exist_ok=True)
+    path_entry.symlink_to(os.path.relpath(wrapper, path_entry.parent))
+    provenance = GrokProvenance(
+        binary_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
+        wrapper_sha256=hashlib.sha256(wrapper.read_bytes()).hexdigest(),
+        package_sha256=hashlib.sha256(package.read_bytes()).hexdigest(),
+        team_id=_FIXTURE_TEAM_ID,
+        cdhash=_FIXTURE_CDHASH,
+    )
+    return home, path_entry, target, provenance
 
 
-def _probe_tree(root: Path) -> tuple[Path, Path, Path]:
-    bin_dir = root / "grok-bin"
-    bin_dir.mkdir()
-    canonical_target = bin_dir / "grok-1.0.13"
-    _write_executable(canonical_target, _BANNER)
-    stale_target = bin_dir / "grok-1.0.5"
-    _write_executable(stale_target, "grok 1.0.5 (5115b46bc909) [alpha]")
-    canonical_link = bin_dir / "grok"
-    canonical_link.symlink_to(canonical_target.name)
-    path_entry = root / "path-grok"
-    _write_executable(path_entry, _BANNER)
-    return canonical_link, canonical_target, path_entry
+def _resolver(root: Path) -> tuple[GrokBinaryResolver, GrokProvenance, Path, Path]:
+    home, path_entry, target, provenance = _fixture_tree(root)
+    resolver = GrokBinaryResolver(
+        home=home,
+        expected_path_entry=path_entry,
+        path_lookup=lambda: path_entry,
+        provenance=provenance,
+        signature_probe=lambda _: GrokSignature(provenance.team_id, provenance.cdhash),
+    )
+    return resolver, provenance, path_entry, target
+
+
+def _fresh_private(root: Path, name: str = "private") -> Path:
+    private = root / name
+    private.mkdir()
+    private.chmod(0o700)
+    return private
 
 
 class GrokVersionContractTest(unittest.TestCase):
@@ -60,195 +116,248 @@ class GrokVersionContractTest(unittest.TestCase):
 
 
 class GrokIdentityContractTest(unittest.TestCase):
-    def test_resolver_fixes_canonical_target_and_path_identity_without_fallback(
+    def test_static_resolver_pins_layout_hashes_and_signature_without_running_wrapper(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            canonical_link, canonical_target, path_entry = _probe_tree(root)
-            calls: list[Path] = []
+            resolver, provenance, path_entry, target = _resolver(root)
+            with mock.patch(
+                "agent_team.grok_probe.subprocess.run",
+                side_effect=AssertionError("static preflight must not spawn"),
+            ):
+                identity = resolver.resolve()
 
-            def version_probe(path: Path) -> str:
-                calls.append(path)
-                return (
-                    _BANNER
-                    if path == canonical_target.resolve()
-                    or path == path_entry.resolve()
-                    else ""
-                )
-
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            identity = GrokBinaryResolver(
-                canonical_link=canonical_link,
-                path_lookup=lambda: path_entry,
-                version_probe=version_probe,
-            ).resolve()
-
-            self.assertEqual(identity.canonical_target, canonical_target.resolve())
-            self.assertEqual(identity.canonical_link, canonical_link)
+            self.assertEqual(identity.canonical_link, root / "home/.grok/bin/grok")
+            self.assertEqual(identity.canonical_target, target.resolve())
             self.assertEqual(identity.path_entry, path_entry)
             self.assertEqual(identity.version, GROK_VERSION)
             self.assertEqual(identity.commit, GROK_COMMIT)
-            self.assertEqual(
-                identity.sha256,
-                hashlib.sha256(canonical_target.read_bytes()).hexdigest(),
-            )
-            self.assertEqual(identity.device, canonical_target.stat().st_dev)
-            self.assertEqual(identity.inode, canonical_target.stat().st_ino)
-            self.assertEqual(identity.symlink_device, canonical_link.lstat().st_dev)
-            self.assertEqual(identity.symlink_inode, canonical_link.lstat().st_ino)
-            self.assertEqual(calls, [canonical_target.resolve(), path_entry.resolve()])
+            self.assertEqual(identity.sha256, provenance.binary_sha256)
+            self.assertEqual(identity.wrapper_sha256, provenance.wrapper_sha256)
+            self.assertEqual(identity.package_sha256, provenance.package_sha256)
+            self.assertEqual(identity.team_id, _FIXTURE_TEAM_ID)
+            self.assertEqual(identity.cdhash, _FIXTURE_CDHASH)
+            self.assertEqual(identity.device, target.stat().st_dev)
+            self.assertEqual(identity.inode, target.stat().st_ino)
+            self.assertFalse((root / "should-not-run").exists())
 
-    def test_stale_canonical_target_is_rejected_even_when_other_binary_exists(
+    def test_expected_provenance_rejects_same_banner_fake_binary_and_wrapper(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            canonical_link, _, path_entry = _probe_tree(root)
-            stale = root / "grok-bin" / "grok-1.0.5"
-            canonical_link.unlink()
-            canonical_link.symlink_to(stale.name)
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            with self.assertRaisesRegex(GrokProbeError, "canonical target"):
+            home, path_entry, _, _ = _fixture_tree(root)
+            with self.assertRaisesRegex(GrokProbeError, "binary hash"):
                 GrokBinaryResolver(
-                    canonical_link=canonical_link,
+                    home=home,
+                    expected_path_entry=path_entry,
                     path_lookup=lambda: path_entry,
-                    version_probe=lambda _: "grok 1.0.5 (5115b46bc909) [alpha]",
+                    signature_probe=lambda _: GrokSignature(
+                        "5Y6N3AJ54S", "ce62b26141f33105a604c3f66c98bdcaee9dd00b"
+                    ),
                 ).resolve()
 
-    def test_identity_validation_rejects_path_or_symlink_drift_without_fallback(
+    def test_wrong_wrapper_package_or_signature_provenance_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home, path_entry, _, provenance = _fixture_tree(root)
+            for field in ("wrapper_sha256", "package_sha256"):
+                wrong = replace(provenance, **{field: "e" * 64})
+                with self.subTest(field=field), self.assertRaises(GrokProbeError):
+                    GrokBinaryResolver(
+                        home=home,
+                        expected_path_entry=path_entry,
+                        path_lookup=lambda: path_entry,
+                        provenance=wrong,
+                        signature_probe=lambda _: GrokSignature(
+                            _FIXTURE_TEAM_ID, _FIXTURE_CDHASH
+                        ),
+                    ).resolve()
+
+            wrong_signature = GrokBinaryResolver(
+                home=home,
+                expected_path_entry=path_entry,
+                path_lookup=lambda: path_entry,
+                provenance=provenance,
+                signature_probe=lambda _: GrokSignature(_FIXTURE_TEAM_ID, "f" * 40),
+            )
+            with self.assertRaisesRegex(GrokProbeError, "signature"):
+                wrong_signature.resolve()
+
+    def test_canonical_link_must_be_the_fixed_home_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home, path_entry, _, _ = _fixture_tree(root)
+            with self.assertRaisesRegex(GrokProbeError, "fixed"):
+                GrokBinaryResolver(
+                    home=home,
+                    canonical_link=root / "alternate" / "grok",
+                    expected_path_entry=path_entry,
+                    path_lookup=lambda: path_entry,
+                )
+
+    def test_path_entry_is_metadata_only_and_never_executes_ambient_wrapper(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            canonical_link, _, path_entry = _probe_tree(root)
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            resolver = GrokBinaryResolver(
-                canonical_link=canonical_link,
-                path_lookup=lambda: path_entry,
-                version_probe=lambda _: _BANNER,
+            resolver, _, path_entry, _ = _resolver(root)
+            marker = root / "path-entry-ran"
+            _write_file(
+                path_entry.resolve(),
+                f"#!/bin/sh\ntouch {marker}\n",
+                executable=True,
             )
+            with self.assertRaises(GrokProbeError):
+                resolver.resolve()
+            self.assertFalse(marker.exists())
+
+    def test_identity_validation_rejects_path_and_symlink_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            resolver, provenance, path_entry, _ = _resolver(root)
             identity = resolver.resolve()
-            _write_executable(path_entry, "grok 1.0.5 (5115b46bc909) [alpha]")
-            with self.assertRaisesRegex(GrokProbeError, "identity changed"):
+            replacement = path_entry.parent / "replacement-wrapper"
+            _write_file(replacement, "replacement", executable=True)
+            path_entry.unlink()
+            path_entry.symlink_to(replacement)
+            with self.assertRaisesRegex(GrokProbeError, "PATH"):
                 validate_grok_identity(identity, resolver)
 
-            _write_executable(path_entry, _BANNER)
+            path_entry.unlink()
+            expected_wrapper = (
+                root
+                / "home/.local/share/mise/installs/npm-xai-official-grok"
+                / GROK_VERSION
+                / "lib/node_modules/@xai-official/grok/bin/grok"
+            )
+            path_entry.symlink_to(os.path.relpath(expected_wrapper, path_entry.parent))
+            new_resolver = GrokBinaryResolver(
+                home=root / "home",
+                expected_path_entry=path_entry,
+                path_lookup=lambda: path_entry,
+                provenance=provenance,
+                signature_probe=lambda _: GrokSignature(
+                    _FIXTURE_TEAM_ID, _FIXTURE_CDHASH
+                ),
+            )
+            identity = new_resolver.resolve()
+            canonical_link = root / "home/.grok/bin/grok"
+            _write_file(
+                root / "home/.grok/bin/grok-1.0.5",
+                "stale",
+                executable=True,
+            )
             canonical_link.unlink()
             canonical_link.symlink_to("grok-1.0.5")
             with self.assertRaisesRegex(GrokProbeError, "canonical target"):
-                validate_grok_identity(identity, resolver)
+                validate_grok_identity(identity, new_resolver)
 
 
 class GrokProfileContractTest(unittest.TestCase):
-    def test_direct_and_native_stdio_commands_are_separate_and_never_acpx(
+    def test_direct_and_native_manifests_are_separate_without_live_command_api(
         self,
     ) -> None:
-        executable = Path("/__agent_team_probe__/grok/grok-1.0.13")
-        direct = build_profile_command(
-            "direct",
-            executable,
-            prompt_file=Path("/__agent_team_probe__/prompt.txt"),
-        )
-        native = build_profile_command("native-stdio", executable)
-
-        self.assertNotEqual(direct, native)
-        self.assertEqual(native, (str(executable), "agent", "--no-leader", "stdio"))
-        self.assertIn("--no-subagents", direct)
-        self.assertIn("MCPTool(*)", direct)
-        self.assertIn("WebFetch(*)", direct)
-        self.assertNotIn("acpx", " ".join(direct + native))
-
-    def test_live_command_revalidates_exact_identity_before_building_argv(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            canonical_link, _, path_entry = _probe_tree(root)
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            resolver = GrokBinaryResolver(
-                canonical_link=canonical_link,
-                path_lookup=lambda: path_entry,
-                version_probe=lambda _: _BANNER,
-            )
+            resolver, _, _, _ = _resolver(root)
             identity = resolver.resolve()
-            command = prepare_bounded_command(
-                "direct",
-                identity,
-                resolver=resolver,
-                private_root=root / "private",
-                prompt_file=root / "private" / "prompt.txt",
-            )
-            self.assertEqual(command.argv[0], str(identity.canonical_target))
-            self.assertEqual(command.timeout_seconds, 900.0)
+            direct = build_profile_manifest("direct", identity)
+            native = build_profile_manifest("native-stdio", identity)
 
-            _write_executable(path_entry, "grok 1.0.5 (5115b46bc909) [alpha]")
-            with self.assertRaisesRegex(GrokProbeError, "identity changed"):
-                prepare_bounded_command(
-                    "direct",
-                    identity,
-                    resolver=resolver,
-                    private_root=root / "private",
-                    prompt_file=root / "private" / "prompt.txt",
-                )
+        self.assertNotEqual(direct.identity.argv_sha256, native.identity.argv_sha256)
+        self.assertEqual(direct.identity.prompt_transport, "file")
+        self.assertEqual(native.identity.prompt_transport, "stdin")
+        self.assertIn("unverified", native.identity.sandbox_policy_id)
+        self.assertNotIn("acpx", direct.identity.sandbox_policy_id)
+        self.assertNotIn("acpx", native.identity.sandbox_policy_id)
+        self.assertFalse(hasattr(grok_probe, "prepare_bounded_command"))
+        self.assertFalse(hasattr(grok_probe, "build_profile_command"))
+
+    def test_manifest_digest_uses_role_tokens_not_actual_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            resolver, _, _, _ = _resolver(root)
+            first = resolver.resolve()
+            other_root = root / "other"
+            other_root.mkdir()
+            home, path_entry, _, provenance = _fixture_tree(other_root)
+            other_resolver = GrokBinaryResolver(
+                home=home,
+                expected_path_entry=path_entry,
+                path_lookup=lambda: path_entry,
+                provenance=provenance,
+                signature_probe=lambda _: GrokSignature(
+                    _FIXTURE_TEAM_ID, _FIXTURE_CDHASH
+                ),
+            )
+            second = other_resolver.resolve()
+            first_manifest = build_profile_manifest("direct", first)
+            second_manifest = build_profile_manifest("direct", second)
+
+        self.assertEqual(
+            first_manifest.identity.argv_sha256,
+            second_manifest.identity.argv_sha256,
+        )
+        self.assertEqual(
+            first_manifest.identity.executable.sha256,
+            second_manifest.identity.executable.sha256,
+        )
 
 
 class GrokIsolationAndReceiptTest(unittest.TestCase):
-    def test_isolated_environment_drops_credentials_and_ambient_controls(self) -> None:
+    def test_private_root_must_be_fresh_owner_only_non_symlink_and_empty(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            private_root = Path(temp_dir) / "private"
+            root = Path(temp_dir)
+            private = _fresh_private(root)
             environment = build_isolated_environment(
-                private_root,
+                private,
                 source={
-                    "PATH": "/usr/bin",
                     "HOME": "/Users/personal",
                     "XAI_API_KEY": "do-not-read",
                     "MCP_CONFIG": "/Users/personal/mcp.json",
                     "NODE_OPTIONS": "--require ambient.js",
                 },
             )
+            self.assertEqual(environment["HOME"], str(private / "home"))
+            self.assertEqual(environment["GROK_HOME"], str(private / "grok-home"))
+            self.assertNotIn("XAI_API_KEY", environment)
+            self.assertNotIn("MCP_CONFIG", environment)
+            self.assertNotIn("NODE_OPTIONS", environment)
+            self.assertNotIn("/Users/personal", json.dumps(environment))
 
-        self.assertEqual(environment["HOME"], str(private_root / "home"))
-        self.assertEqual(environment["GROK_HOME"], str(private_root / "grok-home"))
-        for name in (
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME",
-            "XDG_STATE_HOME",
-            "XDG_CACHE_HOME",
-        ):
-            self.assertEqual(environment[name], str(private_root / name.lower()))
-        self.assertEqual(environment["GROK_SUBAGENTS"], "0")
-        self.assertEqual(environment["GROK_DISABLE_AUTOUPDATER"], "1")
-        self.assertNotIn("XAI_API_KEY", environment)
-        self.assertNotIn("MCP_CONFIG", environment)
-        self.assertNotIn("NODE_OPTIONS", environment)
-        self.assertNotIn("/Users/personal", json.dumps(environment))
+            (private / "ambient").touch()
+            with self.assertRaisesRegex(GrokProbeError, "empty"):
+                build_isolated_environment(private)
 
-    def test_missing_auth_makes_both_profile_receipts_blocked_and_cells_not_run(
-        self,
-    ) -> None:
+            empty = root / "empty"
+            empty.mkdir()
+            empty.chmod(0o755)
+            with self.assertRaisesRegex(GrokProbeError, "owner-only"):
+                build_isolated_environment(empty)
+
+            target = root / "target"
+            target.mkdir()
+            target.chmod(0o700)
+            link = root / "link"
+            link.symlink_to(target)
+            with self.assertRaisesRegex(GrokProbeError, "symlink"):
+                build_isolated_environment(link)
+
+    def test_missing_auth_blocks_both_profiles_and_keeps_matrix_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            canonical_link, _, path_entry = _probe_tree(root)
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            resolver = GrokBinaryResolver(
-                canonical_link=canonical_link,
-                path_lookup=lambda: path_entry,
-                version_probe=lambda _: _BANNER,
-            )
-            results = {
-                profile: offline_preflight(
+            resolver, _, _, _ = _resolver(root)
+            results = {}
+            for profile in ("direct", "native-stdio"):
+                results[profile] = offline_preflight(
                     profile,
                     resolver=resolver,
-                    private_root=root / profile,
+                    private_root=_fresh_private(root, f"private-{profile}"),
                     auth_path=root / "missing-auth.json",
                     source_environment={"PATH": "/usr/bin"},
                 )
-                for profile in ("direct", "native-stdio")
-            }
 
         for profile, result in results.items():
             with self.subTest(profile=profile):
@@ -257,81 +366,72 @@ class GrokIsolationAndReceiptTest(unittest.TestCase):
                 self.assertEqual(result.matrix_status, "not-run")
                 self.assertEqual(result.acpx_status, "not-run")
                 self.assertTrue(
-                    all(phase.outcome == "not-run" for phase in result.receipt.phases)
+                    all(
+                        not phase.attempted and phase.outcome == "not-run"
+                        for phase in result.receipt.phases
+                    )
                 )
-                self.assertTrue(
-                    all(not phase.attempted for phase in result.receipt.phases)
-                )
-        self.assertNotEqual(
-            results["direct"].manifest.identity.prompt_transport,
-            results["native-stdio"].manifest.identity.prompt_transport,
-        )
-        self.assertNotEqual(
-            results["direct"].manifest.identity.sandbox_policy_id,
-            results["native-stdio"].manifest.identity.sandbox_policy_id,
-        )
 
-    def test_receipt_serialization_redacts_paths_prompts_logs_and_environment_values(
+    def test_auth_marker_is_metadata_only_and_does_not_read_credential_content(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            canonical_link, _, path_entry = _probe_tree(root)
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            resolver = GrokBinaryResolver(
-                canonical_link=canonical_link,
-                path_lookup=lambda: path_entry,
-                version_probe=lambda _: _BANNER,
-            )
-            result = offline_preflight(
-                "direct",
-                resolver=resolver,
-                private_root=root / "private-personal-path",
-                auth_path=root / "auth.json",
-                source_environment={"PATH": "/usr/bin", "XAI_API_KEY": "secret"},
-            )
-            serialized = serialize_grok_receipt(result)
-            payload = json.loads(serialized)
-
-        self.assertEqual(serialized, serialize_grok_receipt(result))
-        self.assertEqual(payload["artifact"], "grok-probe-receipt")
-        self.assertEqual(payload["auth_status"], "blocked")
-        self.assertEqual(payload["matrix_status"], "not-run")
-        self.assertEqual(payload["acpx_status"], "not-run")
-        self.assertEqual(payload["binary"]["version"], GROK_VERSION)
-        self.assertEqual(payload["binary"]["commit"], GROK_COMMIT)
-        self.assertNotIn("do-not-read", serialized)
-        self.assertNotIn("XAI_API_KEY", serialized)
-        self.assertNotIn("private-personal-path", serialized)
-        self.assertNotIn("auth.json", serialized)
-        self.assertNotIn("credential-must-not-be-read", serialized)
-        self.assertNotIn("raw", serialized.lower())
-
-    def test_auth_marker_is_never_read_and_stays_blocked(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            canonical_link, _, path_entry = _probe_tree(root)
+            resolver, _, _, _ = _resolver(root)
+            private = _fresh_private(root)
             auth_path = root / "auth.json"
             auth_path.write_text("credential-must-not-be-read", encoding="utf-8")
-            from agent_team.grok_probe import GrokBinaryResolver
-
-            resolver = GrokBinaryResolver(
-                canonical_link=canonical_link,
-                path_lookup=lambda: path_entry,
-                version_probe=lambda _: _BANNER,
-            )
             with mock.patch.object(Path, "read_text", side_effect=AssertionError):
                 result = offline_preflight(
                     "native-stdio",
                     resolver=resolver,
-                    private_root=root / "private",
+                    private_root=private,
                     auth_path=auth_path,
                     source_environment={"PATH": "/usr/bin"},
                 )
 
-        self.assertEqual(result.receipt.blocked_reason, "authentication")
+        self.assertEqual(result.auth_status, "blocked")
+        self.assertEqual(result.auth_marker_status, "present-unverified")
         self.assertEqual(result.judgment.status, "blocked")
+
+    def test_serializer_rechecks_correlation_and_rejects_forged_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            resolver, _, _, _ = _resolver(root)
+            result = offline_preflight(
+                "direct",
+                resolver=resolver,
+                private_root=_fresh_private(root),
+                auth_path=root / "missing-auth.json",
+                source_environment={"PATH": "/usr/bin"},
+            )
+            serialized = serialize_grok_receipt(result)
+            forged = replace(
+                result,
+                judgment=Judgment("grok", "read-only", "candidate", ()),
+            )
+            forged_profile = replace(
+                result,
+                manifest=build_profile_manifest("native-stdio", result.identity),
+            )
+            forged_status = replace(
+                result,
+                auth_marker_status=cast(AuthMarkerStatus, "unexpected"),
+            )
+
+        payload = json.loads(serialized)
+        self.assertEqual(payload["auth_status"], "blocked")
+        self.assertEqual(payload["matrix_status"], "not-run")
+        self.assertEqual(payload["judgment"]["status"], "blocked")
+        self.assertNotIn(str(root), serialized)
+        self.assertNotIn("credential", serialized)
+        self.assertNotIn("prompt text", serialized)
+        with self.assertRaisesRegex(GrokProbeError, "judgment"):
+            serialize_grok_receipt(forged)
+        with self.assertRaisesRegex(GrokProbeError, "manifest"):
+            serialize_grok_receipt(forged_profile)
+        with self.assertRaisesRegex(GrokProbeError, "auth marker"):
+            serialize_grok_receipt(forged_status)
 
 
 if __name__ == "__main__":
