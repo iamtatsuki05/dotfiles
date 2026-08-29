@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git and GitHub Flow"
+  short_description: "Organize branches, worktrees, issues, and pull requests"
+  default_prompt: "Use $git-github-flow to organize this Git and GitHub task."
