@@ -1,8 +1,8 @@
-"""Pinned Cursor Agent profiles and provider-free receipt assembly.
+"""Static Cursor Agent pin inspection and blocked/not-run receipts.
 
-The live boundary is the injected runner.  This module never resolves
-``cursor-agent`` through PATH, writes provider state, or persists prompts,
-provider output, environment values, or local paths.
+This slice deliberately has no provider runner or prompt API.  It verifies the
+known mise installation without executing Cursor, then emits a redacted
+receipt whose live safety matrix remains ``not-run``.
 """
 
 from __future__ import annotations
@@ -13,687 +13,403 @@ import os
 import platform
 import re
 import stat
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, Literal, Protocol, cast
+from typing import Final, Literal
 
-from agent_team.adapters import (
-    SAFE_ENV_KEYS,
-    AdapterSnapshot,
-    FileIdentity,
-    ProcessResult,
-)
+from agent_team.adapters import SAFE_ENV_KEYS, FileIdentity
 from agent_team.probe_receipts import (
-    BLOCKER_CODES,
     CURRENT_SCHEMA_VERSION,
+    CleanupInventory,
     ExecutableIdentity,
+    Judgment,
     Manifest,
     PhaseReceipt,
     ProfileIdentity,
     Receipt,
-    ReceiptValidationError,
     judge_profile,
     required_phases_for_profile,
 )
 
-CURSOR_PINNED_VERSION: Final = "2026.05.09-0afadcc"
-CURSOR_PROBE_REVISION: Final = "cursor-probe-20260830"
-MAX_PROMPT_BYTES: Final = 400_000
-MAX_TIMEOUT_SECONDS: Final = 900.0
-VERSION_TIMEOUT_SECONDS: Final = 15.0
-_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_PLATFORM = re.compile(r"[a-zA-Z0-9._-]{1,64}\Z")
-_REASON_CODE = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
-_PROFILES: Final[dict[str, tuple[str, str, str]]] = {
-    "direct-plan": ("cursor", "argv", "cursor-advertised-plan-v1"),
-    "acp": ("cursor", "stdin", "cursor-acp-no-policy-v1"),
+CursorProfile = Literal["direct-plan", "acp"]
+
+_SHA256 = "[0-9a-f]{64}"
+_SAFE_ENVIRONMENT = tuple(
+    sorted(SAFE_ENV_KEYS & {"HOME", "LANG", "LC_ALL", "PATH", "TERM"})
+)
+_PROFILE_SPECS: Final[dict[str, tuple[str, str]]] = {
+    "direct-plan": ("argv", "cursor-advertised-plan-v1"),
+    "acp": ("stdin", "cursor-acp-no-policy-v1"),
 }
-_BYPASS_FLAGS: Final = frozenset(
-    {"--force", "--yolo", "--trust", "--approve-mcps", "--plugin-dir"}
+
+
+class CursorStaticPreflightError(RuntimeError):
+    """The trusted installation or fresh private root is unavailable or changed."""
+
+
+@dataclass(frozen=True, slots=True)
+class CursorInstallationPin:
+    """Inventory-derived immutable path, version, and content pin."""
+
+    version: str
+    executable_relative_path: str
+    canonical_relative_path: str
+    bundle_relative_path: str
+    node_relative_path: str
+    wrapper_sha256: str
+    bundle_sha256: str
+    node_version: str
+
+    def __post_init__(self) -> None:
+        for value in (
+            self.executable_relative_path,
+            self.canonical_relative_path,
+            self.bundle_relative_path,
+            self.node_relative_path,
+        ):
+            if not value or Path(value).is_absolute() or ".." in Path(value).parts:
+                raise CursorStaticPreflightError("Cursor pin path must be relative")
+        for value in (self.wrapper_sha256, self.bundle_sha256):
+            if not isinstance(value, str) or re.fullmatch(_SHA256, value) is None:
+                raise CursorStaticPreflightError("Cursor pin hash is invalid")
+        if not self.version or not self.node_version:
+            raise CursorStaticPreflightError("Cursor pin version is incomplete")
+
+
+CURSOR_INSTALLATION_PIN: Final = CursorInstallationPin(
+    version="2026.05.09-0afadcc",
+    executable_relative_path=(
+        ".local/share/mise/installs/http-cursor-agent/2026.05.09-0afadcc/cursor-agent"
+    ),
+    canonical_relative_path=(
+        ".local/share/mise/http-tarballs/954dc62a6a840b808e6661c95dc56d8b6f0ea7673c3253688f80bcf235236f29/cursor-agent"
+    ),
+    bundle_relative_path=(
+        ".local/share/mise/http-tarballs/954dc62a6a840b808e6661c95dc56d8b6f0ea7673c3253688f80bcf235236f29/index.js"
+    ),
+    node_relative_path=(
+        ".local/share/mise/http-tarballs/954dc62a6a840b808e6661c95dc56d8b6f0ea7673c3253688f80bcf235236f29/node"
+    ),
+    wrapper_sha256="b7babf47d8b1eee28ac27a74affa02a559bb38103a6e71fbb1f120805d51fedf",
+    bundle_sha256="cbe95bd372a165cebd83658a293d844cae2dfddc7e1e0aef59e704d16d960257",
+    node_version="v24.5.0",
 )
 
-CursorProfile = Literal["direct-plan", "acp"]
-CursorTransport = Literal["argv", "stdin"]
-CursorStatus = Literal["candidate", "rejected", "blocked", "not-run"]
 
-
-class CursorProbeError(RuntimeError):
-    """Base class for fail-closed Cursor probe errors."""
-
-
-class CursorIdentityError(CursorProbeError):
-    """The pinned executable or bundle no longer matches its identity."""
-
-
-class CursorExecutionError(CursorProbeError):
-    """A bounded Cursor invocation failed or timed out."""
-
-
-def _validate_file_identity(identity: FileIdentity) -> None:
-    if not isinstance(identity, FileIdentity):
-        raise CursorIdentityError("Cursor file identity is invalid")
-    for value, name in (
-        (identity.device, "device"),
-        (identity.inode, "inode"),
-        (identity.size, "size"),
-        (identity.mtime_ns, "mtime_ns"),
-    ):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise CursorIdentityError(f"Cursor file identity {name} is invalid")
-    if _SHA256.fullmatch(identity.sha256) is None:
-        raise CursorIdentityError("Cursor file identity sha256 is invalid")
+@dataclass(frozen=True, slots=True)
+class CursorStaticPreflight:
+    pin: CursorInstallationPin
+    home: Path = field(repr=False)
+    executable_path: Path = field(repr=False)
+    canonical_path: Path = field(repr=False)
+    bundle_path: Path = field(repr=False)
+    node_path: Path = field(repr=False)
+    wrapper_identity: FileIdentity
+    bundle_identity: FileIdentity
+    node_identity: FileIdentity
 
 
 @dataclass(frozen=True, slots=True)
-class _ArtifactPin:
-    path: Path = field(repr=False)
-    identity: FileIdentity
-    canonical_path: Path = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.path, Path) or not self.path.is_absolute():
-            raise CursorIdentityError("Cursor pin path must be absolute")
-        _validate_file_identity(self.identity)
-        object.__setattr__(self, "canonical_path", self.path.resolve(strict=False))
-
-
-@dataclass(frozen=True, slots=True)
-class CursorExecutablePin:
-    """Caller-supplied pin; no PATH or alternate-version fallback is allowed."""
-
-    path: Path = field(repr=False)
-    version: str
-    identity: FileIdentity
-    bundle_path: Path | None = field(default=None, repr=False)
-    bundle_identity: FileIdentity | None = None
-    _canonical_path: Path = field(init=False, repr=False)
-    _bundle: _ArtifactPin | None = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        executable = _ArtifactPin(self.path, self.identity)
-        if not isinstance(self.version, str) or not self.version.strip():
-            raise CursorIdentityError("Cursor pin version must be non-empty")
-        if any(ord(char) < 0x20 or ord(char) == 0x7F for char in self.version):
-            raise CursorIdentityError("Cursor pin version contains control text")
-        if (self.bundle_path is None) != (self.bundle_identity is None):
-            raise CursorIdentityError(
-                "Cursor bundle_path and bundle_identity must be supplied together"
-            )
-        bundle = None
-        if self.bundle_path is not None and self.bundle_identity is not None:
-            bundle = _ArtifactPin(self.bundle_path, self.bundle_identity)
-        object.__setattr__(self, "_canonical_path", executable.canonical_path)
-        object.__setattr__(self, "_bundle", bundle)
-
-
-@dataclass(frozen=True, slots=True)
-class CursorInvocation:
+class CursorStaticReport:
     profile: CursorProfile
-    executable: Path = field(repr=False)
-    argv: tuple[str, ...] = field(repr=False)
-    input_text: str | None = field(repr=False)
-    prompt_transport: CursorTransport
-    timeout_seconds: float
-    identity: FileIdentity | None = None
-    bundle_path: Path | None = field(default=None, repr=False)
-    bundle_identity: FileIdentity | None = None
-    _prompt_arg_index: int | None = field(default=None, repr=False)
-
-    @property
-    def argv_sha256(self) -> str:
-        payload = json.dumps(
-            self.argv,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-
-    def redacted_argv(self, workspace: Path) -> tuple[str, ...]:
-        """Return argv with prompt and filesystem paths replaced by markers."""
-
-        result: list[str] = []
-        for index, token in enumerate(self.argv):
-            if index == self._prompt_arg_index:
-                result.append("<prompt>")
-            elif token == str(self.executable):
-                result.append("<pinned-cursor-agent>")
-            elif token == str(workspace):
-                result.append("<workspace>")
-            else:
-                result.append(token)
-        return tuple(result)
+    workspace: Path = field(repr=False)
+    private_root: Path = field(repr=False)
+    preflight: CursorStaticPreflight = field(repr=False)
+    manifest: Manifest = field(repr=False)
+    receipt: Receipt = field(repr=False)
+    judgment: Judgment = field(repr=False)
 
 
-@dataclass(frozen=True, slots=True)
-class CursorDecision:
-    harness_id: str
-    permission_profile: str
-    profile_id: CursorProfile
-    status: CursorStatus
-    reason_codes: tuple[str, ...]
-    receipt: Receipt | None
+def static_preflight(*, private_root: Path) -> CursorStaticPreflight:
+    """Inspect only the inventory-pinned files; never start Cursor or Node."""
 
-
-class CursorCommandRunner(Protocol):
-    """Runner seam; :class:`agent_team.adapters.ProcessRunner` implements it."""
-
-    def run(
-        self,
-        argv: Sequence[str],
-        *,
-        cwd: Path,
-        env: Mapping[str, str],
-        input_text: str | None = None,
-        timeout_seconds: float = 900.0,
-    ) -> ProcessResult: ...
-
-
-def safe_environment(
-    source: Mapping[str, str], *, home: Path | None = None
-) -> dict[str, str]:
-    """Use the shared allowlist and never return provider credential names."""
-
-    result = {
-        key: value
-        for key, value in source.items()
-        if (key in SAFE_ENV_KEYS or key.startswith("LC_")) and isinstance(value, str)
-    }
-    if home is not None:
-        if not home.is_absolute():
-            raise CursorProbeError("isolated HOME must be absolute")
-        result["HOME"] = str(home)
-    return result
-
-
-class CursorProbe:
-    """Build one fixed Cursor read-only profile and run it through a runner."""
-
-    def __init__(
-        self,
-        pin: CursorExecutablePin,
-        *,
-        profile: CursorProfile,
-        workspace: Path,
-        environment: Mapping[str, str] | None = None,
-        probe_revision: str = CURSOR_PROBE_REVISION,
-    ) -> None:
-        if not isinstance(profile, str) or profile not in _PROFILES:
-            raise CursorProbeError(f"unsupported Cursor profile: {profile!r}")
-        if not isinstance(workspace, Path) or not workspace.is_absolute():
-            raise CursorProbeError("Cursor workspace must be absolute")
-        if not isinstance(pin, CursorExecutablePin):
-            raise CursorIdentityError("Cursor executable pin is invalid")
-        if not isinstance(probe_revision, str) or not _PLATFORM.fullmatch(
-            probe_revision
-        ):
-            raise CursorProbeError("Cursor probe revision is invalid")
-        self.pin = pin
-        self.profile: CursorProfile = profile
-        self.workspace = workspace
-        self.environment = safe_environment(
-            os.environ if environment is None else environment
-        )
-        self.probe_revision = probe_revision
-
-    @property
-    def adapter_id(self) -> str:
-        return f"cursor-{self.profile}-readonly"
-
-    def build_invocation(
-        self, prompt: str, *, timeout_seconds: float = 90.0
-    ) -> CursorInvocation:
-        _validate_prompt(prompt)
-        _validate_timeout(timeout_seconds)
-        self._resolve_current_path()
-        self._resolve_workspace()
-        if self.profile == "direct-plan":
-            argv = (
-                str(self.pin.path),
-                "--print",
-                "--mode",
-                "plan",
-                "--sandbox",
-                "enabled",
-                "--workspace",
-                str(self.workspace),
-                "--output-format",
-                "text",
-                prompt,
-            )
-            return CursorInvocation(
-                self.profile,
-                self.pin.path,
-                argv,
-                None,
-                "argv",
-                timeout_seconds,
-                self.pin.identity,
-                self.pin.bundle_path,
-                self.pin.bundle_identity,
-                len(argv) - 1,
-            )
-        return CursorInvocation(
-            self.profile,
-            self.pin.path,
-            (str(self.pin.path), "acp"),
-            prompt,
-            "stdin",
-            timeout_seconds,
-            self.pin.identity,
-            self.pin.bundle_path,
-            self.pin.bundle_identity,
-        )
-
-    def manifest(self, invocation: CursorInvocation) -> Manifest:
-        self._validate_invocation(invocation)
-        harness_id, transport, policy_id = _PROFILES[self.profile]
-        os_name = platform.system().lower()
-        architecture = platform.machine().lower()
-        if not _PLATFORM.fullmatch(os_name) or not _PLATFORM.fullmatch(architecture):
-            raise CursorProbeError("Cursor platform identity is invalid")
-        identity = ProfileIdentity(
-            CURRENT_SCHEMA_VERSION,
-            harness_id,
-            "read-only",
-            os_name,
-            architecture,
-            self.probe_revision,
-            ExecutableIdentity(
-                str(invocation.executable), self.pin.version, self.pin.identity.sha256
-            ),
-            invocation.argv_sha256,
-            transport,
-            str(self.workspace),
-            tuple(sorted(self.environment)),
-            policy_id,
-        )
-        return Manifest(identity, required_phases_for_profile("read-only"))
-
-    def preflight(self, runner: CursorCommandRunner) -> AdapterSnapshot:
-        """Verify the exact file and version without starting a model turn."""
-
-        path, identity = self._verify_identity()
-        result = runner.run(
-            (str(self.pin.path), "--version"),
-            cwd=self._resolve_workspace(),
-            env=safe_environment(self.environment),
-            input_text=None,
-            timeout_seconds=VERSION_TIMEOUT_SECONDS,
-        )
-        version = _require_version_result(result, self.pin.version)
-        return AdapterSnapshot(
-            self.adapter_id, self.probe_revision, path, version, identity
-        )
-
-    def execute(
-        self,
-        invocation: CursorInvocation,
-        runner: CursorCommandRunner,
-    ) -> ProcessResult:
-        """Revalidate identity/version immediately before the provider command."""
-
-        self._validate_invocation(invocation)
-        self._verify_identity()
-        version_result = runner.run(
-            (str(self.pin.path), "--version"),
-            cwd=self._resolve_workspace(),
-            env=safe_environment(self.environment),
-            input_text=None,
-            timeout_seconds=VERSION_TIMEOUT_SECONDS,
-        )
-        _require_version_result(version_result, self.pin.version)
-        self._verify_identity()
-        result = runner.run(
-            invocation.argv,
-            cwd=self._resolve_workspace(),
-            env=safe_environment(self.environment),
-            input_text=invocation.input_text,
-            timeout_seconds=invocation.timeout_seconds,
-        )
-        if result.timed_out:
-            raise CursorExecutionError("Cursor provider command timed out")
-        if result.returncode != 0:
-            raise CursorExecutionError(
-                f"Cursor provider command failed with exit {result.returncode}"
-            )
-        if not result.stdout.strip():
-            raise CursorExecutionError("Cursor provider returned empty output")
-        return result
-
-    def run(
-        self, prompt: str, runner: CursorCommandRunner, *, timeout_seconds: float = 90.0
-    ) -> ProcessResult:
-        invocation = self.build_invocation(prompt, timeout_seconds=timeout_seconds)
-        self.preflight(runner)
-        return self.execute(invocation, runner)
-
-    def _resolve_workspace(self) -> Path:
-        try:
-            workspace_stat = self.workspace.lstat()
-            resolved = self.workspace.resolve(strict=True)
-        except OSError as exc:
-            raise CursorProbeError("Cursor workspace is unavailable") from exc
-        if stat.S_ISLNK(workspace_stat.st_mode) or not resolved.is_dir():
-            raise CursorProbeError("Cursor workspace must be a real directory")
-        return resolved
-
-    def _resolve_current_path(self) -> Path:
-        try:
-            resolved = self.pin.path.resolve(strict=True)
-        except OSError as exc:
-            raise CursorIdentityError(
-                "pinned Cursor executable is unavailable"
-            ) from exc
-        if resolved != self.pin._canonical_path:
-            raise CursorIdentityError("pinned Cursor executable path changed")
-        return resolved
-
-    def _verify_identity(self) -> tuple[Path, FileIdentity]:
-        path = self._resolve_current_path()
-        observed = _capture_identity(path)
-        if observed != self.pin.identity:
-            raise CursorIdentityError("pinned Cursor executable identity changed")
-        if self.pin._bundle is not None:
-            bundle = self.pin._bundle
-            try:
-                bundle_path = bundle.path.resolve(strict=True)
-            except OSError as exc:
-                raise CursorIdentityError(
-                    "pinned Cursor bundle is unavailable"
-                ) from exc
-            if bundle_path != bundle.canonical_path:
-                raise CursorIdentityError("pinned Cursor bundle path changed")
-            if (
-                _capture_identity(bundle_path, require_executable=False)
-                != bundle.identity
-            ):
-                raise CursorIdentityError("pinned Cursor bundle identity changed")
-        return path, observed
-
-    def _validate_invocation(self, invocation: CursorInvocation) -> None:
-        if not isinstance(invocation, CursorInvocation):
-            raise CursorProbeError("Cursor invocation is invalid")
-        if invocation.profile != self.profile:
-            raise CursorProbeError("Cursor invocation profile does not match probe")
-        if invocation.executable != self.pin.path:
-            raise CursorIdentityError("Cursor invocation executable is not pinned")
-        if (
-            invocation.bundle_path != self.pin.bundle_path
-            or invocation.bundle_identity != self.pin.bundle_identity
-        ):
-            raise CursorIdentityError("Cursor invocation bundle is not pinned")
-        if not invocation.argv or any(
-            not isinstance(item, str) or not item for item in invocation.argv
-        ):
-            raise CursorProbeError("Cursor invocation argv is invalid")
-        if invocation.argv[0] != str(invocation.executable):
-            raise CursorProbeError("Cursor invocation executable argv is inconsistent")
-        if invocation.identity != self.pin.identity:
-            raise CursorIdentityError("Cursor invocation identity is not pinned")
-        _validate_timeout(invocation.timeout_seconds)
-        if self.profile == "direct-plan":
-            expected_prefix = (
-                str(self.pin.path),
-                "--print",
-                "--mode",
-                "plan",
-                "--sandbox",
-                "enabled",
-                "--workspace",
-                str(self.workspace),
-                "--output-format",
-                "text",
-            )
-            if (
-                invocation.prompt_transport != "argv"
-                or invocation.input_text is not None
-                or invocation._prompt_arg_index != len(invocation.argv) - 1
-                or tuple(invocation.argv[:-1]) != expected_prefix
-            ):
-                raise CursorProbeError("Cursor direct invocation is not fixed")
-            _validate_prompt(invocation.argv[-1])
-            if any(flag in invocation.argv[:-1] for flag in _BYPASS_FLAGS):
-                raise CursorProbeError(
-                    "Cursor direct invocation contains a bypass flag"
-                )
-            return
-        if (
-            invocation.prompt_transport != "stdin"
-            or invocation.argv != (str(self.pin.path), "acp")
-            or invocation.input_text is None
-        ):
-            raise CursorProbeError("Cursor ACP invocation is not fixed")
-        _validate_prompt(invocation.input_text)
-
-
-def evaluate_profile(
-    manifest: Manifest,
-    phases: Sequence[PhaseReceipt],
-    *,
-    blocked_reason: str | None = None,
-) -> CursorDecision:
-    """Judge the common receipt contract without starting Cursor."""
-
-    profile = _profile_from_manifest(manifest)
-    if profile is None:
-        return CursorDecision(
-            "cursor",
-            "read-only",
-            "direct-plan",
-            "rejected",
-            ("profile-identity-mismatch",),
-            None,
-        )
-    if blocked_reason is not None and blocked_reason not in BLOCKER_CODES:
-        return _decision(manifest, profile, "rejected", ("invalid-blocker",), None)
-    expected_ids = tuple(
-        phase.phase_id for phase in required_phases_for_profile("read-only")
-    )
-    observations = tuple(phases)
-    if tuple(getattr(phase, "phase_id", "") for phase in observations) != expected_ids:
-        return _decision(manifest, profile, "rejected", ("phase-set-mismatch",), None)
-    if any(not isinstance(phase, PhaseReceipt) for phase in observations):
-        return _decision(manifest, profile, "rejected", ("phase-malformed",), None)
-    try:
-        receipt = Receipt(manifest.identity, blocked_reason, observations)
-        judgment = judge_profile(manifest, receipt)
-    except (ReceiptValidationError, TypeError, ValueError):
-        return _decision(manifest, profile, "rejected", ("receipt-invalid",), None)
-    return _decision(
-        manifest,
-        profile,
-        judgment.status,
-        judgment.reason_codes,
-        receipt,
+    _validate_private_root(private_root)
+    pin = CURSOR_INSTALLATION_PIN
+    home = Path.home()
+    executable = home / pin.executable_relative_path
+    canonical = home / pin.canonical_relative_path
+    bundle = home / pin.bundle_relative_path
+    node = home / pin.node_relative_path
+    wrapper = _same_object_identity(executable, canonical, require_executable=True)
+    if wrapper.sha256 != pin.wrapper_sha256:
+        raise CursorStaticPreflightError("Cursor wrapper hash does not match pin")
+    bundle_identity = _capture_identity(bundle, require_executable=False)
+    if bundle_identity.sha256 != pin.bundle_sha256:
+        raise CursorStaticPreflightError("Cursor bundle hash does not match pin")
+    node_identity = _capture_identity(node, require_executable=True)
+    return CursorStaticPreflight(
+        pin,
+        home,
+        executable,
+        canonical,
+        bundle,
+        node,
+        wrapper,
+        bundle_identity,
+        node_identity,
     )
 
 
-def redacted_record(
-    manifest: Manifest,
-    invocation: CursorInvocation,
-    *,
-    status: CursorStatus,
-    reason_codes: Sequence[str] = (),
-) -> dict[str, object]:
-    """Return a persistence-safe summary; raw prompt/output/path never appear."""
-
-    profile = _profile_from_manifest(manifest)
-    if profile is None or invocation.profile != profile:
-        raise CursorProbeError("manifest and invocation profile do not match")
-    if status not in {"candidate", "rejected", "blocked", "not-run"}:
-        raise CursorProbeError("Cursor status is invalid")
-    safe_reasons = _safe_reason_codes(reason_codes)
-    if invocation.identity is None:
-        raise CursorProbeError("Cursor invocation identity is missing")
-    identity = manifest.identity
-    file_identity = invocation.identity
-    record: dict[str, object] = {
-        "artifact": "cursor-probe",
-        "harness_id": identity.harness_id,
-        "profile_id": profile,
-        "permission_profile": identity.permission_profile,
-        "os": identity.os_name,
-        "architecture": identity.architecture,
-        "probe_revision": identity.probe_revision,
-        "executable": {
-            "version": identity.executable.version,
-            "sha256": identity.executable.sha256,
-            "device": file_identity.device,
-            "inode": file_identity.inode,
-            "size": file_identity.size,
-            "mtime_ns": file_identity.mtime_ns,
-        },
-        "executable_path_sha256": hashlib.sha256(
-            identity.executable.path.encode("utf-8")
-        ).hexdigest(),
-        "argv_sha256": identity.argv_sha256,
-        "redacted_argv": list(invocation.redacted_argv(Path(identity.cwd))),
-        "prompt_transport": identity.prompt_transport,
-        "cwd": "<workspace>",
-        "environment_allowlist": list(identity.environment_allowlist),
-        "sandbox_policy_id": identity.sandbox_policy_id,
-        "status": status,
-        "reason_codes": list(safe_reasons),
-    }
-    if invocation.bundle_path is not None and invocation.bundle_identity is not None:
-        bundle = invocation.bundle_identity
-        record["bundle"] = {
-            "sha256": bundle.sha256,
-            "device": bundle.device,
-            "inode": bundle.inode,
-            "size": bundle.size,
-            "mtime_ns": bundle.mtime_ns,
-            "path_sha256": hashlib.sha256(
-                str(invocation.bundle_path).encode("utf-8")
-            ).hexdigest(),
-        }
-    return record
-
-
-def capture_cursor_identity(path: Path) -> FileIdentity:
-    """Capture a trusted identity for an offline pin; reuse it for live runs."""
-
-    if not isinstance(path, Path) or not path.is_absolute():
-        raise CursorIdentityError("Cursor executable path must be absolute")
-    try:
-        resolved = path.resolve(strict=True)
-    except OSError as exc:
-        raise CursorIdentityError("Cursor executable is unavailable") from exc
-    return _capture_identity(resolved)
-
-
-def _profile_from_manifest(manifest: Manifest) -> CursorProfile | None:
-    if not isinstance(manifest, Manifest):
-        return None
-    identity = manifest.identity
-    for profile, (harness_id, transport, policy_id) in _PROFILES.items():
-        if (
-            identity.harness_id == harness_id
-            and identity.permission_profile == "read-only"
-            and identity.prompt_transport == transport
-            and identity.sandbox_policy_id == policy_id
-        ):
-            return cast(CursorProfile, profile)
-    return None
-
-
-def _decision(
-    manifest: Manifest,
+def static_probe(
     profile: CursorProfile,
-    status: CursorStatus,
-    reasons: Sequence[str],
-    receipt: Receipt | None,
-) -> CursorDecision:
-    return CursorDecision(
-        manifest.identity.harness_id,
-        manifest.identity.permission_profile,
+    *,
+    workspace: Path,
+    private_root: Path,
+) -> CursorStaticReport:
+    """Create a static report; no caller-supplied executable, phases, or status."""
+
+    if profile not in _PROFILE_SPECS:
+        raise CursorStaticPreflightError(f"unsupported Cursor profile: {profile!r}")
+    _validate_workspace(workspace)
+    preflight = static_preflight(private_root=private_root)
+    manifest = _build_manifest(profile, workspace, preflight)
+    receipt = _not_run_receipt(manifest)
+    judgment = judge_profile(manifest, receipt)
+    if judgment.status != "not-run":
+        raise CursorStaticPreflightError("static report unexpectedly passed live gate")
+    return CursorStaticReport(
         profile,
-        status,
-        tuple(reasons),
+        workspace,
+        private_root,
+        preflight,
+        manifest,
         receipt,
+        judgment,
     )
 
 
-def _safe_reason_codes(reason_codes: Sequence[str]) -> tuple[str, ...]:
-    result: list[str] = []
-    for reason in reason_codes:
-        if not isinstance(reason, str) or _REASON_CODE.fullmatch(reason) is None:
-            raise CursorProbeError("Cursor reason code is invalid")
-        result.append(reason)
-    return tuple(result)
+def serialize_static_report(report: CursorStaticReport) -> str:
+    """Recompute the static report and serialize only redacted metadata."""
+
+    if not isinstance(report, CursorStaticReport):
+        raise CursorStaticPreflightError("static report is invalid")
+    _validate_workspace(report.workspace)
+    preflight = static_preflight(private_root=report.private_root)
+    manifest = _build_manifest(report.profile, report.workspace, preflight)
+    receipt = _not_run_receipt(manifest)
+    judgment = judge_profile(manifest, receipt)
+    if judgment.status != "not-run":
+        raise CursorStaticPreflightError("static report unexpectedly passed live gate")
+    pin = preflight.pin
+    return json.dumps(
+        {
+            "artifact": "cursor-static-probe",
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "profile": {
+                "id": report.profile,
+                "harness_id": manifest.identity.harness_id,
+                "permission_profile": manifest.identity.permission_profile,
+                "prompt_transport": manifest.identity.prompt_transport,
+                "sandbox_policy_id": manifest.identity.sandbox_policy_id,
+                "status": judgment.status,
+                "reason_codes": list(judgment.reason_codes),
+            },
+            "manifest": {
+                "probe_revision": manifest.identity.probe_revision,
+                "argv_sha256": manifest.identity.argv_sha256,
+                "environment_allowlist": list(_SAFE_ENVIRONMENT),
+                "workspace": "<workspace>",
+            },
+            "receipt": {
+                "status": judgment.status,
+                "phases": [
+                    {"phase_id": phase.phase_id, "outcome": phase.outcome}
+                    for phase in receipt.phases
+                ],
+            },
+            "installation": {
+                "version": pin.version,
+                "wrapper_sha256": pin.wrapper_sha256,
+                "bundle_sha256": pin.bundle_sha256,
+                "node_version": pin.node_version,
+                "wrapper_path_sha256": _path_digest(preflight.executable_path),
+                "canonical_path_sha256": _path_digest(preflight.canonical_path),
+                "bundle_path_sha256": _path_digest(preflight.bundle_path),
+                "node_path_sha256": _path_digest(preflight.node_path),
+                "wrapper_identity": _identity_dict(preflight.wrapper_identity),
+                "bundle_identity": _identity_dict(preflight.bundle_identity),
+                "node_identity": _identity_dict(preflight.node_identity),
+            },
+            "private_root": "<private-root>",
+            "auth_prerequisite": "authenticated-at-inventory",
+            "live_matrix": "not-run",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
-def _capture_identity(path: Path, *, require_executable: bool = True) -> FileIdentity:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    file_descriptor: int | None = None
+def _build_manifest(
+    profile: CursorProfile,
+    workspace: Path,
+    preflight: CursorStaticPreflight,
+) -> Manifest:
+    transport, policy_id = _PROFILE_SPECS[profile]
+    argv = (
+        (
+            str(preflight.executable_path),
+            "--print",
+            "--mode",
+            "plan",
+            "--sandbox",
+            "enabled",
+            "--workspace",
+            "<workspace>",
+            "--output-format",
+            "text",
+            "<prompt>",
+        )
+        if profile == "direct-plan"
+        else (str(preflight.executable_path), "acp")
+    )
+    argv_digest = hashlib.sha256(
+        json.dumps(argv, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    identity = ProfileIdentity(
+        CURRENT_SCHEMA_VERSION,
+        "cursor",
+        "read-only",
+        platform.system().lower(),
+        platform.machine().lower(),
+        "cursor-static-preflight-20260830",
+        ExecutableIdentity(
+            str(preflight.executable_path),
+            preflight.pin.version,
+            preflight.pin.wrapper_sha256,
+        ),
+        argv_digest,
+        transport,
+        str(workspace),
+        _SAFE_ENVIRONMENT,
+        policy_id,
+    )
+    return Manifest(identity, required_phases_for_profile("read-only"))
+
+
+def _not_run_receipt(manifest: Manifest) -> Receipt:
+    phases = tuple(
+        PhaseReceipt(
+            phase.phase_id,
+            phase.expected_result,
+            False,
+            False,
+            "not-run",
+            None,
+            False,
+            (),
+            CleanupInventory(),
+        )
+        for phase in manifest.required_phases
+    )
+    return Receipt(manifest.identity, None, phases)
+
+
+def _validate_workspace(workspace: Path) -> None:
+    if not isinstance(workspace, Path) or not workspace.is_absolute():
+        raise CursorStaticPreflightError("workspace must be absolute")
     try:
-        file_descriptor = os.open(path, flags)
-        before = os.fstat(file_descriptor)
+        info = workspace.lstat()
+    except OSError as exc:
+        raise CursorStaticPreflightError("workspace is unavailable") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise CursorStaticPreflightError("workspace must be a real directory")
+
+
+def _validate_private_root(private_root: Path) -> None:
+    if not isinstance(private_root, Path) or not private_root.is_absolute():
+        raise CursorStaticPreflightError("private root must be absolute")
+    try:
+        info = private_root.lstat()
+        entries = next(private_root.iterdir(), None)
+    except OSError as exc:
+        raise CursorStaticPreflightError("private root cannot be inspected") from exc
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+        or entries is not None
+    ):
+        raise CursorStaticPreflightError(
+            "private root is not a fresh owner-only directory"
+        )
+
+
+def _same_object_identity(
+    logical: Path, canonical: Path, *, require_executable: bool
+) -> FileIdentity:
+    try:
+        if logical.is_symlink() and logical.resolve(strict=True) != canonical.resolve(
+            strict=True
+        ):
+            raise CursorStaticPreflightError("Cursor executable path target changed")
+        logical_identity = _capture_identity(
+            canonical if logical.is_symlink() else logical,
+            require_executable=require_executable,
+        )
+        canonical_identity = _capture_identity(
+            canonical, require_executable=require_executable
+        )
+    except OSError as exc:
+        raise CursorStaticPreflightError(
+            "Cursor executable path cannot be inspected"
+        ) from exc
+    if logical_identity != canonical_identity:
+        raise CursorStaticPreflightError("Cursor wrapper and canonical object differ")
+    return logical_identity
+
+
+def _capture_identity(path: Path, *, require_executable: bool) -> FileIdentity:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or (
             require_executable and not os.access(path, os.X_OK)
         ):
-            raise CursorIdentityError("Cursor file is not a regular executable")
-        digest_builder = hashlib.sha256()
-        while True:
-            chunk = os.read(file_descriptor, 65_536)
-            if not chunk:
-                break
-            digest_builder.update(chunk)
-        after = os.fstat(file_descriptor)
-        if (
-            after.st_dev != before.st_dev
-            or after.st_ino != before.st_ino
-            or after.st_size != before.st_size
-            or after.st_mtime_ns != before.st_mtime_ns
+            raise CursorStaticPreflightError("Cursor installation object is invalid")
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 65_536):
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
         ):
-            raise CursorIdentityError("Cursor file changed while reading")
-        identity = FileIdentity(
+            raise CursorStaticPreflightError(
+                "Cursor installation object changed while reading"
+            )
+        return FileIdentity(
             before.st_dev,
             before.st_ino,
             before.st_size,
             before.st_mtime_ns,
-            digest_builder.hexdigest(),
+            digest.hexdigest(),
         )
-    except CursorIdentityError:
+    except CursorStaticPreflightError:
         raise
     except OSError as exc:
-        raise CursorIdentityError("Cursor file cannot be inspected") from exc
+        raise CursorStaticPreflightError(
+            "Cursor installation object cannot be inspected"
+        ) from exc
     finally:
-        if file_descriptor is not None:
-            os.close(file_descriptor)
-    return identity
+        if descriptor is not None:
+            os.close(descriptor)
 
 
-def _validate_prompt(prompt: str) -> None:
-    if not isinstance(prompt, str) or not prompt.strip():
-        raise CursorProbeError("Cursor prompt must not be empty")
-    try:
-        prompt_bytes = len(prompt.encode("utf-8"))
-    except UnicodeEncodeError as exc:
-        raise CursorProbeError("Cursor prompt contains invalid Unicode") from exc
-    if prompt_bytes > MAX_PROMPT_BYTES:
-        raise CursorProbeError("Cursor prompt exceeds the byte limit")
+def _identity_dict(identity: FileIdentity) -> dict[str, int | str]:
+    return {
+        "device": identity.device,
+        "inode": identity.inode,
+        "size": identity.size,
+        "mtime_ns": identity.mtime_ns,
+        "sha256": identity.sha256,
+    }
 
 
-def _validate_timeout(timeout_seconds: float) -> None:
-    if not isinstance(timeout_seconds, (int, float)) or isinstance(
-        timeout_seconds, bool
-    ):
-        raise CursorExecutionError("Cursor timeout must be numeric")
-    if timeout_seconds <= 0 or timeout_seconds > MAX_TIMEOUT_SECONDS:
-        raise CursorExecutionError("Cursor timeout is outside the bounded range")
-
-
-def _require_version_result(result: ProcessResult, expected: str) -> str:
-    if result.timed_out:
-        raise CursorExecutionError("Cursor version probe timed out")
-    if result.returncode != 0:
-        raise CursorExecutionError("Cursor version probe failed")
-    if not result.stdout.strip() or not _exact_version_present(result.stdout, expected):
-        raise CursorIdentityError("pinned Cursor executable version changed")
-    return expected
-
-
-def _exact_version_present(output: str, version: str) -> bool:
-    return re.search(rf"(?<![0-9]){re.escape(version)}(?![0-9])", output) is not None
+def _path_digest(path: Path) -> str:
+    return hashlib.sha256(str(path).encode("utf-8")).hexdigest()
