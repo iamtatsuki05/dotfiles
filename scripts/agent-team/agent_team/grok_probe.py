@@ -17,7 +17,7 @@ import shutil
 import stat
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final, Literal, NoReturn
 
@@ -149,7 +149,6 @@ class GrokProvenance:
 
 
 PINNED_GROK_PROVENANCE: Final = GrokProvenance()
-_VERIFICATION_TOKEN = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +181,28 @@ def parse_grok_version(banner: str) -> tuple[str, str]:
     return version, commit
 
 
-def _regular_file_identity(path: Path, field: str) -> tuple[str, int, int]:
+@dataclass(frozen=True, slots=True)
+class _FileSnapshot:
+    sha256: str
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    birthtime_ns: int | None
+
+
+def _birthtime_ns(file_stat: os.stat_result) -> int | None:
+    value = getattr(file_stat, "st_birthtime_ns", None)
+    if isinstance(value, int):
+        return value
+    seconds = getattr(file_stat, "st_birthtime", None)
+    if isinstance(seconds, (int, float)):
+        return int(seconds * 1_000_000_000)
+    return None
+
+
+def _regular_file_identity(path: Path, field: str) -> _FileSnapshot:
     path = _absolute(path, field)
     if not hasattr(os, "O_NOFOLLOW"):
         _fail("platform lacks the no-follow file primitive")
@@ -208,23 +228,34 @@ def _regular_file_identity(path: Path, field: str) -> tuple[str, int, int]:
             digest_builder.update(chunk)
             remaining -= len(chunk)
         after = os.fstat(descriptor)
-        if (
+        if _file_fingerprint(before) != _file_fingerprint(after):
+            _fail(f"{field} identity changed while it was being hashed")
+        return _FileSnapshot(
+            digest_builder.hexdigest(),
             before.st_dev,
             before.st_ino,
-            before.st_mode,
             before.st_size,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_mode,
-            after.st_size,
-        ):
-            _fail(f"{field} identity changed while it was being hashed")
-        return digest_builder.hexdigest(), before.st_dev, before.st_ino
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            _birthtime_ns(before),
+        )
     except OSError as exc:
         raise GrokProbeError(f"{field} cannot be hashed") from exc
     finally:
         os.close(descriptor)
+
+
+def _file_fingerprint(file_stat: os.stat_result) -> tuple[int, ...]:
+    birthtime_ns = _birthtime_ns(file_stat)
+    return (
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_mode,
+        file_stat.st_size,
+        file_stat.st_mtime_ns,
+        file_stat.st_ctime_ns,
+        -1 if birthtime_ns is None else birthtime_ns,
+    )
 
 
 def _default_path_lookup() -> Path | None:
@@ -296,8 +327,27 @@ class GrokBinaryIdentity:
     package_inode: int
     team_id: str
     cdhash: str
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    birthtime_ns: int | None
+    wrapper_size: int
+    wrapper_mtime_ns: int
+    wrapper_ctime_ns: int
+    wrapper_birthtime_ns: int | None
+    package_size: int
+    package_mtime_ns: int
+    package_ctime_ns: int
+    package_birthtime_ns: int | None
+    symlink_size: int
+    symlink_mtime_ns: int
+    symlink_ctime_ns: int
+    symlink_birthtime_ns: int | None
+    path_entry_size: int
+    path_entry_mtime_ns: int
+    path_entry_ctime_ns: int
+    path_entry_birthtime_ns: int | None
     provenance: GrokProvenance = PINNED_GROK_PROVENANCE
-    verification_token: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         for path_value, field_name in (
@@ -310,8 +360,6 @@ class GrokBinaryIdentity:
             _absolute(path_value, field_name)
         if self.provenance != PINNED_GROK_PROVENANCE:
             _fail("Grok provenance is not the pinned release")
-        if self.verification_token is not _VERIFICATION_TOKEN:
-            _fail("Grok identity was not produced by a verified resolver")
         if self.canonical_target.name != GROK_TARGET_NAME:
             _fail("canonical target is not the pinned Grok executable")
         expected_target = self.canonical_link.parent / self.provenance.target_name
@@ -372,6 +420,21 @@ class GrokBinaryIdentity:
             (self.path_entry_inode, "path_entry_inode"),
             (self.package_device, "package_device"),
             (self.package_inode, "package_inode"),
+            (self.size, "size"),
+            (self.mtime_ns, "mtime_ns"),
+            (self.ctime_ns, "ctime_ns"),
+            (self.wrapper_size, "wrapper_size"),
+            (self.wrapper_mtime_ns, "wrapper_mtime_ns"),
+            (self.wrapper_ctime_ns, "wrapper_ctime_ns"),
+            (self.package_size, "package_size"),
+            (self.package_mtime_ns, "package_mtime_ns"),
+            (self.package_ctime_ns, "package_ctime_ns"),
+            (self.symlink_size, "symlink_size"),
+            (self.symlink_mtime_ns, "symlink_mtime_ns"),
+            (self.symlink_ctime_ns, "symlink_ctime_ns"),
+            (self.path_entry_size, "path_entry_size"),
+            (self.path_entry_mtime_ns, "path_entry_mtime_ns"),
+            (self.path_entry_ctime_ns, "path_entry_ctime_ns"),
         ):
             if (
                 not isinstance(numeric_value, int)
@@ -379,6 +442,17 @@ class GrokBinaryIdentity:
                 or numeric_value < 0
             ):
                 _fail(f"{field_name} must be a non-negative integer")
+        for value, field_name in (
+            (self.birthtime_ns, "birthtime_ns"),
+            (self.wrapper_birthtime_ns, "wrapper_birthtime_ns"),
+            (self.package_birthtime_ns, "package_birthtime_ns"),
+            (self.symlink_birthtime_ns, "symlink_birthtime_ns"),
+            (self.path_entry_birthtime_ns, "path_entry_birthtime_ns"),
+        ):
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                _fail(f"{field_name} must be a non-negative integer or null")
 
 
 class GrokBinaryResolver:
@@ -439,10 +513,8 @@ class GrokBinaryResolver:
             or target != expected_target.resolve(strict=True)
         ):
             _fail("canonical target is not grok-1.0.13")
-        target_sha, target_device, target_inode = _regular_file_identity(
-            target, "canonical target"
-        )
-        if target_sha != PINNED_GROK_PROVENANCE.binary_sha256:
+        target_snapshot = _regular_file_identity(target, "canonical target")
+        if target_snapshot.sha256 != PINNED_GROK_PROVENANCE.binary_sha256:
             _fail("canonical binary hash does not match pinned provenance")
         try:
             link_after = link.lstat()
@@ -490,15 +562,11 @@ class GrokBinaryResolver:
         package = package_root / "package.json"
         if entry_resolved != wrapper.resolve(strict=True):
             _fail("PATH Grok entry does not point to the pinned wrapper")
-        wrapper_sha, wrapper_device, wrapper_inode = _regular_file_identity(
-            wrapper, "Grok wrapper"
-        )
-        if wrapper_sha != PINNED_GROK_PROVENANCE.wrapper_sha256:
+        wrapper_snapshot = _regular_file_identity(wrapper, "Grok wrapper")
+        if wrapper_snapshot.sha256 != PINNED_GROK_PROVENANCE.wrapper_sha256:
             _fail("Grok wrapper hash does not match pinned provenance")
-        package_sha, package_device, package_inode = _regular_file_identity(
-            package, "Grok package metadata"
-        )
-        if package_sha != PINNED_GROK_PROVENANCE.package_sha256:
+        package_snapshot = _regular_file_identity(package, "Grok package metadata")
+        if package_snapshot.sha256 != PINNED_GROK_PROVENANCE.package_sha256:
             _fail("Grok package metadata hash does not match pinned provenance")
         try:
             entry_after = entry.lstat()
@@ -522,6 +590,30 @@ class GrokBinaryResolver:
             PINNED_GROK_PROVENANCE.cdhash,
         ):
             _fail("Grok signature metadata does not match pinned provenance")
+        target_after_signature = _regular_file_identity(target, "canonical target")
+        wrapper_after_signature = _regular_file_identity(wrapper, "Grok wrapper")
+        package_after_signature = _regular_file_identity(
+            package, "Grok package metadata"
+        )
+        try:
+            link_after_signature = link.lstat()
+            link_target_after_signature = Path(os.readlink(link)).name
+            entry_after_signature = entry.lstat()
+            entry_target_after_signature = entry.resolve(strict=True)
+        except OSError as exc:
+            raise GrokProbeError(
+                "Grok static identity changed after signature"
+            ) from exc
+        if (
+            target_after_signature != target_snapshot
+            or wrapper_after_signature != wrapper_snapshot
+            or package_after_signature != package_snapshot
+            or _file_fingerprint(link_after_signature) != _file_fingerprint(link_stat)
+            or link_target_after_signature != link_target_name
+            or _file_fingerprint(entry_after_signature) != _file_fingerprint(entry_stat)
+            or entry_target_after_signature != entry_resolved
+        ):
+            _fail("Grok static identity changed after signature")
         return GrokBinaryIdentity(
             canonical_link=link,
             canonical_target=target,
@@ -530,23 +622,42 @@ class GrokBinaryResolver:
             package_path=package,
             version=version,
             commit=commit,
-            sha256=target_sha,
-            device=target_device,
-            inode=target_inode,
+            sha256=target_snapshot.sha256,
+            device=target_snapshot.device,
+            inode=target_snapshot.inode,
             symlink_device=link_stat.st_dev,
             symlink_inode=link_stat.st_ino,
-            wrapper_sha256=wrapper_sha,
-            wrapper_device=wrapper_device,
-            wrapper_inode=wrapper_inode,
+            wrapper_sha256=wrapper_snapshot.sha256,
+            wrapper_device=wrapper_snapshot.device,
+            wrapper_inode=wrapper_snapshot.inode,
             path_entry_device=entry_stat.st_dev,
             path_entry_inode=entry_stat.st_ino,
-            package_sha256=package_sha,
-            package_device=package_device,
-            package_inode=package_inode,
+            package_sha256=package_snapshot.sha256,
+            package_device=package_snapshot.device,
+            package_inode=package_snapshot.inode,
             team_id=signature.team_id,
             cdhash=signature.cdhash,
+            size=target_snapshot.size,
+            mtime_ns=target_snapshot.mtime_ns,
+            ctime_ns=target_snapshot.ctime_ns,
+            birthtime_ns=target_snapshot.birthtime_ns,
+            wrapper_size=wrapper_snapshot.size,
+            wrapper_mtime_ns=wrapper_snapshot.mtime_ns,
+            wrapper_ctime_ns=wrapper_snapshot.ctime_ns,
+            wrapper_birthtime_ns=wrapper_snapshot.birthtime_ns,
+            package_size=package_snapshot.size,
+            package_mtime_ns=package_snapshot.mtime_ns,
+            package_ctime_ns=package_snapshot.ctime_ns,
+            package_birthtime_ns=package_snapshot.birthtime_ns,
+            symlink_size=link_stat.st_size,
+            symlink_mtime_ns=link_stat.st_mtime_ns,
+            symlink_ctime_ns=link_stat.st_ctime_ns,
+            symlink_birthtime_ns=_birthtime_ns(link_stat),
+            path_entry_size=entry_stat.st_size,
+            path_entry_mtime_ns=entry_stat.st_mtime_ns,
+            path_entry_ctime_ns=entry_stat.st_ctime_ns,
+            path_entry_birthtime_ns=_birthtime_ns(entry_stat),
             provenance=PINNED_GROK_PROVENANCE,
-            verification_token=_VERIFICATION_TOKEN,
         )
 
 
@@ -773,8 +884,6 @@ def _validate_serializable_result(result: GrokPreflightResult) -> Judgment:
         _fail("result receipt is invalid")
     if not isinstance(result.judgment, Judgment):
         _fail("result judgment is invalid")
-    if result.identity.verification_token is not _VERIFICATION_TOKEN:
-        _fail("result identity was not produced by the pinned resolver")
     if result.identity.provenance != PINNED_GROK_PROVENANCE:
         _fail("result identity provenance is not pinned")
     if (
@@ -791,6 +900,13 @@ def _validate_serializable_result(result: GrokPreflightResult) -> Judgment:
         GROK_CDHASH,
     ):
         _fail("result identity pin fields are invalid")
+    home = result.identity.canonical_link.parent.parent.parent
+    fresh_identity = GrokBinaryResolver(
+        home=home,
+        expected_path_entry=result.identity.path_entry,
+    ).resolve()
+    if fresh_identity != result.identity:
+        _fail("fresh static resolver identity does not match the receipt")
     if result.auth_marker_status not in {"absent", "present-unverified"}:
         _fail("auth marker status is invalid")
     expected_manifest = build_profile_manifest(result.profile, result.identity)
@@ -857,6 +973,26 @@ def serialize_grok_receipt(result: GrokPreflightResult) -> str:
             "package_sha256": identity.package_sha256,
             "package_device": identity.package_device,
             "package_inode": identity.package_inode,
+            "size": identity.size,
+            "mtime_ns": identity.mtime_ns,
+            "ctime_ns": identity.ctime_ns,
+            "birthtime_ns": identity.birthtime_ns,
+            "wrapper_size": identity.wrapper_size,
+            "wrapper_mtime_ns": identity.wrapper_mtime_ns,
+            "wrapper_ctime_ns": identity.wrapper_ctime_ns,
+            "wrapper_birthtime_ns": identity.wrapper_birthtime_ns,
+            "package_size": identity.package_size,
+            "package_mtime_ns": identity.package_mtime_ns,
+            "package_ctime_ns": identity.package_ctime_ns,
+            "package_birthtime_ns": identity.package_birthtime_ns,
+            "symlink_size": identity.symlink_size,
+            "symlink_mtime_ns": identity.symlink_mtime_ns,
+            "symlink_ctime_ns": identity.symlink_ctime_ns,
+            "symlink_birthtime_ns": identity.symlink_birthtime_ns,
+            "path_entry_size": identity.path_entry_size,
+            "path_entry_mtime_ns": identity.path_entry_mtime_ns,
+            "path_entry_ctime_ns": identity.path_entry_ctime_ns,
+            "path_entry_birthtime_ns": identity.path_entry_birthtime_ns,
             "team_id": identity.team_id,
             "cdhash": identity.cdhash,
         },

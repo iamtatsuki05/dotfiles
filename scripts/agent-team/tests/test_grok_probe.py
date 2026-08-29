@@ -27,6 +27,7 @@ from agent_team.grok_probe import (
     GrokProbeError,
     GrokProvenance,
     GrokSignature,
+    _FileSnapshot,
     build_isolated_environment,
     build_profile_manifest,
     offline_preflight,
@@ -98,14 +99,22 @@ def _static_fixture(
     package_sha256: str = GROK_PACKAGE_SHA256,
     signature: GrokSignature | None = None,
 ) -> Iterator[None]:
-    def file_identity(_path: Path, field: str) -> tuple[str, int, int]:
+    def file_identity(_path: Path, field: str) -> _FileSnapshot:
         path_stat = _path.stat()
         expected = {
             "canonical target": GROK_BINARY_SHA256,
             "Grok wrapper": wrapper_sha256,
             "Grok package metadata": package_sha256,
         }[field]
-        return expected, path_stat.st_dev, path_stat.st_ino
+        return _FileSnapshot(
+            expected,
+            path_stat.st_dev,
+            path_stat.st_ino,
+            path_stat.st_size,
+            path_stat.st_mtime_ns,
+            path_stat.st_ctime_ns,
+            None,
+        )
 
     with (
         mock.patch("agent_team.grok_probe._regular_file_identity", file_identity),
@@ -283,6 +292,72 @@ class GrokIdentityContractTest(unittest.TestCase):
                 self.assertRaisesRegex(GrokProbeError, "identity changed"),
             ):
                 grok_probe._regular_file_identity(regular, "probe")
+
+    def test_static_hash_rejects_same_size_mtime_and_ctime_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            regular = Path(temp_dir) / "regular"
+            regular.write_bytes(b"same-size-content")
+            real_fstat = os.fstat
+            calls = 0
+
+            def drifting_times(fd: int) -> os.stat_result:
+                nonlocal calls
+                calls += 1
+                result = real_fstat(fd)
+                if calls == 2:
+                    values = list(result)
+                    values[8] += 1
+                    values[9] += 1
+                    return os.stat_result(values)
+                return result
+
+            with (
+                mock.patch("agent_team.grok_probe.os.fstat", drifting_times),
+                self.assertRaisesRegex(GrokProbeError, "identity changed"),
+            ):
+                grok_probe._regular_file_identity(regular, "probe")
+
+    def test_resolver_rehashes_after_signature_and_rejects_same_size_content_race(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            resolver, _, target = _resolver(root)
+            original_identity = grok_probe._regular_file_identity
+            calls: dict[str, int] = {}
+
+            def fixture_identity(path: Path, field: str) -> grok_probe._FileSnapshot:
+                actual = original_identity(path, field)
+                calls[field] = calls.get(field, 0) + 1
+                if field == "canonical target" and calls[field] > 1:
+                    return actual
+                expected = {
+                    "canonical target": GROK_BINARY_SHA256,
+                    "Grok wrapper": GROK_WRAPPER_SHA256,
+                    "Grok package metadata": GROK_PACKAGE_SHA256,
+                }[field]
+                return replace(actual, sha256=expected)
+
+            original_content = target.read_bytes()
+
+            def mutate_after_static_hash(_: Path) -> GrokSignature:
+                target.write_bytes(b"X" + original_content[1:])
+                return GrokSignature(GROK_TEAM_ID, GROK_CDHASH)
+
+            with (
+                mock.patch(
+                    "agent_team.grok_probe._regular_file_identity",
+                    fixture_identity,
+                ),
+                mock.patch(
+                    "agent_team.grok_probe._codesign_signature",
+                    mutate_after_static_hash,
+                ),
+                self.assertRaisesRegex(GrokProbeError, "changed|identity"),
+            ):
+                resolver.resolve()
+
+            self.assertEqual(calls["canonical target"], 2)
 
     def test_canonical_link_must_be_the_fixed_home_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -485,7 +560,13 @@ class GrokIsolationAndReceiptTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             resolver, _, _ = _resolver(root)
-            with _static_fixture():
+            with (
+                _static_fixture(),
+                mock.patch(
+                    "agent_team.grok_probe._default_path_lookup",
+                    return_value=resolver.expected_path_entry,
+                ),
+            ):
                 result = offline_preflight(
                     "direct",
                     resolver=resolver,
@@ -493,33 +574,50 @@ class GrokIsolationAndReceiptTest(unittest.TestCase):
                     auth_path=root / "missing-auth.json",
                     source_environment={"PATH": "/usr/bin"},
                 )
-            serialized = serialize_grok_receipt(result)
-            forged = replace(
-                result,
-                judgment=Judgment("grok", "read-only", "candidate", ()),
-            )
-            forged_profile = replace(
-                result,
-                manifest=build_profile_manifest("native-stdio", result.identity),
-            )
-            forged_status = replace(
-                result,
-                auth_marker_status=cast(AuthMarkerStatus, "unexpected"),
-            )
+            with (
+                _static_fixture(),
+                mock.patch(
+                    "agent_team.grok_probe._default_path_lookup",
+                    return_value=result.identity.path_entry,
+                ),
+            ):
+                serialized = serialize_grok_receipt(result)
+                forged = replace(
+                    result,
+                    judgment=Judgment("grok", "read-only", "candidate", ()),
+                )
+                forged_profile = replace(
+                    result,
+                    manifest=build_profile_manifest("native-stdio", result.identity),
+                )
+                forged_status = replace(
+                    result,
+                    auth_marker_status=cast(AuthMarkerStatus, "unexpected"),
+                )
+                forged_identity = replace(
+                    result.identity,
+                    path_entry_device=result.identity.path_entry_device + 1,
+                )
+                forged_identity_result = replace(
+                    result,
+                    identity=forged_identity,
+                )
 
-        payload = json.loads(serialized)
-        self.assertEqual(payload["auth_status"], "blocked")
-        self.assertEqual(payload["matrix_status"], "not-run")
-        self.assertEqual(payload["judgment"]["status"], "blocked")
-        self.assertNotIn(str(root), serialized)
-        self.assertNotIn("credential", serialized)
-        self.assertNotIn("prompt text", serialized)
-        with self.assertRaisesRegex(GrokProbeError, "judgment"):
-            serialize_grok_receipt(forged)
-        with self.assertRaisesRegex(GrokProbeError, "manifest"):
-            serialize_grok_receipt(forged_profile)
-        with self.assertRaisesRegex(GrokProbeError, "auth marker"):
-            serialize_grok_receipt(forged_status)
+                payload = json.loads(serialized)
+                self.assertEqual(payload["auth_status"], "blocked")
+                self.assertEqual(payload["matrix_status"], "not-run")
+                self.assertEqual(payload["judgment"]["status"], "blocked")
+                self.assertNotIn(str(root), serialized)
+                self.assertNotIn("credential", serialized)
+                self.assertNotIn("prompt text", serialized)
+                with self.assertRaisesRegex(GrokProbeError, "judgment"):
+                    serialize_grok_receipt(forged)
+                with self.assertRaisesRegex(GrokProbeError, "manifest"):
+                    serialize_grok_receipt(forged_profile)
+                with self.assertRaisesRegex(GrokProbeError, "auth marker"):
+                    serialize_grok_receipt(forged_status)
+                with self.assertRaisesRegex(GrokProbeError, "fresh static resolver"):
+                    serialize_grok_receipt(forged_identity_result)
 
 
 if __name__ == "__main__":
