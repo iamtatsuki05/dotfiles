@@ -729,16 +729,22 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
   done
 }
 
-test_agent_skills_use_flat_discovery_paths() {
+test_agent_skills_use_supported_discovery_paths() {
   local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+  local bundled_manifest="$skills_root/.bundled_manifest"
   local skill_file
+  local skill_name
   local relative_path
+
+  assert_file "$bundled_manifest"
 
   while IFS= read -r skill_file; do
     relative_path="${skill_file#$skills_root/}"
     [[ "$relative_path" == */*/* ]] || continue
     [[ "$relative_path" == .* ]] && continue
-    fail "agent skill must live at skills/<name>/SKILL.md: $relative_path"
+    skill_name="${relative_path:h:t}"
+    grep -Eq "^${skill_name}:" "$bundled_manifest" \
+      || fail "nested agent skill must be registered in .bundled_manifest: $relative_path"
   done < <(find "$skills_root" -type f -name SKILL.md -print | sort)
 }
 
@@ -3229,7 +3235,7 @@ main() {
   test_waza_cli_agent_eval_script_preserves_cli_failure_status
   test_waza_cli_agent_eval_script_grades_successful_cli_output
   test_waza_eval_suites_cover_all_regular_agent_skills
-  test_agent_skills_use_flat_discovery_paths
+  test_agent_skills_use_supported_discovery_paths
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
   test_nix_install_script_switches_nix_darwin_or_home_manager

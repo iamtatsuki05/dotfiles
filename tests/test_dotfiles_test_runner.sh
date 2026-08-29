@@ -85,6 +85,18 @@ test_test_runner_exists_and_lists_checks() {
   rm -f "$output"
 }
 
+test_test_runner_references_existing_test_files() {
+  local relative_path
+  local -a referenced_tests
+
+  referenced_tests=("${(@f)$(sed -n 's|.*\$REPO_ROOT/\(tests/[^\"]*\)".*|\1|p' "$TEST_RUNNER")}")
+  (( ${#referenced_tests[@]} > 0 )) || fail "expected test runner to reference test files"
+
+  for relative_path in "${referenced_tests[@]}"; do
+    assert_file "$REPO_ROOT/$relative_path"
+  done
+}
+
 test_test_runner_syntax_only_stops_before_unit_tests() {
   local repo
   local output
@@ -240,6 +252,7 @@ test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
 
 main() {
   test_test_runner_exists_and_lists_checks
+  test_test_runner_references_existing_test_files
   test_test_runner_syntax_only_stops_before_unit_tests
   test_test_runner_skip_chezmoi_keeps_fast_checks
   test_mise_task_runs_test_runner_from_repo_root
