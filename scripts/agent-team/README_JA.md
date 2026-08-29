@@ -16,7 +16,8 @@ Agent Client Protocol経由の`acp`で動きます。
 - [teamを起動する](#teamを起動する)は通常の利用手順です。
 - [アーキテクチャ](docs/architecture_JA.md)はruntimeと安全境界を説明します。
 - [設定リファレンス](docs/configuration_JA.md)はconfig version 3と、対応する
-  provider/transportの組み合わせを説明します。
+  provider/transportの組み合わせを説明します。[Version 4の設定](docs/configuration-v4_JA.md)
+  では、明示的なteam選択とtopologyの確認を説明します。
 - [Harness対応matrix](docs/support-matrix_JA.md)は、認識済み・利用可能・実行可能・
   拒否を区別します。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。

@@ -16,7 +16,8 @@ linked reference documents when changing the implementation or configuration.
 - [Architecture](docs/architecture.md) explains the runtime and safety
   boundaries.
 - [Configuration](docs/configuration.md) lists the version-3 schema and the
-  supported provider/transport combinations.
+  supported provider/transport combinations. [Version-4 configuration](docs/configuration-v4.md)
+  describes explicit team selection and pure topology inspection.
 - [Harness support matrix](docs/support-matrix.md) separates recognized,
   available, runnable, and rejected harnesses.
 - [ACP boundary](docs/acp.md) explains adapter pins, authentication, and why

@@ -3,8 +3,11 @@
 [日本語](configuration_JA.md) · [README](../README.md) ·
 [Architecture](architecture.md)
 
-`agent-team` accepts config version 3 only. Missing values and unsupported
-combinations fail before any role starts.
+`agent-team` keeps the existing version-3 fixed-role configuration and also
+accepts the explicit version-4 topology configuration. Missing values and
+unsupported combinations fail before any role starts. See
+[Version-4 configuration](configuration-v4.md) for the separate topology
+schema and pure inspection commands.
 
 ## Start from the canonical config
 
