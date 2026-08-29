@@ -2,25 +2,21 @@
 
 The current repository has no audited Docker image or endpoint pin.  This
 module therefore stops at a blocked/not-run receipt and has no container,
-cleanup, image-pull, or provider-turn API.  A command runner is injected so
-the preflight can be tested without starting Docker or a provider.
+cleanup, image-pull, provider-turn, or command-runner API.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import platform
 import re
 import stat
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Final, Literal, NoReturn, Protocol
+from typing import Final, Literal, NoReturn
 
-from .adapters import ExecutionError, ProcessResult
 from .probe_receipts import (
     BLOCKER_CODES,
     CURRENT_SCHEMA_VERSION,
@@ -45,15 +41,9 @@ OPENCLAW_EXECUTABLE_SHA256: Final = (
 )
 OPENCLAW_PROBE_REVISION: Final = "openclaw-docker-probe-20260830-v1"
 OPENCLAW_SANDBOX_POLICY_ID: Final = "openclaw-docker-sandbox-v1"
-OPENCLAW_DEFAULT_NETWORK: Final = "none"
-OPENCLAW_MAX_PROVIDER_TURNS: Final = 1
-OPENCLAW_QUOTA_BUDGET: Final = 1
-OPENCLAW_VERSION_TIMEOUT_SECONDS: Final = 15.0
-DOCKER_PREFLIGHT_TIMEOUT_SECONDS: Final = 15.0
-DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS: Final = 15.0
-OPENCLAW_VERSION_PROBE_ARGV: Final = ("openclaw", "--version")
 REDACTED_EXECUTABLE_PATH: Final = "/redacted/openclaw/2026.7.1/openclaw.mjs"
 REDACTED_WORKSPACE_PATH: Final = "/redacted/openclaw/probe-workspace"
+OPENCLAW_STATIC_ARGV_DIGEST: Final = hashlib.sha256(b"[]").hexdigest()
 
 # No full repository@digest or endpoint has been audited yet.  Keeping these
 # pins absent makes every unreviewed caller-supplied value fail closed.
@@ -61,50 +51,13 @@ AUDITED_OPENCLAW_IMAGE_PIN: Final[str | None] = None
 AUDITED_DOCKER_CONTEXT: Final[str | None] = None
 AUDITED_DOCKER_ENDPOINT_SHA256: Final[str | None] = None
 
-SAFE_ENVIRONMENT_NAMES: Final = frozenset(
-    {"HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TERM", "TMPDIR", "USER"}
-)
-_RESERVED_NAMES: Final = frozenset(
-    {
-        ".agent",
-        ".claude",
-        ".codex",
-        ".config",
-        ".env",
-        ".env.local",
-        ".env.production",
-        ".github",
-        ".git",
-        ".netrc",
-        ".openclaw",
-        ".npmrc",
-        ".ssh",
-        "auth.json",
-        "credential",
-        "credentials",
-        "credentials.json",
-        "private_key",
-        "secret",
-        "secrets",
-        "token",
-        "tokens",
-    }
-)
-_RESERVED_SUFFIXES: Final = (".key", ".pem", ".p12", ".pfx", ".secret", ".token")
-_DISPOSABLE_PARENT_PREFIX: Final = "openclaw-probe-"
-
 CellId = Literal["direct-sandbox-off", "docker-read-only", "docker-workspace-write"]
 ReceiptProfile = Literal["read-only", "workspace-write"]
-DockerStatus = Literal["ready", "blocked"]
+DockerStatus = Literal["blocked"]
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _CONTEXT = re.compile(r"[a-z][a-z0-9_.-]{0,63}\Z")
 _IMAGE = re.compile(r"[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}\Z")
-_SESSION = re.compile(r"agent:issue9-openclaw:[a-zA-Z0-9._-]{8,64}\Z")
-_ENVIRONMENT = re.compile(r"[A-Z][A-Z0-9_]{0,63}\Z")
-_SENSITIVE_NAME = re.compile(
-    r"(?i)(?:api[_-]?key|access[_-]?token|bearer|cookie|password|secret|credential)"
-)
 
 
 class OpenClawProbeError(RuntimeError):
@@ -116,12 +69,6 @@ class OpenClawProbeStatus(str, Enum):
     BLOCKED = "blocked"
     REJECTED = "rejected"
     NOT_RUN = "not-run"
-
-
-class CommandRunner(Protocol):
-    """A no-shell command runner used for injected, bounded probes."""
-
-    def run(self, argv: Sequence[str], *, timeout_seconds: float) -> ProcessResult: ...
 
 
 def _fail(message: str) -> NoReturn:
@@ -256,26 +203,12 @@ class OpenClawIdentity:
         )
 
 
-def _version_banner(value: object) -> str:
-    if not isinstance(value, str):
-        _fail("OpenClaw version output must be text")
-    banner = value.strip()
-    expected = f"OpenClaw {OPENCLAW_VERSION} ({OPENCLAW_BUILD})"
-    if banner != expected:
-        _fail("executable did not report the exact OpenClaw 2026.7.1 identity")
-    return banner
-
-
-def resolve_openclaw_identity(
-    executable: Path, observed_version: str | None = None
-) -> OpenClawIdentity:
-    """Inspect one canonical executable before any version process is started."""
+def resolve_openclaw_identity(executable: Path) -> OpenClawIdentity:
+    """Inspect one canonical executable without starting a runtime."""
 
     attestation = _read_executable_attestation(executable)
     if attestation.sha256 != OPENCLAW_EXECUTABLE_SHA256:
         _fail("OpenClaw executable SHA-256 identity drifted")
-    if observed_version is not None:
-        _version_banner(observed_version)
     return OpenClawIdentity(
         executable,
         OPENCLAW_VERSION,
@@ -302,392 +235,46 @@ def _verify_identity_attestation(identity: OpenClawIdentity) -> None:
 
 @dataclass(frozen=True, slots=True)
 class DockerSandboxConfig:
-    """Explicit policy inputs for one future disposable Docker cell."""
+    """Static Docker identity inputs; no mount or execution settings."""
 
     context: str
     image: str
-    disposable_parent: Path
-    mount_source: Path
-    session_key: str
-    mount_target: str = "/agent"
-    mount_mode: Literal["ro", "rw"] = "ro"
-    network: str = OPENCLAW_DEFAULT_NETWORK
-    read_only_root: bool = True
-    cap_drop: tuple[str, ...] = ("ALL",)
-    privileged: bool = False
-    docker_socket: bool = False
-    credential_mounts: tuple[str, ...] = ()
-    environment_allowlist: tuple[str, ...] = ("HOME", "PATH", "TMPDIR")
-    provider: str = "openclaw"
-    transport: str = "acp"
-    model: str = "fixed"
-    max_provider_turns: int = OPENCLAW_MAX_PROVIDER_TURNS
-    quota_budget: int = OPENCLAW_QUOTA_BUDGET
-
-
-def _current_home() -> Path:
-    try:
-        import pwd
-
-        return Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
-    except (ImportError, KeyError, OSError):
-        return Path.home().resolve()
-
-
-def _canonical_directory(path: Path, field_name: str) -> tuple[Path, os.stat_result]:
-    if not isinstance(path, Path) or not path.is_absolute():
-        _fail(f"{field_name} must be an absolute path")
-    try:
-        canonical = path.resolve(strict=True)
-        value = os.stat(path, follow_symlinks=False)
-    except OSError as exc:
-        raise OpenClawProbeError(f"{field_name} could not be inspected") from exc
-    if path != canonical or stat.S_ISLNK(value.st_mode):
-        _fail(f"{field_name} must be an absolute canonical path")
-    if not stat.S_ISDIR(value.st_mode):
-        _fail(f"{field_name} must be a directory")
-    if value.st_uid != os.getuid():
-        _fail(f"{field_name} must be owned by the current user")
-    if stat.S_IMODE(value.st_mode) != 0o700:
-        _fail(f"{field_name} must have mode 0700")
-    return canonical, value
-
-
-def _assert_no_symlink_components(path: Path, stop: Path) -> None:
-    cursor = path
-    while True:
-        try:
-            if stat.S_ISLNK(os.lstat(cursor).st_mode):
-                _fail("disposable mount has a symlink parent")
-        except OSError as exc:
-            raise OpenClawProbeError(
-                "disposable mount parent could not be inspected"
-            ) from exc
-        if cursor == stop:
-            return
-        if cursor == Path("/"):
-            _fail("disposable mount is outside its declared parent")
-        cursor = cursor.parent
-
-
-def _assert_clean_mount_tree(root: Path) -> None:
-    pending = [root]
-    while pending:
-        current = pending.pop()
-        try:
-            with os.scandir(current) as scanner:
-                entries = tuple(scanner)
-        except OSError as exc:
-            raise OpenClawProbeError("disposable mount could not be scanned") from exc
-        for entry in entries:
-            entry_name = entry.name.lower()
-            if (
-                entry_name in _RESERVED_NAMES
-                or entry_name.startswith((".env.", "credential", "secret", "token"))
-                or entry_name.endswith(_RESERVED_SUFFIXES)
-            ):
-                _fail("disposable mount contains a reserved or secret-like name")
-            try:
-                entry_stat = entry.stat(follow_symlinks=False)
-            except OSError as exc:
-                raise OpenClawProbeError(
-                    "disposable mount entry could not be inspected"
-                ) from exc
-            if stat.S_ISLNK(entry_stat.st_mode):
-                _fail("disposable mount contains a symlink")
-            if stat.S_ISDIR(entry_stat.st_mode):
-                pending.append(Path(entry.path))
-            elif not stat.S_ISREG(entry_stat.st_mode):
-                _fail("disposable mount contains a special file")
-
-
-def validate_docker_sandbox_config(config: DockerSandboxConfig) -> None:
-    """Validate policy and disposable mount metadata without creating a mount."""
-
-    if not isinstance(config, DockerSandboxConfig):
-        _fail("Docker sandbox config has an invalid type")
-    if (
-        not isinstance(config.context, str)
-        or _CONTEXT.fullmatch(config.context) is None
-    ):
-        _fail("Docker context is invalid")
-    if not isinstance(config.image, str) or _IMAGE.fullmatch(config.image) is None:
-        _fail("Docker image must include an immutable sha256 digest")
-    parent, _ = _canonical_directory(config.disposable_parent, "disposable parent")
-    source, source_stat = _canonical_directory(config.mount_source, "mount source")
-    if source == parent:
-        _fail("mount source must be a child of the disposable parent")
-    if not parent.name.startswith(_DISPOSABLE_PARENT_PREFIX):
-        _fail("disposable parent must have an explicit probe prefix")
-    try:
-        source.relative_to(parent)
-    except ValueError:
-        _fail("mount source must be inside the disposable parent")
-    _assert_no_symlink_components(source, parent)
-    if source_stat.st_uid != os.getuid() or stat.S_IMODE(source_stat.st_mode) != 0o700:
-        _fail("mount source must be owned by the current user with mode 0700")
-    if parent == _current_home():
-        _fail("disposable parent must not be the user's home directory")
-    _assert_clean_mount_tree(source)
-    if not isinstance(config.mount_mode, str) or config.mount_mode not in {"ro", "rw"}:
-        _fail("Docker mount mode is invalid")
-    expected_target = "/agent" if config.mount_mode == "ro" else "/workspace"
-    if (
-        not isinstance(config.mount_target, str)
-        or config.mount_target != expected_target
-    ):
-        _fail(f"Docker mount target must be {expected_target} for {config.mount_mode}")
-    if (
-        not isinstance(config.network, str)
-        or config.network != OPENCLAW_DEFAULT_NETWORK
-    ):
-        _fail("Docker network must be none (network=none)")
-    if config.read_only_root is not True:
-        _fail("Docker root filesystem must be read-only")
-    if config.cap_drop != ("ALL",):
-        _fail("Docker must drop all capabilities")
-    if not isinstance(config.privileged, bool):
-        _fail("Docker privileged flag must be boolean")
-    if config.privileged:
-        _fail("privileged Docker containers are forbidden")
-    if not isinstance(config.docker_socket, bool):
-        _fail("Docker socket flag must be boolean")
-    if config.docker_socket:
-        _fail("Docker socket mounts are forbidden")
-    if not isinstance(config.credential_mounts, tuple) or config.credential_mounts:
-        _fail("credential mounts are forbidden")
-    if not isinstance(config.environment_allowlist, tuple):
-        _fail("environment allowlist must be a tuple")
-    if any(not isinstance(name, str) for name in config.environment_allowlist):
-        _fail("environment allowlist must contain strings")
-    if len(set(config.environment_allowlist)) != len(config.environment_allowlist):
-        _fail("environment allowlist contains duplicate names")
-    for name in config.environment_allowlist:
-        if (
-            not isinstance(name, str)
-            or _ENVIRONMENT.fullmatch(name) is None
-            or name not in SAFE_ENVIRONMENT_NAMES
-            or _SENSITIVE_NAME.search(name) is not None
-        ):
-            _fail("environment allowlist contains an unsafe name")
-    if (
-        not isinstance(config.session_key, str)
-        or _SESSION.fullmatch(config.session_key) is None
-    ):
-        _fail("session key must be an explicit issue9 OpenClaw key")
-    if not isinstance(config.provider, str) or config.provider != "openclaw":
-        _fail("provider fallback is forbidden")
-    if not isinstance(config.transport, str) or config.transport != "acp":
-        _fail("OpenClaw Docker transport must be acp")
-    if (
-        not isinstance(config.model, str)
-        or not config.model
-        or _SENSITIVE_NAME.search(config.model) is not None
-    ):
-        _fail("model is invalid or contains a sensitive value marker")
-    if (
-        not isinstance(config.max_provider_turns, int)
-        or isinstance(config.max_provider_turns, bool)
-        or config.max_provider_turns != OPENCLAW_MAX_PROVIDER_TURNS
-    ):
-        _fail("OpenClaw provider turn count must be exactly one")
-    if (
-        not isinstance(config.quota_budget, int)
-        or isinstance(config.quota_budget, bool)
-        or config.quota_budget != OPENCLAW_QUOTA_BUDGET
-    ):
-        _fail("OpenClaw quota budget must be exactly one turn")
 
 
 @dataclass(frozen=True, slots=True)
 class DockerPreflight:
     status: DockerStatus
     context: str | None = None
-    client_version: str | None = None
-    server_version: str | None = None
     image_ref: str | None = None
     reason: str | None = None
-
-
-def _docker_command(config: DockerSandboxConfig, *args: str) -> tuple[str, ...]:
-    return ("docker", "--context", config.context, *args)
-
-
-def _safe_run(
-    runner: CommandRunner,
-    argv: Sequence[str],
-    *,
-    timeout_seconds: float,
-) -> tuple[ProcessResult | None, str | None]:
-    try:
-        result = runner.run(tuple(argv), timeout_seconds=timeout_seconds)
-    except (ExecutionError, OSError, TimeoutError):
-        return None, "failed"
-    if not isinstance(result, ProcessResult):
-        return None, "failed"
-    if result.timed_out:
-        return result, "timeout"
-    if result.returncode != 0:
-        return result, "failed"
-    return result, None
 
 
 def _blocked(reason: str, context: str | None = None) -> DockerPreflight:
     return DockerPreflight("blocked", context=context, reason=reason)
 
 
-def _parse_versions(stdout: str) -> tuple[str, str] | None:
-    value = stdout.strip()
-    if not value or "\n" in value or "\r" in value:
-        return None
-    if "\t" in value:
-        client, server = value.split("\t", 1)
-        return (
-            (client.strip(), server.strip())
-            if client.strip() and server.strip()
-            else None
-        )
-    try:
-        payload: object = json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    client_value = payload.get("Client")
-    server_value = payload.get("Server")
-    if not isinstance(client_value, Mapping) or not isinstance(server_value, Mapping):
-        return None
-    client = client_value.get("Version")
-    server = server_value.get("Version")
-    if not isinstance(client, str) or not isinstance(server, str):
-        return None
-    return (client, server) if client and server else None
+def docker_preflight(config: DockerSandboxConfig) -> DockerPreflight:
+    """Return a blocked decision until a later slice supplies audited pins."""
 
-
-def _parse_endpoint_digest(stdout: str) -> str | None:
-    try:
-        value: object = json.loads(stdout.strip())
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+    if not isinstance(config, DockerSandboxConfig):
+        _fail("Docker preflight config has an invalid type")
     if (
-        not isinstance(value, str)
-        or not value
-        or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value)
-    ):
-        return None
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _parse_image_ref(stdout: str, expected: str) -> bool:
-    try:
-        payload: object = json.loads(stdout.strip())
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, list):
-        return False
-    return any(isinstance(item, str) and item.strip() == expected for item in payload)
-
-
-def docker_preflight(
-    config: DockerSandboxConfig, runner: CommandRunner
-) -> DockerPreflight:
-    """Inspect only an audited context, daemon, and local immutable image."""
-
-    validate_docker_sandbox_config(config)
-    if (
-        AUDITED_OPENCLAW_IMAGE_PIN is None
-        or config.image != AUDITED_OPENCLAW_IMAGE_PIN
-        or _IMAGE.fullmatch(config.image) is None
-    ):
-        return _blocked("blocked-image", config.context)
-    if (
-        AUDITED_DOCKER_CONTEXT is None
-        or config.context != AUDITED_DOCKER_CONTEXT
+        not isinstance(config.context, str)
         or _CONTEXT.fullmatch(config.context) is None
     ):
+        return _blocked("blocked-context", config.context)
+    if not isinstance(config.image, str) or _IMAGE.fullmatch(config.image) is None:
+        return _blocked("blocked-image", config.context)
+    if AUDITED_OPENCLAW_IMAGE_PIN is None or config.image != AUDITED_OPENCLAW_IMAGE_PIN:
+        return _blocked("blocked-image", config.context)
+    if AUDITED_DOCKER_CONTEXT is None or config.context != AUDITED_DOCKER_CONTEXT:
         return _blocked("blocked-context", config.context)
     if (
         AUDITED_DOCKER_ENDPOINT_SHA256 is None
         or _SHA256.fullmatch(AUDITED_DOCKER_ENDPOINT_SHA256) is None
     ):
         return _blocked("blocked-context-endpoint", config.context)
-
-    context_result, context_error = _safe_run(
-        runner,
-        _docker_command(config, "context", "show"),
-        timeout_seconds=DOCKER_PREFLIGHT_TIMEOUT_SECONDS,
-    )
-    if context_error == "timeout":
-        return _blocked("docker-context-timeout", config.context)
-    if context_error is not None or context_result is None:
-        return _blocked("docker-context-unavailable", config.context)
-    if context_result.stdout.strip() != config.context:
-        return _blocked("docker-context-mismatch", config.context)
-
-    endpoint_result, endpoint_error = _safe_run(
-        runner,
-        _docker_command(
-            config,
-            "context",
-            "inspect",
-            config.context,
-            "--format",
-            "{{json .Endpoints.docker.Host}}",
-        ),
-        timeout_seconds=DOCKER_PREFLIGHT_TIMEOUT_SECONDS,
-    )
-    if endpoint_error == "timeout":
-        return _blocked("docker-context-endpoint-timeout", config.context)
-    if endpoint_error is not None or endpoint_result is None:
-        return _blocked("docker-context-endpoint-unavailable", config.context)
-    endpoint_digest = _parse_endpoint_digest(endpoint_result.stdout)
-    if endpoint_digest != AUDITED_DOCKER_ENDPOINT_SHA256:
-        return _blocked("blocked-context-endpoint", config.context)
-
-    version_result, version_error = _safe_run(
-        runner,
-        _docker_command(
-            config,
-            "version",
-            "--format",
-            "{{.Client.Version}}\\t{{.Server.Version}}",
-        ),
-        timeout_seconds=DOCKER_PREFLIGHT_TIMEOUT_SECONDS,
-    )
-    if version_error == "timeout":
-        return _blocked("docker-daemon-timeout", config.context)
-    if version_error is not None or version_result is None:
-        return _blocked("docker-daemon-unavailable", config.context)
-    versions = _parse_versions(version_result.stdout)
-    if versions is None:
-        return _blocked("docker-daemon-unavailable", config.context)
-    client_version, server_version = versions
-
-    image_result, image_error = _safe_run(
-        runner,
-        _docker_command(
-            config,
-            "image",
-            "inspect",
-            config.image,
-            "--format",
-            "{{json .RepoDigests}}",
-        ),
-        timeout_seconds=DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
-    )
-    if image_error == "timeout":
-        return _blocked("docker-image-timeout", config.context)
-    if image_error is not None or image_result is None:
-        return _blocked("docker-image-unavailable", config.context)
-    if not _parse_image_ref(image_result.stdout, config.image):
-        return _blocked("blocked-image", config.context)
-    return DockerPreflight(
-        "ready",
-        context=config.context,
-        client_version=client_version,
-        server_version=server_version,
-        image_ref=config.image,
-    )
+    return _blocked("docker-runtime-probe-not-implemented", config.context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -716,13 +303,7 @@ def _receipt_manifest(identity: OpenClawIdentity, profile: ReceiptProfile) -> Ma
             platform.machine().lower(),
             OPENCLAW_PROBE_REVISION,
             identity.as_receipt_identity(),
-            hashlib.sha256(
-                json.dumps(
-                    list(OPENCLAW_VERSION_PROBE_ARGV),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest(),
+            OPENCLAW_STATIC_ARGV_DIGEST,
             "argv",
             REDACTED_WORKSPACE_PATH,
             ("HOME", "PATH", "TMPDIR"),
@@ -787,6 +368,10 @@ def _validate_receipt_bundle(bundle: ReceiptBundle) -> Judgment:
         )
     if bundle.receipt.identity.permission_profile != bundle.profile:
         raise ReceiptValidationError("receipt profile does not match bundle profile")
+    if any(phase.attempted for phase in bundle.receipt.phases):
+        raise ReceiptValidationError(
+            "preflight-only OpenClaw receipts cannot contain phase provenance"
+        )
     judgment = judge_profile(manifest, bundle.receipt)
     if bundle.receipt.blocked_reason is not None and (
         judgment.status != "blocked"
@@ -878,55 +463,28 @@ class OpenClawPreflightReport:
 
 
 class OpenClawProbe:
-    """Run identity and Docker read-only checks; never run a container."""
+    """Build static identity and blocked/not-run Docker cell reports."""
 
     def __init__(
         self,
         executable: Path,
         config: DockerSandboxConfig,
-        runner: CommandRunner,
     ) -> None:
         self.executable = executable
         self.config = config
-        self.runner = runner
-
-    def _version_output(self, identity: OpenClawIdentity) -> str:
-        result, error = _safe_run(
-            self.runner,
-            (str(identity.path), "--version"),
-            timeout_seconds=OPENCLAW_VERSION_TIMEOUT_SECONDS,
-        )
-        if error == "timeout":
-            _fail("OpenClaw version preflight timed out")
-        if error is not None or result is None:
-            _fail("OpenClaw version preflight failed")
-        return result.stdout
 
     def preflight(self) -> OpenClawPreflightReport:
-        """Verify file identity before invoking its canonical path for version."""
+        """Verify static file identity and return blocked Docker cells."""
 
-        validate_docker_sandbox_config(self.config)
         identity = resolve_openclaw_identity(self.executable)
-        observed_version = self._version_output(identity)
-        _version_banner(observed_version)
-        identity = resolve_openclaw_identity(identity.path, observed_version)
-        docker = docker_preflight(self.config, self.runner)
-        if docker.status == "blocked":
-            receipts = (
-                build_blocked_receipt(identity, "read-only", "docker"),
-                build_blocked_receipt(identity, "workspace-write", "docker"),
-            )
-            read_status = write_status = OpenClawProbeStatus.BLOCKED
-            read_reason = write_reason = docker.reason or "docker-preflight-blocked"
-            status = OpenClawProbeStatus.BLOCKED
-        else:
-            receipts = (
-                build_not_run_receipt(identity, "read-only"),
-                build_not_run_receipt(identity, "workspace-write"),
-            )
-            read_status = write_status = OpenClawProbeStatus.NOT_RUN
-            read_reason = write_reason = "live-matrix-not-run"
-            status = OpenClawProbeStatus.READY
+        docker = docker_preflight(self.config)
+        receipts = (
+            build_blocked_receipt(identity, "read-only", "docker"),
+            build_blocked_receipt(identity, "workspace-write", "docker"),
+        )
+        read_status = write_status = OpenClawProbeStatus.BLOCKED
+        read_reason = write_reason = docker.reason or "docker-preflight-blocked"
+        status = OpenClawProbeStatus.BLOCKED
         return OpenClawPreflightReport(
             status,
             identity,
