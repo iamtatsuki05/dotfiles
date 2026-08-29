@@ -48,6 +48,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/pets"
 
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
+  cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   cp -R "$REPO_ROOT/scripts/agent-team/." "$repo/scripts/agent-team/"
   cp "$REPO_ROOT/dotfiles/.agent/apps/agent-team/config.toml" "$repo/dotfiles/.agent/apps/agent-team/config.toml"
@@ -64,6 +65,7 @@ create_agent_fixture_repo() {
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   chmod +x \
+    "$repo/scripts/agent-run-compact" \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/agent-team/agent-team" \
     "$repo/dotfiles/.agent/sync.sh"
@@ -215,6 +217,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
+  assert_symlink_target "$home_dir/.local/bin/agent-run-compact" "$repo/scripts/agent-run-compact"
+  assert_not_exists "$home_dir/.local/bin/pytest"
+  assert_not_exists "$home_dir/.local/bin/npm"
   assert_symlink_target "$home_dir/.claude/settings.json" "$repo/dotfiles/.agent/apps/claude/settings.json"
   assert_not_exists "$repo/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"

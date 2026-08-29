@@ -177,6 +177,7 @@ shared_link_specs() {
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.openclaw/workspace/skills"
 
   print -r -- "$AGENT_DIR/pets"$'\t'"$HOME/.codex/pets"
+  print -r -- "$REPO_ROOT/scripts/agent-run-compact"$'\t'"$HOME/.local/bin/agent-run-compact"
 }
 
 sync_shared_files() {

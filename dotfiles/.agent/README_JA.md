@@ -121,6 +121,7 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
+| `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |

@@ -95,7 +95,7 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 ```markdown
 ## Status
 
-早期レビュー用のDraftです。まだマージ可能ではありません。
+必須CIとmetadata readbackの完了待ちです。まだマージ可能ではありません。
 
 ## Why
 
