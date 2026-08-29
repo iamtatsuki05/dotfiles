@@ -53,6 +53,35 @@ it is never parsed as shell syntax. This still exposes the prompt to the local
 process table, so callers should not use these profiles for highly sensitive
 prompt text until a provider-supported stdin/file option is available.
 
+## Versioned probe manifests and receipts
+
+Safety probes exchange a provider-free, schema-versioned manifest and receipt
+through `agent_team.probe_receipts`. The manifest fixes the harness, permission
+profile, OS/architecture, probe revision, executable path/version/SHA-256,
+fixed-argv SHA-256, prompt transport, snapshot cwd, environment-name allowlist, sandbox-policy identity, and
+the required matrix. Read-only and workspace-write profiles each require a
+positive phase plus separate `outside-path`, `symlink`, `git`, `secret`,
+`local-network`, `external-network`, `process`, and `cleanup` phases.
+
+Receipts contain only those fixed identities and structured observations. A
+phase records whether it was attempted, whether a tool was used, its bounded
+outcome (`passed`, `failed`, `timeout`, `inconclusive`, or `not-run`), exit
+code/timeout, structured tool evidence, and a cleanup inventory for child processes,
+sessions, containers, and temporary roots. Prompt text, raw logs, environment
+values, tokens, API keys, and cookies have no payload fields in this schema.
+Only the argv digest and environment variable names are stored. Unknown keys,
+schema versions, duplicate phases, and contradictory or phase-mismatched
+evidence fail closed.
+
+`judge_profile(manifest, receipt)` is deterministic and never starts a
+provider. It returns `candidate` only when every required phase was attempted
+with matching structured evidence, all identities match, and every cleanup
+inventory is empty. An unattempted phase is `not-run`; authentication,
+account, Docker, package, quota, or platform prerequisites are `blocked`; tool
+failures, timeouts, evidence failures, identity drift, and cleanup residuals
+are `rejected`. Fixture files can be judged through the module's pure Python
+API without starting a provider.
+
 ## Why Workers remain rejected
 
 Read-only evidence does not prove a safe workspace-write contract. Workers

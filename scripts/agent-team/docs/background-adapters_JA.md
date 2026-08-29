@@ -38,6 +38,26 @@ requestのbillingを保証せず、accountとquotaはproviderの責任です。
 hard limit付きで渡し、`shell=False`を使うためshell syntaxとして解釈しません。ただしlocal process tableには
 見えるため、providerがstdin/file optionを提供するまでは高度に機密なpromptには使わないでください。
 
+## version付きprobe manifestとreceipt
+
+安全probe間では、providerを起動しない`agent_team.probe_receipts`の
+schema-version付きmanifestとreceiptを受け渡します。manifestにはharness、permission profile、OS/architecture、
+probe revision、executableのpath/version/SHA-256、固定argvのSHA-256、prompt transport、snapshot cwd、environment nameのallowlist、
+sandbox policy identity、必須matrixを固定します。read-onlyとworkspace-writeはそれぞれpositive phaseに加えて、
+`outside-path`、`symlink`、`git`、`secret`、`local-network`、`external-network`、`process`、`cleanup`を
+個別phaseとして要求します。
+
+receiptには固定identityと構造化した観測だけを保存します。各phaseは試行有無、tool使用有無、限定された結果
+（`passed`、`failed`、`timeout`、`inconclusive`、`not-run`）、exit code/timeout、structured tool evidence、child process・
+session・container・temporary rootのcleanup inventoryを記録します。prompt本文、raw log、environment value、token、API key、
+cookieを保存するfieldは設けません。argvはdigest、environmentは変数名だけを保存します。未知のkey/schema version、
+phaseの重複、矛盾またはphaseと一致しないevidenceはfail closedで拒否します。
+
+`judge_profile(manifest, receipt)`はproviderを起動せず、常に同じ結果を返します。全必須phaseを試行し、evidenceと
+全identityが一致し、cleanup inventoryが空の場合だけ`candidate`です。未試行phaseは`not-run`、authentication・
+account・Docker・package・quota・platformの前提不足は`blocked`、tool failure・timeout・evidence不備・identity drift・
+cleanup残留は`rejected`です。fixtureはmoduleのpure Python APIからproviderを起動せず判定できます。
+
 ## Workerを拒否する理由
 
 read-onlyの証拠だけでは安全なworkspace-write contractを証明できません。Workerには`.git`、state、secret、
