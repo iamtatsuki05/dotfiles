@@ -684,11 +684,11 @@ def _derive_judgment(receipt: HermesProbeReceipt) -> Judgment:
             or generic.status != "not-run"
             or receipt.receipt.phases != _not_run_phases()
         ):
-            raise HermesProbeError("invalid ACP rejection receipt")
+            raise HermesProbeError("invalid ACP not-run receipt")
         return Judgment(
             HERMES_HARNESS_ID,
             "read-only",
-            "rejected",
+            "not-run",
             ("not-a-filesystem-sandbox",),
         )
     preflight = receipt.external_preflight
@@ -741,14 +741,14 @@ def build_rejected_local_receipt(
 
 
 def build_unaccepted_acp_receipt(manifest: Manifest) -> HermesProbeReceipt:
-    """Reject ACP as a protocol transport, not a filesystem sandbox."""
+    """Keep untested ACP not-run; protocol support is not sandbox evidence."""
 
     if _profile_for_manifest(manifest) != "acp":
         raise HermesProbeError("ACP rejection requires the ACP profile")
     receipt = Receipt(manifest.identity, None, _not_run_phases())
     result = HermesProbeReceipt(manifest, receipt, (), None)
-    if result.judgment.status != "rejected":
-        raise HermesProbeError("ACP receipt did not reject")
+    if result.judgment.status != "not-run":
+        raise HermesProbeError("ACP receipt did not remain not-run")
     return result
 
 

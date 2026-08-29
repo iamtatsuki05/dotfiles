@@ -321,10 +321,10 @@ class HermesProbeContractTest(unittest.TestCase):
         with self.assertRaises(HermesProbeError):
             build_rejected_local_receipt(manifest(), observed=receipt.observed[:2])
 
-    def test_acp_is_rejected_as_protocol_and_not_sandbox_evidence(self) -> None:
+    def test_acp_stays_not_run_without_filesystem_sandbox_evidence(self) -> None:
         receipt = build_unaccepted_acp_receipt(manifest("acp"))
 
-        self.assertEqual(receipt.judgment.status, "rejected")
+        self.assertEqual(receipt.judgment.status, "not-run")
         self.assertEqual(receipt.judgment.reason_codes, ("not-a-filesystem-sandbox",))
         self.assertEqual(receipt.observed, ())
         self.assertIsNone(receipt.provenance)
