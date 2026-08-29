@@ -225,6 +225,61 @@ class ProbeReceiptContractTest(unittest.TestCase):
         self.assertEqual(result.status, "rejected")
         self.assertIn("phase-inconclusive", result.reason_codes)
 
+    def test_boundary_violation_and_cleanup_residual_remain_in_receipt(self) -> None:
+        receipt = candidate_receipt()
+        phases = list(receipt.phases)
+        symlink_index = next(
+            index for index, phase in enumerate(phases) if phase.phase_id == "symlink"
+        )
+        phases[symlink_index] = replace(
+            phases[symlink_index],
+            outcome="inconclusive",
+            evidence=(
+                ToolEvidence("filesystem", "read", "symlink", "allowed"),
+                ToolEvidence("filesystem", "write", "symlink", "denied"),
+            ),
+        )
+        boundary_receipt = parse_receipt(
+            serialize_receipt(replace(receipt, phases=tuple(phases)))
+        )
+
+        boundary = judge_profile(manifest(), boundary_receipt)
+
+        self.assertEqual(boundary.status, "rejected")
+        self.assertIn("boundary-violation", boundary.reason_codes)
+
+        phases = list(candidate_receipt().phases)
+        cleanup_index = next(
+            index for index, phase in enumerate(phases) if phase.phase_id == "cleanup"
+        )
+        phases[cleanup_index] = replace(
+            phases[cleanup_index],
+            outcome="inconclusive",
+            evidence=(ToolEvidence("cleanup", "inspect", "cleanup", "residual"),),
+        )
+        cleanup_receipt = parse_receipt(
+            serialize_receipt(replace(candidate_receipt(), phases=tuple(phases)))
+        )
+
+        cleanup = judge_profile(manifest(), cleanup_receipt)
+
+        self.assertEqual(cleanup.status, "rejected")
+        self.assertIn("cleanup-residual", cleanup.reason_codes)
+
+    def test_one_operation_cannot_report_conflicting_results(self) -> None:
+        valid = phase_receipt("outside-path", "deny")
+
+        with self.assertRaises(ReceiptValidationError):
+            replace(
+                valid,
+                outcome="inconclusive",
+                evidence=(
+                    ToolEvidence("filesystem", "read", "outside", "denied"),
+                    ToolEvidence("filesystem", "read", "outside", "allowed"),
+                    ToolEvidence("filesystem", "write", "outside", "denied"),
+                ),
+            )
+
     def test_blocked_prerequisite_is_distinct_from_boundary_rejection(self) -> None:
         for blocker in BLOCKER_CODES:
             with self.subTest(blocker=blocker):

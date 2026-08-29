@@ -318,8 +318,19 @@ class PhaseReceipt:
             for item in self.evidence
         )
         expected_evidence = _PHASE_EVIDENCE[self.phase_id]
-        if any(item not in expected_evidence for item in observed_evidence) or (
-            self.outcome == "passed" and observed_evidence != expected_evidence
+        observed_operations = tuple(item[:3] for item in observed_evidence)
+        permitted_evidence = set(expected_evidence)
+        for tool, operation, target, result in expected_evidence:
+            if result == "denied":
+                permitted_evidence.add((tool, operation, target, "allowed"))
+            elif result == "allowed":
+                permitted_evidence.add((tool, operation, target, "denied"))
+            elif result == "clean":
+                permitted_evidence.add((tool, operation, target, "residual"))
+        if (
+            len(set(observed_operations)) != len(observed_operations)
+            or any(item not in permitted_evidence for item in observed_evidence)
+            or (self.outcome == "passed" and observed_evidence != expected_evidence)
         ):
             _fail(f"phase evidence contradicts its expectation: {self.phase_id}")
         if not self.attempted and (
@@ -742,6 +753,14 @@ def _phase_reasons(receipt: Receipt) -> tuple[str, ...]:
                 reasons.append("phase-failed")
             elif phase.outcome == "inconclusive":
                 reasons.append("phase-inconclusive")
+            if phase.phase_id in _NEGATIVE_PHASES and any(
+                item.result == "allowed" for item in phase.evidence
+            ):
+                reasons.append("boundary-violation")
+            elif phase.phase_id == "cleanup" and any(
+                item.result == "residual" for item in phase.evidence
+            ):
+                reasons.append("cleanup-residual")
             if not phase.tool_used:
                 reasons.append("tool-not-used")
             elif not phase.evidence:
