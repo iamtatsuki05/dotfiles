@@ -82,6 +82,25 @@ failures, timeouts, evidence failures, identity drift, and cleanup residuals
 are `rejected`. Fixture files can be judged through the module's pure Python
 API without starting a provider.
 
+## OpenCode probe status
+
+`agent_team.opencode_probe` builds the two independent manifests and parses only
+terminal JSON tool events. A text event containing a shell command, path, or
+`worker_done` is never reinterpreted. Each attestation records the provider tool,
+abstract operation, declared target, and structured result; missing events stay
+inconclusive and cannot become a candidate. A negative phase with an `allowed`
+result is retained as an explicit boundary violation, so the raw-workspace
+symlink escape is rejected rather than discarded as malformed evidence.
+
+The pinned OpenCode `1.18.25` executable was observed with SHA-256
+`88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`. The
+2026-08-30 disposable live attempt used that exact binary and isolated XDG
+roots, but `opencode auth list` reported zero credentials; no login, package
+installation, or retry was performed. The snapshot profile is therefore
+`blocked-authentication`, not `candidate`. The separate raw-workspace profile
+remains `rejected` from the prior synthetic-marker symlink-escape observation.
+Neither profile is registered or connected to the Orca lifecycle.
+
 ## Why Workers remain rejected
 
 Read-only evidence does not prove a safe workspace-write contract. Workers

@@ -19,7 +19,7 @@ login, downloads packages, starts a process, or writes a workspace.
 | Devin | None | Native `devin acp` | Recognized, rejected | Only the no-tool smoke completed; tool tasks did not, and model overrides required Pro. |
 | Antigravity | None | None registered | Recognized, rejected | A read-only probe read a sibling file outside the workspace. |
 | Hermes Agent | None | Native `hermes acp` | Recognized, rejected | A read-only probe wrote a normal file, `.git`, and an outside sibling path. |
-| OpenCode | None (adapter implemented, not yet registered) | Native `opencode acp`; acpx built-in `opencode` | Recognized, rejected | A raw-workspace symlink escape was observed. Registration waits for profile-specific live E2E with isolated XDG roots, `--pure`, a closed read-only policy, and a snapshot. |
+| OpenCode | None (adapter implemented, not yet registered) | Native `opencode acp`; acpx built-in `opencode` | Recognized; raw rejected, snapshot blocked | The raw-workspace profile has a symlink escape. The 2026-08-30 snapshot attempt was blocked because `opencode auth list` reported zero credentials; neither profile is registered. |
 | OpenClaw | None | Native `openclaw acp`; acpx built-in `openclaw` | Recognized, rejected | One-shot execution works, but the sandbox needs a Docker daemon that was unavailable, so negative tests remain incomplete. |
 | Grok | None | Native `grok agent stdio`; acpx built-in `grok-build` | Recognized, rejected | The current CLI is unauthenticated, so direct/ACP permission-negative tests could not complete. |
 

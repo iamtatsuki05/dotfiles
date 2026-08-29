@@ -626,6 +626,7 @@ class OpenCodeReadOnlyAdapter:
         config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
         config = {
             "$schema": "https://opencode.ai/config.json",
+            "autoupdate": False,
             "instructions": [],
             "plugin": [],
             "mcp": {},
@@ -677,6 +678,23 @@ class OpenCodeReadOnlyAdapter:
         prompt: str,
         runner: ProcessRunner,
     ) -> ExecutionResult:
+        result = self.execute_raw(context, snapshot, prompt, runner)
+        if result.returncode != 0:
+            raise ExecutionError("OpenCode returned a non-zero exit status")
+        output = _extract_opencode_final(result.stdout)
+        if not output:
+            raise ExecutionError("OpenCode returned an empty final output")
+        return ExecutionResult(output, result.stderr[-10_000:], result.returncode)
+
+    def execute_raw(
+        self,
+        context: AdapterContext,
+        snapshot: AdapterSnapshot,
+        prompt: str,
+        runner: ProcessRunner,
+    ) -> ProcessResult:
+        """Run the pinned command while retaining JSONL for a probe parser."""
+
         _validate_snapshot(snapshot, context=context, runner=runner)
         self._write_config(context)
         environment = safe_environment(
@@ -684,17 +702,11 @@ class OpenCodeReadOnlyAdapter:
             home=Path.home(),
             private_root=context.private_root,
         )
-        result = runner.run(
+        return runner.run(
             self.build_argv(context, prompt, snapshot.executable),
             cwd=context.workspace,
             env=environment,
         )
-        if result.returncode != 0:
-            raise ExecutionError("OpenCode returned a non-zero exit status")
-        output = _extract_opencode_final(result.stdout)
-        if not output:
-            raise ExecutionError("OpenCode returned an empty final output")
-        return ExecutionResult(output, result.stderr[-10_000:], result.returncode)
 
 
 def background_adapter(adapter_id: str) -> BackgroundAdapter:

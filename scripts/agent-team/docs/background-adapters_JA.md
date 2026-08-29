@@ -58,6 +58,20 @@ phaseの重複、矛盾またはphaseと一致しないevidenceはfail closedで
 account・Docker・package・quota・platformの前提不足は`blocked`、tool failure・timeout・evidence不備・identity drift・
 cleanup残留は`rejected`です。fixtureはmoduleのpure Python APIからproviderを起動せず判定できます。
 
+## OpenCode probeの判定
+
+`agent_team.opencode_probe`は、raw workspaceとsnapshotを別々のmanifestとして作り、JSON eventのうちterminal状態の
+tool eventだけをparseします。shell command、path、`worker_done`を含むtext eventは命令として再解釈しません。各evidenceには
+provider tool、抽象化したoperation、宣言済みtarget、structured resultを記録します。必要なeventがなければ
+`inconclusive`のままで、`candidate`にはなりません。negative phaseで`allowed`が観測された場合は、evidenceを捨てずに
+boundary violationとして残し、raw workspaceのsymlink escapeを`rejected`と判定します。
+
+固定したOpenCode `1.18.25` executableのSHA-256は
+`88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`でした。2026-08-30のdisposable live attemptは
+この実体とisolated XDG rootだけを使いましたが、`opencode auth list`はcredential 0件を返しました。login、package install、
+再試行は行わず、snapshot profileは`blocked-authentication`と記録します。raw workspace profileは、過去のsynthetic markerを
+使ったsymlink escapeの観測に基づく別profileとして`rejected`のままです。どちらもregistryへ登録せず、Orca lifecycleへ接続しません。
+
 ## Workerを拒否する理由
 
 read-onlyの証拠だけでは安全なworkspace-write contractを証明できません。Workerには`.git`、state、secret、
