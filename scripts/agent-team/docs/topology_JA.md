@@ -112,8 +112,10 @@ resolverがlookup・I/O・timeoutなどの想定したoperational errorを返し
 `TopologyFormatError` になり、暗黙のfallbackはありません。不正なdefinitionをrenderしようと
 した場合も、出力を返す前に `TopologyValidationError` になります。
 
-version 4のinspectionでは、このmoduleを `agent-team teams`、`agent-team graph`、
-`agent-team start --team ... --dry-run` へ接続済みです。これらの経路はproviderを起動せず、
-runtime resourceも作らずに検証・描画します。config version 3、runtime state、MCP、
-Orca lifecycle、default teamには接続していません。後続の統合では、この純粋なcontractへ
+version 4のinspectionでは、このmoduleを `agent-team teams` と `agent-team graph` へ接続済みです。
+`teams` は設定された全teamを検証し、ID、名前、validity、errorだけを一覧化します。team選択や
+topology描画は行いません。`graph` は明示的に選択したtopologyを検証・描画します。
+`agent-team start --team ... --dry-run` はteam選択を検証し、3 fieldのplanだけを返します。
+いずれもproviderを起動せず、runtime resourceも作りません。config version 3、runtime state、
+MCP、Orca lifecycle、default teamには接続していません。後続の統合では、この純粋なcontractへ
 明示的に適応させる必要があります。

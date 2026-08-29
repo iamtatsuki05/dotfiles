@@ -121,9 +121,12 @@ format names raise `TopologyFormatError`; there is no implicit fallback.
 Rendering an invalid definition raises `TopologyValidationError` before any
 output is returned.
 
-Version-4 inspection already adapts this module through `agent-team teams`,
-`agent-team graph`, and `agent-team start --team ... --dry-run`. Those paths
-validate and render without starting a provider or creating runtime resources.
-Config version 3, runtime state, MCP, the Orca lifecycle, and the default team
-remain intentionally unconnected; later integration must adapt this pure
-contract explicitly.
+Version-4 inspection already adapts this module through `agent-team teams` and
+`agent-team graph`. `teams` validates every configured team and lists only its
+ID, name, validity, and errors; it does not select or render a topology.
+`graph` validates and renders the explicitly selected topology. `agent-team
+start --team ... --dry-run` validates selection and returns only its
+three-field plan. None of these paths starts a provider or creates runtime
+resources. Config version 3, runtime state, MCP, the Orca lifecycle, and the
+default team remain intentionally unconnected; later integration must adapt
+this pure contract explicitly.
