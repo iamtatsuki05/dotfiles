@@ -56,7 +56,7 @@ Google eng-practices の CL Author Guide の 3 章（Small CLs / Writing Good CL
 - **命令形**: `Add ...` / `Fix ...` / `Remove ...` / `Refactor ...`。
 - **短く、具体的に**: 50〜70 文字目安。
 - **テーマと範囲がわかる**: `Fix race in user-token cache by guarding refresh with mutex` は良い。`Fix bug` は悪い。
-- 接頭辞は repo の規約に従う（`fix:`, `feat:` 等）。`pr-code-review` で見たコミットメッセージ規約と整合させる。
+- 接頭辞は repo の規約に従う（`fix:`, `feat:` 等）。`git-github-flow` で確認したコミットメッセージ規約と整合させる。
 
 ### 悪い例と直し方
 

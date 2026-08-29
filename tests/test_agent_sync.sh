@@ -593,9 +593,8 @@ assert "コード、設定、文書、データ、browser、外部操作を含�
 assert "外部操作の readback または結果確認" in prompt
 assert "送信、公開、外部反映を依頼されていない draft-only の文案" in prompt
 assert "危険または合理的な疑いが未解決" in prompt
-assert "stop_hook_active が true でも" in prompt
-assert "stop_hook_active は (1) と (2) を解除しません" in prompt
-assert "現在の turn で待機、検証、readback、修正により解消できる" in prompt
+assert "stop_hook_active が true の場合は、他の条件を評価せず必ず停止を許可する" in prompt
+assert "stop_hook_active が false の場合だけ" in prompt
 assert "ユーザー入力または外部状態の変化がなければ進められず" in prompt
 assert "重大な未解決安全問題" in prompt
 assert "セキュリティ、権限変更、個人情報、課金、法的・契約的問題、prompt injection" in prompt
