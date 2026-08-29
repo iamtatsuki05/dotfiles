@@ -191,18 +191,31 @@ class CursorStaticProbeTest(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            report, home, _ = self.run_static(Path(temp_dir))
-            self.assertFalse(hasattr(report, "manifest"))
-            self.assertFalse(hasattr(report, "receipt"))
-            self.assertFalse(hasattr(report, "judgment"))
-            self.assertFalse(hasattr(report, "workspace"))
-            with self.assertRaises(cursor_probe.CursorStaticPreflightError):
-                replace(report, status="candidate")  # type: ignore[arg-type]
-            serialized = cursor_probe.serialize_static_report(report)
+            root = Path(temp_dir)
+            home, pin = fixture_installation(root)
+            with (
+                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.object(cursor_probe, "CURSOR_INSTALLATION_PIN", pin),
+            ):
+                report = cursor_probe.static_probe("direct-plan")
+                self.assertFalse(hasattr(report, "manifest"))
+                self.assertFalse(hasattr(report, "receipt"))
+                self.assertFalse(hasattr(report, "judgment"))
+                self.assertFalse(hasattr(report, "workspace"))
+                with self.assertRaises(cursor_probe.CursorStaticPreflightError):
+                    replace(report, status="candidate")  # type: ignore[arg-type]
+                serialized = cursor_probe.serialize_static_report(report)
 
-        self.assertNotIn(str(home), serialized)
-        self.assertNotIn("candidate", serialized)
-        self.assertNotIn("<private-root>", serialized)
+            self.assertNotIn(str(home), serialized)
+            self.assertNotIn("candidate", serialized)
+            self.assertNotIn("<private-root>", serialized)
+
+    def test_focused_probe_does_not_require_cursor_under_an_empty_home(self) -> None:
+        with (
+            mock.patch.object(Path, "home", return_value=Path("/tmp")),
+            self.assertRaises(cursor_probe.CursorStaticPreflightError),
+        ):
+            cursor_probe.static_preflight()
 
     def test_serializer_recomputes_forged_identity_and_records_historical_auth(
         self,
