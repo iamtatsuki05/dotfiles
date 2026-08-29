@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from collections import deque
+from pathlib import Path
+from typing import BinaryIO
+
+SUCCESS_TAIL_LINES = 5
+FAILURE_HEAD_LINES = 20
+FAILURE_TAIL_LINES = 160
+MAX_DISPLAY_LINE_BYTES = 1_000
+SUCCESS_DISPLAY_CHARS = 4_000
+FAILURE_HEAD_DISPLAY_CHARS = 4_000
+FAILURE_TAIL_DISPLAY_CHARS = 16_000
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="agent-run-compact",
+        description="Run a command with compact success output and retained failure logs.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="stream the command output without capture or wrapper summaries",
+    )
+    parser.add_argument(
+        "--heartbeat-seconds",
+        type=float,
+        default=60.0,
+        metavar="SECONDS",
+        help="heartbeat interval in compact mode; 0 disables heartbeats (default: 60)",
+    )
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if args.command and args.command[0] == "--":
+        args.command = args.command[1:]
+    if not args.command:
+        parser.error("a command is required after --")
+    if args.heartbeat_seconds < 0:
+        parser.error("--heartbeat-seconds must be 0 or greater")
+    return args
+
+
+def display_command(command: list[str]) -> str:
+    return Path(command[0]).name or command[0]
+
+
+def start_process(
+    command: list[str], output: BinaryIO | None
+) -> tuple[subprocess.Popen[bytes] | None, int | None]:
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=output,
+            stderr=subprocess.STDOUT if output is not None else None,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        message = f"command not found: {command[0]}\n".encode()
+        if output is None:
+            sys.stderr.buffer.write(message)
+        else:
+            output.write(message)
+            output.flush()
+        return None, 127
+    except PermissionError:
+        message = f"command is not executable: {command[0]}\n".encode()
+        if output is None:
+            sys.stderr.buffer.write(message)
+        else:
+            output.write(message)
+            output.flush()
+        return None, 126
+    except OSError as error:
+        detail = error.strerror or str(error)
+        message = f"cannot execute {command[0]}: {detail}\n".encode()
+        if output is None:
+            sys.stderr.buffer.write(message)
+        else:
+            output.write(message)
+            output.flush()
+        return None, 126
+    return process, None
+
+
+def wait_for_process(
+    process: subprocess.Popen[bytes], heartbeat_seconds: float
+) -> tuple[int, int | None]:
+    received_signal: int | None = None
+    started_at = time.monotonic()
+
+    def forward_signal(signum: int, _frame: object) -> None:
+        nonlocal received_signal
+        received_signal = signum
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+
+    previous_handlers = {
+        signum: signal.signal(signum, forward_signal)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        if heartbeat_seconds == 0:
+            returncode = process.wait()
+        else:
+            while True:
+                try:
+                    returncode = process.wait(timeout=heartbeat_seconds)
+                    break
+                except subprocess.TimeoutExpired:
+                    elapsed = time.monotonic() - started_at
+                    print(
+                        f"agent-run-compact: still running ({elapsed:.0f}s)",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+    if received_signal is not None:
+        return 128 + received_signal, received_signal
+    if returncode < 0:
+        return 128 - returncode, -returncode
+    return returncode, None
+
+
+def run_command(
+    command: list[str], output: BinaryIO | None, heartbeat_seconds: float
+) -> tuple[int, int | None]:
+    process, immediate_status = start_process(command, output)
+    if process is None:
+        return immediate_status or 1, None
+    return wait_for_process(process, heartbeat_seconds)
+
+
+def collect_log(
+    log_path: Path, head_limit: int, tail_limit: int
+) -> tuple[int, list[str], list[str]]:
+    head: list[str] = []
+    tail: deque[str] = deque(maxlen=tail_limit)
+    count = 0
+    prefix = bytearray()
+    line_truncated = False
+    line_open = False
+
+    def append_segment(segment: bytes) -> None:
+        nonlocal line_open, line_truncated
+        line_open = True
+        remaining = MAX_DISPLAY_LINE_BYTES - len(prefix)
+        if remaining > 0:
+            prefix.extend(segment[:remaining])
+        if len(segment) > max(remaining, 0):
+            line_truncated = True
+
+    def finish_line() -> None:
+        nonlocal count, line_open, line_truncated
+        line = bytes(prefix).decode("utf-8", errors="replace").rstrip("\r")
+        if line_truncated:
+            line = f"{line}... [line truncated]"
+        count += 1
+        if len(head) < head_limit:
+            head.append(line)
+        tail.append(line)
+        prefix.clear()
+        line_truncated = False
+        line_open = False
+
+    with log_path.open("rb") as log_file:
+        while chunk := log_file.read(65_536):
+            offset = 0
+            while True:
+                newline = chunk.find(b"\n", offset)
+                if newline == -1:
+                    if offset < len(chunk):
+                        append_segment(chunk[offset:])
+                    break
+                append_segment(chunk[offset:newline])
+                finish_line()
+                offset = newline + 1
+    if line_open:
+        finish_line()
+    return count, head, list(tail)
+
+
+def bounded_head(lines: list[str], max_chars: int) -> list[str]:
+    selected: list[str] = []
+    used = 0
+    for line in lines:
+        cost = len(line) + 1
+        if used + cost > max_chars:
+            selected.append("... [output truncated] ...")
+            break
+        selected.append(line)
+        used += cost
+    return selected
+
+
+def bounded_tail(lines: list[str], max_chars: int) -> list[str]:
+    selected: list[str] = []
+    used = 0
+    for line in reversed(lines):
+        cost = len(line) + 1
+        if used + cost > max_chars:
+            selected.append("... [output truncated] ...")
+            break
+        selected.append(line)
+        used += cost
+    selected.reverse()
+    return selected
+
+
+def print_success(log_path: Path, command: list[str], elapsed: float) -> None:
+    line_count, _, tail = collect_log(log_path, 0, SUCCESS_TAIL_LINES)
+    print(
+        f"PASS command={display_command(command)} exit=0 "
+        f"duration={elapsed:.2f}s output_lines={line_count}"
+    )
+    if tail:
+        print("--- output tail ---")
+        print("\n".join(bounded_tail(tail, SUCCESS_DISPLAY_CHARS)))
+
+
+def print_failure(
+    log_path: Path,
+    command: list[str],
+    status: int,
+    received_signal: int | None,
+    elapsed: float,
+) -> None:
+    line_count, head, tail = collect_log(
+        log_path, FAILURE_HEAD_LINES, FAILURE_TAIL_LINES
+    )
+    label = "INTERRUPTED" if received_signal is not None else "FAIL"
+    print(
+        f"{label} command={display_command(command)} exit={status} "
+        f"duration={elapsed:.2f}s output_lines={line_count}"
+    )
+    print(f"full_log={log_path}")
+    if line_count <= FAILURE_TAIL_LINES:
+        if tail:
+            print("--- diagnostic output ---")
+            print("\n".join(bounded_tail(tail, FAILURE_TAIL_DISPLAY_CHARS)))
+        return
+    print("--- diagnostic output: first 20 lines ---")
+    print("\n".join(bounded_head(head, FAILURE_HEAD_DISPLAY_CHARS)))
+    omitted = line_count - len(head) - len(tail)
+    if omitted > 0:
+        print(f"... {omitted} lines omitted ...")
+    print("--- diagnostic output: last 160 lines ---")
+    print("\n".join(bounded_tail(tail, FAILURE_TAIL_DISPLAY_CHARS)))
+
+
+def run_compact(command: list[str], heartbeat_seconds: float) -> int:
+    descriptor, raw_log_path = tempfile.mkstemp(
+        prefix="agent-run-compact-", suffix=".log"
+    )
+    log_path = Path(raw_log_path)
+    os.chmod(log_path, 0o600)
+    started_at = time.monotonic()
+    with os.fdopen(descriptor, "wb") as log_file:
+        status, received_signal = run_command(command, log_file, heartbeat_seconds)
+    elapsed = time.monotonic() - started_at
+
+    if status == 0:
+        print_success(log_path, command, elapsed)
+        log_path.unlink()
+        return 0
+
+    print_failure(log_path, command, status, received_signal, elapsed)
+    return status
+
+
+def main() -> int:
+    args = parse_args()
+    if args.verbose:
+        status, _ = run_command(args.command, None, 0)
+        return status
+    return run_compact(args.command, args.heartbeat_seconds)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

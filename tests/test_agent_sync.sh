@@ -47,6 +47,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/pets"
 
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
+  cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
@@ -59,7 +60,10 @@ create_agent_fixture_repo() {
   chmod +x "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
-  chmod +x "$repo/scripts/setup_agent_files.sh" "$repo/dotfiles/.agent/sync.sh"
+  chmod +x \
+    "$repo/scripts/agent-run-compact" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'
 {"cleanupPeriodDays":36500,"hooks":{"Notification":[{"matcher":"idle_prompt","hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}],"Stop":[{"hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}]}}
@@ -208,6 +212,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
+  assert_symlink_target "$home_dir/.local/bin/agent-run-compact" "$repo/scripts/agent-run-compact"
+  assert_not_exists "$home_dir/.local/bin/pytest"
+  assert_not_exists "$home_dir/.local/bin/npm"
   assert_symlink_target "$home_dir/.claude/settings.json" "$repo/dotfiles/.agent/apps/claude/settings.json"
   assert_not_exists "$repo/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
