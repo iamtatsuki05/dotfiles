@@ -186,12 +186,30 @@ class HermesProbeError(RuntimeError):
 class HermesExecutableIdentity:
     """The exact Hermes installation identity used by a probe."""
 
+    launcher_path: Path
+    target_path: Path
     launcher: FileIdentity
     target: FileIdentity
     version: str
     release: str
     source_commit: str
     source_describe: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "launcher_path",
+            _canonical_non_symlink_path(self.launcher_path, "launcher_path"),
+        )
+        object.__setattr__(
+            self,
+            "target_path",
+            _canonical_non_symlink_path(self.target_path, "target_path"),
+        )
+        if not isinstance(self.launcher, FileIdentity):
+            raise HermesProbeError("launcher identity must be FileIdentity")
+        if not isinstance(self.target, FileIdentity):
+            raise HermesProbeError("target identity must be FileIdentity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +269,39 @@ class HermesProbeReceipt:
     provenance: HistoricalProvenance | None
     external_preflight: HermesExternalPreflight | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest, Manifest):
+            raise HermesProbeError("Hermes receipt manifest must be Manifest")
+        if not isinstance(self.receipt, Receipt):
+            raise HermesProbeError("Hermes receipt must be Receipt")
+        if self.receipt.identity != self.manifest.identity:
+            raise HermesProbeError("Hermes receipt identity does not match manifest")
+        if not isinstance(self.observed, tuple) or any(
+            not isinstance(item, ToolEvidence) for item in self.observed
+        ):
+            raise HermesProbeError(
+                "Hermes observed evidence must be a ToolEvidence tuple"
+            )
+        if self.provenance is not None and not isinstance(
+            self.provenance, HistoricalProvenance
+        ):
+            raise HermesProbeError("Hermes provenance must be HistoricalProvenance")
+        profile = _profile_for_manifest(self.manifest)
+        if profile in {"external-docker", "external-openshell"}:
+            if self.external_preflight is None:
+                raise HermesProbeError("external receipt needs a preflight result")
+            expected_runtime = "docker" if profile == "external-docker" else "openshell"
+            if (
+                self.external_preflight.runtime != expected_runtime
+                or self.external_preflight.policy_id
+                != self.manifest.identity.sandbox_policy_id
+            ):
+                raise HermesProbeError(
+                    "external preflight does not match manifest profile"
+                )
+        elif self.external_preflight is not None:
+            raise HermesProbeError("non-external receipt cannot carry preflight")
+
     @property
     def generic_judgment(self) -> Judgment:
         return judge_profile(self.manifest, self.receipt)
@@ -260,10 +311,27 @@ class HermesProbeReceipt:
         return _derive_judgment(self)
 
 
+def _canonical_non_symlink_path(path: Path, field: str) -> Path:
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise HermesProbeError(f"{field} must be an absolute path")
+    try:
+        if path.is_symlink():
+            raise HermesProbeError(f"{field} must not be a symlink")
+        canonical = path.resolve(strict=False)
+    except HermesProbeError:
+        raise
+    except OSError as exc:
+        raise HermesProbeError(f"{field} could not be canonicalized") from exc
+    if canonical != path:
+        raise HermesProbeError(f"{field} must already be canonical")
+    return canonical
+
+
 def _read_identity_bytes(path: Path) -> tuple[FileIdentity, bytes]:
+    canonical = _canonical_non_symlink_path(path, "executable path")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        descriptor = os.open(path, flags)
+        descriptor = os.open(canonical, flags)
     except OSError as exc:
         raise HermesProbeError("Hermes executable could not be opened safely") from exc
     try:
@@ -340,6 +408,8 @@ def inspect_hermes_identity(
     launcher: FileIdentity,
     target: FileIdentity,
     *,
+    launcher_path: Path,
+    target_path: Path,
     version_banner: str,
     source_commit: str,
     source_describe: str,
@@ -350,6 +420,8 @@ def inspect_hermes_identity(
         raise HermesProbeError("Hermes launcher identity does not match the pin")
     if target != HERMES_TARGET_IDENTITY:
         raise HermesProbeError("Hermes target identity does not match the pin")
+    launcher_path = _canonical_non_symlink_path(launcher_path, "launcher_path")
+    target_path = _canonical_non_symlink_path(target_path, "target_path")
     if version_banner != HERMES_VERSION_BANNER:
         raise HermesProbeError("Hermes version banner does not match the pin")
     if not _COMMIT_RE.fullmatch(source_commit) or source_commit != HERMES_SOURCE_COMMIT:
@@ -357,6 +429,8 @@ def inspect_hermes_identity(
     if source_describe != HERMES_SOURCE_DESCRIBE:
         raise HermesProbeError("Hermes source describe does not match the pin")
     return HermesExecutableIdentity(
+        launcher_path=launcher_path,
+        target_path=target_path,
         launcher=launcher,
         target=target,
         version=HERMES_VERSION,
@@ -376,6 +450,8 @@ def inspect_installed_hermes(
 ) -> HermesExecutableIdentity:
     """Inspect launcher and target using one descriptor per file, no spawn."""
 
+    launcher_path = _canonical_non_symlink_path(launcher_path, "launcher_path")
+    target_path = _canonical_non_symlink_path(target_path, "target_path")
     launcher_identity, launcher_bytes = _read_identity_bytes(launcher_path)
     target_identity, _ = _read_identity_bytes(target_path)
     try:
@@ -392,6 +468,8 @@ def inspect_installed_hermes(
     return inspect_hermes_identity(
         launcher_identity,
         target_identity,
+        launcher_path=launcher_path,
+        target_path=target_path,
         version_banner=version_banner,
         source_commit=source_commit,
         source_describe=source_describe,
@@ -469,6 +547,13 @@ def build_probe_manifest(
         raise HermesProbeError("Hermes file identity must be FileIdentity")
     if not isinstance(hermes_identity, HermesExecutableIdentity):
         raise HermesProbeError("Hermes identity must be HermesExecutableIdentity")
+    executable_path = _canonical_non_symlink_path(
+        Path(executable.path), "executable.path"
+    )
+    if executable_path != hermes_identity.target_path:
+        raise HermesProbeError(
+            "Hermes executable path does not match target attestation"
+        )
     if hermes_identity.launcher != HERMES_LAUNCHER_IDENTITY:
         raise HermesProbeError("Hermes launcher identity is not pinned")
     if hermes_identity.target != HERMES_TARGET_IDENTITY:
@@ -489,7 +574,7 @@ def build_probe_manifest(
         raise HermesProbeError("Hermes executable hash does not match target identity")
     if executable.version != HERMES_VERSION:
         raise HermesProbeError("Hermes executable version is not pinned")
-    if Path(executable.path).name != "hermes":
+    if executable_path.name != "hermes":
         raise HermesProbeError("Hermes executable name is not pinned")
     manifest = Manifest(
         ProfileIdentity(
@@ -607,10 +692,13 @@ def _derive_judgment(receipt: HermesProbeReceipt) -> Judgment:
             ("not-a-filesystem-sandbox",),
         )
     preflight = receipt.external_preflight
+    expected_runtime = "docker" if profile == "external-docker" else "openshell"
     if (
         preflight is None
         or receipt.observed
         or receipt.provenance is not None
+        or preflight.runtime != expected_runtime
+        or preflight.policy_id != receipt.manifest.identity.sandbox_policy_id
         or receipt.receipt.blocked_reason != preflight.blocked_reason
         or generic.status != "blocked"
         or receipt.receipt.phases != _not_run_phases()

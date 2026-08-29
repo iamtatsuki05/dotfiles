@@ -47,6 +47,8 @@ from agent_team.probe_receipts import (
 
 def hermes_identity() -> HermesExecutableIdentity:
     return HermesExecutableIdentity(
+        launcher_path=Path("/private/hermes/launcher"),
+        target_path=Path("/private/hermes/bin/hermes"),
         launcher=HERMES_LAUNCHER_IDENTITY,
         target=HERMES_TARGET_IDENTITY,
         version=HERMES_VERSION,
@@ -58,7 +60,7 @@ def hermes_identity() -> HermesExecutableIdentity:
 
 def executable() -> ExecutableIdentity:
     return ExecutableIdentity(
-        "/private/hermes/bin/hermes",
+        str(hermes_identity().target_path),
         HERMES_VERSION,
         HERMES_TARGET_IDENTITY.sha256,
     )
@@ -119,6 +121,8 @@ class HermesProbeContractTest(unittest.TestCase):
         observed = inspect_hermes_identity(
             hermes_identity().launcher,
             hermes_identity().target,
+            launcher_path=hermes_identity().launcher_path,
+            target_path=hermes_identity().target_path,
             version_banner=HERMES_VERSION_BANNER,
             source_commit=HERMES_SOURCE_COMMIT,
             source_describe=HERMES_SOURCE_DESCRIBE,
@@ -135,6 +139,8 @@ class HermesProbeContractTest(unittest.TestCase):
                 inspect_hermes_identity(
                     changed if field == "launcher mtime" else observed.launcher,
                     changed if field.startswith("target") else observed.target,
+                    launcher_path=observed.launcher_path,
+                    target_path=observed.target_path,
                     version_banner=HERMES_VERSION_BANNER,
                     source_commit=HERMES_SOURCE_COMMIT,
                     source_describe=HERMES_SOURCE_DESCRIBE,
@@ -144,6 +150,8 @@ class HermesProbeContractTest(unittest.TestCase):
             inspect_hermes_identity(
                 observed.launcher,
                 observed.target,
+                launcher_path=observed.launcher_path,
+                target_path=observed.target_path,
                 version_banner="Hermes Agent v0.20.5 (2026.8.18)",
                 source_commit=HERMES_SOURCE_COMMIT,
                 source_describe=HERMES_SOURCE_DESCRIBE,
@@ -152,6 +160,8 @@ class HermesProbeContractTest(unittest.TestCase):
             inspect_hermes_identity(
                 observed.launcher,
                 observed.target,
+                launcher_path=observed.launcher_path,
+                target_path=observed.target_path,
                 version_banner=HERMES_VERSION_BANNER,
                 source_commit="0" * 40,
                 source_describe=HERMES_SOURCE_DESCRIBE,
@@ -253,6 +263,19 @@ class HermesProbeContractTest(unittest.TestCase):
                 profile=cast(HermesProfile, "unknown"),
                 workspace=Path("/private/hermes-workspace"),
                 executable=executable(),
+                file_identity=hermes_identity().target,
+                hermes_identity=hermes_identity(),
+            )
+
+        with self.assertRaises(HermesProbeError):
+            build_probe_manifest(
+                profile="direct-local-oneshot",
+                workspace=Path("/private/hermes-workspace"),
+                executable=ExecutableIdentity(
+                    "/private/another-hermes/hermes",
+                    HERMES_VERSION,
+                    HERMES_TARGET_IDENTITY.sha256,
+                ),
                 file_identity=hermes_identity().target,
                 hermes_identity=hermes_identity(),
             )
@@ -395,6 +418,12 @@ class HermesProbeContractTest(unittest.TestCase):
             candidate_receipt(profile_manifest),
             (),
             None,
+            HermesExternalPreflight(
+                runtime="docker",
+                policy_id=EXTERNAL_DOCKER_POLICY_ID,
+                blocked_reason="docker",
+                classification="sandbox-unverified",
+            ),
         )
         with self.assertRaises(HermesProbeError):
             serialize_hermes_receipt(forged)
@@ -404,9 +433,27 @@ class HermesProbeContractTest(unittest.TestCase):
             local.manifest,
             identity=replace(local.manifest.identity, prompt_transport="stdin"),
         )
-        tampered = replace(local, manifest=tampered_manifest)
         with self.assertRaises(HermesProbeError):
-            serialize_hermes_receipt(tampered)
+            replace(local, manifest=tampered_manifest)
+
+        with self.assertRaises(HermesProbeError):
+            replace(
+                build_blocked_external_receipt(
+                    profile_manifest,
+                    HermesExternalPreflight(
+                        runtime="docker",
+                        policy_id=EXTERNAL_DOCKER_POLICY_ID,
+                        blocked_reason="docker",
+                        classification="sandbox-unverified",
+                    ),
+                ),
+                external_preflight=HermesExternalPreflight(
+                    runtime="openshell",
+                    policy_id="hermes-external-openshell-v1",
+                    blocked_reason="platform",
+                    classification="sandbox-unverified",
+                ),
+            )
 
     def test_synthetic_candidate_api_is_not_public(self) -> None:
         import agent_team.hermes_probe as module
