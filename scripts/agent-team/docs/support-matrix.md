@@ -19,7 +19,7 @@ login, downloads packages, starts a process, or writes a workspace.
 | Devin | None | Native `devin acp` | Recognized, rejected | Only the no-tool smoke completed; tool tasks did not, and model overrides required Pro. |
 | Antigravity | None | None registered | Recognized, rejected | A read-only probe read a sibling file outside the workspace. |
 | Hermes Agent | None | Native `hermes acp` | Recognized, rejected | A read-only probe wrote a normal file, `.git`, and an outside sibling path. |
-| OpenCode | None (static profiles only; live not implemented) | Native `opencode acp`; acpx built-in `opencode` | Recognized; both profiles blocked | Current auth provenance reports zero credentials, so raw/snapshot phases are all `not-run`. A prior raw-workspace symlink escape remains a separate historical `rejected` record; neither profile is registered. |
+| OpenCode | None (static profiles only; live not implemented) | Native `opencode acp`; acpx built-in `opencode` | Recognized; both profiles blocked | The `auth-list-zero-credentials` source is retained as `historical-unverified`, so raw/snapshot phases are all `not-run`. A prior raw-workspace symlink escape remains a separate historical `rejected` record; neither profile is registered. |
 | OpenClaw | None | Native `openclaw acp`; acpx built-in `openclaw` | Recognized, rejected | One-shot execution works, but the sandbox needs a Docker daemon that was unavailable, so negative tests remain incomplete. |
 | Grok | None | Native `grok agent stdio`; acpx built-in `grok-build` | Recognized, rejected | The current CLI is unauthenticated, so direct/ACP permission-negative tests could not complete. |
 

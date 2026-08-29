@@ -16,18 +16,41 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, NoReturn
 
-from .adapters import FileIdentity
+from .adapters import FileIdentity as _FileIdentity
 from .probe_receipts import (
-    CURRENT_SCHEMA_VERSION,
-    CleanupInventory,
-    ExecutableIdentity,
-    Manifest,
-    PhaseReceipt,
-    ProfileIdentity,
-    Receipt,
-    judge_profile,
-    required_phases_for_profile,
-    serialize_manifest,
+    CURRENT_SCHEMA_VERSION as _CURRENT_SCHEMA_VERSION,
+)
+from .probe_receipts import (
+    CleanupInventory as _CleanupInventory,
+)
+from .probe_receipts import (
+    ExecutableIdentity as _ExecutableIdentity,
+)
+from .probe_receipts import (
+    Manifest as _Manifest,
+)
+from .probe_receipts import (
+    PhaseReceipt as _PhaseReceipt,
+)
+from .probe_receipts import (
+    ProfileIdentity as _ProfileIdentity,
+)
+from .probe_receipts import (
+    Receipt as _Receipt,
+)
+from .probe_receipts import (
+    judge_profile as _judge_profile,
+)
+from .probe_receipts import (
+    required_phases_for_profile as _required_phases_for_profile,
+)
+from .probe_receipts import (
+    serialize_manifest as _serialize_manifest,
+)
+
+__all__: Final[tuple[str, ...]] = (
+    "build_static_artifact",
+    "serialize_static_artifact",
 )
 
 OPENCODE_CANONICAL_RELATIVE_PATH: Final = (
@@ -103,15 +126,15 @@ AUTH_SOURCE_DIGEST: Final = (
 )
 
 
-class OpenCodeProbeError(RuntimeError):
+class _OpenCodeProbeError(RuntimeError):
     """Raised when static OpenCode evidence is unavailable or forged."""
 
 
 @dataclass(frozen=True, slots=True)
-class OpenCodeExecutablePin:
+class _OpenCodeExecutablePin:
     path: Path
     version: str
-    file_identity: FileIdentity
+    file_identity: _FileIdentity
 
     def __post_init__(self) -> None:
         if not self.path.is_absolute() or self.path.name != OPENCODE_IDENTIFIER:
@@ -133,7 +156,7 @@ class OpenCodeExecutablePin:
 
 
 @dataclass(frozen=True, slots=True)
-class HistoricalSymlinkProvenance:
+class _HistoricalSymlinkProvenance:
     observed_at: str
     source_digest: str
     verification_status: Literal["verified", "unverified"]
@@ -154,18 +177,43 @@ class HistoricalSymlinkProvenance:
 
 
 @dataclass(frozen=True, slots=True)
-class BlockedObservation:
+class _BlockedObservation:
     source: Literal["historical", "current"]
     code: str
     observed_at: str
     source_digest: str
-    verification_status: Literal["verified", "unverified"]
+    verification_status: Literal["verified", "unverified", "historical-unverified"]
+    executable_version: str
+    executable_sha256: str
+
+    def __post_init__(self) -> None:
+        expected = {
+            ("historical", "raw-symlink-escape"): (
+                "2026-08-29",
+                HISTORICAL_SOURCE_DIGEST,
+                "unverified",
+            ),
+            ("historical", "auth-list-zero-credentials"): (
+                "2026-08-30",
+                AUTH_SOURCE_DIGEST,
+                "historical-unverified",
+            ),
+        }.get((self.source, self.code))
+        if (
+            expected is None
+            or self.observed_at != expected[0]
+            or self.source_digest != expected[1]
+            or self.verification_status != expected[2]
+            or self.executable_version != OPENCODE_VERSION
+            or self.executable_sha256 != OPENCODE_SHA256
+        ):
+            _fail("blocked observation provenance does not match the static record")
 
 
 @dataclass(frozen=True, slots=True)
-class BlockedState:
+class _BlockedState:
     reason: str
-    observations: tuple[BlockedObservation, ...]
+    observations: tuple[_BlockedObservation, ...]
 
     def __post_init__(self) -> None:
         if (
@@ -176,7 +224,7 @@ class BlockedState:
 
 
 @dataclass(frozen=True, slots=True)
-class OpenCodeProfileRecord:
+class _OpenCodeProfileRecord:
     profile: str
     role_token_digest: str
     manifest_digest: str
@@ -194,36 +242,36 @@ class OpenCodeProfileRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class OpenCodeStaticProbe:
-    pin: OpenCodeExecutablePin
-    profiles: tuple[OpenCodeProfileRecord, ...]
-    blocked: BlockedState
-    historical: HistoricalSymlinkProvenance
+class _OpenCodeStaticProbe:
+    pin: _OpenCodeExecutablePin
+    profiles: tuple[_OpenCodeProfileRecord, ...]
+    blocked: _BlockedState
+    historical: _HistoricalSymlinkProvenance
 
     def __post_init__(self) -> None:
-        if not isinstance(self.pin, OpenCodeExecutablePin):
+        if not isinstance(self.pin, _OpenCodeExecutablePin):
             _fail("static probe pin has an invalid type")
         expected_profiles = tuple(
             _profile_record(self.pin, profile) for profile in PROFILES
         )
         if self.profiles != expected_profiles:
             _fail("static probe profiles, receipts, or judgments were forged")
-        if self.blocked != BlockedState(_BLOCKED_REASON, _blocked_observations()):
+        if self.blocked != _BlockedState(_BLOCKED_REASON, _blocked_observations()):
             _fail("static probe blocked provenance was forged")
         if self.historical != _historical_provenance():
             _fail("static probe historical provenance was forged")
 
 
 def _fail(message: str) -> NoReturn:
-    raise OpenCodeProbeError(message)
+    raise _OpenCodeProbeError(message)
 
 
-def _capture_file_identity(path: Path) -> FileIdentity:
+def _capture_file_identity(path: Path) -> _FileIdentity:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
     except OSError as exc:
-        raise OpenCodeProbeError(
+        raise _OpenCodeProbeError(
             "OpenCode executable cannot be opened read-only"
         ) from exc
     try:
@@ -257,7 +305,7 @@ def _capture_file_identity(path: Path) -> FileIdentity:
         )
         if before_key != after_key:
             _fail("OpenCode executable changed during static identity capture")
-        return FileIdentity(
+        return _FileIdentity(
             before.st_dev,
             before.st_ino,
             before.st_size,
@@ -275,12 +323,12 @@ def _canonical_path() -> Path:
             _fail("OpenCode canonical executable must not be a symlink")
         return raw.resolve(strict=True)
     except OSError as exc:
-        raise OpenCodeProbeError(
+        raise _OpenCodeProbeError(
             "OpenCode canonical executable is unavailable"
         ) from exc
 
 
-def static_preflight() -> OpenCodeExecutablePin:
+def _static_preflight() -> _OpenCodeExecutablePin:
     """Read only the exact pinned path; never invoke OpenCode or another provider."""
 
     path = _canonical_path()
@@ -290,41 +338,41 @@ def static_preflight() -> OpenCodeExecutablePin:
     second = _capture_file_identity(path)
     if first != second:
         _fail("OpenCode executable changed between static identity captures")
-    return OpenCodeExecutablePin(path, OPENCODE_VERSION, first)
+    return _OpenCodeExecutablePin(path, OPENCODE_VERSION, first)
 
 
 def _token_digest(profile: str) -> str:
     try:
         tokens = _ROLE_TOKENS[profile]
     except KeyError as exc:
-        raise OpenCodeProbeError("unknown OpenCode static profile") from exc
+        raise _OpenCodeProbeError("unknown OpenCode static profile") from exc
     encoded = json.dumps(list(tokens), separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _profile_manifest(pin: OpenCodeExecutablePin, profile: str) -> Manifest:
+def _profile_manifest(pin: _OpenCodeExecutablePin, profile: str) -> _Manifest:
     if profile not in PROFILES:
         _fail("unknown OpenCode static profile")
-    identity = ProfileIdentity(
-        CURRENT_SCHEMA_VERSION,
+    identity = _ProfileIdentity(
+        _CURRENT_SCHEMA_VERSION,
         OPENCODE_IDENTIFIER,
         "read-only",
         platform.system().lower(),
         platform.machine().lower(),
         PROBE_REVISION,
-        ExecutableIdentity(_PROBE_PATH_LABEL, pin.version, pin.file_identity.sha256),
+        _ExecutableIdentity(_PROBE_PATH_LABEL, pin.version, pin.file_identity.sha256),
         _token_digest(profile),
         "argv",
         _CWD_LABELS[profile],
         _ENVIRONMENT_NAMES,
         _POLICIES[profile],
     )
-    return Manifest(identity, required_phases_for_profile("read-only"))
+    return _Manifest(identity, _required_phases_for_profile("read-only"))
 
 
-def _not_run_receipt(manifest: Manifest) -> Receipt:
+def _not_run_receipt(manifest: _Manifest) -> _Receipt:
     phases = tuple(
-        PhaseReceipt(
+        _PhaseReceipt(
             phase.phase_id,
             phase.expected_result,
             False,
@@ -333,21 +381,23 @@ def _not_run_receipt(manifest: Manifest) -> Receipt:
             None,
             False,
             (),
-            CleanupInventory(),
+            _CleanupInventory(),
         )
         for phase in manifest.required_phases
     )
-    return Receipt(manifest.identity, _BLOCKED_REASON, phases)
+    return _Receipt(manifest.identity, _BLOCKED_REASON, phases)
 
 
-def _profile_record(pin: OpenCodeExecutablePin, profile: str) -> OpenCodeProfileRecord:
+def _profile_record(
+    pin: _OpenCodeExecutablePin, profile: str
+) -> _OpenCodeProfileRecord:
     manifest = _profile_manifest(pin, profile)
     receipt = _not_run_receipt(manifest)
-    judgment = judge_profile(manifest, receipt)
-    return OpenCodeProfileRecord(
+    judgment = _judge_profile(manifest, receipt)
+    return _OpenCodeProfileRecord(
         profile,
         _token_digest(profile),
-        hashlib.sha256(serialize_manifest(manifest).encode("utf-8")).hexdigest(),
+        hashlib.sha256(_serialize_manifest(manifest).encode("utf-8")).hexdigest(),
         manifest.identity.argv_sha256,
         manifest.identity.sandbox_policy_id,
         manifest.identity.permission_profile,
@@ -362,8 +412,8 @@ def _profile_record(pin: OpenCodeExecutablePin, profile: str) -> OpenCodeProfile
     )
 
 
-def _historical_provenance() -> HistoricalSymlinkProvenance:
-    return HistoricalSymlinkProvenance(
+def _historical_provenance() -> _HistoricalSymlinkProvenance:
+    return _HistoricalSymlinkProvenance(
         "2026-08-29",
         HISTORICAL_SOURCE_DIGEST,
         "unverified",
@@ -373,56 +423,60 @@ def _historical_provenance() -> HistoricalSymlinkProvenance:
     )
 
 
-def _blocked_observations() -> tuple[BlockedObservation, ...]:
+def _blocked_observations() -> tuple[_BlockedObservation, ...]:
     return (
-        BlockedObservation(
+        _BlockedObservation(
             "historical",
             "raw-symlink-escape",
             "2026-08-29",
             HISTORICAL_SOURCE_DIGEST,
             "unverified",
+            OPENCODE_VERSION,
+            OPENCODE_SHA256,
         ),
-        BlockedObservation(
-            "current",
+        _BlockedObservation(
+            "historical",
             "auth-list-zero-credentials",
             "2026-08-30",
             AUTH_SOURCE_DIGEST,
-            "verified",
+            "historical-unverified",
+            OPENCODE_VERSION,
+            OPENCODE_SHA256,
         ),
     )
 
 
-def build_static_probe() -> OpenCodeStaticProbe:
+def _build_static_probe() -> _OpenCodeStaticProbe:
     """Build fixed raw/snapshot records without a provider turn."""
 
-    pin = static_preflight()
-    return OpenCodeStaticProbe(
+    pin = _static_preflight()
+    return _OpenCodeStaticProbe(
         pin,
         tuple(_profile_record(pin, profile) for profile in PROFILES),
-        BlockedState(_BLOCKED_REASON, _blocked_observations()),
+        _BlockedState(_BLOCKED_REASON, _blocked_observations()),
         _historical_provenance(),
     )
 
 
-def validate_static_probe(probe: OpenCodeStaticProbe) -> None:
+def _validate_static_probe(probe: _OpenCodeStaticProbe) -> None:
     """Re-read the pinned file and reject forged profile/provenance records."""
 
-    if not isinstance(probe, OpenCodeStaticProbe):
+    if not isinstance(probe, _OpenCodeStaticProbe):
         _fail("static probe has an invalid type")
-    observed = static_preflight()
+    observed = _static_preflight()
     if probe.pin != observed:
         _fail("OpenCode executable pin does not match static preflight")
-    expected = OpenCodeStaticProbe(
+    expected = _OpenCodeStaticProbe(
         observed,
         tuple(_profile_record(observed, profile) for profile in PROFILES),
-        BlockedState(_BLOCKED_REASON, _blocked_observations()),
+        _BlockedState(_BLOCKED_REASON, _blocked_observations()),
         _historical_provenance(),
     )
     if probe != expected:
         _fail("static probe does not match recomputed provenance")
 
 
-def _record_payload(record: OpenCodeProfileRecord) -> dict[str, object]:
+def _record_payload(record: _OpenCodeProfileRecord) -> dict[str, object]:
     return {
         "profile": record.profile,
         "role_token_digest": record.role_token_digest,
@@ -441,13 +495,10 @@ def _record_payload(record: OpenCodeProfileRecord) -> dict[str, object]:
     }
 
 
-def serialize_static_probe(probe: OpenCodeStaticProbe) -> str:
-    """Serialize redacted static evidence after a fresh provider-free validation."""
-
-    validate_static_probe(probe)
+def _artifact_payload(probe: _OpenCodeStaticProbe) -> dict[str, object]:
     payload: dict[str, object] = {
         "artifact": "opencode-static-probe",
-        "schema_version": CURRENT_SCHEMA_VERSION,
+        "schema_version": _CURRENT_SCHEMA_VERSION,
         "probe_revision": PROBE_REVISION,
         "pin": {
             "path": _PROBE_PATH_LABEL,
@@ -468,6 +519,8 @@ def serialize_static_probe(probe: OpenCodeStaticProbe) -> str:
                     "observed_at": item.observed_at,
                     "source_digest": item.source_digest,
                     "verification_status": item.verification_status,
+                    "executable_version": item.executable_version,
+                    "executable_sha256": item.executable_sha256,
                 }
                 for item in probe.blocked.observations
             ],
@@ -482,6 +535,24 @@ def serialize_static_probe(probe: OpenCodeStaticProbe) -> str:
             "policy_id": probe.historical.policy_id,
         },
     }
+    return payload
+
+
+def build_static_artifact() -> dict[str, object]:
+    """Return a fresh, provider-free, redacted static artifact DTO."""
+
+    probe = _build_static_probe()
+    _validate_static_probe(probe)
+    return _artifact_payload(probe)
+
+
+def serialize_static_artifact() -> str:
+    """Return freshly validated static evidence as deterministic redacted JSON."""
+
     return json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        build_static_artifact(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     )

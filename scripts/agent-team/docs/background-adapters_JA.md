@@ -60,16 +60,20 @@ cleanup残留は`rejected`です。fixtureはmoduleのpure Python APIからprovi
 
 ## OpenCode probeの判定
 
-今回の`agent_team.opencode_probe`はstatic-onlyです。固定したinstallation identityをreadし、role tokenからredactedな
-manifestを作るだけで、OpenCodeを起動しません。provider eventのparse、current candidate receiptのassembly、live runnerも
-公開しません。認証済みpermission matrixはIssue #22の後続sliceで扱います。
+今回の`agent_team.opencode_probe`はstatic-onlyです。公開APIは、fresh validation済みのredacted DTOを返す
+`build_static_artifact()`と、決定的なredacted JSONを返す`serialize_static_artifact()`だけです。固定したinstallation
+identityをreadし、role tokenからredactedなmanifestを内部で作りますが、pinやgenericなmanifest/receipt/judgment objectは返しません。
+OpenCodeの起動、provider eventのparse、current candidate receiptのassembly、live runnerも公開しません。認証済みpermission
+matrixはIssue #22の後続sliceで扱います。
 
 固定したOpenCode `1.18.25` executableのSHA-256は
 `88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`でした。static recordにはdevice、inode、size、mtime、
-hashを残しますが、pathは`/probe/opencode`へredactします。rawとsnapshotの固定profileは、currentの
-`auth-list-zero-credentials` observationに基づく`blocked-authentication`で、required phaseはすべて`not-run`です。
-過去のraw workspace synthetic-marker symlink escapeは、`unverified`なhistorical provenanceを持つ別の`rejected`
-observationとして保持し、current runへ昇格しません。どちらもregistryへ登録せず、Orca lifecycleへ接続しません。
+hashを残しますが、pathは`/probe/opencode`へredactします。rawとsnapshotの固定profileは、sourceをfreshに再検証できない
+`auth-list-zero-credentials` observationを`historical-unverified` provenanceとして保持した
+`blocked-authentication`で、required phaseはすべて`not-run`です。この構造化 observationには観測日、source digest、固定したexecutable
+version/hashを含めます。過去のraw workspace synthetic-marker symlink escapeは、`unverified`なhistorical provenanceを持つ別の
+`rejected` observationとして保持し、current runへ昇格しません。どちらもregistryへ登録せず、Orca lifecycleへ接続しません。
+adapter側のdynamicなPATH preflightは今回のstatic-only変更の対象外です。static helperはPATH上のbinaryを解決・起動しません。
 
 ## Workerを拒否する理由
 

@@ -18,7 +18,7 @@ package download、process起動、workspace書き込みは行いません。
 | Devin | なし | native `devin acp` | 認識済み・拒否 | no-tool smokeだけ成功。tool taskは完了せず、model overrideはProを要求した。 |
 | Antigravity | なし | 登録なし | 認識済み・拒否 | read-only probeでworkspace外のsibling fileを読めた。 |
 | Hermes Agent | なし | native `hermes acp` | 認識済み・拒否 | read-only probeで通常file、`.git`、workspace外siblingへの書き込みを確認した。 |
-| OpenCode | なし（static profileだけ。liveは未実装） | native `opencode acp`、acpx built-in `opencode` | 認識済み・両profile blocked | currentのauth provenanceがcredential 0件を示すため、raw/snapshotのphaseはすべて`not-run`。過去のraw workspace symlink escapeは別のhistorical `rejected` recordとして保持し、どちらもregistryへ登録しない。 |
+| OpenCode | なし（static profileだけ。liveは未実装） | native `opencode acp`、acpx built-in `opencode` | 認識済み・両profile blocked | `auth-list-zero-credentials`のsourceを`historical-unverified`として保持するため、raw/snapshotのphaseはすべて`not-run`。過去のraw workspace symlink escapeは別のhistorical `rejected` recordとして保持し、どちらもregistryへ登録しない。 |
 | OpenClaw | なし | native `openclaw acp`、acpx built-in `openclaw` | 認識済み・拒否 | one-shotは動くが、sandboxに必要なDocker daemonを利用できずnegative test未完了。 |
 | Grok | なし | native `grok agent stdio`、acpx built-in `grok-build` | 認識済み・拒否 | 現在のCLIは未認証。direct/ACPのpermission negative testを完走できていない。 |
 

@@ -84,21 +84,28 @@ API without starting a provider.
 
 ## OpenCode probe status
 
-`agent_team.opencode_probe` is intentionally static in this change. It reads the
-fixed installation identity and builds redacted, role-token manifests; it does
-not start OpenCode, parse provider events, assemble a current candidate receipt,
-or expose a live runner. The authenticated permission matrix is a separate
-follow-up for Issue #22.
+`agent_team.opencode_probe` is intentionally static in this change. Its only
+public API is `build_static_artifact()` (a freshly validated redacted DTO) and
+`serialize_static_artifact()` (deterministic redacted JSON). It reads the fixed
+installation identity and builds redacted, role-token manifests; it does not
+return a pin, generic manifest/receipt/judgment object, start OpenCode, parse
+provider events, assemble a current candidate receipt, or expose a live runner.
+The authenticated permission matrix is a separate follow-up for Issue #22.
 
 The pinned OpenCode `1.18.25` executable was observed with SHA-256
 `88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`. The
 static record keeps device, inode, size, mtime, and hash provenance while
 serializing only the redacted path `/probe/opencode`. Both fixed profiles are
 `blocked-authentication` with every required phase `not-run`, based on the
-current `auth-list-zero-credentials` observation. The prior raw-workspace
-synthetic-marker symlink escape remains a separate historical `rejected`
-observation with `unverified` provenance; it is not promoted to a current run.
+`auth-list-zero-credentials` observation retained as `historical-unverified`
+provenance because its source cannot be freshly reverified. That structured
+observation includes its observation date, source digest, and pinned executable
+version/hash. The prior raw-workspace synthetic-marker symlink escape remains a
+separate historical `rejected` observation with `unverified` provenance; it is
+not promoted to a current run.
 Neither profile is registered or connected to the Orca lifecycle.
+The adapter's dynamic PATH preflight remains outside this static-only change;
+the static helper does not resolve or run a PATH-selected binary.
 
 ## Why Workers remain rejected
 

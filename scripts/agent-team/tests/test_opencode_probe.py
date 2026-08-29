@@ -19,20 +19,19 @@ from agent_team.opencode_probe import (
     PROFILE_RAW,
     PROFILE_SNAPSHOT,
     PROFILES,
-    BlockedObservation,
-    HistoricalSymlinkProvenance,
-    OpenCodeExecutablePin,
-    OpenCodeProbeError,
-    OpenCodeStaticProbe,
-    build_static_probe,
-    serialize_static_probe,
-    static_preflight,
-    validate_static_probe,
+    _build_static_probe,
+    _HistoricalSymlinkProvenance,
+    _OpenCodeExecutablePin,
+    _OpenCodeProbeError,
+    _OpenCodeStaticProbe,
+    _static_preflight,
+    build_static_artifact,
+    serialize_static_artifact,
 )
 
 
-def fake_pin(path: Path = Path("/private/opencode")) -> OpenCodeExecutablePin:
-    return OpenCodeExecutablePin(
+def fake_pin(path: Path = Path("/private/opencode")) -> _OpenCodeExecutablePin:
+    return _OpenCodeExecutablePin(
         path,
         OPENCODE_VERSION,
         FileIdentity(
@@ -54,7 +53,7 @@ class OpenCodeStaticProbeTest(unittest.TestCase):
                 mock.patch("agent_team.opencode_probe.OPENCODE_CANONICAL_PATH", path),
                 mock.patch("agent_team.opencode_probe.OPENCODE_SHA256", digest),
             ):
-                pin = static_preflight()
+                pin = _static_preflight()
 
         self.assertEqual(pin.path, path.resolve())
         self.assertEqual(pin.file_identity.sha256, digest)
@@ -75,74 +74,69 @@ class OpenCodeStaticProbeTest(unittest.TestCase):
                     "agent_team.opencode_probe.OPENCODE_SHA256",
                     hashlib.sha256(b"fake").hexdigest(),
                 ),
-                self.assertRaises(OpenCodeProbeError),
+                self.assertRaises(_OpenCodeProbeError),
             ):
-                static_preflight()
+                _static_preflight()
             with (
                 mock.patch("agent_team.opencode_probe.OPENCODE_CANONICAL_PATH", target),
                 mock.patch("agent_team.opencode_probe.OPENCODE_SHA256", "0" * 64),
-                self.assertRaises(OpenCodeProbeError),
+                self.assertRaises(_OpenCodeProbeError),
             ):
-                static_preflight()
+                _static_preflight()
 
-    def test_static_probe_has_fixed_raw_and_snapshot_blocked_profiles(self) -> None:
-        pin = fake_pin()
-        with mock.patch("agent_team.opencode_probe.static_preflight", return_value=pin):
-            probe = build_static_probe()
-
-        self.assertEqual(tuple(item.profile for item in probe.profiles), PROFILES)
-        self.assertEqual(PROFILES, (PROFILE_RAW, PROFILE_SNAPSHOT))
-        for item in probe.profiles:
-            self.assertEqual(item.status, "blocked")
-            self.assertEqual(item.blocked_reason, "authentication")
-            self.assertTrue(
-                all(outcome == "not-run" for outcome in item.phase_outcomes)
-            )
-            self.assertEqual(item.permission_profile, "read-only")
-        self.assertEqual(probe.blocked.reason, "authentication")
-        self.assertEqual(
-            probe.blocked.observations,
-            (
-                BlockedObservation(
-                    "historical",
-                    "raw-symlink-escape",
-                    "2026-08-29",
-                    HISTORICAL_SOURCE_DIGEST,
-                    "unverified",
-                ),
-                BlockedObservation(
-                    "current",
-                    "auth-list-zero-credentials",
-                    "2026-08-30",
-                    AUTH_SOURCE_DIGEST,
-                    "verified",
-                ),
-            ),
-        )
-
-    def test_profiles_use_distinct_fixed_role_tokens_and_no_generic_objects(
+    def test_public_builder_freshly_validates_and_returns_redacted_artifact(
         self,
     ) -> None:
         pin = fake_pin()
-        with mock.patch("agent_team.opencode_probe.static_preflight", return_value=pin):
-            probe = build_static_probe()
-            payload = json.loads(serialize_static_probe(probe))
+        with mock.patch(
+            "agent_team.opencode_probe._static_preflight", return_value=pin
+        ) as preflight:
+            artifact = build_static_artifact()
 
+        self.assertGreaterEqual(preflight.call_count, 2)
+        self.assertEqual(
+            tuple(item["profile"] for item in artifact["profiles"]), PROFILES
+        )
+        for item in artifact["profiles"]:
+            self.assertEqual(item["status"], "blocked")
+            self.assertEqual(item["blocked_reason"], "authentication")
+            self.assertTrue(
+                all(outcome == "not-run" for outcome in item["phase_outcomes"])
+            )
+        self.assertEqual(artifact["blocked"]["reason"], "authentication")
+        observations = artifact["blocked"]["provenance"]
+        self.assertEqual(observations[0]["verification_status"], "unverified")
+        self.assertEqual(
+            observations[1]["verification_status"], "historical-unverified"
+        )
+        self.assertEqual(observations[1]["executable_version"], OPENCODE_VERSION)
+        self.assertEqual(observations[1]["executable_sha256"], OPENCODE_SHA256)
+        self.assertNotIn(str(pin.path), repr(artifact))
+        self.assertNotIn("Manifest", repr(artifact))
+        self.assertNotIn("Receipt", repr(artifact))
+        self.assertNotIn("Judgment", repr(artifact))
+
+    def test_profiles_use_distinct_fixed_role_tokens_and_redacted_paths(self) -> None:
+        pin = fake_pin()
+        with mock.patch(
+            "agent_team.opencode_probe._static_preflight", return_value=pin
+        ):
+            artifact = build_static_artifact()
+
+        profiles = artifact["profiles"]
         self.assertNotEqual(
-            probe.profiles[0].role_token_digest,
-            probe.profiles[1].role_token_digest,
+            profiles[0]["role_token_digest"], profiles[1]["role_token_digest"]
         )
         self.assertEqual(
-            tuple(item["profile"] for item in payload["profiles"]), PROFILES
+            tuple(item["profile"] for item in profiles),
+            (PROFILE_RAW, PROFILE_SNAPSHOT),
         )
-        self.assertNotIn("Manifest", repr(payload))
-        self.assertNotIn("Receipt", repr(payload))
-        self.assertNotIn(str(pin.path), repr(payload))
-        self.assertEqual(payload["probe_revision"], PROBE_REVISION)
-        self.assertEqual(payload["historical_symlink"]["verdict"], "rejected")
+        self.assertEqual(artifact["probe_revision"], PROBE_REVISION)
+        self.assertEqual(artifact["pin"]["path"], "/probe/opencode")
+        self.assertEqual(artifact["historical_symlink"]["verdict"], "rejected")
 
     def test_historical_symlink_provenance_is_separate_and_unverified(self) -> None:
-        provenance = HistoricalSymlinkProvenance(
+        provenance = _HistoricalSymlinkProvenance(
             observed_at="2026-08-29",
             source_digest=HISTORICAL_SOURCE_DIGEST,
             verification_status="unverified",
@@ -155,36 +149,65 @@ class OpenCodeStaticProbeTest(unittest.TestCase):
             provenance.policy_id, "opencode-raw-workspace-readonly-static-v3"
         )
 
-    def test_serializer_recomputes_and_rejects_forged_candidate_or_pin(self) -> None:
+    def test_auth_provenance_is_historical_unverified_and_structured(self) -> None:
         pin = fake_pin()
-        with mock.patch("agent_team.opencode_probe.static_preflight", return_value=pin):
-            probe = build_static_probe()
-            with self.assertRaises(OpenCodeProbeError):
-                serialize_static_probe(
-                    replace(
-                        probe,
-                        profiles=(
-                            replace(probe.profiles[0], status="candidate"),
-                            probe.profiles[1],
-                        ),
-                    )
-                )
-            with self.assertRaises(OpenCodeProbeError):
-                validate_static_probe(
-                    replace(
-                        probe,
-                        pin=replace(
-                            pin, file_identity=FileIdentity(1, 2, 3, 4, "b" * 64)
-                        ),
-                    )
-                )
+        with mock.patch(
+            "agent_team.opencode_probe._static_preflight", return_value=pin
+        ):
+            artifact = build_static_artifact()
 
-    def test_static_builder_has_no_live_parser_or_caller_command_api(self) -> None:
+        auth = artifact["blocked"]["provenance"][1]
+        self.assertEqual(auth["source"], "historical")
+        self.assertEqual(auth["code"], "auth-list-zero-credentials")
+        self.assertEqual(auth["observed_at"], "2026-08-30")
+        self.assertEqual(auth["source_digest"], AUTH_SOURCE_DIGEST)
+        self.assertEqual(auth["verification_status"], "historical-unverified")
+        self.assertEqual(auth["executable_version"], OPENCODE_VERSION)
+        self.assertEqual(auth["executable_sha256"], OPENCODE_SHA256)
+
+    def test_serializer_has_no_object_input_and_recomputes_safe_json(self) -> None:
+        pin = fake_pin()
+        with mock.patch(
+            "agent_team.opencode_probe._static_preflight", return_value=pin
+        ):
+            text = serialize_static_artifact()
+
+        self.assertEqual(tuple(inspect.signature(build_static_artifact).parameters), ())
+        self.assertEqual(
+            tuple(inspect.signature(serialize_static_artifact).parameters), ()
+        )
+        payload = json.loads(text)
+        self.assertEqual(payload["pin"]["path"], "/probe/opencode")
+        self.assertNotIn(str(pin.path), text)
+
+    def test_forged_internal_probe_is_rejected_and_not_public(self) -> None:
+        pin = fake_pin()
+        with mock.patch(
+            "agent_team.opencode_probe._static_preflight", return_value=pin
+        ):
+            valid = _build_static_probe()
+        forged = replace(valid.profiles[0], status="candidate", blocked_reason="")
+        with self.assertRaises(_OpenCodeProbeError):
+            _OpenCodeStaticProbe(
+                pin, (forged, valid.profiles[1]), valid.blocked, valid.historical
+            )
+
         import agent_team.opencode_probe as module
 
-        self.assertEqual(tuple(inspect.signature(build_static_probe).parameters), ())
-        self.assertEqual(tuple(inspect.signature(static_preflight).parameters), ())
+        self.assertEqual(
+            module.__all__, ("build_static_artifact", "serialize_static_artifact")
+        )
         for name in (
+            "OpenCodeExecutablePin",
+            "OpenCodeStaticProbe",
+            "OpenCodeProbeError",
+            "Manifest",
+            "Receipt",
+            "Judgment",
+            "build_static_probe",
+            "serialize_static_probe",
+            "validate_static_probe",
+            "static_preflight",
             "run_live_probe",
             "parse_opencode_events",
             "attest_profile",
@@ -192,16 +215,6 @@ class OpenCodeStaticProbeTest(unittest.TestCase):
             "execute_raw",
         ):
             self.assertFalse(hasattr(module, name), name)
-
-    def test_blocked_profile_record_cannot_be_constructed_as_candidate(self) -> None:
-        pin = fake_pin()
-        with mock.patch("agent_team.opencode_probe.static_preflight", return_value=pin):
-            probe = build_static_probe()
-        forged = replace(probe.profiles[0], status="candidate", blocked_reason=None)
-        with self.assertRaises(OpenCodeProbeError):
-            OpenCodeStaticProbe(
-                pin, (forged, probe.profiles[1]), probe.blocked, probe.historical
-            )
 
 
 if __name__ == "__main__":
