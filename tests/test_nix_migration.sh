@@ -29,8 +29,8 @@ readonly WAZA_AGENT_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/ev
 readonly WAZA_MARKDOWN_DOCS_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/model.yaml"
 readonly WAZA_AUTO_DEBUGGER_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/auto-debugger/eval.yaml"
 readonly WAZA_AUTO_DEBUGGER_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/auto-debugger/model.yaml"
-readonly WAZA_PR_CODE_REVIEW_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code-review/eval.yaml"
-readonly WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/pr-code-review/model.yaml"
+readonly WAZA_GIT_GITHUB_FLOW_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/git-github-flow/eval.yaml"
+readonly WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/git-github-flow/model.yaml"
 readonly WAZA_SECURITY_CHECK_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/eval.yaml"
 readonly WAZA_SECURITY_CHECK_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/security-check/model.yaml"
 readonly WAZA_ALL_EVAL_SCRIPT="$REPO_ROOT/scripts/waza_eval_all.sh"
@@ -465,10 +465,10 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_AUTO_DEBUGGER_EVAL_FILE" 'auto-debugger-eval'
   assert_contains "$WAZA_MARKDOWN_DOCS_MODEL_EVAL_FILE" 'duplicated_headings_detected'
   assert_contains "$WAZA_AUTO_DEBUGGER_MODEL_EVAL_FILE" 'string_concatenation_detected'
-  assert_contains "$WAZA_PR_CODE_REVIEW_EVAL_FILE" 'pr-code-review-eval'
+  assert_contains "$WAZA_GIT_GITHUB_FLOW_EVAL_FILE" 'git-github-flow-eval'
   assert_contains "$WAZA_SECURITY_CHECK_EVAL_FILE" 'security-check-eval'
-  assert_contains "$WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE" 'executor: copilot-sdk'
-  assert_contains "$WAZA_PR_CODE_REVIEW_MODEL_EVAL_FILE" 'authorization_bypass_detected'
+  assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'executor: copilot-sdk'
+  assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'force_push_requires_authorization'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'executor: copilot-sdk'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'sql_injection_detected'
   assert_executable "$WAZA_MODEL_EVAL_SCRIPT"
@@ -682,7 +682,7 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     markdown-docs
     markitdown
     missing-tools
-    pr-code-review
+    git-github-flow
     prompt-tuner
     python-dev
     retrospective-codify

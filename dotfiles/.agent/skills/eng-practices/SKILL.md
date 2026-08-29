@@ -7,7 +7,7 @@ description: "Use when the user asks about engineering practices, code review st
 
 Google の公開ドキュメント [eng-practices](https://github.com/google/eng-practices)（Reviewer Guide + CL Author Guide）の要点を、Claude Code エージェントが「自分で実装するとき」「PR をレビューするとき」「PR 説明を書くとき」「指摘を受けたとき」にすぐ使える行動規範に翻訳したスキル。
 
-他の開発系スキル（`pr-code-review` / `python-dev` / `go-dev` / `typescript-dev` / `api-design` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `auto-debugger` / `markdown-docs`）から共通参照される。
+他の開発系スキル（`git-github-flow` / `python-dev` / `go-dev` / `typescript-dev` / `api-design` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `auto-debugger` / `markdown-docs`）から共通参照される。
 
 ## 目的・適用範囲
 
@@ -45,7 +45,7 @@ Google の公開ドキュメント [eng-practices](https://github.com/google/eng
 
 ## PR/CL をレビューするとき
 
-`pr-code-review` から流入してきた場合の補助規範。レビュー観点（セキュリティ、パフォーマンス、可読性、エラーハンドリング、テスト、言語規約）に加えて、以下の 6 軸で判断する。
+`git-github-flow` のPR reviewから流入してきた場合の補助規範。レビュー観点（セキュリティ、パフォーマンス、可読性、エラーハンドリング、テスト、言語規約）に加えて、以下の 6 軸で判断する。
 
 1. **Standard of Code Review**: 「現状より明確に良いか」で承認可否を決める。完璧でなくても、健全性が前進していれば承認し、残りは新 CL の TODO に切る。
 2. **What to Look For**: 設計（コードベースに収まるか）、機能（意図通り動くか、エッジケース）、複雑性（不要な一般化はないか）、テスト（適切な層で揃っているか）、命名、コメント（Why を語るか）、ドキュメント（外部影響の更新）、文脈（システム全体を壊さないか）。
@@ -73,7 +73,7 @@ CL/PR description の目的は、レビュアーが「読まなくても変更�
 
 ## レビュー指摘を受けたとき
 
-- **個人化しない**: 指摘はコードに対するもので、人格批判ではない。`pr-code-review` 由来か別 CLI（Codex 等）由来かに関わらず同じ態度で扱う。
+- **個人化しない**: 指摘はコードに対するもので、人格批判ではない。GitHub PR review由来か別 CLI（Codex 等）由来かに関わらず同じ態度で扱う。
 - **まずコード改善を試す**: レビュアーがすぐ理解できない箇所は、説明を返す前にコード自体（命名・分割・コメント）を直せないか検討する。
 - **合意形成**: 事実ベースで議論する。スタイルガイドや測定値で決着できる場合はそれを優先する。
 - **「後で直す」を約束しない**: 別 CL に切るならその場で issue/TODO を切り、リンクを残す。約束だけは残さない。

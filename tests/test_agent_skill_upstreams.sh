@@ -202,40 +202,39 @@ from pathlib import Path
 import re
 import sys
 
+
+def parse_skill_metadata(text):
+    match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if not match:
+        return None
+
+    frontmatter = match.group(1)
+    name_match = re.search(r"^name:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    if not name_match:
+        return None
+    name = name_match.group(1)
+    if len(name) >= 2 and name[0] == name[-1] and name[0] in "'\"":
+        name = name[1:-1]
+
+    related_match = re.search(r"^\s*related_skills:\s*(\[.*\])\s*$", frontmatter, re.MULTILINE)
+    if not related_match:
+        return name, []
+    related_value = related_match.group(1)[1:-1].strip()
+    if not related_value:
+        return name, []
+    return name, [item.strip().strip("'\"") for item in related_value.split(",")]
+
 root = Path(sys.argv[1])
 by_name = defaultdict(list)
 related = []
-
-
-def scalar_value(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
-
-
-frontmatter_pattern = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
-name_pattern = re.compile(r"^name:\s*(.*?)\s*$", re.MULTILINE)
-related_pattern = re.compile(r"^[ \t]+related_skills:\s*\[(.*?)\]\s*$", re.MULTILINE)
-
 for path in root.rglob("SKILL.md"):
     if ".system" in path.parts:
         continue
-    frontmatter = frontmatter_pattern.match(path.read_text(encoding="utf-8"))
-    if not frontmatter:
+    parsed = parse_skill_metadata(path.read_text(encoding="utf-8"))
+    if parsed is None:
         continue
-    name = name_pattern.search(frontmatter.group(1))
-    if not name:
-        continue
-    by_name[scalar_value(name.group(1))].append(path)
-    related_skills = related_pattern.search(frontmatter.group(1))
-    targets = []
-    if related_skills:
-        targets = [
-            scalar_value(target)
-            for target in related_skills.group(1).split(",")
-            if target.strip()
-        ]
+    name, targets = parsed
+    by_name[name].append(path)
     related.append((path, targets))
 
 duplicates = {name: paths for name, paths in by_name.items() if len(paths) > 1}

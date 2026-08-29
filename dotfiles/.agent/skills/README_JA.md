@@ -43,6 +43,7 @@ skills/
 | `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |
 | `eng-practices` | code review、CL/PR 説明、small CL、review comment 作法。 | Google eng-practices を repo 向けに要約した共通 skill。 |
 | `go-dev` | Go 実装、テスト、並行処理、interface、module 周り。 | `eng-practices` と連携。 |
+| `git-github-flow` | Git/GitHub作業を認証・branch構造からIssue、PR、review、CI、merge、復旧まで一元管理する。 | `gh`と専用worktreeを使い、外部writeを操作ごとに制御する。 |
 | `goal-prompt-builder` | Codex `/goal` 用の長期作業 prompt を作る。 | durable objective と検証条件を固める。 |
 | `gws` | Google Calendar / Drive / Gmail / Tasks を `gws` CLI で扱う。 | 外部操作は確認を重視。 |
 | `html-preview-review` | 検証済みの Agent 実行結果を、安全な自己完結型 local HTML にして視覚レビューする。 | 必要な独立レビュー後、main agent が成果物を提示する。 |
@@ -51,7 +52,6 @@ skills/
 | `markdown-docs` | README、技術文書、校閲、Markdown 整形。 | この README もこの skill の対象。 |
 | `markitdown` | PDF / Word / PowerPoint / Excel / HTML などを Markdown に変換。 | MarkItDown CLI 用。 |
 | `missing-tools` | 見つからないコマンドを global install なしで解決する。 | project env、mise、comma、Nix fallback を優先。 |
-| `pr-code-review` | GitHub PR 差分を read-only で bug / risk / test gap 優先にレビュー。 | findings のみ返す。local pre-commit は `requesting-code-review`、投稿操作は `github-code-review`。 |
 | `prompt-tuner` | LLM prompt / system prompt / template の改善・評価。 | prompt tuning 作業用。 |
 | `python-dev` | Python 実装、pytest、typing、Pydantic、packaging。 | `eng-practices` と連携。 |
 | `retrospective-codify` | 作業終盤に学びを rule / skill / lint へ codify する。 | 繰り返しミスの恒久化向け。 |

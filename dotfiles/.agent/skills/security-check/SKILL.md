@@ -165,7 +165,7 @@ bundle audit
 - レビュー専用依頼では、勝手に修正しない。修正まで求められた場合だけ最小変更で対応する。
 - 誤検知、要確認、実害ありを分けて記載する。
 - 最終報告には対象範囲、実行した検索/ツール、検出件数、値をマスクした findings、未確認範囲を含める。
-- severity と eng-practices ラベルの対応: Critical/High → `Critical:`（修正必須）、Medium → `Warning:`（修正または理由の説明が必要）、Low → `Nit:` / `Optional:`。pr-code-review スキルの対応表と同じ方針。
+- severity と eng-practices ラベルの対応: Critical/High → `Critical:`（修正必須）、Medium → `Warning:`（修正または理由の説明が必要）、Low → `Nit:` / `Optional:`。GitHub PR reviewでも同じ対応を使う。
 - 指摘の書き方（理由を添える、人ではなくコードに焦点を当てる、コード自体で直せる場合は説明より修正を優先する）は `eng-practices` スキル参照。
 
 ## リファレンス
