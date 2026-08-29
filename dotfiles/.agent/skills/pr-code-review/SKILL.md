@@ -1,6 +1,6 @@
 ---
 name: pr-code-review
-description: "Use when the user asks to review a GitHub Pull Request, inspect PR diffs, assess changed code, or produce PR review findings with severity, file/line references, risks, and test gaps."
+description: "Use for a read-only GitHub Pull Request assessment that returns evidence-backed findings with severity and file/line references. For local pre-commit verification use requesting-code-review; for posting GitHub comments or reviews use github-code-review."
 ---
 
 # PR Code Review

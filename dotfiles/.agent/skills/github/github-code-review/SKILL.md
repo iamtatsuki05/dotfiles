@@ -1,6 +1,6 @@
 ---
 name: github-code-review
-description: "Review PRs: diffs, inline comments via gh or REST."
+description: "Review local changes or operate GitHub Pull Request workflows, including inline comments or formal reviews when explicitly requested. For findings-only read-only PR assessment, use pr-code-review."
 version: 1.1.0
 author: Hermes Agent
 license: MIT

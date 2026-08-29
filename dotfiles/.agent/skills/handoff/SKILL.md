@@ -1,6 +1,8 @@
 ---
 name: handoff
 description: Compact the current conversation into a handoff document for another agent to pick up.
+metadata:
+  invocation: "Explicit handoff focus arguments are supported."
 ---
 
 Write a handoff document summarising the current conversation so a fresh agent can continue the work.
@@ -21,9 +23,9 @@ For a workspace with `.agent`, give the next agent this resume sequence:
 3. Inspect the current Git status and diff.
 4. Run the relevant focused test before continuing implementation.
 
-Include a "suggested skills" section in the document, which suggests skills that the agent should invoke.
+Include a "suggested skills" section in the document, naming which skills the next agent should invoke explicitly.
 
-Do not duplicate content already captured in other artifacts (PRDs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
+Do not duplicate content already captured in other artifacts (specs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
 
 Redact any sensitive information, such as API keys, passwords, or personally identifiable information.
 

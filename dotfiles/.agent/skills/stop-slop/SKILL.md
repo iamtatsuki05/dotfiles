@@ -1,6 +1,6 @@
 ---
 name: stop-slop
-description: Remove AI writing patterns from prose. Use when drafting, editing, or reviewing text to eliminate predictable AI tells.
+description: Use for concise English prose cleanup with a strict checklist of predictable AI-writing patterns. For voice matching or preserving a specific personal style, use humanizer; for Japanese business prose, use natural-japanese.
 metadata:
   trigger: Writing prose, editing drafts, reviewing content for AI patterns
   author: Hardik Pandya (https://hvpandya.com)

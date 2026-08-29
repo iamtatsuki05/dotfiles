@@ -144,9 +144,9 @@
   - 外部 issue tracker への書き込みが前提のもの
   - git commit や push を自動実行するもの
 - skill が GitHub issue、PR コメント、メール、外部サービス、課金、telemetry、package install、hook 設定、永続ファイル作成、権限変更、本番環境に影響する操作を促す場合は、実行前に対象、影響、取り消し方法、ユーザー確認の要否を明示してください。
-- `grill-me` / `grill-with-docs` 系の質問攻め skill は、設計・計画の不明点を潰す用途に使ってください。コードや資料を読めば答えられる質問はユーザーに聞かず自分で確認し、質問は一度に一つずつ出してください。
-- Prototype は最初から throwaway と明示し、既存 runtime / task runner で 1 コマンド実行できる形にしてください。永続化、本番コードへの混入、不要な package 追加を避け、最後に「何が分かったか」だけを issue、ADR、作業ログなど対象に近い既存の記録に残してください。
-- Architecture review / diagnose 系 skill では、まず再現可能な feedback loop、観測結果、反証可能な仮説、検証方法を作ってください。HTML report や一時ファイルは OS の一時ディレクトリに作り、repo に残す必要があるものだけ明示的に残してください。
+- `grilling` / `grill-with-docs` は、設計・計画の不明点を潰す用途に使ってください。コードや資料を読めば答えられる事実はユーザーに聞かず自分で確認してください。`grilling` では、依存関係が解決済みの質問だけを同じ round にまとめ、回答を待ってから次の frontier へ進んでください。
+- Prototype は最初から throwaway と明示し、既存 runtime / task runner で 1 コマンド実行できる形にしてください。永続化、本番コードへの混入、不要な package 追加を避けてください。最後に「何が分かったか」と記録先・文面を提案し、ユーザーが対象を明示承認した場合だけ issue、ADR、作業ログなど対象に近い既存の記録へ残してください。
+- Architecture review / diagnosing-bugs 系 skill では、まず再現可能な feedback loop、観測結果、反証可能な仮説、検証方法を作ってください。HTML report や一時ファイルは OS の一時ディレクトリに作り、repo に残す必要があるものだけ明示的に残してください。
 
 # 作業ログ・引き継ぎ
 

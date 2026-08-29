@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [planning, plan-mode, implementation, workflow, design, documentation]
-    related_skills: [subagent-driven-development, test-driven-development, requesting-code-review]
+    related_skills: [dispatching-parallel-agents, test-driven-development, requesting-code-review]
 ---
 
 # Plan Mode
@@ -76,7 +76,7 @@ Assume the implementer is a skilled developer but knows almost nothing about the
 **Always use before:**
 - Implementing multi-step features
 - Breaking down complex requirements
-- Delegating to subagents via subagent-driven-development
+- Delegating independent tasks to subagents
 
 **Don't skip when:**
 - Feature seems simple (assumptions cause bugs)
@@ -121,7 +121,7 @@ Every plan MUST start with:
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For Hermes:** Execute this plan task-by-task. Use `dispatching-parallel-agents` only for independent tasks.
 
 **Goal:** [One sentence describing what this builds]
 
@@ -315,9 +315,9 @@ git commit -m "type: description"
 
 After saving the plan, offer the execution approach:
 
-**"Plan complete and saved. Ready to execute using subagent-driven-development — I'll dispatch a fresh subagent per task with two-stage review (spec compliance then code quality). Shall I proceed?"**
+**"Plan complete and saved. Ready to execute task-by-task, using fresh subagents for independent work and two-stage review (spec compliance then code quality). Shall I proceed?"**
 
-When executing, use the `subagent-driven-development` skill:
+When executing, use `dispatching-parallel-agents` only where tasks are independent:
 - Fresh `delegate_task` per task with full context
 - Spec compliance review after each task
 - Code quality review after spec passes

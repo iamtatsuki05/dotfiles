@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 8"
+  assert_contains_text "$output" "registered upstream skills: 10"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -28,6 +28,8 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "herdr"
   assert_contains_text "$output" "stop-slop"
   assert_contains_text "$output" "eli5"
+  assert_contains_text "$output" "orca-cli"
+  assert_contains_text "$output" "orchestration"
 }
 
 test_tree_hash_ignores_generated_python_bytecode() {
@@ -89,11 +91,11 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" empirical-prompt-tuning)"
   [[ "$pin" == "7a0d72866a0bb3e9ac3e2768c328b09ba2bc40c4" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" herdr)"
-  [[ "$pin" == "51b7064ef0a02642393bab1d2eea0f4dbd8414d2" ]] || fail "unexpected herdr pin: $pin"
+  [[ "$pin" == "c2637dc182ddc5425108824d5ed15d24ce38c4e3" ]] || fail "unexpected herdr pin: $pin"
 
-  # These candidates failed security review and must remain on their reviewed pins.
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" mattpocock-skills)"
-  [[ "$pin" == "b8be62ffacb0118fa3eaa29a0923c87c8c11985c" ]] || fail "unexpected mattpocock-skills pin: $pin"
+  [[ "$pin" == "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76" ]] || fail "unexpected mattpocock-skills pin: $pin"
+  # This candidate adds query telemetry and an unpinned runtime, so it remains rejected.
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" modern-web-guidance)"
   [[ "$pin" == "65d7f20ac85517a362107ce89b7be7f905105fd3" ]] || fail "unexpected modern-web-guidance pin: $pin"
 
@@ -120,6 +122,8 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   assert_contains "$skills_root/herdr/SKILL.md" 'Never open an arbitrary path returned by another agent.'
   assert_contains "$skills_root/herdr/SKILL.md" 'choose the exact `$tmpdir/report.md` path before prompting'
   assert_contains "$skills_root/herdr/SKILL.md" 'reject symlinks'
+  assert_contains "$skills_root/herdr/SKILL.md" 'agent_not_ready'
+  assert_contains "$skills_root/herdr/SKILL.md" 'sends text followed by encoded Enter after a short delay'
   assert_not_contains "$skills_root/herdr/SKILL.md" 'reply only with the file path, then read the file directly'
   assert_contains "$skills_root/herdr/LICENSE" 'Apache License'
 }
@@ -172,6 +176,82 @@ test_eli5_is_pinned_and_licensed() {
   assert_contains "$skills_root/eli5/SKILL.md" 'Local modification notice:'
   assert_not_contains "$skills_root/eli5/SKILL.md" '<topic>'
   assert_contains "$skills_root/eli5/LICENSE" 'Apache License'
+}
+
+test_mattpocock_skills_use_current_names_and_resolve_dependencies() {
+  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+
+  assert_file "$skills_root/grilling/SKILL.md"
+  assert_file "$skills_root/grilling/LICENSE"
+  assert_file "$skills_root/diagnosing-bugs/SKILL.md"
+  assert_file "$skills_root/domain-modeling/SKILL.md"
+  assert_file "$skills_root/codebase-design/SKILL.md"
+  assert_file "$skills_root/grill-with-docs/agents/openai.yaml"
+  assert_contains "$skills_root/grilling/SKILL.md" "Ask the whole frontier in one round"
+  assert_contains "$skills_root/diagnosing-bugs/SKILL.md" "# Diagnosing Bugs"
+  assert_contains "$skills_root/grill-with-docs/SKILL.md" '$grilling'
+  assert_contains "$skills_root/grill-with-docs/SKILL.md" '$domain-modeling'
+  assert_not_exists "$skills_root/grill-me"
+  assert_not_exists "$skills_root/diagnose"
+  assert_not_exists "$skills_root/zoom-out"
+  assert_contains "$skills_root/grilling/LICENSE" "MIT License"
+}
+
+test_regular_skill_names_are_unique_and_related_skills_resolve() {
+  python3 - "$REPO_ROOT/dotfiles/.agent/skills" <<'PY' || fail "skill names or related_skills are ambiguous"
+from collections import defaultdict
+from pathlib import Path
+import re
+import sys
+
+import yaml
+
+root = Path(sys.argv[1])
+by_name = defaultdict(list)
+related = []
+for path in root.rglob("SKILL.md"):
+    if ".system" in path.parts:
+        continue
+    match = re.match(r"^---\n(.*?)\n---", path.read_text(encoding="utf-8"), re.DOTALL)
+    if not match:
+        continue
+    data = yaml.safe_load(match.group(1))
+    if not isinstance(data, dict) or not isinstance(data.get("name"), str):
+        continue
+    by_name[data["name"]].append(path)
+    metadata = data.get("metadata")
+    hermes = metadata.get("hermes") if isinstance(metadata, dict) else None
+    targets = hermes.get("related_skills", []) if isinstance(hermes, dict) else []
+    related.append((path, targets))
+
+duplicates = {name: paths for name, paths in by_name.items() if len(paths) > 1}
+missing = [(path, target) for path, targets in related for target in targets if target not in by_name]
+if duplicates or missing:
+    for name, paths in sorted(duplicates.items()):
+        print(f"duplicate {name}: {', '.join(map(str, paths))}", file=sys.stderr)
+    for path, target in missing:
+        print(f"missing related skill {target}: {path}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+test_orca_skills_are_pinned_licensed_and_verbatim() {
+  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+  local expected_pin="026389a3bc03da03ca2d65295e805493712b0774"
+  local skill_id
+  local pin
+
+  for skill_id in orca-cli orchestration; do
+    pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" "$skill_id")"
+    [[ "$pin" == "$expected_pin" ]] || fail "unexpected $skill_id pin: $pin"
+    assert_file "$skills_root/$skill_id/SKILL.md"
+    assert_file "$skills_root/$skill_id/LICENSE"
+    assert_contains "$skills_root/$skill_id/LICENSE" "MIT License"
+    assert_not_contains "$skills_root/$skill_id/SKILL.md" "Local safety overlay"
+  done
+
+  assert_contains "$skills_root/orca-cli/SKILL.md" "Use plain shell tools when Orca state does not matter."
+  assert_contains "$skills_root/orchestration/SKILL.md" "Orchestration is Orca's structured coordination layer"
 }
 
 test_updates_accepts_fixture_ls_remote_output() {
@@ -270,7 +350,9 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit natural-japanese=cccccccccccccccccccccccccccccccccccccccc \
       --latest-commit herdr=7777777777777777777777777777777777777777 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit eli5=1313131313131313131313131313131313131313 \
+      --latest-commit orca-cli=1414141414141414141414141414141414141414 \
+      --latest-commit orchestration=1515151515151515151515151515151515151515
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -289,6 +371,10 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
   assert_contains_text "$output" "Skill ID: eli5"
   assert_contains_text "$output" "candidate_commit: 1313131313131313131313131313131313131313"
+  assert_contains_text "$output" "Skill ID: orca-cli"
+  assert_contains_text "$output" "candidate_commit: 1414141414141414141414141414141414141414"
+  assert_contains_text "$output" "Skill ID: orchestration"
+  assert_contains_text "$output" "candidate_commit: 1515151515151515151515151515151515151515"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -304,6 +390,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed herdr" > "$report_dir/herdr.md"
   print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
   print -r -- "reviewed eli5" > "$report_dir/eli5.md"
+  print -r -- "reviewed orca-cli" > "$report_dir/orca-cli.md"
+  print -r -- "reviewed orchestration" > "$report_dir/orchestration.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -319,7 +407,9 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit natural-japanese=4444444444444444444444444444444444444444 \
       --latest-commit herdr=6666666666666666666666666666666666666666 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit eli5=1313131313131313131313131313131313131313 \
+      --latest-commit orca-cli=1414141414141414141414141414141414141414 \
+      --latest-commit orchestration=1515151515151515151515151515151515151515
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -338,6 +428,10 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
   assert_contains_text "$output" "eli5: plan update"
   assert_contains_text "$output" "candidate=1313131313131313131313131313131313131313"
+  assert_contains_text "$output" "orca-cli: plan update"
+  assert_contains_text "$output" "candidate=1414141414141414141414141414141414141414"
+  assert_contains_text "$output" "orchestration: plan update"
+  assert_contains_text "$output" "candidate=1515151515151515151515151515151515151515"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -506,6 +600,7 @@ test_security_prompt_contains_required_review_points() {
 test_update_defaults_to_all_latest_and_runs_agent_review_before_dry_run_apply() {
   local output
   local review_command
+  local review_dir
 
   review_command='mkdir -p "$(dirname "$AGENT_SKILL_REVIEW_REPORT")"; cat > "$AGENT_SKILL_REVIEW_REPORT" <<EOF
 - review agent: codex
@@ -515,9 +610,12 @@ test_update_defaults_to_all_latest_and_runs_agent_review_before_dry_run_apply() 
 - update recommendation: approve
 EOF'
 
+  review_dir="$(mktemp -d)"
+
   output="$(
     python3 "$SCRIPT" update \
       --dry-run \
+      --review-report-dir "$review_dir" \
       --review-command "$review_command" \
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
@@ -526,7 +624,9 @@ EOF'
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit eli5=1313131313131313131313131313131313131313 \
+      --latest-commit orca-cli=1414141414141414141414141414141414141414 \
+      --latest-commit orchestration=1515151515151515151515151515151515151515
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -537,6 +637,8 @@ EOF'
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "stop-slop: review approved"
   assert_contains_text "$output" "eli5: review approved"
+  assert_contains_text "$output" "orca-cli: review approved"
+  assert_contains_text "$output" "orchestration: review approved"
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
@@ -551,12 +653,18 @@ EOF'
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
   assert_contains_text "$output" "eli5: plan update"
   assert_contains_text "$output" "candidate=1313131313131313131313131313131313131313"
+  assert_contains_text "$output" "orca-cli: plan update"
+  assert_contains_text "$output" "candidate=1414141414141414141414141414141414141414"
+  assert_contains_text "$output" "orchestration: plan update"
+  assert_contains_text "$output" "candidate=1515151515151515151515151515151515151515"
   assert_not_contains_text "$output" "manifest updated"
+  rm -rf "$review_dir"
 }
 
 test_update_reviews_all_skills_in_parallel() {
   local output
   local review_command
+  local review_dir
   local started_at
   local ended_at
   local elapsed
@@ -569,6 +677,8 @@ test_update_reviews_all_skills_in_parallel() {
 - update recommendation: approve
 EOF'
 
+  review_dir="$(mktemp -d)"
+
   started_at="$(python3 - <<'PY'
 import time
 print(time.monotonic())
@@ -577,6 +687,7 @@ PY
   output="$(
     python3 "$SCRIPT" update \
       --dry-run \
+      --review-report-dir "$review_dir" \
       --review-command "$review_command" \
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
@@ -585,7 +696,9 @@ PY
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit eli5=1313131313131313131313131313131313131313 \
+      --latest-commit orca-cli=1414141414141414141414141414141414141414 \
+      --latest-commit orchestration=1515151515151515151515151515151515151515
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -611,11 +724,15 @@ PY
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "stop-slop: review approved"
   assert_contains_text "$output" "eli5: review approved"
+  assert_contains_text "$output" "orca-cli: review approved"
+  assert_contains_text "$output" "orchestration: review approved"
+  rm -rf "$review_dir"
 }
 
 test_update_blocks_when_agent_review_does_not_approve() {
   local output
   local review_command
+  local review_dir
 
   review_command='mkdir -p "$(dirname "$AGENT_SKILL_REVIEW_REPORT")"; cat > "$AGENT_SKILL_REVIEW_REPORT" <<EOF
 - review agent: codex
@@ -625,10 +742,13 @@ test_update_blocks_when_agent_review_does_not_approve() {
 - update recommendation: reject
 EOF'
 
+  review_dir="$(mktemp -d)"
+
   set +e
   output="$(
     python3 "$SCRIPT" update \
       --dry-run \
+      --review-report-dir "$review_dir" \
       --review-command "$review_command" \
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
@@ -637,7 +757,9 @@ EOF'
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313 2>&1
+      --latest-commit eli5=1313131313131313131313131313131313131313 \
+      --latest-commit orca-cli=1414141414141414141414141414141414141414 \
+      --latest-commit orchestration=1515151515151515151515151515151515151515 2>&1
   )"
   local exit_status=$?
   set -e
@@ -645,11 +767,13 @@ EOF'
   [[ "$exit_status" -ne 0 ]] || fail "expected rejected review to fail"
   assert_contains_text "$output" "review did not approve"
   assert_not_contains_text "$output" "plan update"
+  rm -rf "$review_dir"
 }
 
 test_update_accepts_approve_with_changes_when_no_blocking_findings() {
   local output
   local review_command
+  local review_dir
 
   review_command='mkdir -p "$(dirname "$AGENT_SKILL_REVIEW_REPORT")"; cat > "$AGENT_SKILL_REVIEW_REPORT" <<EOF
 - review agent: codex
@@ -659,22 +783,27 @@ test_update_accepts_approve_with_changes_when_no_blocking_findings() {
 - update recommendation: approve with changes.
 EOF'
 
+  review_dir="$(mktemp -d)"
+
   output="$(
     python3 "$SCRIPT" update \
       --id empirical-prompt-tuning \
       --commit 6666666666666666666666666666666666666666 \
       --dry-run \
+      --review-report-dir "$review_dir" \
       --review-command "$review_command"
   )"
 
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
+  rm -rf "$review_dir"
 }
 
 test_update_can_limit_to_one_skill_with_specific_commit() {
   local output
   local review_command
+  local review_dir
 
   review_command='mkdir -p "$(dirname "$AGENT_SKILL_REVIEW_REPORT")"; cat > "$AGENT_SKILL_REVIEW_REPORT" <<EOF
 - review agent: codex
@@ -684,11 +813,14 @@ test_update_can_limit_to_one_skill_with_specific_commit() {
 - update recommendation: approve
 EOF'
 
+  review_dir="$(mktemp -d)"
+
   output="$(
     python3 "$SCRIPT" update \
       --id empirical-prompt-tuning \
       --commit 5555555555555555555555555555555555555555 \
       --dry-run \
+      --review-report-dir "$review_dir" \
       --review-command "$review_command"
   )"
 
@@ -696,6 +828,7 @@ EOF'
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
   assert_contains_text "$output" "candidate=5555555555555555555555555555555555555555"
   assert_not_contains_text "$output" "superpowers: plan update"
+  rm -rf "$review_dir"
 }
 
 test_mise_has_agent_skill_update_task() {
@@ -714,6 +847,9 @@ main() {
   test_reviewed_updates_preserve_local_security_and_compatibility_overlays
   test_superpowers_selection_has_five_non_conflicting_workflows
   test_eli5_is_pinned_and_licensed
+  test_mattpocock_skills_use_current_names_and_resolve_dependencies
+  test_regular_skill_names_are_unique_and_related_skills_resolve
+  test_orca_skills_are_pinned_licensed_and_verbatim
   test_updates_accepts_fixture_ls_remote_output
   test_security_prompt_accepts_commit_alias
   test_security_prompt_accepts_registered_review_agent

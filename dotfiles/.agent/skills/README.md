@@ -39,7 +39,6 @@ Do not manually copy external skill trees without recording provenance and revie
 | `alphaxiv-paper-lookup` | Summarize, compare, and extract implementation details from arXiv / alphaxiv papers. | Paper research workflow. |
 | `api-design` | Design and review REST APIs, OpenAPI specs, versioning, auth, and error responses. | Links to `eng-practices`. |
 | `auto-debugger` | Investigate errors, stack traces, and failing tests. | Emphasizes reproduction, hypotheses, and verification before fixing. |
-| `chronicle` | Use screen history and recent desktop context to disambiguate user requests. | Only for environments where Chronicle is enabled. |
 | `ci-cd` | Design, edit, and debug CI/CD workflows such as GitHub Actions. | Workflow YAML and log investigation. |
 | `compatibility-safety` | Avoid unrequested compatibility layers, aliases, silent fallbacks, and default-value fallbacks. | Use before adding compatibility behavior or legacy paths. |
 | `database-dev` | Design and review schemas, queries, indexes, migrations, and database performance. | Covers SQL and NoSQL work. |
@@ -53,7 +52,7 @@ Do not manually copy external skill trees without recording provenance and revie
 | `markdown-docs` | Create, edit, review, and lint README and Markdown documentation. | This README is also covered by this skill. |
 | `markitdown` | Convert PDF, Word, PowerPoint, Excel, HTML, and other sources into Markdown. | MarkItDown CLI workflow. |
 | `missing-tools` | Resolve unavailable commands without changing global machine state. | Prefers project env, mise, comma, and Nix fallbacks. |
-| `pr-code-review` | Review GitHub PR diffs for bugs, risks, and missing tests. | Uses finding-oriented review output. |
+| `pr-code-review` | Review GitHub PR diffs read-only for bugs, risks, and missing tests. | Findings only; local pre-commit work uses `requesting-code-review`, posting uses `github-code-review`. |
 | `prompt-tuner` | Improve, evaluate, and rewrite LLM prompts and templates. | Prompt tuning workflow. |
 | `python-dev` | Implement, test, and debug Python, pytest, typing, Pydantic, and packaging work. | Links to `eng-practices`. |
 | `retrospective-codify` | Turn repeated lessons into rules, skills, or lint checks near the end of a task. | For codifying repeated mistakes. |
@@ -86,23 +85,24 @@ An update fails before overwriting local files if a source match count differs f
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | Japanese skill for iteratively improving agent instructions through executor feedback. |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
-| `mattpocock-skills` | `mattpocock/skills` | `diagnose/`, `grill-me/`, etc. | Design questioning, diagnosis, prototyping, handoff, and architecture review skills. Each skill includes the upstream LICENSE. |
+| `mattpocock-skills` | `mattpocock/skills` | `grilling/`, `diagnosing-bugs/`, `domain-modeling/`, etc. | Current design, diagnosis, prototyping, handoff, and architecture skills without deprecated aliases. Each skill includes the upstream LICENSE. |
 | `superpowers` | `obra/superpowers` | `brainstorming/`, `dispatching-parallel-agents/`, `software-development/systematic-debugging/`, `test-driven-development/`, `writing-skills/` | Five selected workflow areas. Three skills are vendored directly; systematic debugging keeps the richer local skill with pinned upstream waiting references, and brainstorming is a minimal local Three Paths router. |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied Apache-2.0 license. |
-| `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | English prose review skill for removing predictable AI writing patterns. |
+| `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | Strict English AI-pattern checklist; voice matching routes to `humanizer`. |
 
 ### Matt Pocock Group
 
 | Skill | Purpose |
 |---|---|
-| `diagnose` | Work through hard bugs and performance regressions with reproduction, minimization, hypotheses, instrumentation, and regression tests. |
-| `grill-me` | Ask focused questions to stress-test a plan or design and remove ambiguity. |
-| `grill-with-docs` | Challenge design decisions against `CONTEXT.md`, ADRs, and project language. |
+| `codebase-design` | Provide shared vocabulary and principles for deep-module design. |
+| `diagnosing-bugs` | Work through hard bugs and performance regressions with a red-capable feedback loop, minimization, hypotheses, instrumentation, and regression tests. |
+| `domain-modeling` | Sharpen project terminology and prepare `CONTEXT.md` or ADR updates. |
+| `grilling` | Stress-test a plan in dependency-aware rounds and wait for feedback between frontiers. |
+| `grill-with-docs` | Compose `grilling` with `domain-modeling`. |
 | `handoff` | Compact the conversation into a handoff document for another agent. |
 | `improve-codebase-architecture` | Find architecture improvements, deep modules, and testability opportunities. |
 | `prototype` | Build throwaway prototypes for state design or UI exploration. |
-| `zoom-out` | Understand the higher-level structure of an unfamiliar code area. |
 
 ### Superpowers Group
 

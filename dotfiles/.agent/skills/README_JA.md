@@ -38,7 +38,6 @@ skills/
 | `alphaxiv-paper-lookup` | arXiv / alphaxiv 論文の要約、比較、実装詳細抽出。 | 論文調査用。 |
 | `api-design` | REST API / OpenAPI / versioning / auth / error response の設計・レビュー。 | `eng-practices` と連携。 |
 | `auto-debugger` | エラー、stack trace、失敗テストの原因調査と修正。 | 実装前に再現・仮説・検証を重視。 |
-| `chronicle` | ユーザー画面と最近の作業履歴を使った文脈補完。 | Chronicle が有効な環境専用。 |
 | `ci-cd` | GitHub Actions などの CI/CD 設計・修正・調査。 | workflow YAML とログ調査向け。 |
 | `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
 | `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |
@@ -52,7 +51,7 @@ skills/
 | `markdown-docs` | README、技術文書、校閲、Markdown 整形。 | この README もこの skill の対象。 |
 | `markitdown` | PDF / Word / PowerPoint / Excel / HTML などを Markdown に変換。 | MarkItDown CLI 用。 |
 | `missing-tools` | 見つからないコマンドを global install なしで解決する。 | project env、mise、comma、Nix fallback を優先。 |
-| `pr-code-review` | GitHub PR 差分を bug / risk / test gap 優先でレビュー。 | review finding 形式に寄せる。 |
+| `pr-code-review` | GitHub PR 差分を read-only で bug / risk / test gap 優先にレビュー。 | findings のみ返す。local pre-commit は `requesting-code-review`、投稿操作は `github-code-review`。 |
 | `prompt-tuner` | LLM prompt / system prompt / template の改善・評価。 | prompt tuning 作業用。 |
 | `python-dev` | Python 実装、pytest、typing、Pydantic、packaging。 | `eng-practices` と連携。 |
 | `retrospective-codify` | 作業終盤に学びを rule / skill / lint へ codify する。 | 繰り返しミスの恒久化向け。 |
@@ -85,23 +84,24 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
-| `mattpocock-skills` | `mattpocock/skills` | `diagnose/`、`grill-me/` など | 設計質問、diagnose、prototype、handoff、architecture review 系 skill。各 skill に upstream LICENSE を同梱。 |
+| `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、prototype、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
-| `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語 prose から AI らしい定型表現を取り除く文章校閲 skill。 |
+| `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語の AI pattern を strict checklist で除く。voice matching は `humanizer`。 |
 
 ### mattpocock group
 
 | Skill | 用途 |
 |---|---|
-| `diagnose` | hard bug / performance regression を再現、最小化、仮説、計測、回帰テストで詰める。 |
-| `grill-me` | 計画や設計を一問ずつ深掘りし、曖昧さを潰す。 |
-| `grill-with-docs` | `CONTEXT.md` や ADR を踏まえて設計判断と言語を詰める。 |
+| `codebase-design` | deep module 設計の共通語彙と原則を提供する。 |
+| `diagnosing-bugs` | red-capable な feedback loop、最小化、仮説、計測、回帰テストで hard bug / performance regression を詰める。 |
+| `domain-modeling` | project 用語を明確にし、`CONTEXT.md` や ADR の更新案を作る。 |
+| `grilling` | 依存関係が解決済みの質問を round 単位で提示し、frontier ごとに feedback を待つ。 |
+| `grill-with-docs` | `grilling` と `domain-modeling` を組み合わせる。 |
 | `handoff` | 会話を別 agent 向けの引き継ぎ文書にまとめる。 |
 | `improve-codebase-architecture` | codebase の構造改善、deep module、testability を探す。 |
 | `prototype` | throwaway prototype で状態設計や UI 案を試す。 |
-| `zoom-out` | 不慣れなコード領域の上位構造を把握する。 |
 
 ### superpowers group
 

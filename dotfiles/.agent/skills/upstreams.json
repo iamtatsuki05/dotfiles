@@ -8,7 +8,7 @@
       "repository": "https://github.com/obra/superpowers.git",
       "branch": "main",
       "pinned_commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
-      "local_tree_sha256": "8707b3c107fb8e54def5a90cee17410b1415d1916f1a3b34157a5315d3bee6d3",
+      "local_tree_sha256": "27eaf8e7fb580cd2f01acc9a347069dbba7f81d725a7fea1d205a410d5b99da2",
       "mappings": [
         {
           "source_path": "skills/dispatching-parallel-agents",
@@ -73,6 +73,18 @@
           "expected_count": 1
         },
         {
+          "local_path": "dotfiles/.agent/skills/writing-skills/render-graphs.js",
+          "old": "console.error('  ./render-graphs.js ../subagent-driven-development');",
+          "new": "console.error('  ./render-graphs.js ../dispatching-parallel-agents');",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/writing-skills/render-graphs.js",
+          "old": "console.error('  ./render-graphs.js ../subagent-driven-development --combine');",
+          "new": "console.error('  ./render-graphs.js ../dispatching-parallel-agents --combine');",
+          "expected_count": 1
+        },
+        {
           "local_path": "dotfiles/.agent/skills/writing-skills/SKILL.md",
           "old": "1. **One fresh-context sample per call** — a raw API call, or a single-shot subagent if you don't have API access. System prompt = the realistic context the guidance will live in (the full skill or prompt template, not the guidance in isolation); user message = a task that tempts the failure.",
           "new": "1. **One fresh-context sample per call** — use a single-shot local subagent by default. Use a raw external API only after explicitly confirming the provider, data sent, repetition count and cost, and the user's authorization. System prompt = the realistic context the guidance will live in (the full skill or prompt template, not the guidance in isolation); user message = a task that tempts the failure.",
@@ -131,8 +143,8 @@
         "status": "reviewed",
         "review_agent": "codex",
         "last_reviewed_commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
-        "last_reviewed_at": "2026-08-19T09:04:10+00:00",
-        "review_report": ".agent/work/sessions/2026-08-19-173400-superpowers-five-codex/superpowers-systematic-approval.md"
+        "last_reviewed_at": "2026-08-29T10:05:12+00:00",
+        "review_report": ".agent/work/sessions/2026-08-29-201500-grilling-refresh-codex/subagents/local-skill-audit.md"
       },
       "provenance_note": "Three skills are installed directly under the flat discovery root. The existing systematic-debugging skill receives the pinned condition-based-waiting reference, and the local Three Paths brainstorming router retains the upstream MIT LICENSE. Namespace-qualified references are rewritten to flat names. Local replacements preserve CommonJS compatibility, require authorization before paid API micro-tests, correct the waiting examples, exclude the Lace-specific helper, and mark upstream performance figures as historical."
     },
@@ -175,19 +187,19 @@
     },
     {
       "id": "mattpocock-skills",
-      "description": "Selected Matt Pocock engineering and productivity skills vendored into the shared agent skill tree.",
+      "description": "Current Matt Pocock engineering and productivity skills vendored into the shared agent skill tree without deprecated aliases.",
       "repository": "https://github.com/mattpocock/skills.git",
       "branch": "main",
-      "pinned_commit": "b8be62ffacb0118fa3eaa29a0923c87c8c11985c",
-      "local_tree_sha256": "ca7310abfd4200de99e77f094b933ec57882cb769cbee89f6cf476402e9f1cd5",
+      "pinned_commit": "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
+      "local_tree_sha256": "bd551fe9592718c78cf8746875b2d57d229c94c7ed3c4a8939ec1b4cd0dd0c14",
       "mappings": [
         {
-          "source_path": "skills/productivity/grill-me",
-          "local_path": "dotfiles/.agent/skills/grill-me"
+          "source_path": "skills/productivity/grilling",
+          "local_path": "dotfiles/.agent/skills/grilling"
         },
         {
           "source_path": "LICENSE",
-          "local_path": "dotfiles/.agent/skills/grill-me/LICENSE"
+          "local_path": "dotfiles/.agent/skills/grilling/LICENSE"
         },
         {
           "source_path": "skills/productivity/handoff",
@@ -206,20 +218,20 @@
           "local_path": "dotfiles/.agent/skills/grill-with-docs/LICENSE"
         },
         {
-          "source_path": "skills/engineering/diagnose",
-          "local_path": "dotfiles/.agent/skills/diagnose"
+          "source_path": "skills/engineering/domain-modeling",
+          "local_path": "dotfiles/.agent/skills/domain-modeling"
         },
         {
           "source_path": "LICENSE",
-          "local_path": "dotfiles/.agent/skills/diagnose/LICENSE"
+          "local_path": "dotfiles/.agent/skills/domain-modeling/LICENSE"
         },
         {
-          "source_path": "skills/engineering/zoom-out",
-          "local_path": "dotfiles/.agent/skills/zoom-out"
+          "source_path": "skills/engineering/diagnosing-bugs",
+          "local_path": "dotfiles/.agent/skills/diagnosing-bugs"
         },
         {
           "source_path": "LICENSE",
-          "local_path": "dotfiles/.agent/skills/zoom-out/LICENSE"
+          "local_path": "dotfiles/.agent/skills/diagnosing-bugs/LICENSE"
         },
         {
           "source_path": "skills/engineering/prototype",
@@ -236,9 +248,23 @@
         {
           "source_path": "LICENSE",
           "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/LICENSE"
+        },
+        {
+          "source_path": "skills/engineering/codebase-design",
+          "local_path": "dotfiles/.agent/skills/codebase-design"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/codebase-design/LICENSE"
         }
       ],
       "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/handoff/SKILL.md",
+          "old": "description: Compact the current conversation into a handoff document for another agent to pick up.\nargument-hint: \"What will the next session be used for?\"\ndisable-model-invocation: true",
+          "new": "description: Compact the current conversation into a handoff document for another agent to pick up.\nmetadata:\n  invocation: \"Explicit handoff focus arguments are supported.\"",
+          "expected_count": 1
+        },
         {
           "local_path": "dotfiles/.agent/skills/handoff/SKILL.md",
           "old": "Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save to the temporary directory of the user's OS - not the current workspace.",
@@ -247,20 +273,188 @@
         },
         {
           "local_path": "dotfiles/.agent/skills/handoff/SKILL.md",
+          "old": "Include a \"suggested skills\" section in the document, naming which skills the next agent should call the Skill tool for.",
+          "new": "Include a \"suggested skills\" section in the document, naming which skills the next agent should invoke explicitly.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/handoff/SKILL.md",
           "old": "If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.",
           "new": "Treat user-provided arguments as the next session's focus and tailor the document accordingly.\n\nVerify that the document exists at the selected destination and report its path.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/grill-with-docs/SKILL.md",
+          "old": "disable-model-invocation: true",
+          "new": "metadata:\n  invocation: \"Explicit composition of $grilling and $domain-modeling.\"",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/grill-with-docs/SKILL.md",
+          "old": "Call the Skill tool twice, for \"grilling\" and \"domain-modeling\".",
+          "new": "Use both `$grilling` and `$domain-modeling`.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/SKILL.md",
+          "old": "disable-model-invocation: true",
+          "new": "metadata:\n  invocation: \"Explicit architecture improvement workflow.\"",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/SKILL.md",
+          "old": "Call the Skill tool with \"codebase-design\"",
+          "new": "Use `$codebase-design`",
+          "expected_count": 2
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/SKILL.md",
+          "old": "call the Skill tool with \"grilling\"",
+          "new": "use `$grilling`",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/prototype/SKILL.md",
+          "old": "6. **Capture it when done.** Fold any validated decision into the real code, then capture the prototype itself as a **primary source**: commit it to a throwaway branch, out of main, and leave a context pointer to that branch on the implementation issue. Capture the answer too (the verdict and the question it settled) in the issue or a commit. The main branch keeps only the validated decision.",
+          "new": "6. **Capture the answer when done.** Present the validated decision, proposed production-code change, and proposed record destination. Do not modify real code, write an issue/ADR/work log, preserve the prototype, create a branch, or commit unless the user explicitly approves those exact targets.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/prototype/LOGIC.md",
+          "old": "Send them the file, or open it for them. They'll click through the walkthroughs and free-play whenever they get to it; the interesting moments are when they say \"wait, that shouldn't be possible\" or \"huh, I assumed X would be different\"; those are the bugs in the _idea_, which is the whole point. If they want new actions or a new scenario, add them. Prototypes evolve.",
+          "new": "Report the file's absolute path. Open or send it only when the user explicitly asks. Their feedback on the walkthroughs and free-play reveals bugs in the idea; if they ask for a new action or scenario, add only that scoped change.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/prototype/LOGIC.md",
+          "old": "Once the prototype has answered its question, capture the answer, then capture the prototype the way the [SKILL](SKILL.md) describes. The logic-specific mapping: the validated reducer / machine / function set lifts into the real module (the decision, absorbed); the HTML shell rides along to the throwaway branch that keeps the prototype as a primary source, and being one self-contained file, it stays trivially re-runnable there.",
+          "new": "Once the prototype has answered its question, record the answer as [SKILL.md](SKILL.md) describes. Fold only the validated reducer, machine, or function set into the real module. Do not create a branch or commit for the HTML shell unless the user explicitly asks.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/prototype/UI.md",
+          "old": "Once a variant has won, capture the answer (which variant and why), then capture the prototype the way the [SKILL](SKILL.md) describes. Fold the winner into the real code and move the rest onto the throwaway branch, not into main:\n\n- **Sub-shape A**: fold the winner into the existing page; drop the losing variants and the switcher from main.\n- **Sub-shape B**: promote the winning variant to a real route; drop the throwaway route and the switcher from main.\n\nThe full set of variants is the primary source, so it lands on the throwaway branch, not the bin, since variant components and the switcher left in the main branch rot fast and confuse the next reader.",
+          "new": "Once a variant has won, record which variant won and why, as [SKILL.md](SKILL.md) describes. Fold only the winner into the real code, and remove the throwaway route or switcher created by this run after confirming the exact targets with the user. Do not create a branch or commit for losing variants unless the user explicitly asks.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/domain-modeling/SKILL.md",
+          "old": "When a term is resolved, update `CONTEXT.md` right there. Don't batch these up: capture them as they happen. Use the format in [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md).",
+          "new": "When a term is resolved, propose the exact `CONTEXT.md` change right there. Write it only after the user approves the target and wording; otherwise keep it in the active session draft. Use the format in [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md).",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/diagnosing-bugs/SKILL.md",
+          "old": "8. **Bisection harness.** If the bug appeared between two known states (commit, dataset, version), automate \"boot at state X, check, repeat\" so you can `git bisect run` it.",
+          "new": "8. **Bisection harness.** If the bug appeared between two known states, propose an automated check. Run `git bisect` only in a clean disposable worktree or clone whose exact path the user approved; never change the current dirty checkout.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/diagnosing-bugs/SKILL.md",
+          "old": "- [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)",
+          "new": "- [ ] Throwaway artifacts created by this diagnosis are listed; delete or move them only after the user confirms the exact targets",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/diagnosing-bugs/scripts/hitl-loop.template.sh",
+          "old": "capture ERROR_MSG \"Paste the error message (or 'none'):\"",
+          "new": "capture ERROR_MSG \"Paste a short redacted error signal (or 'none'; use <REDACTED> for secrets or PII):\"",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/codebase-design/DEEPENING.md",
+          "old": "- Old unit tests on shallow modules become waste once tests at the deepened module's interface exist; delete them.",
+          "new": "- Once replacement tests exist at the deepened module's interface, list any old shallow-module tests that may be redundant. Delete them only as an explicitly approved follow-up with exact targets.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/SKILL.md",
+          "old": "Write a self-contained HTML file to the OS temp directory so nothing lands in the repo. Resolve the temp dir from `$TMPDIR`, falling back to `/tmp` (or `%TEMP%` on Windows), and write to `<tmpdir>/architecture-review-<timestamp>.html` so each run gets a fresh file. Open it for the user (`xdg-open <path>` on Linux, `open <path>` on macOS, `start <path>` on Windows) and tell them the absolute path.\n\nThe report uses **Tailwind via CDN** for layout and styling, and **Mermaid via CDN** for diagrams where a graph/flow/sequence reliably communicates the structure. Mix Mermaid with hand-crafted CSS/SVG visuals: use Mermaid when relationships are graph-shaped (call graphs, dependencies, sequences), and hand-built divs/SVG when you want something more editorial (mass diagrams, cross-sections, collapse animations). Each candidate gets a **before/after visualisation**. Be visual.",
+          "new": "Write a fully self-contained offline HTML file to the OS temp directory so nothing lands in the repo. Resolve the temp dir from `$TMPDIR`, falling back to `/tmp` (or `%TEMP%` on Windows), and write to `<tmpdir>/architecture-review-<timestamp>.html` so each run gets a fresh file. Use only inline CSS, HTML, and SVG; do not load CDN scripts or other external resources. Report the absolute path, and open it only when the user explicitly asks. Each candidate gets a **before/after visualisation**.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/SKILL.md",
+          "old": "Side effects happen inline as decisions crystallize; call the Skill tool with \"domain-modeling\" to keep the domain model current as you go:\n\n- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `CONTEXT.md`. Create the file lazily if it doesn't exist.\n- **Sharpening a fuzzy term during the conversation?** Update `CONTEXT.md` right there.",
+          "new": "Use `$domain-modeling` to propose domain-model changes as decisions crystallize. Show the exact target and wording, then wait for explicit approval before creating or updating `CONTEXT.md` or an ADR:\n\n- **Naming a deepened module after a concept not in `CONTEXT.md`?** Propose the new term and target location.\n- **Sharpening a fuzzy term during the conversation?** Propose the exact glossary change without writing it yet.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "The architectural review is rendered as a single self-contained HTML file in the OS temp directory. Tailwind and Mermaid both come from CDNs. Mermaid handles graph-shaped diagrams reliably; hand-built divs and inline SVG handle the more editorial visuals (mass diagrams, cross-sections). Mix the two: don't lean on Mermaid for everything, it'll start to look generic.",
+          "new": "The architectural review is rendered as a single self-contained offline HTML file in the OS temp directory. Use inline CSS, semantic HTML, and inline SVG only. Do not load scripts, fonts, styles, or other resources from a network.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "    <script src=\"https://cdn.tailwindcss.com\"></script>\n    <script type=\"module\">\n      import mermaid from \"https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs\";\n      mermaid.initialize({ startOnLoad: true, theme: \"neutral\", securityLevel: \"loose\" });\n    </script>",
+          "new": "    <!-- Offline-only: no external scripts or styles. -->",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "      /* small custom layer for things Tailwind doesn't cover cleanly:\n         dashed seam lines, hand-drawn-feeling arrow heads, etc. */\n      .seam { stroke-dasharray: 4 4; }\n      .leak { stroke: #dc2626; }\n      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }",
+          "new": "      body { margin: 0; background: #fafaf9; color: #0f172a; font-family: system-ui, sans-serif; }\n      .report { max-width: 64rem; margin: 0 auto; padding: 3rem 1.5rem; }\n      article { margin: 2.5rem 0; padding: 1.5rem; border: 1px solid #e2e8f0; background: white; }\n      .diagram-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }\n      .files { font-family: ui-monospace, monospace; font-size: 0.875rem; }\n      .layer { min-height: 3rem; border-left: 4px solid #475569; }\n      .seam { stroke-dasharray: 4 4; }\n      .leak { stroke: #dc2626; }\n      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "  <body class=\"bg-stone-50 text-slate-900 font-sans\">\n    <main class=\"max-w-5xl mx-auto px-6 py-12 space-y-12\">\n      <header>...</header>\n      <section id=\"candidates\" class=\"space-y-10\">...</section>",
+          "new": "  <body>\n    <main class=\"report\">\n      <header>...</header>\n      <section id=\"candidates\">...</section>",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "### Mermaid graph (the workhorse for dependencies / call flow)\n\nUse a Mermaid `flowchart` or `graph` when the point is \"X calls Y calls Z, and look at the mess.\" Wrap it in a Tailwind-styled card so it doesn't feel parachuted in. Style with classDef to colour leakage edges red and the deep module dark. Sequence diagrams work well for \"before: 6 round-trips; after: 1.\"\n\n```html\n<div class=\"rounded-lg border border-slate-200 bg-white p-4\">\n  <pre class=\"mermaid\">\n    flowchart LR\n      A[OrderHandler] --> B[OrderValidator]\n      B --> C[OrderRepo]\n      C -.leak.-> D[PricingClient]\n      classDef leak stroke:#dc2626,stroke-width:2px;\n      class C,D leak\n  </pre>\n</div>\n```",
+          "new": "### Inline SVG graph (the workhorse for dependencies / call flow)\n\nUse an inline `<svg>` with labelled boxes and explicit `<line>` or `<path>` connections when the point is \"X calls Y calls Z.\" Keep repository-derived text in `<text>` nodes after HTML escaping. Use red strokes for leakage and a dark fill for the proposed deep module. Never emit script, event-handler, or external-resource attributes.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "### Hand-built boxes-and-arrows (when Mermaid's layout fights you)",
+          "new": "### Hand-built boxes-and-arrows (for editorial layouts)",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "Modules as `<div>`s with borders and labels. Arrows as inline SVG `<line>` or `<path>` elements positioned absolutely over a relative container. Reach for this when you want the \"after\" diagram to feel like one thick-bordered deep module with greyed-out internals, since Mermaid won't render that with the right weight.",
+          "new": "Modules are `<div>` elements with borders and labels. Arrows are inline SVG `<line>` or `<path>` elements positioned over a relative container. Use this when the after diagram should feel like one thick-bordered deep module with greyed-out internals.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "- Lean editorial, not corporate-dashboard. Generous whitespace. Serif optional for headings (`font-serif` works well with stone/slate).",
+          "new": "- Lean editorial, not corporate-dashboard. Use generous whitespace and system fonts defined in the inline stylesheet.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "- **Files**: monospaced list, `font-mono text-sm`.",
+          "new": "- **Files**: monospaced list using the locally defined `.files` class.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "Stack horizontal bands (`h-12 border-l-4`) to show layers a call passes through. Before: 6 thin layers each doing nothing. After: 1 thick band labelled with the consolidated responsibility.",
+          "new": "Stack horizontal bands using the locally defined `.layer` class to show modules a call passes through. Before: 6 thin bands each doing nothing. After: 1 thick band labelled with the consolidated responsibility.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/improve-codebase-architecture/HTML-REPORT.md",
+          "old": "- Use `text-xs uppercase tracking-wider` for module labels inside diagrams, so they read as schematic, not as UI.\n- The only scripts are the Tailwind CDN and the Mermaid ESM import. The report is otherwise static: no app code, no interactivity beyond Mermaid's own rendering.",
+          "new": "- Define a small uppercase label class in the inline stylesheet so module labels read as schematic, not as UI.\n- Use no scripts or external resources. Escape repository-derived text before inserting it into HTML or SVG.",
           "expected_count": 1
         }
       ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "b8be62ffacb0118fa3eaa29a0923c87c8c11985c",
-        "last_reviewed_at": "2026-05-23T06:00:46+00:00",
-        "review_report": "dotfiles/.agent/work/skill-upstream-reviews/20260523T060046Z/mattpocock-skills.md"
+        "last_reviewed_commit": "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
+        "last_reviewed_at": "2026-08-29T10:40:07+00:00",
+        "review_report": ".agent/work/sessions/2026-08-29-201500-grilling-refresh-codex/subagents/matt-latest-security.md"
       },
-      "source_url": "https://github.com/mattpocock/skills/tree/main",
-      "provenance_note": "Codex local skill validator does not accept upstream-only frontmatter keys such as argument-hint and disable-model-invocation, so those keys are removed from the vendored handoff and zoom-out SKILL.md files. The handoff body has a local overlay that stores planned transfers in the active .agent session, retains the OS temporary directory only when .agent is absent, and verifies the output path. Skills are installed directly under the flat discovery root, and the upstream LICENSE is copied into every vendored skill directory so attribution survives independent discovery and updates."
+      "source_url": "https://github.com/mattpocock/skills/tree/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
+      "provenance_note": "Deprecated local aliases and removed upstream skills are not retained: grill-me, diagnose, and zoom-out are removed; diagnosing-bugs is the canonical replacement. domain-modeling and codebase-design are vendored because the current grill-with-docs and improve-codebase-architecture skills require them. Unsupported Claude frontmatter and Skill-tool wording are converted deterministically for Codex. Handoff uses active sessions; architecture reports are offline and user-opened; durable domain docs, prototype persistence, bisect, artifact/test deletion, and raw HITL error input are approval- or redaction-gated. Each skill carries the unchanged upstream MIT LICENSE."
     },
     {
       "id": "modern-web-guidance",
@@ -329,8 +523,8 @@
       "description": "Herdr agent skill for controlling Herdr-managed workspaces, tabs, and panes from inside a Herdr pane.",
       "repository": "https://github.com/ogulcancelik/herdr.git",
       "branch": "master",
-      "pinned_commit": "51b7064ef0a02642393bab1d2eea0f4dbd8414d2",
-      "local_tree_sha256": "efd909b425ad563e7c201ad6b5b4f8518ab3c6f365346894e957641d03ffc239",
+      "pinned_commit": "c2637dc182ddc5425108824d5ed15d24ce38c4e3",
+      "local_tree_sha256": "616f36db7929ee05278a658d710b99a05fc48ce84053e438453789aedb4853f4",
       "mappings": [
         {
           "source_path": "skills/herdr/SKILL.md",
@@ -358,11 +552,11 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "51b7064ef0a02642393bab1d2eea0f4dbd8414d2",
-        "last_reviewed_at": "2026-08-16T07:19:15+00:00",
-        "review_report": ".agent/work/sessions/2026-08-16-155706-update-external-skills-codex/herdr-approval.md"
+        "last_reviewed_commit": "c2637dc182ddc5425108824d5ed15d24ce38c4e3",
+        "last_reviewed_at": "2026-08-29T10:04:04+00:00",
+        "review_report": ".agent/work/sessions/2026-08-29-201500-grilling-refresh-codex/subagents/herdr-audit.md"
       },
-      "source_url": "https://github.com/ogulcancelik/herdr/tree/51b7064ef0a02642393bab1d2eea0f4dbd8414d2/skills/herdr",
+      "source_url": "https://github.com/ogulcancelik/herdr/tree/c2637dc182ddc5425108824d5ed15d24ce38c4e3/skills/herdr",
       "provenance_note": "Herdr is licensed under Apache-2.0 at the pinned commit, and LICENSE is copied into the vendored skill directory. Local SKILL.md keeps the upstream instructions and deterministically adds a 2026-08-16 modification notice plus a safety overlay for live-session verification, untrusted pane output, target-specific authorization, external-agent approval, and temporary-path containment."
     },
     {
@@ -371,7 +565,7 @@
       "repository": "https://github.com/hardikpandya/stop-slop.git",
       "branch": "main",
       "pinned_commit": "8da1f030185bdfe8471220585162991eaeb970e9",
-      "local_tree_sha256": "5c38306d82c1bbf5f9515f12f4211c12b5f6bb33e2eee74bab51043eef0c44a7",
+      "local_tree_sha256": "f60cadb2cdf0e7f63c0c241d4ec9bd31fa02883dc4bfb3a293ccf4ec76b25d0a",
       "mappings": [
         {
           "source_path": "SKILL.md",
@@ -386,15 +580,23 @@
           "local_path": "dotfiles/.agent/skills/stop-slop/LICENSE"
         }
       ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/stop-slop/SKILL.md",
+          "old": "description: Remove AI writing patterns from prose. Use when drafting, editing, or reviewing text to eliminate predictable AI tells.",
+          "new": "description: Use for concise English prose cleanup with a strict checklist of predictable AI-writing patterns. For voice matching or preserving a specific personal style, use humanizer; for Japanese business prose, use natural-japanese.",
+          "expected_count": 1
+        }
+      ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
         "last_reviewed_commit": "8da1f030185bdfe8471220585162991eaeb970e9",
-        "last_reviewed_at": "2026-07-06T14:13:31+00:00",
-        "review_report": ".agent/work/sessions/2026-07-06-230928-stop-slop-skill-codex/subagents/security-review-stop-slop.md"
+        "last_reviewed_at": "2026-08-29T10:22:29+00:00",
+        "review_report": ".agent/work/sessions/2026-08-29-201500-grilling-refresh-codex/subagents/local-skill-audit.md"
       },
       "source_url": "https://github.com/hardikpandya/stop-slop/tree/8da1f030185bdfe8471220585162991eaeb970e9",
-      "provenance_note": "MIT license copied into the vendored skill directory. Upstream SKILL.md and references are vendored without local instruction changes; README and CHANGELOG are intentionally excluded from the loadable skill."
+      "provenance_note": "MIT license copied into the vendored skill directory. The description adds a discovery boundary from humanizer and natural-japanese; the instruction body and references remain upstream. README and CHANGELOG are intentionally excluded from the loadable skill."
     },
     {
       "id": "eli5",
