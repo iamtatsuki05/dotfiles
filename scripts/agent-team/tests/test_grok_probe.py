@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import tempfile
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -12,9 +13,16 @@ from unittest import mock
 
 from agent_team import grok_probe
 from agent_team.grok_probe import (
+    GROK_BINARY_SHA256,
+    GROK_CDHASH,
     GROK_COMMIT,
+    GROK_PACKAGE_SHA256,
+    GROK_TEAM_ID,
     GROK_VERSION,
+    GROK_WRAPPER_SHA256,
+    PINNED_GROK_PROVENANCE,
     AuthMarkerStatus,
+    GrokBinaryIdentity,
     GrokBinaryResolver,
     GrokProbeError,
     GrokProvenance,
@@ -29,8 +37,6 @@ from agent_team.grok_probe import (
 from agent_team.probe_receipts import Judgment
 
 _BANNER = f"grok {GROK_VERSION} ({GROK_COMMIT}) [alpha]"
-_FIXTURE_TEAM_ID = "FIXTURETEAM"
-_FIXTURE_CDHASH = "d" * 40
 
 
 def _write_file(path: Path, content: str, *, executable: bool = False) -> None:
@@ -40,7 +46,7 @@ def _write_file(path: Path, content: str, *, executable: bool = False) -> None:
         path.chmod(0o755)
 
 
-def _fixture_tree(root: Path) -> tuple[Path, Path, Path, GrokProvenance]:
+def _fixture_tree(root: Path) -> tuple[Path, Path, Path]:
     home = root / "home"
     canonical_dir = home / ".grok" / "bin"
     target = canonical_dir / "grok-1.0.13"
@@ -72,26 +78,54 @@ def _fixture_tree(root: Path) -> tuple[Path, Path, Path, GrokProvenance]:
     (home / ".grok" / "bin" / "grok").symlink_to(target.name)
     path_entry.parent.mkdir(parents=True, exist_ok=True)
     path_entry.symlink_to(os.path.relpath(wrapper, path_entry.parent))
-    provenance = GrokProvenance(
-        binary_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
-        wrapper_sha256=hashlib.sha256(wrapper.read_bytes()).hexdigest(),
-        package_sha256=hashlib.sha256(package.read_bytes()).hexdigest(),
-        team_id=_FIXTURE_TEAM_ID,
-        cdhash=_FIXTURE_CDHASH,
-    )
-    return home, path_entry, target, provenance
+    return home, path_entry, target
 
 
-def _resolver(root: Path) -> tuple[GrokBinaryResolver, GrokProvenance, Path, Path]:
-    home, path_entry, target, provenance = _fixture_tree(root)
+def _resolver(root: Path) -> tuple[GrokBinaryResolver, Path, Path]:
+    home, path_entry, target = _fixture_tree(root)
     resolver = GrokBinaryResolver(
         home=home,
         expected_path_entry=path_entry,
         path_lookup=lambda: path_entry,
-        provenance=provenance,
-        signature_probe=lambda _: GrokSignature(provenance.team_id, provenance.cdhash),
     )
-    return resolver, provenance, path_entry, target
+    return resolver, path_entry, target
+
+
+@contextmanager
+def _static_fixture(
+    *,
+    wrapper_sha256: str = GROK_WRAPPER_SHA256,
+    package_sha256: str = GROK_PACKAGE_SHA256,
+    signature: GrokSignature | None = None,
+) -> Iterator[None]:
+    def file_identity(_path: Path, field: str) -> tuple[str, int, int]:
+        path_stat = _path.stat()
+        expected = {
+            "canonical target": GROK_BINARY_SHA256,
+            "Grok wrapper": wrapper_sha256,
+            "Grok package metadata": package_sha256,
+        }[field]
+        return expected, path_stat.st_dev, path_stat.st_ino
+
+    with (
+        mock.patch("agent_team.grok_probe._regular_file_identity", file_identity),
+        mock.patch(
+            "agent_team.grok_probe._codesign_signature",
+            return_value=signature or GrokSignature(GROK_TEAM_ID, GROK_CDHASH),
+        ),
+    ):
+        yield
+
+
+def _resolve_fixture(resolver: GrokBinaryResolver) -> GrokBinaryIdentity:
+    with (
+        _static_fixture(),
+        mock.patch(
+            "agent_team.grok_probe._codesign_signature",
+            return_value=GrokSignature(GROK_TEAM_ID, GROK_CDHASH),
+        ),
+    ):
+        return resolver.resolve()
 
 
 def _fresh_private(root: Path, name: str = "private") -> Path:
@@ -121,23 +155,23 @@ class GrokIdentityContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, provenance, path_entry, target = _resolver(root)
+            resolver, path_entry, target = _resolver(root)
             with mock.patch(
                 "agent_team.grok_probe.subprocess.run",
                 side_effect=AssertionError("static preflight must not spawn"),
             ):
-                identity = resolver.resolve()
+                identity = _resolve_fixture(resolver)
 
             self.assertEqual(identity.canonical_link, root / "home/.grok/bin/grok")
             self.assertEqual(identity.canonical_target, target.resolve())
             self.assertEqual(identity.path_entry, path_entry)
             self.assertEqual(identity.version, GROK_VERSION)
             self.assertEqual(identity.commit, GROK_COMMIT)
-            self.assertEqual(identity.sha256, provenance.binary_sha256)
-            self.assertEqual(identity.wrapper_sha256, provenance.wrapper_sha256)
-            self.assertEqual(identity.package_sha256, provenance.package_sha256)
-            self.assertEqual(identity.team_id, _FIXTURE_TEAM_ID)
-            self.assertEqual(identity.cdhash, _FIXTURE_CDHASH)
+            self.assertEqual(identity.sha256, GROK_BINARY_SHA256)
+            self.assertEqual(identity.wrapper_sha256, GROK_WRAPPER_SHA256)
+            self.assertEqual(identity.package_sha256, GROK_PACKAGE_SHA256)
+            self.assertEqual(identity.team_id, GROK_TEAM_ID)
+            self.assertEqual(identity.cdhash, GROK_CDHASH)
             self.assertEqual(identity.device, target.stat().st_dev)
             self.assertEqual(identity.inode, target.stat().st_ino)
             self.assertFalse((root / "should-not-run").exists())
@@ -147,48 +181,113 @@ class GrokIdentityContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, path_entry, _, _ = _fixture_tree(root)
+            home, path_entry, _ = _fixture_tree(root)
             with self.assertRaisesRegex(GrokProbeError, "binary hash"):
                 GrokBinaryResolver(
                     home=home,
                     expected_path_entry=path_entry,
                     path_lookup=lambda: path_entry,
-                    signature_probe=lambda _: GrokSignature(
-                        "5Y6N3AJ54S", "ce62b26141f33105a604c3f66c98bdcaee9dd00b"
-                    ),
                 ).resolve()
 
     def test_wrong_wrapper_package_or_signature_provenance_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, path_entry, _, provenance = _fixture_tree(root)
+            home, path_entry, _ = _fixture_tree(root)
             for field in ("wrapper_sha256", "package_sha256"):
-                wrong = replace(provenance, **{field: "e" * 64})
-                with self.subTest(field=field), self.assertRaises(GrokProbeError):
+                fixture = (
+                    _static_fixture(wrapper_sha256="e" * 64)
+                    if field == "wrapper_sha256"
+                    else _static_fixture(package_sha256="e" * 64)
+                )
+                with (
+                    self.subTest(field=field),
+                    fixture,
+                    self.assertRaises(GrokProbeError),
+                ):
                     GrokBinaryResolver(
                         home=home,
                         expected_path_entry=path_entry,
                         path_lookup=lambda: path_entry,
-                        provenance=wrong,
-                        signature_probe=lambda _: GrokSignature(
-                            _FIXTURE_TEAM_ID, _FIXTURE_CDHASH
-                        ),
                     ).resolve()
 
             wrong_signature = GrokBinaryResolver(
                 home=home,
                 expected_path_entry=path_entry,
                 path_lookup=lambda: path_entry,
-                provenance=provenance,
-                signature_probe=lambda _: GrokSignature(_FIXTURE_TEAM_ID, "f" * 40),
             )
-            with self.assertRaisesRegex(GrokProbeError, "signature"):
+            with (
+                _static_fixture(),
+                mock.patch(
+                    "agent_team.grok_probe._codesign_signature",
+                    return_value=GrokSignature(GROK_TEAM_ID, "f" * 40),
+                ),
+                self.assertRaisesRegex(GrokProbeError, "signature"),
+            ):
                 wrong_signature.resolve()
+
+    def test_production_resolver_has_no_provenance_or_signature_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home, path_entry, _ = _fixture_tree(root)
+            with self.assertRaises(TypeError):
+                GrokBinaryResolver(
+                    home=home,
+                    expected_path_entry=path_entry,
+                    path_lookup=lambda: path_entry,
+                    provenance=GrokProvenance(),  # type: ignore[call-arg]
+                )
+            with self.assertRaises(TypeError):
+                GrokBinaryResolver(
+                    home=home,
+                    expected_path_entry=path_entry,
+                    path_lookup=lambda: path_entry,
+                    signature_probe=lambda _: GrokSignature(GROK_TEAM_ID, GROK_CDHASH),  # type: ignore[call-arg]
+                )
+
+    def test_provenance_and_identity_constructors_reject_unpinned_fields(self) -> None:
+        with self.assertRaises(GrokProbeError):
+            replace(PINNED_GROK_PROVENANCE, binary_sha256="e" * 64)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resolver, _, _ = _resolver(Path(temp_dir))
+            identity = _resolve_fixture(resolver)
+            with self.assertRaises(GrokProbeError):
+                replace(identity, sha256="e" * 64)
+            with self.assertRaises(GrokProbeError):
+                replace(identity, team_id="OTHERTEAM")
+
+    def test_static_hash_uses_one_no_follow_fd_and_rejects_fstat_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            regular = root / "regular"
+            regular.write_bytes(b"regular")
+            link = root / "link"
+            link.symlink_to(regular)
+            with self.assertRaisesRegex(GrokProbeError, "unavailable"):
+                grok_probe._regular_file_identity(link, "probe")
+
+            real_fstat = os.fstat
+            calls = 0
+
+            def drifting_fstat(fd: int) -> os.stat_result:
+                nonlocal calls
+                calls += 1
+                result = real_fstat(fd)
+                if calls == 2:
+                    values = list(result)
+                    values[1] += 1
+                    return os.stat_result(values)
+                return result
+
+            with (
+                mock.patch("agent_team.grok_probe.os.fstat", drifting_fstat),
+                self.assertRaisesRegex(GrokProbeError, "identity changed"),
+            ):
+                grok_probe._regular_file_identity(regular, "probe")
 
     def test_canonical_link_must_be_the_fixed_home_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            home, path_entry, _, _ = _fixture_tree(root)
+            home, path_entry, _ = _fixture_tree(root)
             with self.assertRaisesRegex(GrokProbeError, "fixed"):
                 GrokBinaryResolver(
                     home=home,
@@ -202,7 +301,7 @@ class GrokIdentityContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, _, path_entry, _ = _resolver(root)
+            resolver, path_entry, _ = _resolver(root)
             marker = root / "path-entry-ran"
             _write_file(
                 path_entry.resolve(),
@@ -216,13 +315,13 @@ class GrokIdentityContractTest(unittest.TestCase):
     def test_identity_validation_rejects_path_and_symlink_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, provenance, path_entry, _ = _resolver(root)
-            identity = resolver.resolve()
+            resolver, path_entry, _ = _resolver(root)
+            identity = _resolve_fixture(resolver)
             replacement = path_entry.parent / "replacement-wrapper"
             _write_file(replacement, "replacement", executable=True)
             path_entry.unlink()
             path_entry.symlink_to(replacement)
-            with self.assertRaisesRegex(GrokProbeError, "PATH"):
+            with _static_fixture(), self.assertRaisesRegex(GrokProbeError, "PATH"):
                 validate_grok_identity(identity, resolver)
 
             path_entry.unlink()
@@ -233,16 +332,6 @@ class GrokIdentityContractTest(unittest.TestCase):
                 / "lib/node_modules/@xai-official/grok/bin/grok"
             )
             path_entry.symlink_to(os.path.relpath(expected_wrapper, path_entry.parent))
-            new_resolver = GrokBinaryResolver(
-                home=root / "home",
-                expected_path_entry=path_entry,
-                path_lookup=lambda: path_entry,
-                provenance=provenance,
-                signature_probe=lambda _: GrokSignature(
-                    _FIXTURE_TEAM_ID, _FIXTURE_CDHASH
-                ),
-            )
-            identity = new_resolver.resolve()
             canonical_link = root / "home/.grok/bin/grok"
             _write_file(
                 root / "home/.grok/bin/grok-1.0.5",
@@ -251,8 +340,11 @@ class GrokIdentityContractTest(unittest.TestCase):
             )
             canonical_link.unlink()
             canonical_link.symlink_to("grok-1.0.5")
-            with self.assertRaisesRegex(GrokProbeError, "canonical target"):
-                validate_grok_identity(identity, new_resolver)
+            with (
+                _static_fixture(),
+                self.assertRaisesRegex(GrokProbeError, "canonical target"),
+            ):
+                validate_grok_identity(identity, resolver)
 
 
 class GrokProfileContractTest(unittest.TestCase):
@@ -261,8 +353,8 @@ class GrokProfileContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, _, _, _ = _resolver(root)
-            identity = resolver.resolve()
+            resolver, _, _ = _resolver(root)
+            identity = _resolve_fixture(resolver)
             direct = build_profile_manifest("direct", identity)
             native = build_profile_manifest("native-stdio", identity)
 
@@ -278,21 +370,12 @@ class GrokProfileContractTest(unittest.TestCase):
     def test_manifest_digest_uses_role_tokens_not_actual_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, _, _, _ = _resolver(root)
-            first = resolver.resolve()
+            resolver, _, _ = _resolver(root)
+            first = _resolve_fixture(resolver)
             other_root = root / "other"
             other_root.mkdir()
-            home, path_entry, _, provenance = _fixture_tree(other_root)
-            other_resolver = GrokBinaryResolver(
-                home=home,
-                expected_path_entry=path_entry,
-                path_lookup=lambda: path_entry,
-                provenance=provenance,
-                signature_probe=lambda _: GrokSignature(
-                    _FIXTURE_TEAM_ID, _FIXTURE_CDHASH
-                ),
-            )
-            second = other_resolver.resolve()
+            other_resolver, _, _ = _resolver(other_root)
+            second = _resolve_fixture(other_resolver)
             first_manifest = build_profile_manifest("direct", first)
             second_manifest = build_profile_manifest("direct", second)
 
@@ -348,16 +431,17 @@ class GrokIsolationAndReceiptTest(unittest.TestCase):
     def test_missing_auth_blocks_both_profiles_and_keeps_matrix_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, _, _, _ = _resolver(root)
+            resolver, _, _ = _resolver(root)
             results = {}
             for profile in ("direct", "native-stdio"):
-                results[profile] = offline_preflight(
-                    profile,
-                    resolver=resolver,
-                    private_root=_fresh_private(root, f"private-{profile}"),
-                    auth_path=root / "missing-auth.json",
-                    source_environment={"PATH": "/usr/bin"},
-                )
+                with _static_fixture():
+                    results[profile] = offline_preflight(
+                        profile,
+                        resolver=resolver,
+                        private_root=_fresh_private(root, f"private-{profile}"),
+                        auth_path=root / "missing-auth.json",
+                        source_environment={"PATH": "/usr/bin"},
+                    )
 
         for profile, result in results.items():
             with self.subTest(profile=profile):
@@ -377,11 +461,14 @@ class GrokIsolationAndReceiptTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, _, _, _ = _resolver(root)
+            resolver, _, _ = _resolver(root)
             private = _fresh_private(root)
             auth_path = root / "auth.json"
             auth_path.write_text("credential-must-not-be-read", encoding="utf-8")
-            with mock.patch.object(Path, "read_text", side_effect=AssertionError):
+            with (
+                mock.patch.object(Path, "read_text", side_effect=AssertionError),
+                _static_fixture(),
+            ):
                 result = offline_preflight(
                     "native-stdio",
                     resolver=resolver,
@@ -397,14 +484,15 @@ class GrokIsolationAndReceiptTest(unittest.TestCase):
     def test_serializer_rechecks_correlation_and_rejects_forged_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            resolver, _, _, _ = _resolver(root)
-            result = offline_preflight(
-                "direct",
-                resolver=resolver,
-                private_root=_fresh_private(root),
-                auth_path=root / "missing-auth.json",
-                source_environment={"PATH": "/usr/bin"},
-            )
+            resolver, _, _ = _resolver(root)
+            with _static_fixture():
+                result = offline_preflight(
+                    "direct",
+                    resolver=resolver,
+                    private_root=_fresh_private(root),
+                    auth_path=root / "missing-auth.json",
+                    source_environment={"PATH": "/usr/bin"},
+                )
             serialized = serialize_grok_receipt(result)
             forged = replace(
                 result,

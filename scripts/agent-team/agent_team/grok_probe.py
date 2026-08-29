@@ -17,7 +17,7 @@ import shutil
 import stat
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Final, Literal, NoReturn
 
@@ -42,9 +42,8 @@ GROK_CHANNEL: Final = "alpha"
 GROK_TARGET_NAME: Final = "grok-1.0.13"
 GROK_WRAPPER_NAME: Final = "grok"
 GROK_PACKAGE_NAME: Final = "@xai-official/grok"
-GROK_INSTALL_RELATIVE: Final = (
-    ".local/share/mise/installs/npm-xai-official-grok/1.0.13"
-)
+GROK_INSTALL_RELATIVE: Final = ".local/share/mise/installs/npm-xai-official-grok/1.0.13"
+MAX_STATIC_FILE_BYTES: Final = 256_000_000
 GROK_BINARY_SHA256: Final = (
     "8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80"
 )
@@ -113,12 +112,12 @@ class GrokProvenance:
     target_name: str = GROK_TARGET_NAME
 
     def __post_init__(self) -> None:
-        for value, field in (
+        for value, field_name in (
             (self.binary_sha256, "binary_sha256"),
             (self.wrapper_sha256, "wrapper_sha256"),
             (self.package_sha256, "package_sha256"),
         ):
-            _validate_sha256(value, field)
+            _validate_sha256(value, field_name)
         if (
             not isinstance(self.team_id, str)
             or re.fullmatch(r"[A-Za-z0-9._-]{1,64}", self.team_id) is None
@@ -133,9 +132,24 @@ class GrokProvenance:
             _fail("Grok provenance is not the pinned release")
         if self.channel != GROK_CHANNEL or self.target_name != GROK_TARGET_NAME:
             _fail("Grok provenance has an unexpected channel or target")
+        if (
+            self.binary_sha256,
+            self.wrapper_sha256,
+            self.package_sha256,
+            self.team_id,
+            self.cdhash,
+        ) != (
+            GROK_BINARY_SHA256,
+            GROK_WRAPPER_SHA256,
+            GROK_PACKAGE_SHA256,
+            GROK_TEAM_ID,
+            GROK_CDHASH,
+        ):
+            _fail("Grok provenance does not match the pinned release")
 
 
 PINNED_GROK_PROVENANCE: Final = GrokProvenance()
+_VERIFICATION_TOKEN = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,17 +183,48 @@ def parse_grok_version(banner: str) -> tuple[str, str]:
 
 
 def _regular_file_identity(path: Path, field: str) -> tuple[str, int, int]:
+    path = _absolute(path, field)
+    if not hasattr(os, "O_NOFOLLOW"):
+        _fail("platform lacks the no-follow file primitive")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     try:
-        file_stat = path.lstat()
+        descriptor = os.open(path, flags)
     except OSError as exc:
         raise GrokProbeError(f"{field} is unavailable") from exc
-    if stat.S_ISLNK(file_stat.st_mode) or not stat.S_ISREG(file_stat.st_mode):
-        _fail(f"{field} must be a regular non-symlink file")
     try:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            _fail(f"{field} must be a regular non-symlink file")
+        if before.st_size < 0 or before.st_size > MAX_STATIC_FILE_BYTES:
+            _fail(f"{field} exceeds the bounded read limit")
+        digest_builder = hashlib.sha256()
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1_048_576, remaining))
+            if not chunk:
+                _fail(f"{field} changed while it was being hashed")
+            digest_builder.update(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+        ):
+            _fail(f"{field} identity changed while it was being hashed")
+        return digest_builder.hexdigest(), before.st_dev, before.st_ino
     except OSError as exc:
         raise GrokProbeError(f"{field} cannot be hashed") from exc
-    return digest, file_stat.st_dev, file_stat.st_ino
+    finally:
+        os.close(descriptor)
 
 
 def _default_path_lookup() -> Path | None:
@@ -251,31 +296,72 @@ class GrokBinaryIdentity:
     package_inode: int
     team_id: str
     cdhash: str
+    provenance: GrokProvenance = PINNED_GROK_PROVENANCE
+    verification_token: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        for path_value, field in (
+        for path_value, field_name in (
             (self.canonical_link, "canonical_link"),
             (self.canonical_target, "canonical_target"),
             (self.path_entry, "path_entry"),
             (self.wrapper_path, "wrapper_path"),
             (self.package_path, "package_path"),
         ):
-            _absolute(path_value, field)
+            _absolute(path_value, field_name)
+        if self.provenance != PINNED_GROK_PROVENANCE:
+            _fail("Grok provenance is not the pinned release")
+        if self.verification_token is not _VERIFICATION_TOKEN:
+            _fail("Grok identity was not produced by a verified resolver")
         if self.canonical_target.name != GROK_TARGET_NAME:
             _fail("canonical target is not the pinned Grok executable")
+        expected_target = self.canonical_link.parent / self.provenance.target_name
+        if (
+            self.canonical_link.name != GROK_WRAPPER_NAME
+            or self.canonical_link.parent.name != "bin"
+            or self.canonical_link.parent.parent.name != ".grok"
+            or self.canonical_target != expected_target.resolve(strict=False)
+        ):
+            _fail("Grok canonical layout is not pinned")
         if self.version != GROK_VERSION or self.commit != GROK_COMMIT:
             _fail("Grok binary identity is not the pinned release")
-        for digest_value, field in (
+        for digest_value, field_name in (
             (self.sha256, "sha256"),
             (self.wrapper_sha256, "wrapper_sha256"),
             (self.package_sha256, "package_sha256"),
         ):
-            _validate_sha256(digest_value, field)
+            _validate_sha256(digest_value, field_name)
+        if (
+            self.sha256 != GROK_BINARY_SHA256
+            or self.wrapper_sha256 != GROK_WRAPPER_SHA256
+            or self.package_sha256 != GROK_PACKAGE_SHA256
+        ):
+            _fail("Grok identity hashes do not match pinned provenance")
         if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", self.team_id) is None:
             _fail("team_id is invalid")
         if re.fullmatch(r"[0-9a-f]{40}", self.cdhash) is None:
             _fail("cdhash is invalid")
-        for numeric_value, field in (
+        if (self.team_id, self.cdhash) != (GROK_TEAM_ID, GROK_CDHASH):
+            _fail("Grok signature identity does not match provenance")
+        install_root = self.path_entry.parent.parent
+        expected_wrapper = (
+            install_root
+            / "lib"
+            / "node_modules"
+            / GROK_PACKAGE_NAME
+            / "bin"
+            / GROK_WRAPPER_NAME
+        )
+        expected_package = expected_wrapper.parent.parent / "package.json"
+        if (
+            self.path_entry.name != GROK_WRAPPER_NAME
+            or self.path_entry.parent.name != "bin"
+            or install_root.name != GROK_VERSION
+            or install_root.parent.name != "npm-xai-official-grok"
+            or self.wrapper_path != expected_wrapper
+            or self.package_path != expected_package
+        ):
+            _fail("Grok package layout is not pinned")
+        for numeric_value, field_name in (
             (self.device, "device"),
             (self.inode, "inode"),
             (self.symlink_device, "symlink_device"),
@@ -292,7 +378,7 @@ class GrokBinaryIdentity:
                 or isinstance(numeric_value, bool)
                 or numeric_value < 0
             ):
-                _fail(f"{field} must be a non-negative integer")
+                _fail(f"{field_name} must be a non-negative integer")
 
 
 class GrokBinaryResolver:
@@ -305,8 +391,6 @@ class GrokBinaryResolver:
         canonical_link: Path | None = None,
         expected_path_entry: Path | None = None,
         path_lookup: PathLookup | None = None,
-        provenance: GrokProvenance = PINNED_GROK_PROVENANCE,
-        signature_probe: SignatureProbe | None = None,
     ) -> None:
         self.home = _absolute(Path.home() if home is None else home, "home")
         expected_link = self.home / ".grok" / "bin" / GROK_WRAPPER_NAME
@@ -318,14 +402,14 @@ class GrokBinaryResolver:
         self.canonical_link = expected_link
         fixed_install = self.home / GROK_INSTALL_RELATIVE
         fixed_path_entry = fixed_install / "bin" / GROK_WRAPPER_NAME
-        if expected_path_entry is not None and _absolute(
-            expected_path_entry, "expected_path_entry"
-        ) != fixed_path_entry:
+        if (
+            expected_path_entry is not None
+            and _absolute(expected_path_entry, "expected_path_entry")
+            != fixed_path_entry
+        ):
             _fail("expected PATH entry is not the fixed mise installation")
         self.expected_path_entry = fixed_path_entry
         self.path_lookup = path_lookup or _default_path_lookup
-        self.provenance = provenance
-        self.signature_probe = signature_probe or _codesign_signature
 
     def current_path_entry(self) -> Path:
         value = self.path_lookup()
@@ -349,18 +433,35 @@ class GrokBinaryResolver:
             target = link.resolve(strict=True)
         except OSError as exc:
             raise GrokProbeError("canonical Grok symlink cannot be resolved") from exc
-        expected_target = link.parent / self.provenance.target_name
+        expected_target = link.parent / PINNED_GROK_PROVENANCE.target_name
         if (
-            link_target_name != self.provenance.target_name
+            link_target_name != PINNED_GROK_PROVENANCE.target_name
             or target != expected_target.resolve(strict=True)
         ):
             _fail("canonical target is not grok-1.0.13")
         target_sha, target_device, target_inode = _regular_file_identity(
             target, "canonical target"
         )
-        if target_sha != self.provenance.binary_sha256:
+        if target_sha != PINNED_GROK_PROVENANCE.binary_sha256:
             _fail("canonical binary hash does not match pinned provenance")
-        version, commit = self.provenance.version, self.provenance.commit
+        try:
+            link_after = link.lstat()
+            link_target_after = Path(os.readlink(link)).name
+        except OSError as exc:
+            raise GrokProbeError("canonical Grok symlink changed") from exc
+        if (
+            link_after.st_dev,
+            link_after.st_ino,
+            link_after.st_mode,
+            link_target_after,
+        ) != (
+            link_stat.st_dev,
+            link_stat.st_ino,
+            link_stat.st_mode,
+            link_target_name,
+        ):
+            _fail("canonical Grok symlink changed during preflight")
+        version, commit = PINNED_GROK_PROVENANCE.version, PINNED_GROK_PROVENANCE.commit
 
         entry = (
             self.current_path_entry()
@@ -380,7 +481,7 @@ class GrokBinaryResolver:
             _fail("PATH Grok entry has an unexpected layout")
         install_root = entry.parent.parent
         if (
-            install_root.name != self.provenance.version
+            install_root.name != PINNED_GROK_PROVENANCE.version
             or install_root.parent.name != "npm-xai-official-grok"
         ):
             _fail("PATH Grok entry is not the pinned mise installation")
@@ -392,19 +493,33 @@ class GrokBinaryResolver:
         wrapper_sha, wrapper_device, wrapper_inode = _regular_file_identity(
             wrapper, "Grok wrapper"
         )
-        if wrapper_sha != self.provenance.wrapper_sha256:
+        if wrapper_sha != PINNED_GROK_PROVENANCE.wrapper_sha256:
             _fail("Grok wrapper hash does not match pinned provenance")
         package_sha, package_device, package_inode = _regular_file_identity(
             package, "Grok package metadata"
         )
-        if package_sha != self.provenance.package_sha256:
+        if package_sha != PINNED_GROK_PROVENANCE.package_sha256:
             _fail("Grok package metadata hash does not match pinned provenance")
-        signature = self.signature_probe(target)
+        try:
+            entry_after = entry.lstat()
+        except OSError as exc:
+            raise GrokProbeError("PATH Grok entry changed") from exc
+        if (
+            entry_after.st_dev,
+            entry_after.st_ino,
+            entry_after.st_mode,
+        ) != (
+            entry_stat.st_dev,
+            entry_stat.st_ino,
+            entry_stat.st_mode,
+        ):
+            _fail("PATH Grok entry changed during preflight")
+        signature = _codesign_signature(target)
         if not isinstance(signature, GrokSignature):
             _fail("Grok signature probe returned an invalid result")
         if (signature.team_id, signature.cdhash) != (
-            self.provenance.team_id,
-            self.provenance.cdhash,
+            PINNED_GROK_PROVENANCE.team_id,
+            PINNED_GROK_PROVENANCE.cdhash,
         ):
             _fail("Grok signature metadata does not match pinned provenance")
         return GrokBinaryIdentity(
@@ -430,6 +545,8 @@ class GrokBinaryResolver:
             package_inode=package_inode,
             team_id=signature.team_id,
             cdhash=signature.cdhash,
+            provenance=PINNED_GROK_PROVENANCE,
+            verification_token=_VERIFICATION_TOKEN,
         )
 
 
@@ -656,6 +773,24 @@ def _validate_serializable_result(result: GrokPreflightResult) -> Judgment:
         _fail("result receipt is invalid")
     if not isinstance(result.judgment, Judgment):
         _fail("result judgment is invalid")
+    if result.identity.verification_token is not _VERIFICATION_TOKEN:
+        _fail("result identity was not produced by the pinned resolver")
+    if result.identity.provenance != PINNED_GROK_PROVENANCE:
+        _fail("result identity provenance is not pinned")
+    if (
+        result.identity.sha256,
+        result.identity.wrapper_sha256,
+        result.identity.package_sha256,
+        result.identity.team_id,
+        result.identity.cdhash,
+    ) != (
+        GROK_BINARY_SHA256,
+        GROK_WRAPPER_SHA256,
+        GROK_PACKAGE_SHA256,
+        GROK_TEAM_ID,
+        GROK_CDHASH,
+    ):
+        _fail("result identity pin fields are invalid")
     if result.auth_marker_status not in {"absent", "present-unverified"}:
         _fail("auth marker status is invalid")
     expected_manifest = build_profile_manifest(result.profile, result.identity)
