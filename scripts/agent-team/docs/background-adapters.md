@@ -87,10 +87,23 @@ API without starting a provider.
 `agent_team.opencode_probe` builds the two independent manifests and parses only
 terminal JSON tool events. A text event containing a shell command, path, or
 `worker_done` is never reinterpreted. Each attestation records the provider tool,
-abstract operation, declared target, and structured result; missing events stay
-inconclusive and cannot become a candidate. A negative phase with an `allowed`
-result is retained as an explicit boundary violation, so the raw-workspace
-symlink escape is rejected rather than discarded as malformed evidence.
+abstract operation, declared target, and structured result; only an explicit
+permission-denial code becomes `denied`. Provider errors, failures, timeouts,
+and top-level error events remain inconclusive and cannot become a candidate.
+Missing or duplicate call IDs, duplicate operations, and incomplete final
+completion are rejected. A negative phase with an `allowed` result is retained
+as an explicit boundary violation, so the raw-workspace symlink escape is
+rejected rather than discarded as malformed evidence.
+
+The probe binding includes the profile, run nonce, manifest digest, target-tree
+fingerprint, and fixed process-probe digest. The assembler checks that binding
+before accepting a current receipt; raw evidence cannot be attached to the
+snapshot profile. The manifest builder accepts only the adapter's canonical
+`<executable> --pure run <prompt> --format json --model opencode-go/kimi-k2.6
+--dir <workspace> --variant low` argv shape and the closed safe-environment
+name set. Before execution, the adapter copies verified bytes to an owned,
+read-only private executable and runs that copy, closing the pathname TOCTOU
+window.
 
 The pinned OpenCode `1.18.25` executable was observed with SHA-256
 `88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`. The

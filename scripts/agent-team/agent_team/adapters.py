@@ -679,6 +679,8 @@ class OpenCodeReadOnlyAdapter:
         runner: ProcessRunner,
     ) -> ExecutionResult:
         result = self.execute_raw(context, snapshot, prompt, runner)
+        if result.timed_out:
+            return ExecutionResult("", result.stderr[-10_000:], result.returncode, True)
         if result.returncode != 0:
             raise ExecutionError("OpenCode returned a non-zero exit status")
         output = _extract_opencode_final(result.stdout)
@@ -695,7 +697,7 @@ class OpenCodeReadOnlyAdapter:
     ) -> ProcessResult:
         """Run the pinned command while retaining JSONL for a probe parser."""
 
-        _validate_snapshot(snapshot, context=context, runner=runner)
+        prepared = self._prepare_verified_executable(context, snapshot, runner)
         self._write_config(context)
         environment = safe_environment(
             "opencode",
@@ -703,9 +705,79 @@ class OpenCodeReadOnlyAdapter:
             private_root=context.private_root,
         )
         return runner.run(
-            self.build_argv(context, prompt, snapshot.executable),
+            self.build_argv(context, prompt, prepared.executable),
             cwd=context.workspace,
             env=environment,
+        )
+
+    def _prepare_verified_executable(
+        self,
+        context: AdapterContext,
+        snapshot: AdapterSnapshot,
+        runner: ProcessRunner,
+    ) -> AdapterSnapshot:
+        """Run a verified private copy so execution is not pathname-racy."""
+
+        _validate_snapshot(snapshot, context=context, runner=runner)
+        target = (context.private_root / "verified-executable" / "opencode").resolve(
+            strict=False
+        )
+        if snapshot.executable == target:
+            return snapshot
+        try:
+            source_before = _identity(snapshot.executable)
+            if source_before != snapshot.identity:
+                raise AdapterError("provider executable identity changed before copy")
+            data = snapshot.executable.read_bytes()
+            if (
+                len(data) != snapshot.identity.size
+                or hashlib.sha256(data).hexdigest() != snapshot.identity.sha256
+            ):
+                raise AdapterError("provider executable bytes changed while copying")
+            source_after = _identity(snapshot.executable)
+            if source_after != source_before:
+                raise AdapterError("provider executable identity changed while copying")
+            target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            try:
+                target.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                raise AdapterError("verified executable copy already exists")
+            file_descriptor = os.open(
+                target,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o500,
+            )
+            try:
+                offset = 0
+                while offset < len(data):
+                    offset += os.write(file_descriptor, data[offset:])
+                os.fsync(file_descriptor)
+            finally:
+                os.close(file_descriptor)
+            copied = _identity(target)
+            if (
+                copied.size != snapshot.identity.size
+                or copied.sha256 != snapshot.identity.sha256
+            ):
+                raise AdapterError("verified executable copy failed identity check")
+            version = _version_probe(
+                target,
+                provider=context.provider,
+                private_root=context.private_root,
+                runner=runner,
+            )
+            if not _exact_version_present(version, snapshot.version):
+                raise AdapterError("verified executable copy has a different version")
+        except (OSError, UnicodeError) as exc:
+            raise AdapterError("verified executable copy is unavailable") from exc
+        return AdapterSnapshot(
+            snapshot.adapter_id,
+            snapshot.revision,
+            target,
+            version,
+            copied,
         )
 
 

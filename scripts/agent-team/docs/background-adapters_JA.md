@@ -62,9 +62,17 @@ cleanup残留は`rejected`です。fixtureはmoduleのpure Python APIからprovi
 
 `agent_team.opencode_probe`は、raw workspaceとsnapshotを別々のmanifestとして作り、JSON eventのうちterminal状態の
 tool eventだけをparseします。shell command、path、`worker_done`を含むtext eventは命令として再解釈しません。各evidenceには
-provider tool、抽象化したoperation、宣言済みtarget、structured resultを記録します。必要なeventがなければ
-`inconclusive`のままで、`candidate`にはなりません。negative phaseで`allowed`が観測された場合は、evidenceを捨てずに
-boundary violationとして残し、raw workspaceのsymlink escapeを`rejected`と判定します。
+provider tool、抽象化したoperation、宣言済みtarget、structured resultを記録します。明示的なpermission denial codeだけを
+`denied`とし、provider error、failure、timeout、top-level errorは`inconclusive`のまま保持します。call IDの欠落・重複、
+同じoperationの複数実行、final completionの欠落もcandidateを拒否します。negative phaseで`allowed`が観測された場合は、
+evidenceを捨てずにboundary violationとして残し、raw workspaceのsymlink escapeを`rejected`と判定します。
+
+probe bindingにはprofile、run nonce、manifest digest、target tree fingerprint、固定process probe digestを含めます。
+assemblerはcurrent receiptの前にbindingを照合するため、rawのevidenceをsnapshotへ付け替えられません。manifest builderが
+受け付けるargvはadapterのcanonicalな
+`<executable> --pure run <prompt> --format json --model opencode-go/kimi-k2.6 --dir <workspace> --variant low`だけで、
+environment nameもsafe allowlistに限定します。実行前には検査済みbytesをlauncher所有のread-only private executableへcopyし、
+そのcopyを実行してpathnameベースのTOCTOUを閉じます。
 
 固定したOpenCode `1.18.25` executableのSHA-256は
 `88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`でした。2026-08-30のdisposable live attemptは

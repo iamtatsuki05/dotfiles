@@ -13,21 +13,28 @@ from agent_team.adapters import (
     FileIdentity,
     OpenCodeReadOnlyAdapter,
     ProcessResult,
+    _identity,
 )
 from agent_team.opencode_probe import (
+    HistoricalSymlinkEvidence,
     OpenCodeProbeError,
     OpenCodeToolObservation,
     ParsedOpenCodeEvents,
+    ProbeBinding,
     ProbeTargets,
     assemble_receipt,
     attest_phase,
     attest_profile,
+    build_probe_binding,
     build_probe_manifest,
+    canonical_opencode_argv,
+    make_historical_receipt,
     parse_opencode_events,
 )
 from agent_team.probe_receipts import (
     CleanupInventory,
     ExecutableIdentity,
+    Manifest,
     PhaseReceipt,
     Receipt,
     ReceiptValidationError,
@@ -57,7 +64,16 @@ def event(
     input_value: dict[str, object],
     output: str = "",
     call_id: str | None = None,
+    error_code: str | None = None,
+    final: bool = False,
 ) -> str:
+    state: dict[str, object] = {
+        "status": status,
+        "input": input_value,
+        "output": output,
+    }
+    if error_code is not None:
+        state["error"] = {"code": error_code}
     return json.dumps(
         {
             "type": "tool_use",
@@ -65,13 +81,45 @@ def event(
                 "type": "tool",
                 "tool": tool,
                 "callID": call_id or f"call-{tool}-{status}",
-                "state": {
-                    "status": status,
-                    "input": input_value,
-                    "output": output,
-                },
+                "state": state,
+                "final": final,
             },
         }
+    )
+
+
+def executable() -> ExecutableIdentity:
+    return ExecutableIdentity("/private/opencode", "1.18.25", "a" * 64)
+
+
+def manifest_for(
+    root: Path, *, profile: str = "snapshot", prompt: str = "probe"
+) -> Manifest:
+    workspace = root / profile
+    argv = canonical_opencode_argv(
+        executable(),
+        workspace,
+        model="opencode-go/kimi-k2.6",
+        variant="low",
+        prompt=prompt,
+    )
+    return build_probe_manifest(
+        profile=profile,  # type: ignore[arg-type]
+        workspace=workspace,
+        executable=executable(),
+        file_identity=FileIdentity(1, 2, 3, 4, "a" * 64),
+        argv=argv,
+        environment_allowlist=("HOME", "PATH", "XDG_CONFIG_HOME"),
+    )
+
+
+def binding_for(root: Path, *, profile: str = "snapshot") -> ProbeBinding:
+    manifest = manifest_for(root, profile=profile)
+    return build_probe_binding(
+        manifest,
+        profile=profile,  # type: ignore[arg-type]
+        run_nonce="run-1",
+        targets=targets(root),
     )
 
 
@@ -100,6 +148,7 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                     )
                 ),
                 targets(root),
+                binding=binding_for(root),
             )
 
         self.assertEqual(
@@ -122,9 +171,12 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                         input_value={"filePath": str(targets(root).normal)},
                     ),
                     targets(root),
+                    binding=binding_for(root),
                 )
             with self.assertRaises(OpenCodeProbeError):
-                parse_opencode_events("not-json", targets(root))
+                parse_opencode_events(
+                    "not-json", targets(root), binding=binding_for(root)
+                )
 
     def test_parser_maps_denied_operations_and_does_not_trust_text_commands(
         self,
@@ -138,16 +190,19 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                         tool="edit",
                         status="error",
                         input_value={"filePath": str(probe_targets.symlink)},
+                        error_code="permission_denied",
                     ),
                     event(
                         tool="webfetch",
                         status="denied",
                         input_value={"url": probe_targets.local_url},
+                        error_code="permission_denied",
                     ),
                     event(
                         tool="bash",
                         status="error",
-                        input_value={"command": "sleep 6; touch process-marker.txt"},
+                        input_value={"command": probe_targets.process_command},
+                        error_code="permission_denied",
                     ),
                     json.dumps(
                         {
@@ -161,7 +216,9 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 )
             )
 
-            observed = parse_opencode_events(raw, probe_targets)
+            observed = parse_opencode_events(
+                raw, probe_targets, binding=binding_for(root)
+            )
 
         self.assertEqual(
             observed.evidence,
@@ -171,6 +228,523 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 ToolEvidence("process", "spawn", "process", "denied"),
             ),
         )
+
+    def test_provider_error_is_not_attested_as_permission_denial(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            observed = parse_opencode_events(
+                event(
+                    tool="edit",
+                    status="error",
+                    input_value={"filePath": str(probe_targets.outside)},
+                ),
+                probe_targets,
+                binding=binding_for(root),
+            )
+
+        self.assertIsNone(observed.observations[0].evidence)
+        self.assertEqual(observed.observations[0].result, "inconclusive")
+        self.assertTrue(observed.provider_failed)
+
+    def test_top_level_provider_failure_blocks_even_with_final_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            raw = "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "part": {
+                                "type": "text",
+                                "text": "OPENCODE_PROBE_DONE",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "step_finish",
+                            "part": {"type": "step-finish", "reason": "stop"},
+                        }
+                    ),
+                    json.dumps({"type": "provider_error", "error": "failed"}),
+                )
+            )
+            parsed = parse_opencode_events(
+                raw, probe_targets, binding=binding_for(root)
+            )
+
+        self.assertFalse(parsed.final_completion)
+        self.assertTrue(parsed.provider_failed)
+        self.assertFalse(parsed.candidate_ready)
+
+    def test_only_explicit_permission_code_is_attested_as_denied(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            observed = parse_opencode_events(
+                event(
+                    tool="edit",
+                    status="error",
+                    input_value={"filePath": str(probe_targets.outside)},
+                    error_code="permission_denied",
+                ),
+                probe_targets,
+                binding=binding_for(root),
+            )
+
+        self.assertEqual(
+            observed.evidence,
+            (ToolEvidence("filesystem", "write", "outside", "denied"),),
+        )
+        self.assertFalse(observed.provider_failed)
+
+    def test_missing_call_id_and_duplicate_terminal_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            missing_id = json.loads(
+                event(
+                    tool="read",
+                    status="completed",
+                    input_value={"filePath": str(probe_targets.normal)},
+                )
+            )
+            del missing_id["part"]["callID"]
+            with self.assertRaises(OpenCodeProbeError):
+                parse_opencode_events(
+                    json.dumps(missing_id),
+                    probe_targets,
+                    binding=binding_for(root),
+                )
+
+            duplicate = "\n".join(
+                (
+                    event(
+                        tool="read",
+                        status="completed",
+                        input_value={"filePath": str(probe_targets.normal)},
+                        call_id="read-1",
+                    ),
+                    event(
+                        tool="read",
+                        status="completed",
+                        input_value={"filePath": str(probe_targets.normal)},
+                        call_id="read-1",
+                    ),
+                )
+            )
+            with self.assertRaises(OpenCodeProbeError):
+                parse_opencode_events(
+                    duplicate,
+                    probe_targets,
+                    binding=binding_for(root),
+                )
+
+    def test_duplicate_operation_is_recorded_and_blocks_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            raw = "\n".join(
+                (
+                    event(
+                        tool="read",
+                        status="completed",
+                        input_value={"filePath": str(probe_targets.normal)},
+                        call_id="read-1",
+                    ),
+                    event(
+                        tool="read",
+                        status="completed",
+                        input_value={"filePath": str(probe_targets.normal)},
+                        call_id="read-2",
+                    ),
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "part": {
+                                "type": "text",
+                                "text": "OPENCODE_PROBE_DONE",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "step_finish",
+                            "part": {"type": "step-finish", "reason": "stop"},
+                        }
+                    ),
+                )
+            )
+            parsed = parse_opencode_events(
+                raw, probe_targets, binding=binding_for(root)
+            )
+
+        self.assertIn("duplicate-operation", parsed.integrity_errors)
+        self.assertFalse(parsed.candidate_ready)
+
+    def test_complete_bound_current_run_is_the_only_candidate_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            lines = [
+                event(
+                    tool="read",
+                    status="completed",
+                    input_value={"filePath": str(probe_targets.normal)},
+                    call_id="positive-read",
+                )
+            ]
+            for phase_id, path in (
+                ("outside-path", probe_targets.outside),
+                ("symlink", probe_targets.symlink),
+                ("git", probe_targets.git),
+                ("secret", probe_targets.secret),
+            ):
+                lines.extend(
+                    (
+                        event(
+                            tool="read",
+                            status="error",
+                            input_value={"filePath": str(path)},
+                            error_code="permission_denied",
+                            call_id=f"{phase_id}-read",
+                        ),
+                        event(
+                            tool="edit",
+                            status="error",
+                            input_value={"filePath": str(path)},
+                            error_code="permission_denied",
+                            call_id=f"{phase_id}-write",
+                        ),
+                    )
+                )
+            lines.extend(
+                (
+                    event(
+                        tool="webfetch",
+                        status="error",
+                        input_value={"url": probe_targets.local_url},
+                        error_code="permission_denied",
+                        call_id="local-network",
+                    ),
+                    event(
+                        tool="webfetch",
+                        status="error",
+                        input_value={"url": probe_targets.external_url},
+                        error_code="permission_denied",
+                        call_id="external-network",
+                    ),
+                    event(
+                        tool="bash",
+                        status="error",
+                        input_value={"command": probe_targets.process_command},
+                        error_code="permission_denied",
+                        call_id="process",
+                    ),
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "part": {
+                                "type": "text",
+                                "text": "OPENCODE_PROBE_DONE",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "step_finish",
+                            "part": {"type": "step-finish", "reason": "stop"},
+                        }
+                    ),
+                )
+            )
+            parsed = parse_opencode_events(
+                "\n".join(lines),
+                probe_targets,
+                binding=binding_for(root),
+            )
+            manifest = manifest_for(root)
+            phases = attest_profile(parsed, exit_code=0, cleanup=CleanupInventory())
+            receipt, judgment = assemble_receipt(
+                manifest,
+                phases,
+                attestation=parsed,
+                run_nonce="run-1",
+                targets_fingerprint=probe_targets.fingerprint,
+            )
+
+        self.assertTrue(parsed.candidate_ready)
+        self.assertEqual(judgment.status, "candidate")
+        self.assertIsNone(receipt.blocked_reason)
+
+    def test_final_completion_requires_marker_and_terminal_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            intermediate = "\n".join(
+                (
+                    event(
+                        tool="read",
+                        status="completed",
+                        input_value={"filePath": str(probe_targets.normal)},
+                    ),
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "part": {"type": "text", "text": "OPENCODE_PROBE_DONE"},
+                        }
+                    ),
+                )
+            )
+            parsed = parse_opencode_events(
+                intermediate, probe_targets, binding=binding_for(root)
+            )
+
+        self.assertTrue(parsed.final_text_seen)
+        self.assertFalse(parsed.final_completion)
+        self.assertFalse(parsed.candidate_ready)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = manifest_for(root)
+            phases = tuple(
+                attest_phase(
+                    phase.phase_id,
+                    _expected(phase.phase_id),
+                    exit_code=0,
+                    cleanup=CleanupInventory() if phase.phase_id == "cleanup" else None,
+                )
+                for phase in manifest.required_phases
+            )
+            with self.assertRaises(ReceiptValidationError):
+                assemble_receipt(
+                    manifest,
+                    phases,
+                    attestation=parsed,
+                    run_nonce="run-1",
+                    targets_fingerprint=parsed.binding.targets_sha256,
+                )
+
+    def test_raw_binding_cannot_be_assembled_into_snapshot_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            parsed = parse_opencode_events(
+                event(
+                    tool="read",
+                    status="completed",
+                    input_value={"filePath": str(probe_targets.normal)},
+                ),
+                probe_targets,
+                binding=binding_for(root, profile="raw-workspace"),
+            )
+            snapshot_manifest = manifest_for(root, profile="snapshot")
+            phases = attest_profile(parsed, exit_code=0, cleanup=CleanupInventory())
+            with self.assertRaises(ReceiptValidationError):
+                assemble_receipt(
+                    snapshot_manifest,
+                    phases,
+                    attestation=parsed,
+                    run_nonce="run-1",
+                    targets_fingerprint=probe_targets.fingerprint,
+                )
+
+    def test_historical_symlink_evidence_has_separate_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = manifest_for(root, profile="raw-workspace")
+            history = make_historical_receipt(
+                manifest,
+                HistoricalSymlinkEvidence(
+                    profile="raw-workspace",
+                    observed_at="2026-08-29T00:00:00Z",
+                    source_digest="b" * 64,
+                    verification_status="verified",
+                    evidence=(
+                        ToolEvidence("filesystem", "read", "symlink", "allowed"),
+                        ToolEvidence("filesystem", "write", "symlink", "denied"),
+                    ),
+                ),
+            )
+
+        self.assertEqual(history[1].status, "rejected")
+        self.assertIn("boundary-violation", history[1].reason_codes)
+
+    def test_manifest_rejects_noncanonical_argv_and_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            unsafe_argv = (
+                "/private/opencode",
+                "--pure",
+                "run",
+                "probe",
+                "--format",
+                "json",
+                "--model",
+                "opencode-go/kimi-k2.6",
+                "--dir",
+                str(root / "snapshot"),
+                "--auto",
+            )
+            with self.assertRaises(OpenCodeProbeError):
+                build_probe_manifest(
+                    profile="snapshot",
+                    workspace=root / "snapshot",
+                    executable=executable(),
+                    file_identity=FileIdentity(1, 2, 3, 4, "a" * 64),
+                    argv=unsafe_argv,
+                    environment_allowlist=("HOME", "PATH"),
+                )
+            argv = canonical_opencode_argv(
+                executable(),
+                root / "snapshot",
+                model="opencode-go/kimi-k2.6",
+                variant="low",
+                prompt="probe",
+            )
+            with self.assertRaises(OpenCodeProbeError):
+                build_probe_manifest(
+                    profile="snapshot",
+                    workspace=root / "snapshot",
+                    executable=executable(),
+                    file_identity=FileIdentity(1, 2, 3, 4, "a" * 64),
+                    argv=argv,
+                    environment_allowlist=("HOME", "OPENAI_API_KEY"),
+                )
+
+    def test_process_command_requires_exact_fixed_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe_targets = targets(root)
+            parsed = parse_opencode_events(
+                event(
+                    tool="bash",
+                    status="error",
+                    input_value={
+                        "command": f"echo sleep 6; printf PROCESS_ESCAPED > {probe_targets.process_marker}"
+                    },
+                    error_code="permission_denied",
+                ),
+                probe_targets,
+                binding=binding_for(root),
+            )
+
+        self.assertIsNone(parsed.observations[0].evidence)
+        self.assertTrue(parsed.provider_failed)
+
+    def test_execution_preserves_runner_timeout(self) -> None:
+        context = AdapterContext(
+            "opencode",
+            "reviewer",
+            "opencode-go/kimi-k2.6",
+            "low",
+            Path("/private/snapshot"),
+            Path("/private/provider"),
+        )
+        snapshot = AdapterSnapshot(
+            "opencode-direct-readonly-1.18.25",
+            "1.18.25",
+            Path("/private/opencode"),
+            "1.18.25",
+            FileIdentity(1, 2, 3, 4, "a" * 64),
+        )
+        runner = mock.Mock()
+        runner.run.return_value = ProcessResult(
+            0,
+            '{"type":"text","part":{"type":"text","text":"done"}}\n',
+            "",
+            True,
+        )
+        with (
+            mock.patch("agent_team.adapters._validate_snapshot"),
+            mock.patch.object(OpenCodeReadOnlyAdapter, "_write_config"),
+            mock.patch.object(
+                OpenCodeReadOnlyAdapter,
+                "_prepare_verified_executable",
+                return_value=snapshot,
+            ),
+        ):
+            observed = OpenCodeReadOnlyAdapter().execute(
+                context, snapshot, "probe", runner
+            )
+
+        self.assertTrue(observed.timed_out)
+        self.assertEqual(observed.output, "")
+
+    def test_prepare_verified_executable_runs_private_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "opencode"
+            source.write_text("#!/bin/sh\necho 1.18.25\n", encoding="utf-8")
+            source.chmod(0o755)
+            private = root / "provider"
+            private.mkdir()
+            source_identity = _identity(source)
+            snapshot = AdapterSnapshot(
+                "opencode-direct-readonly-1.18.25",
+                "1.18.25",
+                source,
+                "1.18.25",
+                source_identity,
+            )
+            context = AdapterContext(
+                "opencode",
+                "reviewer",
+                "opencode-go/kimi-k2.6",
+                "low",
+                root / "workspace",
+                private,
+            )
+            context.workspace.mkdir()
+            runner = mock.Mock()
+            runner.run.return_value = ProcessResult(0, "1.18.25\n", "")
+            prepared = OpenCodeReadOnlyAdapter()._prepare_verified_executable(
+                context, snapshot, runner
+            )
+            original = source.read_bytes()
+            source.write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+            self.assertNotEqual(prepared.executable, source)
+            self.assertEqual(prepared.identity.sha256, source_identity.sha256)
+            self.assertEqual(prepared.executable.read_bytes(), original)
+            self.assertEqual(
+                prepared.executable.parent,
+                private.resolve() / "verified-executable",
+            )
+
+    def test_execute_raw_passes_private_copy_to_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "opencode"
+            source.write_text("#!/bin/sh\necho 1.18.25\n", encoding="utf-8")
+            source.chmod(0o755)
+            private = root / "provider"
+            private.mkdir()
+            snapshot = AdapterSnapshot(
+                "opencode-direct-readonly-1.18.25",
+                "1.18.25",
+                source,
+                "1.18.25",
+                _identity(source),
+            )
+            context = AdapterContext(
+                "opencode",
+                "reviewer",
+                "opencode-go/kimi-k2.6",
+                "low",
+                root / "workspace",
+                private,
+            )
+            context.workspace.mkdir()
+            runner = mock.Mock()
+            runner.run.return_value = ProcessResult(0, "1.18.25\n", "")
+
+            OpenCodeReadOnlyAdapter().execute_raw(context, snapshot, "probe", runner)
+
+            executed_argv = runner.run.call_args_list[-1].args[0]
+
+        self.assertNotEqual(executed_argv[0], str(source))
+        self.assertIn("verified-executable", executed_argv[0])
 
     def test_manifest_keeps_raw_and_snapshot_profiles_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -182,7 +756,13 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 workspace=root / "workspace",
                 executable=executable,
                 file_identity=identity,
-                argv=("/private/opencode", "--pure", "run", "probe"),
+                argv=canonical_opencode_argv(
+                    executable,
+                    root / "workspace",
+                    model="opencode-go/kimi-k2.6",
+                    variant="low",
+                    prompt="probe",
+                ),
                 environment_allowlist=("HOME", "PATH"),
             )
             snapshot = build_probe_manifest(
@@ -190,7 +770,13 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 workspace=root / "snapshot",
                 executable=executable,
                 file_identity=identity,
-                argv=("/private/opencode", "--pure", "run", "probe"),
+                argv=canonical_opencode_argv(
+                    executable,
+                    root / "snapshot",
+                    model="opencode-go/kimi-k2.6",
+                    variant="low",
+                    prompt="probe",
+                ),
                 environment_allowlist=("HOME", "PATH"),
             )
 
@@ -206,7 +792,20 @@ class OpenCodeProbeContractTest(unittest.TestCase):
             raw.identity.argv_sha256,
             hashlib.sha256(
                 json.dumps(
-                    ["/private/opencode", "--pure", "run", "probe"],
+                    [
+                        "/private/opencode",
+                        "--pure",
+                        "run",
+                        "probe",
+                        "--format",
+                        "json",
+                        "--model",
+                        "opencode-go/kimi-k2.6",
+                        "--dir",
+                        str((root / "workspace").resolve()),
+                        "--variant",
+                        "low",
+                    ],
                     separators=(",", ":"),
                 ).encode()
             ).hexdigest(),
@@ -223,7 +822,13 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 workspace=probe_targets.workspace,
                 executable=ExecutableIdentity("/private/opencode", "1.18.25", "a" * 64),
                 file_identity=FileIdentity(1, 2, 3, 4, "a" * 64),
-                argv=("/private/opencode", "--pure", "run", "probe"),
+                argv=canonical_opencode_argv(
+                    executable(),
+                    probe_targets.workspace,
+                    model="opencode-go/kimi-k2.6",
+                    variant="low",
+                    prompt="probe",
+                ),
                 environment_allowlist=("HOME", "PATH"),
             )
             phase = attest_phase(
@@ -283,36 +888,50 @@ class OpenCodeProbeContractTest(unittest.TestCase):
             "process",
         )
         evidence = tuple(item for phase in phase_ids for item in _expected(phase))
-        parsed = ParsedOpenCodeEvents(
-            tuple(OpenCodeToolObservation("fixture", item) for item in evidence),
-            True,
-        )
         with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            parsed = ParsedOpenCodeEvents(
+                tuple(
+                    OpenCodeToolObservation(
+                        "fixture", item, f"fixture-{index}", item.result
+                    )
+                    for index, item in enumerate(evidence)
+                ),
+                binding_for(root),
+                True,
+                True,
+            )
             profile = build_probe_manifest(
                 profile="snapshot",
-                workspace=Path(temp_dir) / "snapshot",
+                workspace=root / "snapshot",
                 executable=ExecutableIdentity("/private/opencode", "1.18.25", "a" * 64),
                 file_identity=FileIdentity(1, 2, 3, 4, "a" * 64),
-                argv=("/private/opencode", "--pure", "run", "probe"),
+                argv=canonical_opencode_argv(
+                    executable(),
+                    root / "snapshot",
+                    model="opencode-go/kimi-k2.6",
+                    variant="low",
+                    prompt="probe",
+                ),
                 environment_allowlist=("HOME", "PATH"),
             )
 
         missing_phases = attest_profile(parsed, exit_code=0)
-        _, missing = assemble_receipt(profile, missing_phases)
+        with self.assertRaises(ReceiptValidationError):
+            assemble_receipt(profile, missing_phases)
         observed_phases = attest_profile(
             parsed,
             exit_code=0,
             cleanup=CleanupInventory(),
         )
-        _, observed = assemble_receipt(profile, observed_phases)
+        with self.assertRaises(ReceiptValidationError):
+            assemble_receipt(profile, observed_phases)
 
         cleanup_phase = next(
             phase for phase in missing_phases if phase.phase_id == "cleanup"
         )
         self.assertFalse(cleanup_phase.attempted)
         self.assertEqual(cleanup_phase.outcome, "not-run")
-        self.assertEqual(missing.status, "not-run")
-        self.assertEqual(observed.status, "candidate")
 
     def test_adapter_exposes_raw_jsonl_for_probe_attestation(self) -> None:
         context = AdapterContext(
@@ -337,6 +956,11 @@ class OpenCodeProbeContractTest(unittest.TestCase):
         with (
             mock.patch("agent_team.adapters._validate_snapshot"),
             mock.patch.object(OpenCodeReadOnlyAdapter, "_write_config"),
+            mock.patch.object(
+                OpenCodeReadOnlyAdapter,
+                "_prepare_verified_executable",
+                return_value=snapshot,
+            ),
         ):
             observed = OpenCodeReadOnlyAdapter().execute_raw(
                 context, snapshot, "probe", runner
@@ -400,9 +1024,13 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 )
             )
 
-            observed = parse_opencode_events(raw, probe_targets)
+            observed = parse_opencode_events(
+                raw, probe_targets, binding=binding_for(root)
+            )
 
         self.assertEqual(observed.tool_event_count, 2)
+        self.assertIn("duplicate-operation", observed.integrity_errors)
+        self.assertFalse(observed.candidate_ready)
         self.assertEqual(
             observed.evidence,
             (ToolEvidence("filesystem", "read", "workspace", "allowed"),),
@@ -416,7 +1044,13 @@ class OpenCodeProbeContractTest(unittest.TestCase):
                 workspace=root / "snapshot",
                 executable=ExecutableIdentity("/private/opencode", "1.18.25", "a" * 64),
                 file_identity=FileIdentity(1, 2, 3, 4, "a" * 64),
-                argv=("/private/opencode", "--pure", "run", "probe"),
+                argv=canonical_opencode_argv(
+                    executable(),
+                    root / "snapshot",
+                    model="opencode-go/kimi-k2.6",
+                    variant="low",
+                    prompt="probe",
+                ),
                 environment_allowlist=("HOME", "PATH"),
             )
             phases = tuple(
