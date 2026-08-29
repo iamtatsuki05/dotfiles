@@ -1,907 +1,487 @@
-"""OpenCode-specific manifest, JSONL attestation, and receipt assembly."""
+"""Static OpenCode identity and blocked/not-run receipt contract.
+
+This slice never starts OpenCode, sends a prompt, parses provider output, or
+exposes a live runner.  The authenticated permission matrix belongs to a later
+controlled Issue #22 follow-up.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
-import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, NoReturn
 
-from .adapters import SAFE_ENV_KEYS, FileIdentity
+from .adapters import FileIdentity
 from .probe_receipts import (
-    BLOCKER_CODES,
     CURRENT_SCHEMA_VERSION,
     CleanupInventory,
     ExecutableIdentity,
-    Judgment,
     Manifest,
     PhaseReceipt,
     ProfileIdentity,
     Receipt,
-    ReceiptValidationError,
-    ToolEvidence,
     judge_profile,
     required_phases_for_profile,
     serialize_manifest,
 )
 
+OPENCODE_CANONICAL_RELATIVE_PATH: Final = (
+    ".local/share/mise/installs/opencode/1.18.25/opencode"
+)
+OPENCODE_CANONICAL_PATH: Final = Path.home() / OPENCODE_CANONICAL_RELATIVE_PATH
 OPENCODE_VERSION: Final = "1.18.25"
-PROBE_REVISION: Final = "opencode-probe-20260830-v1"
-RAW_POLICY_ID: Final = "opencode-raw-workspace-readonly-v1"
-SNAPSHOT_POLICY_ID: Final = "opencode-snapshot-readonly-v1"
-FINAL_MARKER: Final = "OPENCODE_PROBE_DONE"
-OPENCODE_MODEL: Final = "opencode-go/kimi-k2.6"
-OPENCODE_VARIANT: Final = "low"
-ProbeProfile = Literal["raw-workspace", "snapshot"]
-_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9._:-]{0,127}\Z")
+OPENCODE_SHA256: Final = (
+    "88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9"
+)
+OPENCODE_IDENTIFIER: Final = "opencode"
+PROBE_REVISION: Final = "opencode-static-probe-20260830-v3"
 
-_RUNNING: Final[frozenset[str]] = frozenset(
-    {"pending", "running", "started", "in_progress"}
+PROFILE_RAW: Final = "raw-workspace-read-only"
+PROFILE_SNAPSHOT: Final = "snapshot-read-only"
+PROFILES: Final[tuple[str, ...]] = (PROFILE_RAW, PROFILE_SNAPSHOT)
+_POLICIES: Final[dict[str, str]] = {
+    PROFILE_RAW: "opencode-raw-workspace-readonly-static-v3",
+    PROFILE_SNAPSHOT: "opencode-snapshot-readonly-static-v3",
+}
+_ROLE_TOKENS: Final[dict[str, tuple[str, ...]]] = {
+    PROFILE_RAW: (
+        "role=reviewer",
+        "provider=opencode",
+        "transport=direct",
+        "permission=read-only",
+        "profile=raw-workspace",
+        "pure=true",
+        "format=json",
+        "model=opencode-go/kimi-k2.6",
+        "variant=low",
+    ),
+    PROFILE_SNAPSHOT: (
+        "role=reviewer",
+        "provider=opencode",
+        "transport=direct",
+        "permission=read-only",
+        "profile=snapshot",
+        "pure=true",
+        "format=json",
+        "model=opencode-go/kimi-k2.6",
+        "variant=low",
+    ),
+}
+_ENVIRONMENT_NAMES: Final[tuple[str, ...]] = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "OPENCODE_API_KEY",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "USER",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
 )
-_ALLOWED: Final[frozenset[str]] = frozenset({"completed", "success", "succeeded", "ok"})
-_READ_TOOLS: Final[frozenset[str]] = frozenset({"read"})
-_WRITE_TOOLS: Final[frozenset[str]] = frozenset({"edit"})
-_NETWORK_TOOLS: Final[frozenset[str]] = frozenset({"webfetch"})
-_PROCESS_TOOLS: Final[frozenset[str]] = frozenset({"bash"})
-_DANGEROUS_FLAGS: Final[frozenset[str]] = frozenset(
-    {"--auto", "--share", "--attach", "--continue", "--fork", "--interactive"}
+_PROBE_PATH_LABEL: Final = "/probe/opencode"
+_CWD_LABELS: Final[dict[str, str]] = {
+    PROFILE_RAW: "/probe/opencode/raw-workspace",
+    PROFILE_SNAPSHOT: "/probe/opencode/snapshot",
+}
+_BLOCKED_REASON: Final = "authentication"
+HISTORICAL_SOURCE_DIGEST: Final = (
+    "0238a41c5fd6e2def4a1457d5a21e52d565ada836d1e9e9555098db65aefd4c7"
 )
-_PATH_KEYS: Final[tuple[str, ...]] = (
-    "filePath",
-    "filepath",
-    "path",
-    "file",
-    "filename",
-    "pattern",
+AUTH_SOURCE_DIGEST: Final = (
+    "8fc9336fb6cac498366d951c3a986c7bdf16efdd72e2beb13f39630c6fbcb225"
 )
-_URL_KEYS: Final[tuple[str, ...]] = ("url", "uri", "href")
-_COMMAND_KEYS: Final[tuple[str, ...]] = ("command", "cmd", "script")
-_PARSER_TOKEN = object()
 
 
 class OpenCodeProbeError(RuntimeError):
-    pass
+    """Raised when static OpenCode evidence is unavailable or forged."""
 
 
 @dataclass(frozen=True, slots=True)
-class ProbeTargets:
-    workspace: Path
-    normal: Path
-    outside: Path
-    symlink: Path
-    git: Path
-    secret: Path
-    local_url: str
-    external_url: str
-    process_marker: Path
-
-    @property
-    def fingerprint(self) -> str:
-        values = {
-            "workspace": str(self.workspace),
-            "normal": str(self.normal),
-            "outside": str(self.outside),
-            "symlink": str(self.symlink),
-            "git": str(self.git),
-            "secret": str(self.secret),
-            "local_url": self.local_url,
-            "external_url": self.external_url,
-            "process_marker": str(self.process_marker),
-        }
-        return hashlib.sha256(
-            json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-
-    @property
-    def process_command(self) -> str:
-        return f"sleep 6; printf PROCESS_ESCAPED > {self.process_marker}"
-
-    @property
-    def process_probe_sha256(self) -> str:
-        return hashlib.sha256(
-            json.dumps(["bash", self.process_command], separators=(",", ":")).encode(
-                "utf-8"
-            )
-        ).hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class ProbeBinding:
-    profile: ProbeProfile
-    run_nonce: str
-    manifest_sha256: str
-    targets_sha256: str
-    process_probe_sha256: str
+class OpenCodeExecutablePin:
+    path: Path
+    version: str
+    file_identity: FileIdentity
 
     def __post_init__(self) -> None:
-        if self.profile not in {"raw-workspace", "snapshot"}:
-            raise OpenCodeProbeError("binding profile is unsupported")
-        if (
-            not isinstance(self.run_nonce, str)
-            or _IDENTIFIER.fullmatch(self.run_nonce) is None
+        if not self.path.is_absolute() or self.path.name != OPENCODE_IDENTIFIER:
+            _fail("OpenCode executable path is not an absolute pinned binary")
+        if self.version != OPENCODE_VERSION:
+            _fail("OpenCode executable version is not pinned")
+        if self.file_identity.sha256 != OPENCODE_SHA256:
+            _fail("OpenCode executable hash is not pinned")
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in (
+                self.file_identity.device,
+                self.file_identity.inode,
+                self.file_identity.size,
+                self.file_identity.mtime_ns,
+            )
         ):
-            raise OpenCodeProbeError("binding run_nonce is invalid")
-        for value, field_name in (
-            (self.manifest_sha256, "manifest_sha256"),
-            (self.targets_sha256, "targets_sha256"),
-            (self.process_probe_sha256, "process_probe_sha256"),
-        ):
-            if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
-                raise OpenCodeProbeError(f"binding {field_name} is invalid")
+            _fail("OpenCode executable file identity is invalid")
 
 
 @dataclass(frozen=True, slots=True)
-class HistoricalSymlinkEvidence:
-    profile: ProbeProfile
+class HistoricalSymlinkProvenance:
     observed_at: str
     source_digest: str
     verification_status: Literal["verified", "unverified"]
-    evidence: tuple[ToolEvidence, ...]
+    executable_version: str
+    executable_sha256: str
+    policy_id: str
 
     def __post_init__(self) -> None:
-        if self.profile != "raw-workspace":
-            raise OpenCodeProbeError("historical evidence must be raw-workspace")
-        if self.verification_status not in {"verified", "unverified"}:
-            raise OpenCodeProbeError(
-                "historical evidence verification status is invalid"
-            )
         if (
-            not isinstance(self.observed_at, str)
-            or not self.observed_at
-            or not isinstance(self.source_digest, str)
-            or _SHA256.fullmatch(self.source_digest) is None
+            not self.observed_at
+            or self.source_digest != HISTORICAL_SOURCE_DIGEST
+            or self.verification_status != "unverified"
+            or self.executable_version != OPENCODE_VERSION
+            or self.executable_sha256 != OPENCODE_SHA256
+            or self.policy_id != _POLICIES[PROFILE_RAW]
         ):
-            raise OpenCodeProbeError("historical evidence identity is invalid")
-        if not isinstance(self.evidence, tuple) or any(
-            not isinstance(item, ToolEvidence) for item in self.evidence
-        ):
-            raise OpenCodeProbeError("historical evidence entries are invalid")
-        expected = {
-            ToolEvidence("filesystem", "read", "symlink", "allowed"),
-            ToolEvidence("filesystem", "write", "symlink", "denied"),
-        }
-        if set(self.evidence) != expected:
-            raise OpenCodeProbeError(
-                "historical evidence does not describe the symlink probe"
-            )
-
-
-def _binding_targets_fingerprint(targets: ProbeTargets) -> str:
-    return targets.fingerprint
-
-
-def manifest_digest(manifest: Manifest) -> str:
-    return hashlib.sha256(serialize_manifest(manifest).encode("utf-8")).hexdigest()
-
-
-def build_probe_binding(
-    manifest: Manifest,
-    *,
-    profile: ProbeProfile,
-    run_nonce: str,
-    targets: ProbeTargets,
-) -> ProbeBinding:
-    expected_policy = (
-        RAW_POLICY_ID if profile == "raw-workspace" else SNAPSHOT_POLICY_ID
-    )
-    if (
-        manifest.identity.permission_profile != "read-only"
-        or manifest.identity.sandbox_policy_id != expected_policy
-    ):
-        raise ReceiptValidationError("manifest policy does not match probe binding")
-    return ProbeBinding(
-        profile,
-        run_nonce,
-        manifest_digest(manifest),
-        _binding_targets_fingerprint(targets),
-        targets.process_probe_sha256,
-    )
+            _fail("historical symlink provenance does not match the pinned record")
 
 
 @dataclass(frozen=True, slots=True)
-class OpenCodeToolObservation:
-    provider_tool: str
-    evidence: ToolEvidence | None
-    call_id: str = ""
-    result: Literal["allowed", "denied", "inconclusive"] = "allowed"
+class BlockedObservation:
+    source: Literal["historical", "current"]
+    code: str
+    observed_at: str
+    source_digest: str
+    verification_status: Literal["verified", "unverified"]
 
 
 @dataclass(frozen=True, slots=True)
-class ParsedOpenCodeEvents:
-    observations: tuple[OpenCodeToolObservation, ...]
-    binding: ProbeBinding
-    final_text_seen: bool = False
-    final_completion: bool = False
-    provider_failed: bool = False
-    integrity_errors: tuple[str, ...] = ()
-    _parser_token: object = field(default=None, repr=False, compare=False)
+class BlockedState:
+    reason: str
+    observations: tuple[BlockedObservation, ...]
 
-    @property
-    def evidence(self) -> tuple[ToolEvidence, ...]:
-        result: list[ToolEvidence] = []
-        for observation in self.observations:
-            if observation.evidence is not None and observation.evidence not in result:
-                result.append(observation.evidence)
-        return tuple(result)
+    def __post_init__(self) -> None:
+        if (
+            self.reason != _BLOCKED_REASON
+            or self.observations != _blocked_observations()
+        ):
+            _fail("blocked provenance does not match the current static record")
 
-    @property
-    def tool_event_count(self) -> int:
-        return len(self.observations)
 
-    @property
-    def candidate_ready(self) -> bool:
-        return (
-            self._parser_token is _PARSER_TOKEN
-            and self.final_completion
-            and not self.provider_failed
-            and not self.integrity_errors
+@dataclass(frozen=True, slots=True)
+class OpenCodeProfileRecord:
+    profile: str
+    role_token_digest: str
+    manifest_digest: str
+    argv_sha256: str
+    policy_id: str
+    permission_profile: str
+    prompt_transport: str
+    environment_allowlist: tuple[str, ...]
+    cwd_label: str
+    blocked_reason: str
+    phase_ids: tuple[str, ...]
+    phase_outcomes: tuple[str, ...]
+    status: str
+    reason_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OpenCodeStaticProbe:
+    pin: OpenCodeExecutablePin
+    profiles: tuple[OpenCodeProfileRecord, ...]
+    blocked: BlockedState
+    historical: HistoricalSymlinkProvenance
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pin, OpenCodeExecutablePin):
+            _fail("static probe pin has an invalid type")
+        expected_profiles = tuple(
+            _profile_record(self.pin, profile) for profile in PROFILES
         )
+        if self.profiles != expected_profiles:
+            _fail("static probe profiles, receipts, or judgments were forged")
+        if self.blocked != BlockedState(_BLOCKED_REASON, _blocked_observations()):
+            _fail("static probe blocked provenance was forged")
+        if self.historical != _historical_provenance():
+            _fail("static probe historical provenance was forged")
 
 
 def _fail(message: str) -> NoReturn:
     raise OpenCodeProbeError(message)
 
 
-def _mapping(value: object, field: str) -> Mapping[str, object]:
-    if not isinstance(value, dict):
-        _fail(f"{field} must be an object")
-    return value
-
-
-def _source(event: Mapping[str, object]) -> Mapping[str, object] | None:
-    part = event.get("part")
-    part_map = part if isinstance(part, dict) else None
-    if event.get("type") not in {
-        "tool",
-        "tool_use",
-        "tool_result",
-        "tool_execute",
-    } and (part_map is None or part_map.get("type") != "tool"):
-        return None
-    return part_map or event
-
-
-def _state(
-    source: Mapping[str, object], event: Mapping[str, object]
-) -> Mapping[str, object]:
-    value = source.get("state", event.get("state"))
-    return _mapping(value, "tool event state")
-
-
-def _input(
-    source: Mapping[str, object],
-    state: Mapping[str, object],
-    event: Mapping[str, object],
-) -> Mapping[str, object]:
-    for owner in (state, source, event):
-        value = owner.get("input")
-        if isinstance(value, dict):
-            return value
-    _fail("tool event has no structured input")
-
-
-def _string(data: Mapping[str, object], keys: Sequence[str], field: str) -> str:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return value
-    _fail(f"tool event has no {field}")
-
-
-def _status(
-    source: Mapping[str, object],
-    state: Mapping[str, object],
-    event: Mapping[str, object],
-) -> str:
-    for owner in (state, source, event):
-        value = owner.get("status")
-        if isinstance(value, str) and value:
-            return value.lower()
-    _fail("tool event has no structured status")
-
-
-def _tool(source: Mapping[str, object], event: Mapping[str, object]) -> str:
-    for owner in (source, event):
-        value = owner.get("tool")
-        if isinstance(value, str) and value:
-            return value.lower()
-    _fail("tool event has no provider tool name")
-
-
-def _path(value: str) -> str:
-    value = value.strip().strip("\"'`")
-    return value.removeprefix("file://").rstrip("/") or "/"
-
-
-def _path_matches(value: str, expected: Path, workspace: Path) -> bool:
-    actual = _path(value)
-    expected_abs = expected.resolve(strict=False)
-    if actual in {_path(str(expected)), _path(str(expected_abs))}:
-        return True
+def _capture_file_identity(path: Path) -> FileIdentity:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        relative = expected_abs.relative_to(workspace.resolve(strict=False))
-    except ValueError:
-        return False
-    return actual in {relative.as_posix(), f"./{relative.as_posix()}", relative.name}
-
-
-def _target(value: str, targets: ProbeTargets) -> str:
-    for name, path in (
-        ("symlink", targets.symlink),
-        ("secret", targets.secret),
-        ("git", targets.git),
-        ("outside", targets.outside),
-        ("workspace", targets.normal),
-    ):
-        if _path_matches(value, path, targets.workspace):
-            return name
-    actual = _path(value)
-    workspace = targets.workspace.resolve(strict=False)
-    if actual in {str(workspace), ".", "./", ""}:
-        return "workspace"
-    if actual.startswith(("../", "../../")):
-        return "outside"
-    if value.strip().rstrip("/") == targets.local_url.rstrip("/"):
-        return "local-network"
-    if value.strip().rstrip("/") == targets.external_url.rstrip("/"):
-        return "external-network"
-    _fail("tool event target is outside the declared probe matrix")
-
-
-def _tool_shape(provider_tool: str) -> tuple[str, str, tuple[str, ...]]:
-    if provider_tool in _READ_TOOLS:
-        return "filesystem", "read", _PATH_KEYS
-    if provider_tool in _WRITE_TOOLS:
-        return "filesystem", "write", _PATH_KEYS
-    if provider_tool in _NETWORK_TOOLS:
-        return "network", "connect", _URL_KEYS
-    if provider_tool in _PROCESS_TOOLS:
-        return "process", "spawn", _COMMAND_KEYS
-    _fail(f"unsupported provider tool in structured event: {provider_tool}")
-
-
-def _permission_denied(
-    status: str, state: Mapping[str, object], event: Mapping[str, object]
-) -> bool:
-    def code(value: object) -> str:
-        return (
-            value.lower().replace("-", "_").replace(" ", "_")
-            if isinstance(value, str)
-            else ""
-        )
-
-    if any(code(value) == "permission_denied" for value in (status, event.get("type"))):
-        return True
-    for owner in (state, event):
-        if owner.get("permission") is True:
-            return True
-        for key in ("code", "reason", "error_code", "type", "kind"):
-            value = owner.get(key)
-            if code(value) == "permission_denied":
-                return True
-        error = owner.get("error")
-        if isinstance(error, dict) and any(
-            code(error.get(key)) == "permission_denied"
-            for key in ("code", "reason", "type", "kind")
-        ):
-            return True
-    return False
-
-
-def _result(
-    status: str, state: Mapping[str, object], event: Mapping[str, object]
-) -> Literal["allowed", "denied", "inconclusive"]:
-    if _permission_denied(status, state, event):
-        return "denied"
-    if status in _ALLOWED and not any(
-        owner.get("error") or owner.get("failure") for owner in (state, event)
-    ):
-        return "allowed"
-    return "inconclusive"
-
-
-def _evidence(
-    provider_tool: str,
-    input_value: Mapping[str, object],
-    status: str,
-    state: Mapping[str, object],
-    event: Mapping[str, object],
-    targets: ProbeTargets,
-) -> OpenCodeToolObservation:
-    tool, operation, keys = _tool_shape(provider_tool)
-    if status in _RUNNING:
-        _fail("running tool events must be handled before attestation")
-    value = _string(input_value, keys, "target")
-    target = _target(value, targets) if tool != "process" else "process"
-    if tool == "network" and target not in {"local-network", "external-network"}:
-        _fail("network tool target is not a declared network probe")
-    if tool == "process" and value != targets.process_command:
-        return OpenCodeToolObservation(provider_tool, None, "", "inconclusive")
-    result = _result(status, state, event)
-    evidence = (
-        None
-        if result == "inconclusive"
-        else ToolEvidence(tool, operation, target, result)
-    )
-    return OpenCodeToolObservation(provider_tool, evidence, "", result)
-
-
-def parse_opencode_events(
-    raw: str, targets: ProbeTargets, *, binding: ProbeBinding
-) -> ParsedOpenCodeEvents:
-    """Parse terminal JSONL events and retain no provider payloads."""
-
-    if not isinstance(raw, str):
-        _fail("OpenCode output must be text")
-    if (
-        binding.targets_sha256 != _binding_targets_fingerprint(targets)
-        or binding.process_probe_sha256 != targets.process_probe_sha256
-    ):
-        _fail("event targets do not match the attestation binding")
-    observations: list[OpenCodeToolObservation] = []
-    calls: dict[str, tuple[tuple[str, str, str], bool]] = {}
-    operations: dict[tuple[str, str, str], str] = {}
-    integrity_errors: list[str] = []
-    final_text_seen = False
-    final_completion = False
-    provider_failed = False
-    stop_seen = False
-    for line_number, line in enumerate(raw.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            value: object = json.loads(line)
-        except (TypeError, ValueError) as exc:
-            raise OpenCodeProbeError(
-                f"OpenCode output line {line_number} is not JSON"
-            ) from exc
-        event = _mapping(value, f"OpenCode output line {line_number}")
-        event_type = event.get("type")
-        event_name = event_type.lower() if isinstance(event_type, str) else ""
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise OpenCodeProbeError(
+            "OpenCode executable cannot be opened read-only"
+        ) from exc
+    try:
+        before = os.fstat(fd)
         if (
-            event_name
-            in {
-                "error",
-                "failure",
-                "provider_error",
-                "provider.failure",
-                "provider-failure",
-                "session.error",
-                "timeout",
-            }
-            or event.get("error") is not None
+            not stat.S_ISREG(before.st_mode)
+            or not before.st_mode & 0o111
+            or before.st_uid != os.getuid()
         ):
-            provider_failed = True
-        part = event.get("part")
-        part_map = part if isinstance(part, dict) else {}
-        part_type = part_map.get("type")
-        if part_type in {"error", "failure", "provider-error", "provider_failure"}:
-            provider_failed = True
-        if part_type in {"step-finish", "step_finish"} or event_name in {
-            "step_finish",
-            "step-finish",
-        }:
-            reason = part_map.get("reason", event.get("reason"))
-            if reason == "stop":
-                if stop_seen:
-                    integrity_errors.append("duplicate-final-completion")
-                stop_seen = True
-                final_completion = final_text_seen
-            elif final_text_seen:
-                integrity_errors.append("non-success-final-completion")
-            continue
-        if part_type == "text" or event_name == "text":
-            text = part_map.get("text", event.get("text"))
-            if isinstance(text, str) and FINAL_MARKER in text:
-                if stop_seen:
-                    integrity_errors.append("text-after-stop")
-                if final_completion:
-                    integrity_errors.append("text-after-final")
-                final_text_seen = True
-                final_completion = bool(
-                    part_map.get("final") is True or event.get("final") is True
-                )
-            elif final_completion and isinstance(text, str) and text.strip():
-                integrity_errors.append("text-after-final")
-            continue
-        if final_completion:
-            integrity_errors.append("event-after-final")
-        source = _source(event)
-        if source is None:
-            continue
-        state = _state(source, event)
-        provider_tool = _tool(source, event)
-        input_value = _input(source, state, event)
-        shape = _tool_shape(provider_tool)
-        value_text = _string(input_value, shape[2], "target")
-        target = _target(value_text, targets) if shape[0] != "process" else "process"
-        if shape[0] == "network" and target not in {
-            "local-network",
-            "external-network",
-        }:
-            _fail("network tool target is not a declared network probe")
-        if shape[0] == "process" and value_text != targets.process_command:
-            integrity_errors.append("process-command-mismatch")
-        status = _status(source, state, event)
-        call_value = source.get("callID", event.get("callID"))
-        if not isinstance(call_value, str) or not call_value.strip():
-            _fail("terminal tool event requires a stable non-empty callID")
-        call_id = call_value.strip()
-        key = (shape[0], shape[1], target)
-        running = status in _RUNNING
-        previous = calls.get(call_id)
-        if previous is not None:
-            if previous[0] != key:
-                integrity_errors.append("call-conflict")
-            elif running and previous[1] is False:
-                integrity_errors.append("event-after-terminal")
-            elif not running and previous[1]:
-                calls[call_id] = (key, False)
-            elif not running:
-                _fail("one tool call produced more than one terminal event")
-        else:
-            calls[call_id] = (key, running)
-        if running:
-            continue
-        if previous is not None and previous[1] is False:
-            _fail("one tool call produced more than one terminal event")
-        item = _evidence(provider_tool, input_value, status, state, event, targets)
-        item = OpenCodeToolObservation(
-            item.provider_tool, item.evidence, call_id, item.result
+            _fail("OpenCode executable is not an owned executable regular file")
+        digest = hashlib.sha256()
+        os.lseek(fd, 0, os.SEEK_SET)
+        while chunk := os.read(fd, 1_048_576):
+            digest.update(chunk)
+        after = os.fstat(fd)
+        before_key = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_mode,
+            before.st_uid,
         )
-        if key in operations and operations[key] != call_id:
-            integrity_errors.append("duplicate-operation")
-        operations.setdefault(key, call_id)
-        observations.append(item)
-        provider_failed = provider_failed or item.result == "inconclusive"
-        if final_completion:
-            integrity_errors.append("terminal-after-final")
-    if stop_seen and not final_text_seen:
-        final_completion = False
-    if not observations and not final_text_seen and not provider_failed:
-        _fail("OpenCode output contains no structured result or final text")
-    return ParsedOpenCodeEvents(
-        tuple(observations),
-        binding,
-        final_text_seen,
-        final_completion and not provider_failed,
-        provider_failed,
-        tuple(dict.fromkeys(integrity_errors)),
-        _PARSER_TOKEN,
+        after_key = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_mode,
+            after.st_uid,
+        )
+        if before_key != after_key:
+            _fail("OpenCode executable changed during static identity capture")
+        return FileIdentity(
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            digest.hexdigest(),
+        )
+    finally:
+        os.close(fd)
+
+
+def _canonical_path() -> Path:
+    raw = OPENCODE_CANONICAL_PATH
+    try:
+        if stat.S_ISLNK(raw.lstat().st_mode):
+            _fail("OpenCode canonical executable must not be a symlink")
+        return raw.resolve(strict=True)
+    except OSError as exc:
+        raise OpenCodeProbeError(
+            "OpenCode canonical executable is unavailable"
+        ) from exc
+
+
+def static_preflight() -> OpenCodeExecutablePin:
+    """Read only the exact pinned path; never invoke OpenCode or another provider."""
+
+    path = _canonical_path()
+    first = _capture_file_identity(path)
+    if first.sha256 != OPENCODE_SHA256:
+        _fail("OpenCode executable does not have the pinned SHA-256")
+    second = _capture_file_identity(path)
+    if first != second:
+        _fail("OpenCode executable changed between static identity captures")
+    return OpenCodeExecutablePin(path, OPENCODE_VERSION, first)
+
+
+def _token_digest(profile: str) -> str:
+    try:
+        tokens = _ROLE_TOKENS[profile]
+    except KeyError as exc:
+        raise OpenCodeProbeError("unknown OpenCode static profile") from exc
+    encoded = json.dumps(list(tokens), separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _profile_manifest(pin: OpenCodeExecutablePin, profile: str) -> Manifest:
+    if profile not in PROFILES:
+        _fail("unknown OpenCode static profile")
+    identity = ProfileIdentity(
+        CURRENT_SCHEMA_VERSION,
+        OPENCODE_IDENTIFIER,
+        "read-only",
+        platform.system().lower(),
+        platform.machine().lower(),
+        PROBE_REVISION,
+        ExecutableIdentity(_PROBE_PATH_LABEL, pin.version, pin.file_identity.sha256),
+        _token_digest(profile),
+        "argv",
+        _CWD_LABELS[profile],
+        _ENVIRONMENT_NAMES,
+        _POLICIES[profile],
+    )
+    return Manifest(identity, required_phases_for_profile("read-only"))
+
+
+def _not_run_receipt(manifest: Manifest) -> Receipt:
+    phases = tuple(
+        PhaseReceipt(
+            phase.phase_id,
+            phase.expected_result,
+            False,
+            False,
+            "not-run",
+            None,
+            False,
+            (),
+            CleanupInventory(),
+        )
+        for phase in manifest.required_phases
+    )
+    return Receipt(manifest.identity, _BLOCKED_REASON, phases)
+
+
+def _profile_record(pin: OpenCodeExecutablePin, profile: str) -> OpenCodeProfileRecord:
+    manifest = _profile_manifest(pin, profile)
+    receipt = _not_run_receipt(manifest)
+    judgment = judge_profile(manifest, receipt)
+    return OpenCodeProfileRecord(
+        profile,
+        _token_digest(profile),
+        hashlib.sha256(serialize_manifest(manifest).encode("utf-8")).hexdigest(),
+        manifest.identity.argv_sha256,
+        manifest.identity.sandbox_policy_id,
+        manifest.identity.permission_profile,
+        manifest.identity.prompt_transport,
+        manifest.identity.environment_allowlist,
+        manifest.identity.cwd,
+        receipt.blocked_reason or "",
+        tuple(phase.phase_id for phase in receipt.phases),
+        tuple(phase.outcome for phase in receipt.phases),
+        judgment.status,
+        judgment.reason_codes,
     )
 
 
-def _expected(phase_id: str) -> tuple[ToolEvidence, ...]:
-    if phase_id == "positive-read":
-        return (ToolEvidence("filesystem", "read", "workspace", "allowed"),)
-    if phase_id == "positive-write":
-        return (ToolEvidence("filesystem", "write", "workspace", "allowed"),)
-    if phase_id in {"outside-path", "symlink", "git", "secret"}:
-        target = "outside" if phase_id == "outside-path" else phase_id
-        return (
-            ToolEvidence("filesystem", "read", target, "denied"),
-            ToolEvidence("filesystem", "write", target, "denied"),
-        )
-    if phase_id in {"local-network", "external-network"}:
-        return (ToolEvidence("network", "connect", phase_id, "denied"),)
-    if phase_id == "process":
-        return (ToolEvidence("process", "spawn", "process", "denied"),)
-    if phase_id == "cleanup":
-        return (ToolEvidence("cleanup", "inspect", "cleanup", "clean"),)
-    _fail(f"unknown probe phase: {phase_id}")
-
-
-def _permitted(phase_id: str) -> tuple[ToolEvidence, ...]:
-    expected = _expected(phase_id)
-    values = list(expected)
-    for item in expected:
-        alternate = (
-            "allowed"
-            if item.result == "denied"
-            else "denied"
-            if item.result == "allowed"
-            else "residual"
-        )
-        values.append(ToolEvidence(item.tool, item.operation, item.target, alternate))
-    return tuple(values)
-
-
-def attest_phase(
-    phase_id: str,
-    evidence: Iterable[ToolEvidence],
-    *,
-    exit_code: int | None,
-    timed_out: bool = False,
-    cleanup: CleanupInventory | None = None,
-    strict: bool = True,
-) -> PhaseReceipt:
-    expected = _expected(phase_id)
-    observed = tuple(evidence)
-    permitted = _permitted(phase_id)
-    if any(not isinstance(item, ToolEvidence) for item in observed):
-        raise ReceiptValidationError("phase evidence must contain ToolEvidence values")
-    operations = tuple((item.tool, item.operation, item.target) for item in observed)
-    if len(set(operations)) != len(operations) or any(
-        item not in permitted for item in observed
-    ):
-        raise ReceiptValidationError(f"phase evidence is invalid: {phase_id}")
-    if strict and (
-        len(observed) != len(expected)
-        or tuple((item.tool, item.operation, item.target) for item in observed)
-        != tuple((item.tool, item.operation, item.target) for item in expected)
-    ):
-        raise ReceiptValidationError(f"phase evidence is incomplete: {phase_id}")
-    if timed_out and exit_code is not None:
-        raise ReceiptValidationError("timeout phase must not contain an exit code")
-    if not timed_out and exit_code is None:
-        raise ReceiptValidationError("non-timeout phase must contain an exit code")
-    if phase_id == "cleanup" and cleanup is None:
-        raise ReceiptValidationError("cleanup phase requires an observed inventory")
-    inventory = cleanup or CleanupInventory()
-    if phase_id == "cleanup" and inventory.has_residuals:
-        observed = (ToolEvidence("cleanup", "inspect", "cleanup", "residual"),)
-    outcome = (
-        "timeout"
-        if timed_out
-        else "failed"
-        if exit_code not in {None, 0}
-        else "passed"
-        if observed == expected
-        else "inconclusive"
-    )
-    return PhaseReceipt(
-        phase_id,
-        "allow"
-        if phase_id.startswith("positive-")
-        else "clean"
-        if phase_id == "cleanup"
-        else "deny",
-        True,
-        bool(observed),
-        outcome,
-        exit_code,
-        timed_out,
-        observed,
-        inventory,
+def _historical_provenance() -> HistoricalSymlinkProvenance:
+    return HistoricalSymlinkProvenance(
+        "2026-08-29",
+        HISTORICAL_SOURCE_DIGEST,
+        "unverified",
+        OPENCODE_VERSION,
+        OPENCODE_SHA256,
+        _POLICIES[PROFILE_RAW],
     )
 
 
-def attest_profile(
-    parsed: ParsedOpenCodeEvents,
-    *,
-    exit_code: int | None,
-    timed_out: bool = False,
-    cleanup: CleanupInventory | None = None,
-) -> tuple[PhaseReceipt, ...]:
-    """Assemble the complete read-only matrix; missing evidence stays inconclusive."""
-
-    evidence = parsed.evidence if parsed.candidate_ready else ()
-    phases: list[PhaseReceipt] = []
-    for spec in required_phases_for_profile("read-only"):
-        if spec.phase_id == "cleanup":
-            if cleanup is None:
-                phases.append(
-                    PhaseReceipt(
-                        spec.phase_id,
-                        spec.expected_result,
-                        False,
-                        False,
-                        "not-run",
-                        None,
-                        False,
-                        (),
-                        CleanupInventory(),
-                    )
-                )
-                continue
-            cleanup_evidence = (
-                (ToolEvidence("cleanup", "inspect", "cleanup", "residual"),)
-                if cleanup.has_residuals
-                else (ToolEvidence("cleanup", "inspect", "cleanup", "clean"),)
-            )
-            phases.append(
-                attest_phase(
-                    spec.phase_id,
-                    cleanup_evidence,
-                    exit_code=0,
-                    cleanup=cleanup,
-                )
-            )
-            continue
-        relevant = tuple(item for item in evidence if item in _permitted(spec.phase_id))
-        phases.append(
-            attest_phase(
-                spec.phase_id,
-                relevant,
-                exit_code=exit_code,
-                timed_out=timed_out,
-                strict=False,
-            )
-        )
-    return tuple(phases)
-
-
-def build_probe_manifest(
-    *,
-    profile: ProbeProfile,
-    workspace: Path,
-    executable: ExecutableIdentity,
-    file_identity: FileIdentity,
-    argv: Sequence[str],
-    environment_allowlist: Sequence[str],
-) -> Manifest:
-    """Build PR #19's generic manifest for one OpenCode profile."""
-
-    if profile not in {"raw-workspace", "snapshot"}:
-        _fail(f"unsupported OpenCode probe profile: {profile}")
-    if executable.sha256 != file_identity.sha256:
-        _fail("manifest executable hash does not match file identity")
-    if any(
-        not isinstance(value, int) or isinstance(value, bool) or value < 0
-        for value in (
-            file_identity.device,
-            file_identity.inode,
-            file_identity.size,
-            file_identity.mtime_ns,
-        )
-    ):
-        _fail("manifest file identity metadata is invalid")
-    if executable.version != OPENCODE_VERSION:
-        _fail("manifest executable version is not the pinned OpenCode version")
-    if not argv or any(not isinstance(item, str) or not item for item in argv):
-        _fail("manifest argv must contain non-empty strings")
-    canonical = canonical_opencode_argv(
-        executable,
-        workspace,
-        model=OPENCODE_MODEL,
-        variant=OPENCODE_VARIANT,
-        prompt=argv[3] if len(argv) > 3 else "",
-    )
-    if tuple(argv) != canonical or _DANGEROUS_FLAGS.intersection(argv):
-        _fail("manifest argv is not the canonical OpenCode read-only command")
-    if any(not isinstance(value, str) for value in environment_allowlist):
-        _fail("manifest environment allowlist must contain strings")
-    environment = tuple(sorted(environment_allowlist))
-    if len(set(environment)) != len(environment):
-        _fail("manifest environment allowlist contains duplicates")
-    allowed_environment = set(SAFE_ENV_KEYS) | {"OPENCODE_API_KEY"}
-    if any(
-        value not in allowed_environment
-        and not value.startswith("LC_")
-        and not value.startswith("XDG_")
-        for value in environment
-    ):
-        _fail("manifest environment allowlist contains an unsupported name")
-    digest = hashlib.sha256(
-        json.dumps(
-            list(argv), ensure_ascii=False, separators=(",", ":"), allow_nan=False
-        ).encode("utf-8")
-    ).hexdigest()
-    return Manifest(
-        ProfileIdentity(
-            CURRENT_SCHEMA_VERSION,
-            "opencode",
-            "read-only",
-            platform.system().lower(),
-            platform.machine().lower(),
-            PROBE_REVISION,
-            executable,
-            digest,
-            "argv",
-            str(workspace.resolve(strict=False)),
-            environment,
-            RAW_POLICY_ID if profile == "raw-workspace" else SNAPSHOT_POLICY_ID,
-        ),
-        required_phases_for_profile("read-only"),
-    )
-
-
-def canonical_opencode_argv(
-    executable: ExecutableIdentity,
-    workspace: Path,
-    *,
-    model: str,
-    variant: str,
-    prompt: str,
-) -> tuple[str, ...]:
-    if executable.version != OPENCODE_VERSION:
-        _fail("canonical argv requires the pinned OpenCode version")
-    executable_path = str(Path(executable.path).resolve(strict=False))
-    if executable.path != executable_path:
-        _fail("executable path must already be canonical")
-    workspace_path = str(workspace.resolve(strict=False))
-    if model != OPENCODE_MODEL or variant != OPENCODE_VARIANT:
-        _fail("canonical argv requires the pinned OpenCode model and variant")
-    if not prompt or prompt.startswith("-"):
-        _fail("canonical argv prompt is invalid")
+def _blocked_observations() -> tuple[BlockedObservation, ...]:
     return (
-        executable_path,
-        "--pure",
-        "run",
-        prompt,
-        "--format",
-        "json",
-        "--model",
-        model,
-        "--dir",
-        workspace_path,
-        "--variant",
-        variant,
+        BlockedObservation(
+            "historical",
+            "raw-symlink-escape",
+            "2026-08-29",
+            HISTORICAL_SOURCE_DIGEST,
+            "unverified",
+        ),
+        BlockedObservation(
+            "current",
+            "auth-list-zero-credentials",
+            "2026-08-30",
+            AUTH_SOURCE_DIGEST,
+            "verified",
+        ),
     )
 
 
-def make_historical_receipt(
-    manifest: Manifest, evidence: HistoricalSymlinkEvidence
-) -> tuple[Receipt, Judgment]:
-    if manifest.identity.sandbox_policy_id != RAW_POLICY_ID:
-        raise ReceiptValidationError(
-            "historical evidence cannot target snapshot policy"
-        )
-    phases: list[PhaseReceipt] = []
-    for spec in manifest.required_phases:
-        if spec.phase_id == "symlink":
-            phases.append(
-                attest_phase("symlink", evidence.evidence, exit_code=0, strict=True)
-            )
-        else:
-            phases.append(
-                PhaseReceipt(
-                    spec.phase_id,
-                    spec.expected_result,
-                    False,
-                    False,
-                    "not-run",
-                    None,
-                    False,
-                    (),
-                    CleanupInventory(),
-                )
-            )
-    receipt = Receipt(manifest.identity, None, tuple(phases))
-    return receipt, judge_profile(manifest, receipt)
+def build_static_probe() -> OpenCodeStaticProbe:
+    """Build fixed raw/snapshot records without a provider turn."""
+
+    pin = static_preflight()
+    return OpenCodeStaticProbe(
+        pin,
+        tuple(_profile_record(pin, profile) for profile in PROFILES),
+        BlockedState(_BLOCKED_REASON, _blocked_observations()),
+        _historical_provenance(),
+    )
 
 
-def assemble_receipt(
-    manifest: Manifest,
-    phases: Iterable[PhaseReceipt],
-    *,
-    blocked_reason: str | None = None,
-    attestation: ParsedOpenCodeEvents | None = None,
-    run_nonce: str | None = None,
-    targets_fingerprint: str | None = None,
-) -> tuple[Receipt, Judgment]:
-    if blocked_reason is not None and blocked_reason not in BLOCKER_CODES:
-        raise ReceiptValidationError("unsupported blocked reason")
-    if blocked_reason is None:
-        if attestation is None or attestation._parser_token is not _PARSER_TOKEN:
-            raise ReceiptValidationError("current receipt requires parser attestation")
-        if not attestation.candidate_ready:
-            raise ReceiptValidationError(
-                "current receipt has incomplete provider attestation"
-            )
-        expected_profile = (
-            "raw-workspace"
-            if manifest.identity.sandbox_policy_id == RAW_POLICY_ID
-            else "snapshot"
-            if manifest.identity.sandbox_policy_id == SNAPSHOT_POLICY_ID
-            else None
-        )
-        if (
-            expected_profile is None
-            or manifest.identity.permission_profile != "read-only"
-            or attestation.binding.profile != expected_profile
-        ):
-            raise ReceiptValidationError("receipt profile does not match attestation")
-        if attestation.binding.manifest_sha256 != manifest_digest(manifest):
-            raise ReceiptValidationError("receipt manifest does not match attestation")
-        if run_nonce != attestation.binding.run_nonce:
-            raise ReceiptValidationError("receipt run nonce does not match attestation")
-        if targets_fingerprint != attestation.binding.targets_sha256:
-            raise ReceiptValidationError("receipt targets do not match attestation")
-    receipt = Receipt(manifest.identity, blocked_reason, tuple(phases))
-    return receipt, judge_profile(manifest, receipt)
+def validate_static_probe(probe: OpenCodeStaticProbe) -> None:
+    """Re-read the pinned file and reject forged profile/provenance records."""
+
+    if not isinstance(probe, OpenCodeStaticProbe):
+        _fail("static probe has an invalid type")
+    observed = static_preflight()
+    if probe.pin != observed:
+        _fail("OpenCode executable pin does not match static preflight")
+    expected = OpenCodeStaticProbe(
+        observed,
+        tuple(_profile_record(observed, profile) for profile in PROFILES),
+        BlockedState(_BLOCKED_REASON, _blocked_observations()),
+        _historical_provenance(),
+    )
+    if probe != expected:
+        _fail("static probe does not match recomputed provenance")
+
+
+def _record_payload(record: OpenCodeProfileRecord) -> dict[str, object]:
+    return {
+        "profile": record.profile,
+        "role_token_digest": record.role_token_digest,
+        "manifest_digest": record.manifest_digest,
+        "argv_sha256": record.argv_sha256,
+        "policy_id": record.policy_id,
+        "permission_profile": record.permission_profile,
+        "prompt_transport": record.prompt_transport,
+        "environment_allowlist": list(record.environment_allowlist),
+        "cwd": record.cwd_label,
+        "blocked_reason": record.blocked_reason,
+        "phase_ids": list(record.phase_ids),
+        "phase_outcomes": list(record.phase_outcomes),
+        "status": record.status,
+        "reason_codes": list(record.reason_codes),
+    }
+
+
+def serialize_static_probe(probe: OpenCodeStaticProbe) -> str:
+    """Serialize redacted static evidence after a fresh provider-free validation."""
+
+    validate_static_probe(probe)
+    payload: dict[str, object] = {
+        "artifact": "opencode-static-probe",
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "probe_revision": PROBE_REVISION,
+        "pin": {
+            "path": _PROBE_PATH_LABEL,
+            "version": probe.pin.version,
+            "sha256": probe.pin.file_identity.sha256,
+            "device": probe.pin.file_identity.device,
+            "inode": probe.pin.file_identity.inode,
+            "size": probe.pin.file_identity.size,
+            "mtime_ns": probe.pin.file_identity.mtime_ns,
+        },
+        "profiles": [_record_payload(record) for record in probe.profiles],
+        "blocked": {
+            "reason": probe.blocked.reason,
+            "provenance": [
+                {
+                    "source": item.source,
+                    "code": item.code,
+                    "observed_at": item.observed_at,
+                    "source_digest": item.source_digest,
+                    "verification_status": item.verification_status,
+                }
+                for item in probe.blocked.observations
+            ],
+        },
+        "historical_symlink": {
+            "verdict": "rejected",
+            "observed_at": probe.historical.observed_at,
+            "source_digest": probe.historical.source_digest,
+            "verification_status": probe.historical.verification_status,
+            "executable_version": probe.historical.executable_version,
+            "executable_sha256": probe.historical.executable_sha256,
+            "policy_id": probe.historical.policy_id,
+        },
+    }
+    return json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )

@@ -84,34 +84,20 @@ API without starting a provider.
 
 ## OpenCode probe status
 
-`agent_team.opencode_probe` builds the two independent manifests and parses only
-terminal JSON tool events. A text event containing a shell command, path, or
-`worker_done` is never reinterpreted. Each attestation records the provider tool,
-abstract operation, declared target, and structured result; only an explicit
-permission-denial code becomes `denied`. Provider errors, failures, timeouts,
-and top-level error events remain inconclusive and cannot become a candidate.
-Missing or duplicate call IDs, duplicate operations, and incomplete final
-completion are rejected. A negative phase with an `allowed` result is retained
-as an explicit boundary violation, so the raw-workspace symlink escape is
-rejected rather than discarded as malformed evidence.
-
-The probe binding includes the profile, run nonce, manifest digest, target-tree
-fingerprint, and fixed process-probe digest. The assembler checks that binding
-before accepting a current receipt; raw evidence cannot be attached to the
-snapshot profile. The manifest builder accepts only the adapter's canonical
-`<executable> --pure run <prompt> --format json --model opencode-go/kimi-k2.6
---dir <workspace> --variant low` argv shape and the closed safe-environment
-name set. Before execution, the adapter copies verified bytes to an owned,
-read-only private executable and runs that copy, closing the pathname TOCTOU
-window.
+`agent_team.opencode_probe` is intentionally static in this change. It reads the
+fixed installation identity and builds redacted, role-token manifests; it does
+not start OpenCode, parse provider events, assemble a current candidate receipt,
+or expose a live runner. The authenticated permission matrix is a separate
+follow-up for Issue #22.
 
 The pinned OpenCode `1.18.25` executable was observed with SHA-256
 `88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`. The
-2026-08-30 disposable live attempt used that exact binary and isolated XDG
-roots, but `opencode auth list` reported zero credentials; no login, package
-installation, or retry was performed. The snapshot profile is therefore
-`blocked-authentication`, not `candidate`. The separate raw-workspace profile
-remains `rejected` from the prior synthetic-marker symlink-escape observation.
+static record keeps device, inode, size, mtime, and hash provenance while
+serializing only the redacted path `/probe/opencode`. Both fixed profiles are
+`blocked-authentication` with every required phase `not-run`, based on the
+current `auth-list-zero-credentials` observation. The prior raw-workspace
+synthetic-marker symlink escape remains a separate historical `rejected`
+observation with `unverified` provenance; it is not promoted to a current run.
 Neither profile is registered or connected to the Orca lifecycle.
 
 ## Why Workers remain rejected

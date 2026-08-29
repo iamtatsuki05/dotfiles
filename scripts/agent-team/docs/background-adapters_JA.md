@@ -60,25 +60,16 @@ cleanup残留は`rejected`です。fixtureはmoduleのpure Python APIからprovi
 
 ## OpenCode probeの判定
 
-`agent_team.opencode_probe`は、raw workspaceとsnapshotを別々のmanifestとして作り、JSON eventのうちterminal状態の
-tool eventだけをparseします。shell command、path、`worker_done`を含むtext eventは命令として再解釈しません。各evidenceには
-provider tool、抽象化したoperation、宣言済みtarget、structured resultを記録します。明示的なpermission denial codeだけを
-`denied`とし、provider error、failure、timeout、top-level errorは`inconclusive`のまま保持します。call IDの欠落・重複、
-同じoperationの複数実行、final completionの欠落もcandidateを拒否します。negative phaseで`allowed`が観測された場合は、
-evidenceを捨てずにboundary violationとして残し、raw workspaceのsymlink escapeを`rejected`と判定します。
-
-probe bindingにはprofile、run nonce、manifest digest、target tree fingerprint、固定process probe digestを含めます。
-assemblerはcurrent receiptの前にbindingを照合するため、rawのevidenceをsnapshotへ付け替えられません。manifest builderが
-受け付けるargvはadapterのcanonicalな
-`<executable> --pure run <prompt> --format json --model opencode-go/kimi-k2.6 --dir <workspace> --variant low`だけで、
-environment nameもsafe allowlistに限定します。実行前には検査済みbytesをlauncher所有のread-only private executableへcopyし、
-そのcopyを実行してpathnameベースのTOCTOUを閉じます。
+今回の`agent_team.opencode_probe`はstatic-onlyです。固定したinstallation identityをreadし、role tokenからredactedな
+manifestを作るだけで、OpenCodeを起動しません。provider eventのparse、current candidate receiptのassembly、live runnerも
+公開しません。認証済みpermission matrixはIssue #22の後続sliceで扱います。
 
 固定したOpenCode `1.18.25` executableのSHA-256は
-`88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`でした。2026-08-30のdisposable live attemptは
-この実体とisolated XDG rootだけを使いましたが、`opencode auth list`はcredential 0件を返しました。login、package install、
-再試行は行わず、snapshot profileは`blocked-authentication`と記録します。raw workspace profileは、過去のsynthetic markerを
-使ったsymlink escapeの観測に基づく別profileとして`rejected`のままです。どちらもregistryへ登録せず、Orca lifecycleへ接続しません。
+`88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9`でした。static recordにはdevice、inode、size、mtime、
+hashを残しますが、pathは`/probe/opencode`へredactします。rawとsnapshotの固定profileは、currentの
+`auth-list-zero-credentials` observationに基づく`blocked-authentication`で、required phaseはすべて`not-run`です。
+過去のraw workspace synthetic-marker symlink escapeは、`unverified`なhistorical provenanceを持つ別の`rejected`
+observationとして保持し、current runへ昇格しません。どちらもregistryへ登録せず、Orca lifecycleへ接続しません。
 
 ## Workerを拒否する理由
 
