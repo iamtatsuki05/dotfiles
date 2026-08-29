@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
-from agent_team.adapters import ProcessResult
+from agent_team.adapters import ExecutionError, ProcessResult
 from agent_team.hermes_probe import (
+    EXTERNAL_DOCKER_POLICY_ID,
+    HERMES_ENVIRONMENT_ALLOWLIST,
     HERMES_LAUNCHER_IDENTITY,
     HERMES_RELEASE,
     HERMES_SOURCE_COMMIT,
@@ -16,19 +18,20 @@ from agent_team.hermes_probe import (
     HERMES_TARGET_IDENTITY,
     HERMES_VERSION,
     HERMES_VERSION_BANNER,
-    ExternalSandbox,
+    HISTORICAL_PROVENANCE,
     HermesExecutableIdentity,
+    HermesExternalPreflight,
     HermesProbeError,
+    HermesProbeReceipt,
     HermesProfile,
-    HermesRunArtifact,
-    HermesSandboxPreflight,
+    build_blocked_external_receipt,
     build_probe_manifest,
     build_rejected_local_receipt,
     build_unaccepted_acp_receipt,
     inspect_hermes_identity,
+    inspect_installed_hermes,
     parse_launcher_target,
     preflight_external_sandbox,
-    run_external_probe,
     serialize_hermes_receipt,
 )
 from agent_team.probe_receipts import (
@@ -36,9 +39,9 @@ from agent_team.probe_receipts import (
     ExecutableIdentity,
     Manifest,
     PhaseReceipt,
+    Receipt,
     ToolEvidence,
     required_phases_for_profile,
-    serialize_manifest,
 )
 
 
@@ -68,15 +71,6 @@ def manifest(profile: HermesProfile = "direct-local-oneshot") -> Manifest:
         executable=executable(),
         file_identity=hermes_identity().target,
         hermes_identity=hermes_identity(),
-        argv=(
-            "/private/hermes/bin/hermes",
-            "--safe-mode",
-            "--toolsets",
-            "file",
-            "--oneshot",
-            "DO_NOT_PERSIST_THIS_PROMPT",
-        ),
-        environment_allowlist=("HOME", "PATH"),
     )
 
 
@@ -100,8 +94,8 @@ def expected_phase(phase_id: str) -> tuple[ToolEvidence, ...]:
     return (ToolEvidence("cleanup", "inspect", "cleanup", "clean"),)
 
 
-def candidate_phases() -> tuple[PhaseReceipt, ...]:
-    return tuple(
+def candidate_receipt(profile_manifest: Manifest) -> Receipt:
+    phases = tuple(
         PhaseReceipt(
             spec.phase_id,
             spec.expected_result,
@@ -115,6 +109,7 @@ def candidate_phases() -> tuple[PhaseReceipt, ...]:
         )
         for spec in required_phases_for_profile("read-only")
     )
+    return Receipt(profile_manifest.identity, None, phases)
 
 
 class HermesProbeContractTest(unittest.TestCase):
@@ -179,7 +174,30 @@ class HermesProbeContractTest(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(HermesProbeError):
                 parse_launcher_target(source)
 
-    def test_manifest_profiles_have_distinct_policies_and_only_store_argv_digest(
+    def test_installed_identity_reader_uses_real_files_without_provider_start(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            launcher = root / "hermes-launcher"
+            target = root / "hermes"
+            launcher.write_text(f'exec "{target}" "$@"\n', encoding="utf-8")
+            target.write_text("#!/bin/sh\n", encoding="utf-8")
+            launcher.chmod(0o700)
+            target.chmod(0o700)
+
+            with self.assertRaises(HermesProbeError):
+                # The files are deliberately not the pinned installation. The
+                # read-only inspection must fail before any provider turn.
+                inspect_installed_hermes(
+                    launcher,
+                    target,
+                    version_banner=HERMES_VERSION_BANNER,
+                    source_commit=HERMES_SOURCE_COMMIT,
+                    source_describe=HERMES_SOURCE_DESCRIBE,
+                )
+
+    def test_manifest_has_internal_profile_contract_and_rejects_caller_argv_env(
         self,
     ) -> None:
         manifests = {
@@ -195,50 +213,58 @@ class HermesProbeContractTest(unittest.TestCase):
             3,
         )
         self.assertEqual(
-            manifests["direct-local-oneshot"].identity.permission_profile,
-            "read-only",
-        )
-        self.assertEqual(
             manifests["direct-local-oneshot"].identity.prompt_transport,
             "argv",
         )
         self.assertEqual(manifests["acp"].identity.prompt_transport, "stdin")
-        expected_digest = hashlib.sha256(
-            json.dumps(
-                [
-                    "/private/hermes/bin/hermes",
-                    "--safe-mode",
-                    "--toolsets",
-                    "file",
-                    "--oneshot",
-                    "DO_NOT_PERSIST_THIS_PROMPT",
-                ],
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
         self.assertEqual(
-            manifests["direct-local-oneshot"].identity.argv_sha256,
-            expected_digest,
+            manifests["direct-local-oneshot"].identity.environment_allowlist,
+            HERMES_ENVIRONMENT_ALLOWLIST,
         )
-        serialized = serialize_manifest(manifests["direct-local-oneshot"])
-        self.assertNotIn("DO_NOT_PERSIST_THIS_PROMPT", serialized)
+        self.assertEqual(
+            manifests["direct-local-oneshot"].identity.os_name,
+            "darwin",
+        )
+        self.assertEqual(
+            manifests["direct-local-oneshot"].identity.architecture,
+            "arm64",
+        )
+        self.assertNotEqual(
+            manifests["direct-local-oneshot"].identity.argv_sha256,
+            manifests["acp"].identity.argv_sha256,
+        )
+
+        for kwargs in (
+            {"argv": ("hermes", "--yolo", "--oneshot", "prompt")},
+            {"environment_allowlist": ("HOME", "OPENCODE_API_KEY")},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(HermesProbeError):
+                build_probe_manifest(
+                    profile="direct-local-oneshot",
+                    workspace=Path("/private/hermes-workspace"),
+                    executable=executable(),
+                    file_identity=hermes_identity().target,
+                    hermes_identity=hermes_identity(),
+                    **kwargs,
+                )
 
         with self.assertRaises(HermesProbeError):
             build_probe_manifest(
-                profile="direct-local-oneshot",
+                profile=cast(HermesProfile, "unknown"),
                 workspace=Path("/private/hermes-workspace"),
                 executable=executable(),
-                file_identity=replace(hermes_identity().target, inode=100),
+                file_identity=hermes_identity().target,
                 hermes_identity=hermes_identity(),
-                argv=("/private/hermes/bin/hermes", "--oneshot", "prompt"),
-                environment_allowlist=("HOME", "PATH"),
             )
 
-    def test_known_direct_writes_are_preserved_and_judged_rejected(self) -> None:
+    def test_known_direct_writes_keep_historical_provenance_and_are_rejected(
+        self,
+    ) -> None:
         receipt = build_rejected_local_receipt(manifest())
 
         self.assertEqual(receipt.judgment.status, "rejected")
         self.assertIn("boundary-violation", receipt.judgment.reason_codes)
+        self.assertEqual(receipt.provenance, HISTORICAL_PROVENANCE)
         self.assertEqual(
             receipt.observed,
             (
@@ -249,137 +275,144 @@ class HermesProbeContractTest(unittest.TestCase):
         )
         self.assertEqual(receipt.generic_judgment.status, "rejected")
 
-        serialized = serialize_hermes_receipt(receipt)
-        self.assertIn('"status":"rejected"', serialized)
-        self.assertIn('"target":"outside"', serialized)
-        self.assertNotIn("DO_NOT_PERSIST_THIS_PROMPT", serialized)
-        self.assertNotIn("raw provider output", serialized)
+        serialized = json.loads(serialize_hermes_receipt(receipt))
+        self.assertEqual(serialized["status"], "rejected")
+        self.assertEqual(serialized["provenance"]["observed_at"], "2026-08-29")
+        self.assertEqual(
+            serialized["provenance"]["source_artifact_sha256"],
+            HISTORICAL_PROVENANCE.source_artifact_sha256,
+        )
+        self.assertEqual(
+            serialized["provenance"]["historical_verification_status"],
+            "historical-unverified",
+        )
+        self.assertEqual(
+            serialized["provenance"]["current_verification_status"],
+            "static-identity-verified",
+        )
+        serialized_text = json.dumps(serialized)
+        self.assertNotIn("DO_NOT_PERSIST", serialized_text)
+        self.assertNotIn("raw provider output", serialized_text)
+        self.assertNotIn("/Users/", serialized_text)
 
         with self.assertRaises(HermesProbeError):
-            build_rejected_local_receipt(
-                manifest(),
-                observed=receipt.observed[:2],
-            )
+            build_rejected_local_receipt(manifest(), observed=receipt.observed[:2])
 
-    def test_acp_and_safe_mode_are_not_filesystem_sandbox_evidence(self) -> None:
+    def test_acp_is_rejected_as_protocol_and_not_sandbox_evidence(self) -> None:
         receipt = build_unaccepted_acp_receipt(manifest("acp"))
 
         self.assertEqual(receipt.judgment.status, "rejected")
-        self.assertIn("not-a-filesystem-sandbox", receipt.judgment.reason_codes)
+        self.assertEqual(receipt.judgment.reason_codes, ("not-a-filesystem-sandbox",))
         self.assertEqual(receipt.observed, ())
+        self.assertIsNone(receipt.provenance)
         self.assertEqual(receipt.generic_judgment.status, "not-run")
 
-    def test_external_preflight_is_read_only_and_does_not_fallback(self) -> None:
+    def test_external_preflight_never_produces_available_or_candidate(self) -> None:
         calls: list[tuple[str, ...]] = []
 
         def run(argv: tuple[str, ...]) -> ProcessResult:
             calls.append(argv)
-            return ProcessResult(1, "", "daemon unavailable; raw provider output")
+            return ProcessResult(0, "29.7.2\n", "daemon output must not persist")
 
         result = preflight_external_sandbox(
             "docker",
             runner=run,
             lookup=lambda name: "/usr/bin/docker" if name == "docker" else None,
         )
-        self.assertFalse(result.available)
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.classification, "sandbox-unverified")
         self.assertEqual(result.blocked_reason, "docker")
         self.assertEqual(
             calls, [("/usr/bin/docker", "info", "--format", "{{.ServerVersion}}")]
         )
-        self.assertNotIn("daemon unavailable", repr(result))
 
-        empty = preflight_external_sandbox(
-            "docker",
-            runner=lambda _argv: ProcessResult(0, "", ""),
-            lookup=lambda _name: "/usr/bin/docker",
+        receipt = build_blocked_external_receipt(manifest("external-docker"), result)
+        self.assertEqual(receipt.judgment.status, "blocked")
+        self.assertIn("external-sandbox-unverified", receipt.judgment.reason_codes)
+        self.assertTrue(all(not phase.attempted for phase in receipt.receipt.phases))
+        self.assertNotIn("daemon output", serialize_hermes_receipt(receipt))
+
+    def test_external_preflight_missing_timeout_and_execution_error_are_blocked(
+        self,
+    ) -> None:
+        missing = preflight_external_sandbox(
+            "openshell",
+            runner=lambda _argv: ProcessResult(0, "unused", "unused"),
+            lookup=lambda _name: None,
         )
-        self.assertFalse(empty.available)
+        self.assertEqual(missing.classification, "runtime-unavailable")
+        self.assertEqual(missing.blocked_reason, "platform")
 
+        def timeout(_argv: tuple[str, ...]) -> ProcessResult:
+            raise TimeoutError("secret timeout detail")
+
+        timed_out = preflight_external_sandbox(
+            "docker", runner=timeout, lookup=lambda _name: "/usr/bin/docker"
+        )
+        self.assertEqual(timed_out.classification, "runtime-timeout")
+
+        def failed(_argv: tuple[str, ...]) -> ProcessResult:
+            raise ExecutionError("raw provider output and token=must-not-persist")
+
+        execution_failed = preflight_external_sandbox(
+            "docker", runner=failed, lookup=lambda _name: "/usr/bin/docker"
+        )
+        self.assertEqual(execution_failed.classification, "runtime-execution-failed")
+        self.assertNotIn("token=must-not-persist", repr(execution_failed))
+
+    def test_external_preflight_rejects_relative_runtime_and_wrong_profile(
+        self,
+    ) -> None:
         with self.assertRaises(HermesProbeError):
             preflight_external_sandbox(
                 "docker",
-                runner=run,
+                runner=lambda _argv: ProcessResult(0, "ok", ""),
                 lookup=lambda _name: "docker",
             )
 
-        unavailable = preflight_external_sandbox(
-            "openshell",
-            runner=run,
-            lookup=lambda _name: None,
-        )
-        self.assertFalse(unavailable.available)
-        self.assertEqual(unavailable.blocked_reason, "platform")
-        self.assertEqual(len(calls), 1)
-
-        with self.assertRaises(HermesProbeError):
-            preflight_external_sandbox(
-                cast(ExternalSandbox, "unknown"),
-                runner=run,
-                lookup=lambda _: None,
-            )
-
-    def test_blocked_external_preflight_prevents_provider_turn(self) -> None:
-        preflight = HermesSandboxPreflight(
+        preflight = HermesExternalPreflight(
             runtime="docker",
-            available=False,
-            policy_id="hermes-external-docker-v1",
+            policy_id=EXTERNAL_DOCKER_POLICY_ID,
             blocked_reason="docker",
+            classification="sandbox-unverified",
         )
-        called = False
-
-        def provider(_manifest: object) -> HermesRunArtifact:
-            nonlocal called
-            called = True
-            raise AssertionError("provider must not start for a blocked preflight")
-
-        receipt = run_external_probe(manifest("external-docker"), preflight, provider)
-
-        self.assertFalse(called)
-        self.assertEqual(receipt.judgment.status, "blocked")
-        self.assertIn("blocked-docker", receipt.judgment.reason_codes)
-        self.assertTrue(all(not phase.attempted for phase in receipt.receipt.phases))
-
-    def test_available_external_preflight_is_the_only_path_to_provider_runner(
-        self,
-    ) -> None:
-        preflight = HermesSandboxPreflight(
-            runtime="docker",
-            available=True,
-            policy_id="hermes-external-docker-v1",
-            blocked_reason=None,
-        )
-        calls: list[str] = []
-
-        def provider(_manifest: object) -> HermesRunArtifact:
-            calls.append("provider")
-            return HermesRunArtifact(candidate_phases(), ())
-
-        receipt = run_external_probe(manifest("external-docker"), preflight, provider)
-
-        self.assertEqual(calls, ["provider"])
-        self.assertEqual(receipt.judgment.status, "candidate")
-
-        def unsafe_provider(_manifest: object) -> HermesRunArtifact:
-            return HermesRunArtifact(
-                candidate_phases(),
-                (ToolEvidence("filesystem", "write", "outside", "allowed"),),
-            )
-
-        unsafe = run_external_probe(
-            manifest("external-docker"), preflight, unsafe_provider
-        )
-        self.assertEqual(unsafe.judgment.status, "rejected")
-        self.assertIn("boundary-violation", unsafe.judgment.reason_codes)
+        with self.assertRaises(HermesProbeError):
+            build_blocked_external_receipt(manifest(), preflight)
 
         with self.assertRaises(HermesProbeError):
-            run_external_probe(manifest("direct-local-oneshot"), preflight, provider)
-
-        with self.assertRaises(HermesProbeError):
-            run_external_probe(
-                manifest("external-docker"),
-                replace(preflight, policy_id="hermes-external-openshell-v1"),
-                provider,
+            HermesExternalPreflight(
+                runtime="docker",
+                policy_id=EXTERNAL_DOCKER_POLICY_ID,
+                blocked_reason="docker",
+                classification="sandbox-unverified",
+                status=cast(Literal["blocked"], "available"),
             )
+
+    def test_serializer_recomputes_status_and_rejects_forged_candidate(self) -> None:
+        profile_manifest = manifest("external-docker")
+        forged = HermesProbeReceipt(
+            profile_manifest,
+            candidate_receipt(profile_manifest),
+            (),
+            None,
+        )
+        with self.assertRaises(HermesProbeError):
+            serialize_hermes_receipt(forged)
+
+        local = build_rejected_local_receipt(manifest())
+        tampered_manifest = replace(
+            local.manifest,
+            identity=replace(local.manifest.identity, prompt_transport="stdin"),
+        )
+        tampered = replace(local, manifest=tampered_manifest)
+        with self.assertRaises(HermesProbeError):
+            serialize_hermes_receipt(tampered)
+
+    def test_synthetic_candidate_api_is_not_public(self) -> None:
+        import agent_team.hermes_probe as module
+
+        self.assertFalse(hasattr(module, "HermesRunArtifact"))
+        self.assertFalse(hasattr(module, "run_external_probe"))
 
 
 if __name__ == "__main__":
