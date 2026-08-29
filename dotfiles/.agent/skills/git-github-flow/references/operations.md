@@ -22,13 +22,14 @@ gh pr list -R "$base_repo" --state all --limit 50 \
 git branch --all --no-color
 ```
 
-Issue/PR を作る前に `.github`、リポジトリ直下、`docs/` の Issue/PR テンプレートを探す。テンプレートがあれば、その構造と必須項目を保持して埋める。無い場合だけ [templates.md](templates.md) を読む。
+IssueまたはPRを作るときは、対象に対応するテンプレートを `.github`、リポジトリ直下、`docs/` から探す。テンプレートがあれば、その構造と必須項目を保持して埋める。無い場合だけ [templates.md](templates.md) を読む。
 
 ## 作業単位を決める
 
-- 1 Issue は、目的・スコープ・完了条件を短時間で理解できる一つの成果にする。
-- 原則として 1 Issue = 1 branch = 1 PR。PR は独立してレビュー・検証・merge できる大きさにする。
-- 分割しすぎて全体像が失われる場合は、親 tracker Issue を作り、子 Issue/PR をチェックリストと `Part of` / `Depends on` リンクでネストする。
+- IssueはPRの前提ではない。ユーザーが既存Issueへの対応を指定した場合は、そのIssueをbranch/PRへ紐づける。Issueが指定されず、repositoryにも作成必須の規約がなければ、PRのためだけに新しいIssueを作らない。
+- 新しいIssueは、ユーザーが作成を依頼した場合、repository規約で必須の場合、または別途追跡すべき親tracker・後続作業があり作成の許可を得た場合だけ作る。
+- PRは、目的・スコープ・完了条件を短時間で理解でき、独立してレビュー・検証・mergeできる一つの成果にする。Issueがある場合は原則として 1 Issue = 1 branch = 1 PR とする。
+- 分割しすぎて全体像が失われ、Issue作成も許可されている場合は、親tracker Issueを作り、子Issue/PRをチェックリストと `Part of` / `Depends on` リンクでネストする。
 - 子変更を個別に上位branchへ入れられない場合だけ integration branch と umbrella PR を使う。既存の長期 `develop` はそのまま使い、新規に作る一時 integration branch は通常の命名規約に従って、例えば `work/<topic>-integration` とする。各 PR の base、依存順、親 Issue、umbrella PR を相互リンクする。子PRと非既定branch向けumbrella PRは `Refs`、既定ブランチへ入る最終統合PRだけが完了させるIssueへの `Closes` を持つ。
 
 ## Branch と worktree
@@ -70,10 +71,10 @@ git merge-base --is-ancestor "$base_oid" "$head_remote/$branch"
 
 ## GitHub metadata と Development
 
-- すべての `gh issue create` / `gh pr create` に `--assignee @me` を含める。既存 Issue/PR は `gh issue edit` / `gh pr edit` で `@me` を追加する。
-- `gh label list` で確認した既存ラベルから、種類・領域・優先度など判断に役立つ最小限を選び、該当する Issue と PR の両方へ `--label` または `--add-label` で付ける。ラベルを推測で新設しない。適切な既存ラベルがなければ明示し、作成は別途許可を得る。
+- 実際に作成・編集する `gh issue create` / `gh pr create` に `--assignee @me` を含める。既存 Issue/PR は `gh issue edit` / `gh pr edit` で `@me` を追加する。片方を操作するために、もう片方を新規作成しない。
+- `gh label list` で確認した既存ラベルから、種類・領域・優先度など判断に役立つ最小限を選び、実際に作成・編集するIssue/PRへ `--label` または `--add-label` で付ける。ラベルを推測で新設しない。適切な既存ラベルがなければ明示し、作成は別途許可を得る。
 - GitHubのauto-closeを使う場合、PRのbaseが既定ブランチ以外なら、論理的に完了していても `Refs #123` を使う。PRのbaseが既定ブランチで、そのmergeがIssueを完了させる場合だけ `Closes #123` を使う。親 tracker は全体完了まで閉じず、`Part of #100` と子 Issue/PR のリンクを併記する。
-- Issue と branch の Development リンクは `gh issue develop`、作成後の確認は `gh issue develop --list 123` のように対象 Issue を指定する。
+- 対応対象の既存Issueがある場合、IssueとbranchのDevelopment linkは `gh issue develop`、作成後の確認は `gh issue develop --list 123` のように対象Issueを指定する。IssueがないPRではDevelopment linkや`Closes` / `Refs`を捏造しない。
 
 GitHub 上の作成・編集・状態確認は `gh issue ...`、`gh pr ...`、`gh label ...`、必要な場合の `gh api ...` で行う。ユーザーが依頼していない push、merge、close、branch/worktree 削除まで権限を広げない。`gh pr create` は未公開branchを暗黙にpushし得るため、PR作成の依頼にbranch公開が含まれる場合だけ明示的にpushし、`git ls-remote --exit-code --heads "$head_remote" "$branch"` でheadの存在を確認する。
 
@@ -111,15 +112,15 @@ PR本文のMarkdown見出し名は、ユーザー指示・既存テンプレー�
 
 見出し配下の説明文・箇条書き・チェック項目の言語は、今回の明示指示、同じリポジトリ・同種作業の代表的な最近のPR、デフォルト日本語の順で決める。履歴はhuman-authoredのReady/merged PRを優先し、bot・自動更新・未完成Draftは根拠にしない。言語が混在して一貫しない、または参考PRがない場合は日本語を使う。このPR言語規則はIssue見出しには適用しない。
 
-PR本文を保存・送信する前に、`#` から始まる全Markdown見出し行を監査し、見出し名がすべて英語であることを確認する。fallback Ready PRは `Why` / `What` / `Verification` / `Links` / `Risks and remaining work`、fallback Draft PRは `Status` / `Why` / `Completed` / `Remaining` / `Review focus` / `Partial verification` / `Links` を使う。
+PR本文を保存・送信する前に、`#` から始まる全Markdown見出し行を監査し、見出し名がすべて英語であることを確認する。fallback Ready PRは `Why` / `What` / `Verification` / `Risks and remaining work`、fallback Draft PRは `Status` / `Why` / `Completed` / `Remaining` / `Review focus` / `Partial verification` を使い、関連先がある場合だけ `Links` を加える。
 
-途中で PR を開く場合は Draft にし、タイトルを `[WIP] <concise English title>` とする。本文には完了済み、残作業、今回見てほしい点、部分検証、関連 Issue を明記する。
+途中で PR を開く場合は Draft にし、タイトルを `[WIP] <concise English title>` とする。本文には完了済み、残作業、今回見てほしい点、部分検証、関連Issueがあればそのリンクを明記する。
 
 Ready にする直前に実装と必要な検証を完了し、`gh pr edit` で `[WIP]` を外した最終 title と、最終的な変更・検証・リスクを反映した body に置き換えてから `gh pr ready` を実行する。本文置換時も既存の `Closes` / `Refs` / `Part of` / `Depends on` とURLを失わず、最終baseと完了条件に応じて `Closes` / `Refs` だけを更新する。未完了 PR が Ready なら `gh pr ready --undo` で Draft に戻す。
 
 ## 作成後の検証
 
-作成・編集後は readback し、Issue/PR URL、base/head、Draft 状態、title、body、`@me`、labels、Development の closing link が意図どおりか確認する。branch作成直後は、作成直前に記録した `base_oid` がhead branchの祖先であることも確認する。PR時点の `baseRefOid` は作成後に進み得るため、`headRefOid` の祖先であることを要求せず、両OIDは現在のserver stateとして記録する。
+作成・編集後は readback し、作成・編集したIssue/PRのURL、base/head、Draft状態、title、body、`@me`、labelsを確認する。対応する既存Issueがある場合だけDevelopmentとclosing linkも確認する。branch作成直後は、作成直前に記録した `base_oid` がhead branchの祖先であることも確認する。PR時点の `baseRefOid` は作成後に進み得るため、`headRefOid` の祖先であることを要求せず、両OIDは現在のserver stateとして記録する。
 
 ```bash
 gh issue view 42 -R "$base_repo" --json url,title,body,assignees,labels

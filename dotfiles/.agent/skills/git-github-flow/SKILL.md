@@ -5,7 +5,7 @@ description: Use when Git or GitHub work involves authentication, repositories, 
 
 # Git and GitHub Flow
 
-Git/GitHub作業の単一entrypoint。GitHubは`gh`、local Gitは`git`を使う。
+GitHubは`gh`、Gitは`git`を使う。
 
 ## USE FOR:
 
@@ -22,7 +22,7 @@ Git/GitHub作業の単一entrypoint。GitHubは`gh`、local Gitは`git`を使う
 - 最初に `gh auth status` と `git status --short --branch` を確認する。
 - read-onlyは自由。stage、commit、push、Issue/PR、merge等は操作ごとに明示された範囲だけ実行する。
 - repo規約、dirty state、branch topology、template、重複、labels、過去履歴を先に確認し、独立作業はworktreeへ分離する。
-- Issue/PRは`@me`、既存labels、Development linkをreadbackする。commit/PR titleとPR見出しは英語、本文は明示指示→同repoの最近のPR→日本語。
+- 作成・編集したIssue/PRへ`@me`と既存labelsを付けreadbackする。既存IssueだけをDevelopment linkし、PRのためのIssueは作らない。commit/PR titleとPR見出しは英語、本文は明示指示→最近のPR→日本語。
 - force-pushは直接・間接とも明示許可なしで禁止。共有履歴の取消はrevert、未公開commitの整理はsquash/rebaseを使う。
 
 ## Routing
@@ -34,4 +34,4 @@ Git/GitHub作業の単一entrypoint。GitHubは`gh`、local Gitは`git`を使う
 
 ## Completion
 
-URL、base/head SHA、metadata、Links、CI、remote stateをreadbackし、未検証・pending・既存failureを分けて報告する。
+URL、base/head SHA、metadata、既存Links、CI、remote stateをreadbackし、未検証・pending・既存failureを分けて報告する。
