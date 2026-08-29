@@ -469,6 +469,9 @@ test_waza_is_integrated_for_agent_skill_evaluations() {
   assert_contains "$WAZA_SECURITY_CHECK_EVAL_FILE" 'security-check-eval'
   assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'executor: copilot-sdk'
   assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'force_push_requires_authorization'
+  assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'empty_assignee_is_repaired'
+  assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'pr_starts_as_draft'
+  assert_contains "$WAZA_GIT_GITHUB_FLOW_MODEL_EVAL_FILE" 'ready_waits_for_checks'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'executor: copilot-sdk'
   assert_contains "$WAZA_SECURITY_CHECK_MODEL_EVAL_FILE" 'sql_injection_detected'
   assert_executable "$WAZA_MODEL_EVAL_SCRIPT"

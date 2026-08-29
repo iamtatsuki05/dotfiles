@@ -30,6 +30,21 @@ graders:
       regex_match:
         - "(?i)(assignee|@me).*label|label.*(assignee|@me)"
   - type: text
+    name: empty_assignee_is_repaired
+    config:
+      regex_match:
+        - "(?is)(assignee|担当).*(empty|missing|空|未設定).*(add-assignee|edit|補正|再設定)"
+  - type: text
+    name: pr_starts_as_draft
+    config:
+      regex_match:
+        - "(?i)(gh pr create[^\n]*--draft|Draft.*作成|create.*Draft)"
+  - type: text
+    name: ready_waits_for_checks
+    config:
+      regex_match:
+        - "(?is)(actions|checks?|CI).*(success|green|pass|成功|通過).*(gh pr ready|Ready)"
+  - type: text
     name: force_push_requires_authorization
     config:
       regex_match:
