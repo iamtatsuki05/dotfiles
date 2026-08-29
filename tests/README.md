@@ -9,7 +9,7 @@ This directory contains local and CI checks for the dotfiles repository.
 
 | Path | Purpose |
 |---|---|
-| `run.sh` | Main test runner used locally and by compatibility wrappers. |
+| `run.sh` | Main test runner used locally and by CI. |
 | `lib/` | Shared assertions and fixture helpers for shell tests. |
 | `test_agent_*.sh` | AI agent config, support matrix, and upstream skill checks. |
 | `test_chezmoi_*.sh` | Chezmoi source state and rendered-home checks. |
