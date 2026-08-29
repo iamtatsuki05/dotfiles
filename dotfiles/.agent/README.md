@@ -70,6 +70,7 @@ Use the same scratch-home pattern with the target agent's documented config-home
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
+| `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
