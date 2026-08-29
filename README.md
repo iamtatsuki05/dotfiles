@@ -1,8 +1,15 @@
 # dotfiles
 
-Japanese version: [README_JA.md](README_JA.md)
+[日本語](README_JA.md)
 
-Run:
+Personal dotfiles for reproducible macOS and Linux environments. Nix manages
+packages and declarative shell configuration, while chezmoi deploys files that
+belong directly under `$HOME`.
+
+## Quick start
+
+On macOS, `main.sh` installs Nix when needed. On Linux, install Nix first or
+use the [nix-portable path](docs/getting-started.md#linux-without-sudo).
 
 ```sh
 git clone https://github.com/iamtatsuki05/dotfiles.git
@@ -10,320 +17,42 @@ cd dotfiles
 zsh main.sh
 ```
 
-## Repository layout
+`main.sh` selects `full` on macOS and `cli` on Linux. Review the
+[getting-started guide](docs/getting-started.md) before using a different
+profile or setting up a restricted Linux host.
 
-| Path | Purpose |
-|---|---|
-| [`config/`](config/README.md) | Source configuration for Nix, terminals, shell templates, mise, and related tools. |
-| [`config/nix/`](config/nix/README.md) | Nix package lists, nix-darwin modules, Home Manager modules, and migration reports. |
-| [`home/`](home/README.md) | Chezmoi source state rendered into `$HOME`. |
-| [`scripts/`](scripts/README.md) | Setup, migration, update, sync, and evaluation helper scripts. |
-| [`tests/`](tests/README.md) | Local and CI checks. |
-| [`dotfiles/`](dotfiles/README.md) | Repo-managed dotfiles and runtime assets outside the normal chezmoi source tree. |
-| [`dotfiles/.agent/`](dotfiles/.agent/README.md) | Shared AI agent prompts, configs, hooks, skills, evals, and pet assets. |
+## Documentation
 
-## Setup profiles
+- [Getting started](docs/getting-started.md): prerequisites, profiles, initial
+  setup, and post-install checks.
+- [Configuration ownership](docs/configuration-ownership.md): which files are
+  managed by Nix, chezmoi, mise, Homebrew, and the repository.
+- [Maintenance](docs/maintenance.md): updating an existing clone, tests,
+  automatic synchronization, and cleanup.
+- [Package management and migration](docs/package-management.md): Nix package
+  lists, Homebrew and Mac App Store fallbacks, and migration commands.
+- [AI agent configuration](docs/ai-agents.md): shared prompts, app settings,
+  synchronization, evaluation, and Claude Code profiles.
+- [Secrets and safety](docs/secrets-and-safety.md): local credentials,
+  destructive commands, backups, and dry-run conventions.
+- [Troubleshooting](docs/troubleshooting.md): common setup, drift, Nix,
+  Homebrew, and agent-sync failures.
 
-`main.sh` picks a default profile by OS:
+The [documentation index](docs/README.md) also links to the focused READMEs
+inside `config/`, `home/`, `scripts/`, `tests/`, and `dotfiles/.agent/`.
 
-- macOS: `full`
-- Linux: `cli`
-
-`full` is the complete macOS setup. It applies nix-darwin, Home Manager, GUI apps, macOS defaults, launchd / systemd user timers, configs, mise tools, and Neovim.
-If Homebrew fallback entries are still configured for that profile, `main.sh` installs Homebrew before running the Nix switch.
-
-`cli` is a portable CLI-focused setup for Ubuntu and other Linux hosts. It skips GUI apps, macOS-only tools, macOS defaults, and launchd / systemd user timers, then applies only the Nix CLI package set.
-
-```sh
-# Ubuntu / Linux, or CLI-only setup on macOS
-zsh main.sh --cli-only
-
-# Apply only Nix/Home Manager CLI packages
-zsh scripts/nix_install.sh --cli-only
-
-# Install only Homebrew first when fallback apps still require it
-zsh scripts/install_homebrew.sh --profile full
-```
-
-## Updating an existing clone
-
-On another machine that already has this repository cloned, update the repository first, then apply chezmoi and Nix explicitly:
+## Common commands
 
 ```sh
-cd ~/src/dotfiles
-git pull --ff-only
-
-# Preview and apply home files managed by chezmoi.
+# Preview home-file changes.
 zsh scripts/chezmoi_apply.sh --dry-run
-zsh scripts/chezmoi_apply.sh --mark-default
 
-# Build-check and apply the CLI Nix / Home Manager / nix-darwin profile.
+# Build the CLI Nix configuration without switching.
 zsh scripts/nix_install.sh --cli-only --dry-run
-zsh scripts/nix_install.sh --cli-only
-```
 
-For macOS or Linux desktop hosts where Nix should also update GUI apps:
-
-```sh
-zsh scripts/nix_install.sh --with-gui-apps
-```
-
-Run `scripts/nix_install.sh` when `flake.nix`, `flake.lock`, or files under `config/nix/` change. Git pull hooks only run `chezmoi apply`, sync AI tool files, and refresh hooks; they do not switch Nix or install `mise` tools.
-
-This matters after the migration to Nix + chezmoi because zsh and Neovim are managed by Home Manager, while terminal configs, bash startup files, `mise` config, and local secret templates are managed by chezmoi.
-
-## Chezmoi home files
-
-The repository includes a chezmoi source state under `home/`, with `.chezmoiroot` pointing to that directory. Home files that should be copied or templated directly, such as terminal configs, bash startup files, `mise` config, and local secret templates, live there. Shell behavior that is better declared by Home Manager, such as zsh and Neovim, is managed in `config/nix/home-manager/`.
-
-Install `chezmoi` with any supported package manager, then preview and apply:
-
-```sh
-sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
-# or: nix run nixpkgs#chezmoi -- init
-# or: mise use --global chezmoi@latest
-
-zsh scripts/chezmoi_apply.sh --dry-run
-zsh scripts/chezmoi_apply.sh --mark-default
-# Verify deployed state without changing home files.
-zsh scripts/chezmoi_apply.sh --verify
-# On macOS CLI-only machines:
-zsh scripts/chezmoi_apply.sh --cli-only --mark-default
-# or
-mise run chezmoi-diff
-mise run chezmoi-apply
-mise run chezmoi-status
-```
-
-`--mark-default` writes `~/.config/dotfiles/manager` with `chezmoi` and stores the selected profile in `~/.config/dotfiles/profile`. Git pull hooks installed by this repo run `chezmoi apply`; there is no legacy dotfile-copy fallback.
-
-`--verify` and `chezmoi-status` do not modify home files. They exit with status 0 when every managed target matches and 1 when drift exists, so they can gate local checks or CI without applying changes.
-
-## Testing dotfiles
-
-Configuration checks are centralized in [tests/run.sh](tests/run.sh). [scripts/test_dotfiles.sh](scripts/test_dotfiles.sh) remains as a compatibility wrapper.
-
-```sh
+# Run the repository checks.
 zsh tests/run.sh
-# or
-mise run test-dotfiles
 ```
 
-The test runner checks zsh syntax, helper scripts, generated chezmoi source state drift, and chezmoi rendering into a temporary home directory. If `chezmoi` is not installed locally, only the rendered-home integration check is skipped.
-
-GitHub Actions runs the same checks on `ubuntu-latest` and `macos-latest`, installs `chezmoi`, and verifies that the source state can be applied to a temporary home on both platforms.
-
-## Nix package migration
-
-Homebrew is no longer the primary setup path. macOS uses nix-darwin plus Home Manager, and Linux uses standalone Home Manager with the same package sets. CLI packages live in [config/nix/package-names.nix](config/nix/package-names.nix). GUI apps are split by platform in [config/nix/gui-common-package-names.nix](config/nix/gui-common-package-names.nix), [config/nix/gui-macos-package-names.nix](config/nix/gui-macos-package-names.nix), and [config/nix/gui-linux-package-names.nix](config/nix/gui-linux-package-names.nix). Mac App Store apps are listed in [config/nix/mas-apps.nix](config/nix/mas-apps.nix), but installed outside nix-darwin's Homebrew activation so individual App Store failures do not abort setup. Homebrew entries that cannot be moved to Nix are recorded in [config/nix/unmapped-homebrew.tsv](config/nix/unmapped-homebrew.tsv), and the macOS fallback managed by nix-darwin is generated as [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix).
-
-Nix modules are split into [config/nix/darwin](config/nix/darwin) and [config/nix/home-manager](config/nix/home-manager), with each `default.nix` importing small responsibility-focused modules. macOS keyboard repeat, screenshot location, and sudo Touch ID are managed in [config/nix/darwin/defaults.nix](config/nix/darwin/defaults.nix). Screenshots are saved to `${HOME}/SS`. On the first macOS apply, [scripts/nix_install.sh](scripts/nix_install.sh) automatically backs up an existing `/etc/pam.d/sudo_local` to `/etc/pam.d/sudo_local.before-nix-darwin` before activation so nix-darwin can take over cleanly. The setup no longer relies on ad-hoc `defaults write` calls.
-
-App registration follows `Nix > Homebrew > MAS`. During Brewfile migration, Mac App Store entries are first matched against [config/nix/mas-to-nix.tsv](config/nix/mas-to-nix.tsv), then [config/nix/mas-to-cask.tsv](config/nix/mas-to-cask.tsv), and only unmatched entries are written to [config/nix/mas-apps.nix](config/nix/mas-apps.nix).
-
-```sh
-# Regenerate Nix package lists and the unmapped Homebrew report from current Homebrew state
-zsh scripts/migrate_brew_to_nix.sh --apply
-# or migrate an exported Brewfile from another machine
-zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
-# or
-mise run nix-migrate-brew
-
-# Build the CLI Nix configuration without switching
-zsh scripts/nix_install.sh --cli-only --dry-run
-# or
-mise run nix-build
-
-# Apply the CLI profile with nix-darwin on macOS or Home Manager on Linux
-zsh scripts/nix_install.sh --cli-only
-# or
-mise run nix-apply
-
-# Install GUI apps too
-zsh scripts/nix_install.sh --with-gui-apps
-# or
-mise run nix-apply-with-gui-apps
-```
-
-On first macOS setup, `darwin-rebuild` may not be available in `PATH` yet. [scripts/nix_install.sh](scripts/nix_install.sh) handles that by running the flake-provided `darwin-rebuild`. On Linux, it similarly uses the flake-provided `home-manager` when the command is not installed yet.
-
-On Linux hosts where `sudo` is unavailable, use `nix-portable` as the primary path instead of Homebrew. It virtualizes `${HOME}/.nix-portable/store` as `/nix/store`, so Nix-managed packages are used through `nixp`, `dotfiles-nix-shell`, or `dotfiles-nix-run`. The default runtime is `proot`, which works on restricted hosts such as `pine11` where mount namespaces are blocked.
-
-```sh
-zsh scripts/nix_portable_install.sh
-nixp --version
-dotfiles-nix-shell
-
-# Run a command inside the dotfiles CLI package set
-dotfiles-nix-run git --version
-```
-
-[scripts/nix_rootless_install.sh](scripts/nix_rootless_install.sh) remains available for `nix-user-chroot`, but because its `/nix/store` is only visible inside the chroot, [scripts/nix_portable_install.sh](scripts/nix_portable_install.sh) is the preferred sudo-free Linux path.
-
-Pick the lightest update path that matches what you need:
-
-```bash
-# Update only flake.lock
-mise run lock-update
-
-# Update only the nixpkgs input in flake.lock
-mise run lock-update-nixpkgs
-
-# Update and apply only Nix-managed tools
-mise run nix-update
-
-# Update and apply the Nix package set after refreshing nixpkgs
-mise run nixpkgs-update
-
-# Update only mise-managed tools within the current release lines
-mise run mise-update
-
-# Update everything
-mise run package-update
-
-# Use bash for the helper scripts instead of zsh
-mise run package-update -- --shell bash
-
-# Include Homebrew-managed GUI fallback apps in the update
-mise run package-update -- --with-gui-apps
-```
-
-`mise run package-update` runs `nix flake update`, applies `scripts/nix_install.sh`, syncs the tracked `mise` config, runs `mise upgrade`, and finally updates Hermes Agent through `scripts/setup_hermes_agent.sh`. On macOS, if Homebrew-managed GUI fallback apps are configured, the task applies the CLI Nix profile by default and skips GUI fallback updates unless you pass `--with-gui-apps` explicitly. With `--with-gui-apps`, the task also runs `brew update` and upgrades the Homebrew formulae and casks declared in [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix). Use `mise run nix-update` when you only need Nix-managed tools, `mise run nixpkgs-update` when you only want to refresh the `nixpkgs` input, `mise run mise-update` when you only need tools managed by `mise`, and `mise run hermes-update` when you only need Hermes Agent. Old names such as `nix-mise-upgrade`, `nix-upgrade`, `nixpkgs-upgrade`, and `mise-upgrade` remain available as aliases. AI CLI tools such as `codex`, `claude-code`, `copilot`, `cursor-agent`, `opencode`, and `devin` are managed by `mise`; Herdr is also managed by `mise` as an agent runtime / terminal multiplexer. Hermes Agent is not managed by `mise` because upstream removed pip/PyPI and Homebrew distribution on 2026-07-22; install it with `mise run hermes-setup`, which uses the official shell installer, and keep it current with `mise run hermes-update` (`hermes update --yes`). Antigravity CLI is managed as the Homebrew Cask `antigravity` through the GUI package set. To move to a new major line such as `node@22`, edit `config/mise/config.toml` explicitly first.
-The helper script now also supports input-scoped updates inspired by `nix flake lock --update-input ...`, and it prints a stage-based progress bar so you can see whether it is updating the lockfile, applying Nix, or upgrading `mise` tools.
-If Homebrew is not installed on macOS and only GUI fallback entries remain, this task falls back to the CLI Nix profile so Nix-managed CLI tools can still be updated.
-
-If [config/nix/homebrew-fallback.nix](config/nix/homebrew-fallback.nix) has entries, Homebrew is still required on macOS for fallback formulae, casks, taps, or VS Code extensions. Formulae are applied even in the CLI profile. Casks and VS Code extensions are applied only with `--with-gui-apps`. Mac App Store apps are handled separately by `scripts/install_mas_apps.sh`. If Homebrew fallback entries are empty and Nix is applied successfully, Homebrew can be removed explicitly. This is destructive, so check the dry-run first.
-
-Mac App Store apps are not passed to nix-darwin's `homebrew.masApps` because `brew bundle` fails the whole activation when the current App Store account cannot download a listed app. `main.sh` runs [scripts/install_mas_apps.sh](scripts/install_mas_apps.sh) after Nix activation instead; each app is installed best-effort, and individual failures are reported without failing the setup. The key is the app name and the value is the App Store ADAM ID:
-
-```nix
-{
-  "Xcode" = 497799835;
-}
-```
-
-To run the full macOS setup, including GUI packages, while skipping only Mac App Store apps:
-
-```sh
-zsh main.sh --full --skip-mas-apps
-```
-
-You must be signed in to the Mac App Store. Removing an app from `mas-apps.nix` does not automatically uninstall it because Homebrew Bundle does not support MAS cleanup.
-
-```sh
-zsh scripts/remove_homebrew.sh --dry-run
-zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready
-```
-
-`zsh scripts/remove_homebrew.sh --apply --confirm-nix-ready` refuses to remove Homebrew while fallback entries exist. `zsh scripts/nix_install.sh --uninstall-homebrew` runs the same removal only after the selected Nix switch succeeds.
-
-To reclaim space from old Nix generations and Homebrew caches:
-
-```sh
-mise run package-cleanup
-mise run package-cleanup -- --apply
-mise run package-cleanup -- --include-mise
-mise run package-cleanup -- --include-mise --apply
-```
-
-The task runs `nix profile wipe-history --profile <user-profile> --older-than 30d`, `nix store gc`, `nix store optimise`, and `brew cleanup --prune=all --scrub`. The default is a dry-run because deleting old generations reduces rollback history. Pass `--include-mise` to also run `mise prune --tools` for unused tool versions and `mise cache prune` for stale cache files. The old `mise run nix-brew-cleanup` name remains available as an alias.
-
-## Migrating Another Homebrew Machine
-
-Committed `.Brewfile` files are no longer used. On an old macOS machine that still has Homebrew, run the migration directly from the live Homebrew state, or pass an exported Brewfile explicitly.
-
-```sh
-zsh scripts/migrate_brew_to_nix.sh --apply
-zsh scripts/migrate_brew_to_nix.sh --brewfile /path/to/Brewfile --apply
-```
-
-When `--brewfile` is omitted, the script uses `brew bundle dump` to create a temporary Brewfile, migrates it to Nix package lists, and then removes the temporary file.
-
-## Scheduled Updates
-
-On `full` profiles, macOS uses a nix-darwin launchd agent and Linux uses a Home Manager systemd user timer for `dotfiles-auto-update`. It runs `git pull --ff-only` in `${HOME}/src/dotfiles` every day at 06:00 and writes logs to `/tmp/dotfiles-git-pull.log`. On macOS, nix-darwin activation removes the old managed cron block installed by `setup_cron.sh`.
-
-## Auto-sync after git pull
-
-`main.sh` installs Git hooks into `.git/hooks/`.
-
-- `post-merge`: runs after `git pull` / merge
-- `post-rewrite`: runs after `git pull --rebase`
-- `post-checkout`: runs after branch checkout
-
-The hooks call [scripts/apply_updates.sh](scripts/apply_updates.sh), which applies the chezmoi source state, syncs AI tool files, and refreshes the hooks themselves. nix-darwin / Home Manager switch, Homebrew uninstall, and mise tool install are not run automatically.
-
-To reinstall hooks manually:
-
-```sh
-zsh scripts/setup_git_hooks.sh
-```
-
-## AI agent configuration
-
-AI agent files live under [dotfiles/.agent](dotfiles/.agent). The shared prompt is `dotfiles/.agent/AGENTS.md`; the repository root intentionally does not contain an `AGENTS.md` symlink.
-
-Managed CLI agents are `codex`, `claude-code`, `copilot`, `cursor-agent`, `devin`, `antigravity-cli`, `hermes`, `opencode`, `openclaw`, and `grok`. They are installed by `mise` where available, while per-agent settings, MCP files, hooks, skills, and Waza eval suites are tracked under `dotfiles/.agent/`. Hermes Agent is the exception: it is installed and updated by [scripts/setup_hermes_agent.sh](scripts/setup_hermes_agent.sh) through the official shell installer. Herdr is managed by `mise` as a runtime for coordinating agent panes, not as a canonical agent in the support matrix. Antigravity CLI is managed as the Homebrew Cask `antigravity-cli`, which provides the `agy` binary.
-
-```bash
-zsh dotfiles/.agent/sync.sh
-mise run waza-eval-model -- --agent all --dry-run
-```
-
-See [dotfiles/.agent/README.md](dotfiles/.agent/README.md) for the file map, sync behavior, ignore rules, hooks, and Waza evaluation commands.
-
-### Multiple Claude Code accounts
-
-`claude-account` uses the single full-scope `claude auth login` credential in macOS Keychain. The redesigned command does not read setup-tokens because they cannot fetch Fable plan entitlements and mixing them with full login can corrupt the shared Keychain.
-
-Before registering or switching an account, exit every Claude Code session with `/exit` or `Ctrl+D`. Sessions started by `claude-account` hold a shared lock for their full lifetime, while `auth-login` requires a non-blocking exclusive lock. Plain `claude` processes are detected separately. The shared credential is not changed while either kind of session remains.
-
-```bash
-pgrep -fl claude
-# Continue only after no Claude process remains.
-
-claude-account auth-login cierpa
-# Select the cierpa Claude account in the browser.
-```
-
-After login, the command stores only a SHA-256 fingerprint derived from the email and organization ID, plus the subscription type, in `~/.config/claude-account/login-profiles.json` with mode 600. It does not store either identity value. The same email in another organization is treated as a different identity, and choosing a different account for an existing profile fails without replacing the mapping.
-
-List registered profiles and identify the one selected by the shared login:
-
-```bash
-claude-account list
-```
-
-Normal launches and resumes proceed only when the shared login identity matches the requested profile:
-
-```bash
-claude-account cierpa --model fable
-
-claude-account cierpa \
-  --resume <session-id> \
-  --model fable \
-  --dangerously-skip-permissions
-```
-
-To switch profiles, exit every Claude process and run `auth-login` again. macOS cannot keep independent full-login credentials per profile, so browser login is required on each switch.
-
-The wrapper removes API keys, custom endpoints, and Bedrock, Vertex, or Foundry selectors. It fails closed when settings contain `apiKeyHelper` or authentication environment overrides. `--bare`, `--settings`, and `--setting-sources` are unsupported, and `/login` and `/logout` are hidden after launch. Do not use plain `claude` or `claude-auto`, because they bypass profile identity verification.
-
-Legacy setup-tokens remain in macOS Keychain but are not read by the new CLI. The old `add`, `add-token`, and `token` commands were removed without compatibility aliases. See [Anthropic issue #79360](https://github.com/anthropics/claude-code/issues/79360) for the false Fable usage-credit gate with setup-tokens and the [official authentication documentation](https://code.claude.com/docs/en/authentication) for the macOS Keychain model.
-
-## API keys and secrets
-
-Local secrets are managed in `~/.config/shell/secrets.env` (gitignored).
-
-On first setup, chezmoi creates `~/.config/shell/secrets.env` from `config/shell/secrets.env.example` if it does not exist. Fill in the values and restart the shell.
-
-chezmoi also renders `config/shell/bashrc.tmpl` and `config/shell/bash_profile.tmpl` into `~/.bashrc` and `~/.bash_profile`, and renders `config/shell/dotfiles-shell-common.tmpl` into `~/.config/shell/dotfiles-shell-common.sh`. Home Manager's zsh config sources the same shared file when it exists.
-
-```bash
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
-export OPENAI_API_KEY=""
-export ANTHROPIC_API_KEY=""
-export GEMINI_API_KEY=""
-export GITHUB_TOKEN=""
-export DEVIN_API_KEY=""
-```
+For changes to `flake.nix`, `flake.lock`, or `config/nix/`, apply Nix
+explicitly. Git pull hooks do not run a Nix switch or install mise tools.
