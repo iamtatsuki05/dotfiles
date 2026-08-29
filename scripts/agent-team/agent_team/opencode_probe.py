@@ -157,6 +157,10 @@ class HistoricalSymlinkEvidence:
             or _SHA256.fullmatch(self.source_digest) is None
         ):
             raise OpenCodeProbeError("historical evidence identity is invalid")
+        if not isinstance(self.evidence, tuple) or any(
+            not isinstance(item, ToolEvidence) for item in self.evidence
+        ):
+            raise OpenCodeProbeError("historical evidence entries are invalid")
         expected = {
             ToolEvidence("filesystem", "read", "symlink", "allowed"),
             ToolEvidence("filesystem", "write", "symlink", "denied"),
@@ -167,8 +171,7 @@ class HistoricalSymlinkEvidence:
             )
 
 
-def _binding_targets_fingerprint(profile: ProbeProfile, targets: ProbeTargets) -> str:
-    del profile
+def _binding_targets_fingerprint(targets: ProbeTargets) -> str:
     return targets.fingerprint
 
 
@@ -186,13 +189,16 @@ def build_probe_binding(
     expected_policy = (
         RAW_POLICY_ID if profile == "raw-workspace" else SNAPSHOT_POLICY_ID
     )
-    if manifest.identity.sandbox_policy_id != expected_policy:
+    if (
+        manifest.identity.permission_profile != "read-only"
+        or manifest.identity.sandbox_policy_id != expected_policy
+    ):
         raise ReceiptValidationError("manifest policy does not match probe binding")
     return ProbeBinding(
         profile,
         run_nonce,
         manifest_digest(manifest),
-        _binding_targets_fingerprint(profile, targets),
+        _binding_targets_fingerprint(targets),
         targets.process_probe_sha256,
     )
 
@@ -433,7 +439,7 @@ def parse_opencode_events(
     if not isinstance(raw, str):
         _fail("OpenCode output must be text")
     if (
-        binding.targets_sha256 != _binding_targets_fingerprint(binding.profile, targets)
+        binding.targets_sha256 != _binding_targets_fingerprint(targets)
         or binding.process_probe_sha256 != targets.process_probe_sha256
     ):
         _fail("event targets do not match the attestation binding")
@@ -464,6 +470,7 @@ def parse_opencode_events(
                 "failure",
                 "provider_error",
                 "provider.failure",
+                "provider-failure",
                 "session.error",
                 "timeout",
             }
@@ -473,6 +480,8 @@ def parse_opencode_events(
         part = event.get("part")
         part_map = part if isinstance(part, dict) else {}
         part_type = part_map.get("type")
+        if part_type in {"error", "failure", "provider-error", "provider_failure"}:
+            provider_failed = True
         if part_type in {"step-finish", "step_finish"} or event_name in {
             "step_finish",
             "step-finish",
@@ -882,7 +891,11 @@ def assemble_receipt(
             if manifest.identity.sandbox_policy_id == SNAPSHOT_POLICY_ID
             else None
         )
-        if expected_profile is None or attestation.binding.profile != expected_profile:
+        if (
+            expected_profile is None
+            or manifest.identity.permission_profile != "read-only"
+            or attestation.binding.profile != expected_profile
+        ):
             raise ReceiptValidationError("receipt profile does not match attestation")
         if attestation.binding.manifest_sha256 != manifest_digest(manifest):
             raise ReceiptValidationError("receipt manifest does not match attestation")
