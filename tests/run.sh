@@ -5,6 +5,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
+readonly TEST_PYTHON_BIN="${DOTFILES_TEST_PYTHON:-python3}"
 
 LIST_ONLY=0
 SYNTAX_ONLY=0
@@ -84,6 +85,10 @@ run_unit_tests() {
   log_step "Running unit tests"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_delegation_analysis.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_html_preview_review.sh"
+  PYTHONPATH="$REPO_ROOT/scripts/agent-team${PYTHONPATH:+:$PYTHONPATH}" \
+    "$TEST_PYTHON_BIN" -m unittest discover -s "$REPO_ROOT/scripts/agent-team/tests"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team_mcp.py"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_sync.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_support_matrix.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_skill_upstreams.sh"

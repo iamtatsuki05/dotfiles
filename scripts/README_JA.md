@@ -14,6 +14,7 @@ English version: [README.md](README.md)
 | `*_install.sh` | Nix、Homebrew、MAS、rootless Nix 系の install / apply entrypoint。 |
 | `waza_eval_*.sh` | Waza / agent eval entrypoint の互換 wrapper。 |
 | `agent_skill_upstreams.py` | 外部 skill update と security review manifest の管理 tool。 |
+| [`agent-team/`](agent-team/README_JA.md) | opt-inなOrca teamのstandalone Python project。package、bundled default、MCP entrypoint、対応matrix、ACP docs、testを含む。 |
 | `analyze_agent_delegation.py` | prompt、response、tool引数・出力を表示せず、Codex subagent の起動バッチと観測上の重複実行時間を集計する。 |
 | `setup_agent_files.sh` | AI agent config、hook、skill、pet sync の canonical script。 |
 | `setup_hermes_agent.sh` | upstream が pip/PyPI と Homebrew 配布を廃止したため、Hermes Agent を公式 shell installer で導入・更新する script。 |

@@ -1,0 +1,36 @@
+version = 3
+runtime = "orca"
+team_prefix = "agent-team"
+max_review_rounds = 2
+
+[main]
+provider = "claude"
+transport = "direct"
+model = "fable"
+effort = "high"
+prompt = "prompts/orchestrator.md"
+permission = "orchestrator"
+
+[roles.planner]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/planner.md"
+permission = "read-only"
+
+[roles.worker]
+provider = "codex"
+transport = "direct"
+model = "gpt-5.6-sol"
+effort = "medium"
+prompt = "prompts/worker.md"
+permission = "workspace-write"
+
+[roles.reviewer]
+provider = "codex"
+transport = "direct"
+model = "gpt-5.6-sol"
+effort = "high"
+prompt = "prompts/reviewer.md"
+permission = "read-only"

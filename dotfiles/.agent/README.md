@@ -46,6 +46,57 @@ zsh dotfiles/.agent/sync.sh
 
 Herdr itself is installed by `mise` via `github:ogulcancelik/herdr`. The official Herdr skill is vendored under `skills/herdr/` with the upstream license and a local safety overlay.
 
+### Start an opt-in Orca agent team without changing normal CLI behavior
+
+See the dedicated [Agent Team guide](apps/agent-team/README.md) for the quick
+start, architecture, configuration reference, and troubleshooting steps.
+
+`agent-team` creates a project-specific Orca Run; Orca is its only orchestration backend. It starts only the user-facing Main agent initially. Main creates Orca Tasks for Planner, Worker, and Reviewer on demand and launches each role in a dedicated terminal as a supervised Dispatch. Role providers, models, efforts, prompts, permissions, and transports live in `apps/agent-team/config.toml` and `apps/agent-team/prompts/`. Plain `claude` and `codex` invocations keep their existing behavior because the launcher passes role overrides only to the processes it starts.
+
+Config version 3 requires every role to explicitly set `transport = "direct"` or `transport = "acp"`; missing or unsupported values fail fast. The canonical team is:
+
+| Role | Provider / transport | Model / effort | Permission |
+|---|---|---|---|
+| Main | Claude / `direct` | `fable` / `high` | `orchestrator` |
+| Planner | Claude / `acp` | `fable` / `high` | `read-only` |
+| Worker | Codex / `direct` | `gpt-5.6-sol` / `medium` | `workspace-write` |
+| Reviewer | Codex / `direct` | `gpt-5.6-sol` / `high` | `read-only` |
+
+Initial ACP support is limited to Claude read-only background roles. Main ACP, Codex ACP, and workspace-write ACP fail fast because a compatibility probe found that Codex ACP `deny-all`/`read-only` settings did not block writes by Codex internal tools. ACP permission mediation is not a provider or OS sandbox; write roles therefore retain direct Codex permissions.
+
+Main coordinates roles through the Run-scoped `agent_team` MCP server. It exposes only task creation, launch, wait, read, release, and question-reply operations for the three fixed background roles. It invokes Orca with argument arrays instead of a shell. Claude Main has no Bash tool; Planner's ACP invocation uses a `Read,Grep,Glob` allowlist. Reviewer runs as direct Codex with its built-in `:read-only` permission profile.
+
+ACP uses the exact pins `acpx@0.13.2` and `@agentclientprotocol/claude-agent-acp@0.70.0`. The first run may make `npx` download packages over the network; no global install is used. Claude ACP uses the ambient `claude.ai` login and does not pass API credentials to the child. The subscription billing ledger itself has not been verified.
+
+Each launched Codex role uses an isolated `CODEX_HOME` under the team runtime state directory. The launcher links only the normal home's `auth.json` and, when present, `AGENTS.md` and `skills`; it does not inherit the normal `config.toml`, hooks, plugins, or MCP servers. This keeps both ordinary Codex behavior and the team's tool surface separate.
+
+The launcher marks the target workspace's Git root, or the workspace itself outside Git, as `untrusted` only inside each isolated Codex process. This suppresses Codex's interactive directory-trust onboarding while keeping project-local `.codex` config, hooks, and execution policies disabled. It does not change the normal Codex trust setting.
+
+```bash
+# Inspect role metadata and direct argv only; ACP argv is built when a role starts.
+agent-team start --dry-run
+
+# Register the repository with Orca once.
+orca repo add --path "$PWD"
+
+# Start the team and focus Main in Orca.
+agent-team start
+
+agent-team status
+agent-team stop
+```
+
+After Main has started a Worker Dispatch, focus it with:
+
+```bash
+# Run only when Main has already started the Worker Dispatch.
+agent-team attach worker
+```
+
+The existing `start`, `status`, `attach`, and `stop` commands remain unchanged. `start` invokes the configured external agent CLIs and can consume provider quota. It does not commit, push, publish, install integrations, or modify normal Claude/Codex config. Runtime state lives under `$XDG_STATE_HOME/agent-team/` (default `~/.local/state/agent-team/`). If the derived team state already exists, `start` fails and requires an explicit `attach` or `stop` command. `stop` targets only terminals owned by this team; the Orca Run remains as an audit record.
+
+In config version 3, `workspace-write` roles require the Codex provider and use direct transport. For each process, the launcher derives a permission profile from Codex's built-in `:workspace` or `:read-only` profile and allows only the active Orca runtime socket; it allows no external domains. Workspace writes remain limited to normal workspace files while `.git/` and `.codex/` stay protected. Claude remains supported for Main and read-only roles; the launcher rejects a write-enabled Claude role instead of silently weakening isolation. To upgrade a team started by version-2 code, stop it first with the old code's `agent-team stop`, then switch to version 3. There is no legacy fallback.
+
 Herdr integration installers mutate each agent's config home directly. Because `sync.sh` symlinks those homes back into this repository, do not run the installers against the live homes unless you intentionally want tracked config files to change. Generate into a scratch home first, inspect the diff, and then model the required generated files in this repository:
 
 ```bash
@@ -59,7 +110,7 @@ Use the same scratch-home pattern with the target agent's documented config-home
 
 ## Config Map
 
-| Source | Destination |
+| Source | Destination / use |
 |---|---|
 | `AGENTS.md` | `~/.codex/AGENTS.md` |
 | `AGENTS.md` | `~/.claude/CLAUDE.md` |
@@ -76,6 +127,9 @@ Use the same scratch-home pattern with the target agent's documented config-home
 | `apps/copilot/mcp-config.json` | `~/.copilot/mcp-config.json` |
 | `apps/codex/config.toml` | `~/.codex/config.toml` |
 | `apps/codex/hooks.json` | `~/.codex/hooks.json` |
+| `../../scripts/agent-team/agent-team` | `~/.local/bin/agent-team` |
+| `../../scripts/agent-team/agent_team/mcp_server.py` | Launched through `agent-team _mcp-server` by the same package entrypoint |
+| `../../scripts/agent-team/agent_team/runtime.py` | Imported by the package; no separate managed runtime link |
 | `apps/cursor/cli-config.json` | `~/.cursor/cli-config.json` |
 | `apps/cursor/hooks.json` | `~/.cursor/hooks.json` |
 | `apps/cursor/mcp.json` | `~/.cursor/mcp.json` |
