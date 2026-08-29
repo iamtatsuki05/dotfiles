@@ -1,9 +1,8 @@
-name: pr-code-review-eval
+name: git-github-flow-eval
 description: |
-  Smoke evaluation suite for the pr-code-review skill. Fixtures contain a small
-  diff with an obvious regression so future model-backed graders can assert
-  concrete review findings.
-skill: pr-code-review
+  Smoke evaluation for consolidated Git/GitHub workflow routing and safe
+  mutation boundaries.
+skill: git-github-flow
 version: "1.0"
 
 config:
@@ -14,10 +13,10 @@ config:
   model: claude-sonnet-4.6
 
 metrics:
-  - name: review_response
+  - name: github_flow_response
     weight: 1.0
     threshold: 0.8
-    description: Did the skill accept a PR review request with diff context?
+    description: Did the skill accept a Git/GitHub workflow request?
 
 graders:
   - type: code

@@ -41,7 +41,7 @@ evals/<skill>/
 | `markdown-docs` | Markdown review, proofreading, and restructuring. |
 | `markitdown` | Conversion-to-Markdown routing. |
 | `missing-tools` | Safe fallback planning when a command is unavailable. |
-| `pr-code-review` | PR review findings. |
+| `git-github-flow` | Safe Git/GitHub workflow, metadata, review, and mutation boundaries. |
 | `prompt-tuner` | Prompt improvement output. |
 | `python-dev` | Python debugging and typing behavior. |
 | `retrospective-codify` | Turning repeated lessons into durable rules. |

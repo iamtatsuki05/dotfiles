@@ -41,7 +41,7 @@ evals/<skill>/
 | `markdown-docs` | Markdown review、proofread、restructure。 |
 | `markitdown` | Markdown conversion routing。 |
 | `missing-tools` | command 不在時の安全な fallback plan。 |
-| `pr-code-review` | PR review finding。 |
+| `git-github-flow` | 安全なGit/GitHub workflow、metadata、review、write境界。 |
 | `prompt-tuner` | prompt 改善出力。 |
 | `python-dev` | Python debugging と typing。 |
 | `retrospective-codify` | 繰り返し学習を durable rule にする workflow。 |
