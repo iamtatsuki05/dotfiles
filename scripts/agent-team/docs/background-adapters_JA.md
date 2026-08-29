@@ -13,10 +13,11 @@ runnerがOrcaのTask、Dispatch、terminal、`worker_done` lifecycleを管理し
 - GitHub Copilot CLI `1.0.81`: PlannerとReviewerのread-onlyだけ（実行可能）。
 - OpenCode `1.18.25`: PlannerとReviewerのread-onlyだけ（adapterは実装済みだが未有効化）。
 
-実行ファイルは、曖昧でないPATH identity、または既存のexactなmise installation
-（`npm:@github/copilot@1.0.81` / `opencode@1.18.25`）から解決します。install、update、別providerへの
-fallbackは行いません。canonical path、device、inode、size、mtime、SHA-256をsnapshotし、実行直前に
-同じidentityを再検証します。
+Copilotは、既存のexactなmise installation（`npm:@github/copilot@1.0.81`）に含まれるplatform-native
+executableだけを解決します。npm loaderやPATH衝突へfallbackしません。OpenCodeは曖昧でないPATH identity、
+またはexactな`opencode@1.18.25` mise installationを使います。install、update、別providerへのfallbackは
+行いません。canonical path、device、inode、size、mtime、SHA-256をsnapshotし、実行直前に同じidentityを
+再検証します。
 
 ## 境界と認証
 

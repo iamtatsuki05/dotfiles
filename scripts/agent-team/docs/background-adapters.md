@@ -16,12 +16,13 @@ executes the provider process.
 - OpenCode `1.18.25`: Planner and Reviewer, read-only only (adapter implemented,
   lifecycle not yet enabled).
 
-The executable is resolved from an unambiguous PATH identity or the exact
-existing mise installation (`npm:@github/copilot@1.0.81` or
-`opencode@1.18.25`). The launcher never installs, updates, or falls back to a
-different provider. It snapshots the executable's canonical path, device,
-inode, size, mtime, and SHA-256, then checks the same identity again before
-execution.
+Copilot resolves only the platform-native executable inside the exact existing
+mise installation (`npm:@github/copilot@1.0.81`); it never falls back to the npm
+loader or a PATH collision. OpenCode accepts an unambiguous PATH identity or
+the exact `opencode@1.18.25` mise installation. The launcher never installs,
+updates, or falls back to a different provider. It snapshots the executable's
+canonical path, device, inode, size, mtime, and SHA-256, then checks the same
+identity again before execution.
 
 ## Boundary and authentication
 

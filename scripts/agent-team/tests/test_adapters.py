@@ -103,7 +103,12 @@ class AdapterSafetyTest(unittest.TestCase):
     def test_runner_rejects_executable_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            executable = root / "copilot"
+            executable = (
+                root
+                / "lib/node_modules/@github/copilot/node_modules"
+                / "@github/copilot-darwin-arm64/copilot"
+            )
+            executable.parent.mkdir(parents=True)
             executable.write_text(
                 "#!/bin/sh\necho 'GitHub Copilot CLI 1.0.81'\n", encoding="utf-8"
             )
@@ -113,9 +118,12 @@ class AdapterSafetyTest(unittest.TestCase):
             )
             context.private_root.mkdir()
             adapter = CopilotReadOnlyAdapter()
-            with mock.patch(
-                "agent_team.adapters.shutil.which", return_value=str(executable)
+            with (
+                mock.patch("agent_team.adapters._resolve_mise", return_value=root),
+                mock.patch("agent_team.adapters.sys.platform", "darwin"),
+                mock.patch("agent_team.adapters.os.uname") as uname,
             ):
+                uname.return_value.machine = "arm64"
                 snapshot = adapter.preflight(context)
             executable.write_text(
                 "#!/bin/sh\necho 'GitHub Copilot CLI 1.0.81 changed'\n",
@@ -152,6 +160,62 @@ class AdapterSafetyTest(unittest.TestCase):
     def test_copilot_preflight_prefers_pinned_native_binary_over_npm_loader(
         self,
     ) -> None:
+        for system, machine, package_name in (
+            ("darwin", "arm64", "@github/copilot-darwin-arm64"),
+            ("linux", "x86_64", "@github/copilot-linux-x64"),
+        ):
+            with self.subTest(system=system), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                loader = root / "bin/copilot"
+                loader.parent.mkdir(parents=True)
+                loader.write_text(
+                    "#!/bin/sh\necho 'GitHub Copilot CLI 1.0.81.'\n",
+                    encoding="utf-8",
+                )
+                loader.chmod(0o755)
+                native = (
+                    root
+                    / "lib/node_modules/@github/copilot/node_modules"
+                    / package_name
+                    / "copilot"
+                )
+                native.parent.mkdir(parents=True)
+                native.write_text(
+                    "#!/bin/sh\necho 'GitHub Copilot CLI 1.0.81.'\n",
+                    encoding="utf-8",
+                )
+                native.chmod(0o755)
+                private = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
+                try:
+                    context = AdapterContext(
+                        "copilot",
+                        "planner",
+                        "auto",
+                        "none",
+                        root,
+                        private,
+                    )
+                    with (
+                        mock.patch(
+                            "agent_team.adapters.shutil.which",
+                            side_effect=lambda name: (
+                                str(loader) if name == "copilot" else None
+                            ),
+                        ),
+                        mock.patch(
+                            "agent_team.adapters._resolve_mise",
+                            return_value=root,
+                        ),
+                        mock.patch("agent_team.adapters.sys.platform", system),
+                        mock.patch("agent_team.adapters.os.uname") as uname,
+                    ):
+                        uname.return_value.machine = machine
+                        snapshot = CopilotReadOnlyAdapter().preflight(context)
+                    self.assertEqual(snapshot.executable, native.resolve())
+                finally:
+                    remove_owned_tree(private)
+
+    def test_copilot_preflight_rejects_loader_on_unsupported_platform(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             loader = root / "bin/copilot"
@@ -161,26 +225,10 @@ class AdapterSafetyTest(unittest.TestCase):
                 encoding="utf-8",
             )
             loader.chmod(0o755)
-            native = (
-                root
-                / "lib/node_modules/@github/copilot/node_modules"
-                / "@github/copilot-darwin-arm64/copilot"
-            )
-            native.parent.mkdir(parents=True)
-            native.write_text(
-                "#!/bin/sh\necho 'GitHub Copilot CLI 1.0.81.'\n",
-                encoding="utf-8",
-            )
-            native.chmod(0o755)
             private = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
             try:
                 context = AdapterContext(
-                    "copilot",
-                    "planner",
-                    "auto",
-                    "none",
-                    root,
-                    private,
+                    "copilot", "planner", "auto", "none", root, private
                 )
                 with (
                     mock.patch(
@@ -189,13 +237,15 @@ class AdapterSafetyTest(unittest.TestCase):
                             str(loader) if name == "copilot" else None
                         ),
                     ),
+                    mock.patch("agent_team.adapters._resolve_mise", return_value=root),
+                    mock.patch("agent_team.adapters.sys.platform", "win32"),
                     mock.patch(
-                        "agent_team.adapters._resolve_mise",
-                        return_value=root,
+                        "agent_team.adapters.os.uname",
+                        side_effect=AssertionError("unsupported platform must not call uname"),
                     ),
+                    self.assertRaisesRegex(Exception, "exact 1.0.81"),
                 ):
-                    snapshot = CopilotReadOnlyAdapter().preflight(context)
-                self.assertEqual(snapshot.executable, native.resolve())
+                    CopilotReadOnlyAdapter().preflight(context)
             finally:
                 remove_owned_tree(private)
 

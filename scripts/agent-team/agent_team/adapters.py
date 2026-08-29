@@ -409,28 +409,37 @@ def _preflight(
     executable_name: str,
     runner: ProcessRunner,
 ) -> AdapterSnapshot:
+    copilot_adapter = adapter_id == CopilotReadOnlyAdapter.adapter_id
     candidates: list[Path] = []
-    path_candidate = shutil.which(executable_name)
-    if path_candidate:
-        candidates.append(Path(path_candidate))
+    if not copilot_adapter:
+        path_candidate = shutil.which(executable_name)
+        if path_candidate:
+            candidates.append(Path(path_candidate))
     mise_root = _resolve_mise(package, private_root=context.private_root, runner=runner)
     if mise_root is not None:
-        if adapter_id == CopilotReadOnlyAdapter.adapter_id:
+        if copilot_adapter:
+            package_platforms: tuple[str, ...] = ()
             if sys.platform == "darwin":
-                architecture = os.uname().machine
+                package_platforms = ("darwin",)
+            elif sys.platform.startswith("linux"):
+                package_platforms = ("linux", "linuxmusl")
+            package_arch = None
+            if package_platforms:
                 package_arch = {
+                    "aarch64": "arm64",
                     "arm64": "arm64",
                     "x86_64": "x64",
-                }.get(architecture)
-                if package_arch is not None:
-                    candidates.insert(
-                        0,
-                        mise_root
-                        / "lib/node_modules/@github/copilot/node_modules"
-                        / f"@github/copilot-darwin-{package_arch}/copilot",
-                    )
-        candidates.append(mise_root / "bin" / executable_name)
-        candidates.append(mise_root / executable_name)
+                }.get(os.uname().machine.lower())
+            if package_arch is not None:
+                candidates.extend(
+                    mise_root
+                    / "lib/node_modules/@github/copilot/node_modules"
+                    / f"@github/copilot-{package_platform}-{package_arch}/copilot"
+                    for package_platform in package_platforms
+                )
+        else:
+            candidates.append(mise_root / "bin" / executable_name)
+            candidates.append(mise_root / executable_name)
     for candidate in candidates:
         try:
             resolved = candidate.resolve(strict=True)
