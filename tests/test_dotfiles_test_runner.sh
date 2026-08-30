@@ -5,7 +5,6 @@ set -euo pipefail
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly TEST_RUNNER="$REPO_ROOT/tests/run.sh"
-readonly LEGACY_TEST_RUNNER="$REPO_ROOT/scripts/test_dotfiles.sh"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly KIMI_WEBBRIDGE_SETUP_SCRIPT="$REPO_ROOT/scripts/setup_kimi_webbridge.sh"
 readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
@@ -57,7 +56,6 @@ test_test_runner_exists_and_lists_checks() {
   output="$(mktemp)"
 
   assert_file "$TEST_RUNNER"
-  assert_file "$LEGACY_TEST_RUNNER"
   assert_contains "$TEST_RUNNER" "run_syntax_checks"
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
@@ -70,7 +68,6 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "tests/test_claude_account.sh"
   assert_contains "$TEST_RUNNER" "tests/test_hermes_agent_setup.sh"
   assert_contains "$TEST_RUNNER" "tests/test_japanese_prose_lint.sh"
-  assert_contains "$LEGACY_TEST_RUNNER" "tests/run.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
   "$TEST_ZSH_BIN" "$TEST_RUNNER" --list > "$output"
@@ -78,10 +75,6 @@ test_test_runner_exists_and_lists_checks() {
   assert_output_contains "$output" "unit"
   assert_output_contains "$output" "source-state"
   assert_output_contains "$output" "chezmoi-render"
-  assert_output_contains "$output" "nix-static"
-
-  "$TEST_ZSH_BIN" "$LEGACY_TEST_RUNNER" --list > "$output"
-  assert_output_contains "$output" "syntax"
   assert_output_contains "$output" "nix-static"
 
   rm -f "$output"
