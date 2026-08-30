@@ -32,6 +32,9 @@ linked reference documents when changing the implementation or configuration.
 - [Path/resource policy](docs/path-resource-policy.md) defines canonical path
   admission, explicit resource modes, reservation-port handoff, and the
   normal/express/research lane matrix without filesystem or provider effects.
+- [Fixed-argv verification gate](docs/verification-gate.md) defines the typed
+  approval, pinned verification request, before/after snapshot binding, and
+  normalized receipt required before a write task can be completed.
 
 The current configuration uses this team:
 

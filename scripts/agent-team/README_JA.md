@@ -30,6 +30,9 @@ Agent Client Protocol経由の`acp`で動きます。
 - [Path/resource policy](docs/path-resource-policy_JA.md)は、filesystemやproviderを操作せず、
   canonical path admission、明示的なresource mode、reservation port、normal/express/researchの
   lane matrixを説明します。
+- [Fixed-argv verification gate](docs/verification-gate_JA.md)は、write task を completed に
+  する前提となる typed approval、固定 verification request、before/after snapshot の束縛、
+  normalized receipt を説明します。
 
 現在の設定は次のとおりです。
 
