@@ -224,6 +224,7 @@ target_bash="${NIX_TEST_TARGET_BASH:-${DOTFILES_TEST_TARGET_BASH:-}}"
 fixture_root="${NIX_TEST_FIXTURE_ROOT:?}"
 fixture_root="$(cd -P "$fixture_root" && pwd -P)"
 allowed_script="${NIX_TEST_ALLOWED_BASH_SCRIPT:?}"
+allowed_hermes_script="$fixture_root/scripts/setup_hermes_agent.sh"
 event_log_parent="$(cd -P "${event_log:h}" 2>/dev/null && pwd -P)"
 [[ "$event_log_parent" == "$fixture_root" || "$event_log_parent" == "$fixture_root"/* ]] || {
   print -u2 -- "rejected fake bash event log: $event_log"
@@ -239,10 +240,20 @@ event_log_parent="$(cd -P "${event_log:h}" 2>/dev/null && pwd -P)"
 }
 script_path="$1"
 shift
-[[ "$script_path" == "$allowed_script" ]] || {
-  print -u2 -- "rejected fake bash script: $script_path"
-  exit 126
-}
+case "$script_path" in
+  */setup_hermes_agent.sh)
+    [[ "$script_path" == "$allowed_hermes_script" ]] || {
+      print -u2 -- "rejected fake bash script: $script_path"
+      exit 126
+    }
+    ;;
+  *)
+    [[ "$script_path" == "$allowed_script" ]] || {
+      print -u2 -- "rejected fake bash script: $script_path"
+      exit 126
+    }
+    ;;
+esac
 [[ "$script_path" == /* && "$script_path" != *'/../'* && "$script_path" != */.. \
   && "$script_path" != *'/./'* && "$script_path" != */. ]] || exit 126
 script_parent="$(cd -P "${script_path:h}" 2>/dev/null && pwd -P)" || exit 126
