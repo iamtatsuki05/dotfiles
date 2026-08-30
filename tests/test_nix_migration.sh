@@ -3655,7 +3655,7 @@ EOF
   chmod +x "$bin_dir"/*
   cp "$bin_dir/bash" "$home_dir/.nix-profile/bin/bash"
 
-  HOME="$home_dir" USER=dotfiles-test \
+  HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test \
     PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_SHOW_PROGRESS=0 \
     DOTFILES_TEST_EVENT_LOG="$event_log" \
@@ -3704,7 +3704,7 @@ EOF
 
   : > "$event_log"
   exit_status=0
-  HOME="$home_dir" USER=dotfiles-test \
+  HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test \
     PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_SHOW_PROGRESS=0 \
     DOTFILES_TEST_EVENT_LOG="$event_log" \
@@ -3825,7 +3825,7 @@ EOF
 }
 EOF
     exit_status=0
-    HOME="$home_dir" USER=dotfiles-test \
+    HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test \
       PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
       DOTFILES_SHOW_PROGRESS=0 \
       DOTFILES_TEST_EVENT_LOG="$event_log" \
@@ -3857,7 +3857,7 @@ EOF
 }
 EOF
     exit_status=0
-    HOME="$home_dir" USER=dotfiles-test \
+    HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test \
       PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
       DOTFILES_SHOW_PROGRESS=0 \
       DOTFILES_TEST_EVENT_LOG="$event_log" \
@@ -3893,7 +3893,7 @@ EOF
 
   : > "$event_log"
   exit_status=0
-  HOME="$home_dir" USER=dotfiles-test \
+  HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test \
     PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_SHOW_PROGRESS=0 \
     DOTFILES_TEST_EVENT_LOG="$event_log" \
@@ -3925,7 +3925,7 @@ EOF
 
   : > "$event_log"
   exit_status=0
-  HOME="$home_dir" USER=dotfiles-test \
+  HOME="$home_dir" HOMEBREW_PREFIX= USER=dotfiles-test \
     PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
     DOTFILES_SHOW_PROGRESS=0 \
     DOTFILES_TEST_EVENT_LOG="$event_log" \
