@@ -25,6 +25,8 @@ Agent Client Protocol経由の`acp`で動きます。
   adapter実装、snapshot境界、復旧方法を説明します。
 - [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
   保存やworkflow実行を含まないstate観測契約を説明します。
+- [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneの
+  Workerから独立Reviewerへ進むtyped transitionを説明します。
 
 現在の設定は次のとおりです。
 
