@@ -3961,7 +3961,7 @@ run_managed_all_bash_matrix() {
         test_managed_update_all_bash_honors_cli_and_full_gui_profiles "$target_bash" "$expected_major" \
           || matrix_status=1
       fi
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_not_applicable_skip 'managed-default'
       emit_not_applicable_skip 'managed-cli-only'
     else
@@ -5681,7 +5681,7 @@ run_nix_direct_shebang_matrix() {
       bash_bin="$REPLY"
       test_nix_install_direct_copy_uses_bash_shebang "$bash_bin" || matrix_status=1
       (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=nix-direct-shebang|status=PASS|requirement=required|reason=$bash_bin"
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_not_applicable_skip 'nix-direct-shebang-bash3'
     else
       emit_required_bash_skip 'nix-direct-shebang' "$expected_major"
@@ -5701,7 +5701,7 @@ run_managed_activation_failure_matrix() {
       target_bash="$REPLY"
       test_managed_update_propagates_nix_activation_failure "$target_bash" || matrix_status=1
       (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=managed-activation-failure|status=PASS|requirement=required|reason=$target_bash"
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_not_applicable_skip 'managed-activation-failure-bash3'
     else
       emit_required_bash_skip 'managed-activation-failure' "$expected_major"
@@ -5721,7 +5721,7 @@ run_remove_shebang_matrix() {
       bash_bin="$REPLY"
       test_remove_homebrew_direct_copy_uses_bash_shebang "$bash_bin" || matrix_status=1
       (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=remove-direct-shebang|status=PASS|requirement=required|reason=$bash_bin"
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_not_applicable_skip 'remove-direct-shebang-bash3'
     else
       emit_required_bash_skip 'remove-direct-shebang' "$expected_major"
@@ -5741,7 +5741,7 @@ run_remove_output_matrix() {
       bash_bin="$REPLY"
       test_remove_homebrew_dry_run_output_is_shell_neutral "$bash_bin" || matrix_status=1
       (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=remove-output|status=PASS|requirement=required|reason=$bash_bin"
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_not_applicable_skip 'remove-output-bash3'
     else
       emit_required_bash_skip 'remove-output' "$expected_major"
@@ -5792,7 +5792,7 @@ run_nix_cycle2_bash_cell() {
   local cell_status=0
 
   if ! select_bash_for_major "$expected_major"; then
-    if [[ "$expected_major" == "3" && ! is_test_macos ]]; then
+    if [[ "$expected_major" == "3" ]] && ! is_test_macos; then
       emit_not_applicable_skip 'nix-cycle2-bash3'
       return 0
     fi
@@ -5983,7 +5983,7 @@ main() {
         for expected_major in 3 5; do
           if select_bash_for_major "$expected_major"; then
             test_nix_install_rejects_spoofed_bash_source_and_ostype "$REPLY"
-          elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+          elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
             emit_not_applicable_skip "nix-path-resolution-bash${expected_major}"
           else
             emit_required_bash_skip "nix-path-resolution" "$expected_major"

@@ -816,7 +816,7 @@ run_hermes_bash_matrix() {
       test_setup_installer_temp_cleans_when_directory_creation_is_interrupted "$bash_bin" || matrix_status=1
       test_managed_update_script_delegates_real_hermes_through_bash "$bash_bin" || matrix_status=1
       (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=hermes|status=PASS|requirement=required|reason=$bash_bin"
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_matrix_result "MATRIX_RESULT|os=linux|shell=bash3|target=hermes|status=SKIP|requirement=not-applicable|reason=macos-only"
     else
       emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=hermes|status=SKIP|requirement=required|reason=bash${expected_major}-unavailable"

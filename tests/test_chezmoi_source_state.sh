@@ -278,7 +278,7 @@ run_source_bash_matrix() {
       else
         test_shell_common_sources_with_stable_bash_and_zsh_fixtures "$bash_bin" "$expected_major" 0 || matrix_status=1
       fi
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_not_applicable_bash_skip 'chezmoi-source' "$expected_major"
     else
       emit_required_bash_skip 'chezmoi-source' "$expected_major"

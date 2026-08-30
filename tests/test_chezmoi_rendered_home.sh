@@ -212,7 +212,7 @@ run_rendered_bash_matrix() {
       assert_contains "$bash_output" "DOTFILES_REPO_ROOT=$REPO_ROOT"
       assert_contains "$bash_output" "local_bin_in_path=yes"
       emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash$bash_major|target=rendered-home|status=PASS|requirement=required|reason=$bash_version"
-    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+    elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
       emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=SKIP|requirement=not-applicable|reason=macos-only"
     else
       emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=SKIP|requirement=required|reason=bash${expected_major}-unavailable"
