@@ -119,3 +119,66 @@ must progress through `RESTORE_PREPARED`, `RESTORE_REPLACED`, and then
 a later generation may begin with a new `RESTORE_PREPARED` record. The primary database, exact SQLite
 sidecars, marker, and ledger basenames are regular files only; unrelated
 owner-only directories remain inventory entries but are never opened.
+
+## Explicit recovery coordinator
+
+`agent_team.recovery.RecoveryCoordinator` is the mutation boundary for the
+recovery operations owned by this child issue. Its normal `recover` operation
+accepts only an exact `CLAIMED` or `FENCE_PENDING` identity at
+`now_ns >= lease_expires_ns`; the private typed store transaction performs the
+compare-and-swap (CAS) state/event transition. It never retries, closes, or
+executes a provider effect. A concurrent caller loses the CAS and receives a
+conflict. An expired plain `FENCE_PENDING` has no provider marker, so recovery
+uses the typed store reclaim path to allocate the next unused attempt while
+retaining the old attempt and event history. A proof-bearing `CLAIMED` remains
+`UNKNOWN_EFFECT` because its external outcome is ambiguous.
+
+`force_recover` requires an exact operator identity, one of the finite
+`FORCE_REASON_CODES` as an exact built-in string, and a `RecoveryAuthorizer`
+result whose operation, operator, reason, and audit reference are exact
+validated strings and all match. Equality-overriding values, booleans,
+missing/default authorization, or self-asserted values are rejected. The store-issued
+`RecoveryFloorReservation` advances the epoch/token floor; the coordinator
+does not calculate tokens. Force recovery preserves uncertainty for claims
+and prepared effects, while known `INTENT`, `RECEIPTED`, and `COMPLETED`
+states use the typed rebase authority. `CLEANED` remains immutable.
+
+`resolve_unknown` performs at most a provider `status` query. The adapter must
+expose the complete trusted `ProviderPort` shape and an exact
+`ProviderCapabilities` value; a status-only object is rejected. The returned
+status must have the exact `ProviderStatus` runtime type and each field is
+validated before comparison. It accepts only a strongly consistent status
+whose operation, effect, provider, owner,
+attempt, epoch, fencing token, and fence proof exactly match the current
+identity. Only `ABSENT` returns the operation to `INTENT`; a matching
+`COMPLETED` status stores a verified receipt as `RECEIPTED`. Weak, old,
+timeout, WAL-pending, or mismatched observations remain blocked and never
+invoke `execute`.
+
+Before that query, the coordinator reads the current global recovery epoch
+through the store's read-only typed seam. An already-stale operation therefore
+makes zero provider calls; the transaction CAS still rejects a global-epoch
+race after a query.
+
+`RecoveryLayout` is an exact frozen/slotted value. It fixes the marker identity
+and the canonical `recovery.ledger` basename, and every public coordinator
+entry point revalidates it before inspecting or mutating state. The layout has
+no public setter that can hide a pending restore ledger.
+
+The writer in `agent_team.recovery` owns the fixed basename `recovery.ledger`
+and emits `RECOVERY_LEDGER_VERSION=1` records compatible with
+`RecoveryLedgerReader`. First-ever creation requires the separate typed
+`RecoveryLedgerInitialization` authority; normal `append()` never creates a
+missing ledger. It keeps one validated root descriptor through create/append/
+readback, opens every ledger read/write with `O_NONBLOCK` plus the required
+no-follow/close-on-exec/append flags, and rejects FIFO or symlink swaps without
+blocking. It appends with `O_APPEND|O_NOFOLLOW`, fsyncs the ledger and containing
+directory, and rejects malformed, duplicate, partial, version-incompatible,
+non-monotonic, or missing ledgers. It reconstructs and canonical-encodes exact
+record fields and verifies the complete post-write bytes. It implements no
+backup, restore, checkpoint, sidecar cleanup, or writer-marker lifecycle;
+those phases remain the contract of #55/#56.
+
+The provider adapter is a trusted composition-root dependency. A malicious
+full-shape in-process adapter is outside this Python value boundary; task data
+and ordinary callers do not select or inject provider adapters.

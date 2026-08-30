@@ -2006,16 +2006,29 @@ class CoordinationStore:
             operation_provider = row["provider_id"]
             if operation_provider is not None and operation_provider != provider_id:
                 raise LeaseConflictError("operation provider identity mismatches")
+            attempt_row = connection.execute(
+                "SELECT MAX(attempt) AS maximum FROM operation_attempts "
+                "WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            maximum_attempt = (
+                0
+                if attempt_row is None or attempt_row["maximum"] is None
+                else _require_sqlite_integer(attempt_row["maximum"], "attempt")
+            )
+            if maximum_attempt >= SQLITE_INTEGER_MAX:
+                raise ValueError("attempt exceeds supported integer")
+            next_attempt = maximum_attempt + 1
             fencing_token = self._next_value(connection)
             connection.execute(
                 """
-                    UPDATE operations
-                    SET provider_id = ?, status = 'FENCE_PENDING',
-                        current_attempt = 1, updated_ns = ?
-                    WHERE operation_id = ? AND status = 'INTENT'
+                UPDATE operations
+                SET provider_id = ?, status = 'FENCE_PENDING',
+                        current_attempt = ?, updated_ns = ?
+                WHERE operation_id = ? AND status = 'INTENT'
                       AND current_attempt = 0
-                    """,
-                (provider_id, timestamp, operation_id),
+                """,
+                (provider_id, next_attempt, timestamp, operation_id),
             )
             if connection.execute("SELECT changes()").fetchone()[0] != 1:
                 raise LeaseConflictError("operation claim was lost")
@@ -2025,10 +2038,11 @@ class CoordinationStore:
                         operation_id, attempt, owner, provider_id,
                         lease_epoch, fencing_token, lease_heartbeat_ns,
                         lease_expires_ns
-                    ) VALUES (?, 1, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 (
                     operation_id,
+                    next_attempt,
                     owner,
                     provider_id,
                     row["recovery_epoch"],
@@ -2040,7 +2054,7 @@ class CoordinationStore:
             self._append_event(
                 connection,
                 operation_id=operation_id,
-                attempt=1,
+                attempt=next_attempt,
                 from_status="INTENT",
                 to_status="FENCE_PENDING",
                 kind="claim",
@@ -3789,6 +3803,29 @@ class CoordinationStore:
         except (sqlite3.DatabaseError, TypeError, ValueError, OverflowError) as exc:
             _raise_recovery_read_error(exc, kind="effect")
 
+    def _rehydrate_recovery_effect_tx(
+        self,
+        connection: sqlite3.Connection,
+        operation_id: str,
+    ) -> ProviderEffect | None:
+        """Rehydrate identity-only effect evidence for unknown recovery."""
+
+        operation_id = _require_opaque_identifier(operation_id, "operation_id")
+        try:
+            row = self._fetch_attempt(connection, operation_id)
+            if row is None or row["status"] not in {
+                "UNKNOWN_EFFECT",
+                "UNKNOWN",
+            }:
+                return None
+            if row["fence_proof_version"] is None or row["fence_proof_ref"] is None:
+                return None
+            return self._effect_from_attempt_row(row)
+        except StoreError:
+            raise
+        except (sqlite3.DatabaseError, TypeError, ValueError, OverflowError) as exc:
+            _raise_recovery_read_error(exc, kind="recovery effect")
+
     def _rehydrate_receipt_tx(
         self,
         connection: sqlite3.Connection,
@@ -3941,6 +3978,379 @@ class CoordinationStore:
             reason_code="effect_unknown",
             evidence_ref=evidence_ref,
         )
+        return self._recovery_snapshot_tx(connection, snapshot.operation_id)
+
+    def _recover_expired_tx(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: RecoverySnapshot,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Move one expired lease to the fail-closed unknown state.
+
+        The caller owns the clock and event validation.  This helper only
+        performs the identity-checked row/event transition while the private
+        recovery transaction is open.
+        """
+
+        row = self._assert_recovery_snapshot_identity(connection, snapshot)
+        status = row["status"]
+        if status not in {"FENCE_PENDING", "CLAIMED"}:
+            raise LeaseConflictError("operation is not an expiring lease")
+        expiry = row["lease_expires_ns"]
+        if type(expiry) is not int:
+            raise StoreIntegrityError("SQLite lease expiry is invalid")
+        if timestamp < expiry:
+            raise LeaseConflictError("lease has not expired")
+        timestamp = _require_sqlite_integer(timestamp, "clock_ns")
+        self._fault("before_recovery_transition")
+        if status == "FENCE_PENDING" and row["fence_started_ns"] is None:
+            current_attempt = _require_sqlite_integer(
+                row["current_attempt"],
+                "attempt",
+                minimum=1,
+            )
+            attempt_row = connection.execute(
+                "SELECT MAX(attempt) AS maximum FROM operation_attempts "
+                "WHERE operation_id = ?",
+                (snapshot.operation_id,),
+            ).fetchone()
+            maximum_attempt = (
+                current_attempt
+                if attempt_row is None or attempt_row["maximum"] is None
+                else _require_sqlite_integer(attempt_row["maximum"], "attempt")
+            )
+            if maximum_attempt >= SQLITE_INTEGER_MAX:
+                raise ValueError("attempt exceeds supported integer")
+            next_attempt = maximum_attempt + 1
+            heartbeat = row["lease_heartbeat_ns"]
+            if type(heartbeat) is not int or expiry <= heartbeat:
+                raise StoreIntegrityError("SQLite lease duration is invalid")
+            lease_ttl = expiry - heartbeat
+            next_expiry = self._lease_expiry(timestamp, lease_ttl)
+            provider_id = row["attempt_provider_id"]
+            owner = row["owner"]
+            if provider_id is None or owner is None:
+                raise StoreIntegrityError("SQLite pending lease identity is incomplete")
+            fencing_token = self._next_value(connection)
+            connection.execute(
+                """
+                UPDATE operations
+                SET status = 'FENCE_PENDING', current_attempt = ?, updated_ns = ?
+                WHERE operation_id = ? AND current_attempt = ?
+                  AND status = ? AND recovery_epoch = ? AND updated_ns = ?
+                """,
+                (
+                    next_attempt,
+                    timestamp,
+                    snapshot.operation_id,
+                    snapshot.current_attempt,
+                    status,
+                    snapshot.recovery_epoch,
+                    snapshot.updated_ns,
+                ),
+            )
+            if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                raise LeaseConflictError("expired pending recovery was lost")
+            connection.execute(
+                """
+                INSERT INTO operation_attempts(
+                    operation_id, attempt, owner, provider_id,
+                    lease_epoch, fencing_token, lease_heartbeat_ns,
+                    lease_expires_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.operation_id,
+                    next_attempt,
+                    owner,
+                    provider_id,
+                    row["recovery_epoch"],
+                    fencing_token,
+                    timestamp,
+                    next_expiry,
+                ),
+            )
+            self._fault("after_recovery_row")
+            self._fault("before_recovery_event")
+            self._append_event(
+                connection,
+                operation_id=snapshot.operation_id,
+                attempt=next_attempt,
+                from_status=status,
+                to_status="FENCE_PENDING",
+                kind="recover",
+                actor=actor,
+                timestamp=timestamp,
+                reason_code="recover",
+                evidence_ref=evidence_ref,
+            )
+            self._fault("after_recovery_event")
+            return self._recovery_snapshot_tx(connection, snapshot.operation_id)
+        connection.execute(
+            """
+            UPDATE operations
+            SET status = 'UNKNOWN_EFFECT', updated_ns = ?
+            WHERE operation_id = ? AND current_attempt = ? AND status = ?
+              AND recovery_epoch = ? AND updated_ns = ?
+            """,
+            (
+                timestamp,
+                snapshot.operation_id,
+                snapshot.current_attempt,
+                status,
+                snapshot.recovery_epoch,
+                snapshot.updated_ns,
+            ),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise LeaseConflictError("expired recovery transition was lost")
+        self._fault("after_recovery_row")
+        self._fault("before_recovery_event")
+        self._append_event(
+            connection,
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=status,
+            to_status="UNKNOWN_EFFECT",
+            kind="recover",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="recover",
+            evidence_ref=evidence_ref,
+        )
+        self._fault("after_recovery_event")
+        return self._recovery_snapshot_tx(connection, snapshot.operation_id)
+
+    def _force_recover_tx(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: RecoverySnapshot,
+        *,
+        floor: RecoveryFloor,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Fence one operation under an already advanced recovery floor."""
+
+        if snapshot.status == "CLEANED":
+            raise LeaseConflictError("cleaned operation is immutable")
+        row = self._assert_recovery_snapshot_identity(
+            connection,
+            snapshot,
+            require_current_epoch=False,
+        )
+        current_epoch = self._metadata_integer(
+            connection,
+            "recovery_epoch",
+            "recovery_epoch",
+        )
+        if current_epoch != floor.recovery_epoch:
+            raise LeaseConflictError("force recovery floor is stale")
+        self._fault("before_recovery_transition")
+        status = row["status"]
+        if status in {"INTENT", "RECEIPTED", "COMPLETED"}:
+            rebased = self._rebase_operation_tx(
+                connection,
+                snapshot,
+                floor=floor,
+                mode=cast(RecoveryRebaseMode, status),
+                actor=actor,
+                timestamp=timestamp,
+                evidence_ref=evidence_ref,
+            )
+            self._fault("after_recovery_row")
+            self._fault("before_recovery_event")
+            self._append_event(
+                connection,
+                operation_id=rebased.operation_id,
+                attempt=rebased.current_attempt,
+                from_status=rebased.status,
+                to_status=rebased.status,
+                kind="force_recover",
+                actor=actor,
+                timestamp=timestamp,
+                reason_code="force_recover",
+                evidence_ref=evidence_ref,
+            )
+            self._fault("after_recovery_event")
+            return rebased
+        to_status = (
+            "UNKNOWN_EFFECT"
+            if status
+            in {
+                "FENCE_PENDING",
+                "FENCE_RESERVATION_STARTED",
+                "CLAIMED",
+                "EFFECT_PREPARED",
+            }
+            else status
+        )
+        connection.execute(
+            """
+            UPDATE operations
+            SET status = ?, recovery_epoch = ?, updated_ns = ?
+            WHERE operation_id = ? AND current_attempt = ? AND status = ?
+              AND recovery_epoch = ? AND updated_ns = ?
+            """,
+            (
+                to_status,
+                floor.recovery_epoch,
+                timestamp,
+                snapshot.operation_id,
+                snapshot.current_attempt,
+                status,
+                snapshot.recovery_epoch,
+                snapshot.updated_ns,
+            ),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise LeaseConflictError("force recovery transition was lost")
+        self._fault("after_recovery_row")
+        self._fault("before_recovery_event")
+        self._append_event(
+            connection,
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=status,
+            to_status=to_status,
+            kind="force_recover",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="force_recover",
+            evidence_ref=evidence_ref,
+        )
+        self._fault("after_recovery_event")
+        return self._recovery_snapshot_tx(connection, snapshot.operation_id)
+
+    def _resolve_unknown_absent_tx(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: RecoverySnapshot,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Return a proven-absent operation to its original intent state."""
+
+        row = self._assert_recovery_snapshot_identity(connection, snapshot)
+        if row["status"] not in {"UNKNOWN_EFFECT", "UNKNOWN"}:
+            raise LeaseConflictError("operation is not unknown")
+        self._fault("before_recovery_transition")
+        connection.execute(
+            """
+            UPDATE operations
+            SET status = 'INTENT', current_attempt = 0, updated_ns = ?
+            WHERE operation_id = ? AND current_attempt = ? AND status = ?
+              AND recovery_epoch = ? AND updated_ns = ?
+            """,
+            (
+                timestamp,
+                snapshot.operation_id,
+                snapshot.current_attempt,
+                row["status"],
+                snapshot.recovery_epoch,
+                snapshot.updated_ns,
+            ),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise LeaseConflictError("unknown resolution transition was lost")
+        self._fault("after_recovery_row")
+        self._fault("before_recovery_event")
+        self._append_event(
+            connection,
+            operation_id=snapshot.operation_id,
+            attempt=0,
+            from_status=row["status"],
+            to_status="INTENT",
+            kind="resolve_unknown",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="resolve_unknown",
+            evidence_ref=evidence_ref,
+        )
+        self._fault("after_recovery_event")
+        return self._recovery_snapshot_tx(connection, snapshot.operation_id)
+
+    def _resolve_unknown_completed_tx(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: RecoverySnapshot,
+        receipt: VerifiedProviderReceipt,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Persist a verified completed provider status without executing it."""
+
+        row = self._assert_recovery_snapshot_identity(connection, snapshot)
+        if row["status"] not in {"UNKNOWN_EFFECT", "UNKNOWN"}:
+            raise LeaseConflictError("operation is not unknown")
+        effect = self._effect_from_attempt_row(row)
+        self._validate_receipt(effect, receipt)
+        self._fault("before_recovery_transition")
+        connection.execute(
+            """
+            INSERT INTO effect_receipts(
+                operation_id, attempt, effect_key, provider_effect_id,
+                provider_status, provider_id, owner, fencing_token,
+                lease_epoch, received_ns, proof_version, proof_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                receipt.operation_id,
+                receipt.attempt,
+                receipt.effect_key,
+                receipt.provider_effect_id,
+                receipt.provider_status,
+                receipt.provider_id,
+                receipt.owner,
+                receipt.fencing_token,
+                receipt.lease_epoch,
+                timestamp,
+                receipt.proof_version,
+                receipt.proof_ref,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE operations
+            SET status = 'RECEIPTED', updated_ns = ?
+            WHERE operation_id = ? AND current_attempt = ? AND status = ?
+              AND recovery_epoch = ? AND updated_ns = ?
+            """,
+            (
+                timestamp,
+                snapshot.operation_id,
+                snapshot.current_attempt,
+                row["status"],
+                snapshot.recovery_epoch,
+                snapshot.updated_ns,
+            ),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise LeaseConflictError("unknown receipt transition was lost")
+        self._fault("after_recovery_row")
+        self._fault("before_recovery_event")
+        self._append_event(
+            connection,
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=row["status"],
+            to_status="RECEIPTED",
+            kind="resolve_unknown",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="resolve_unknown",
+            evidence_ref=evidence_ref,
+        )
+        self._fault("after_recovery_event")
         return self._recovery_snapshot_tx(connection, snapshot.operation_id)
 
     def _append_recovery_event_tx(
@@ -4388,6 +4798,24 @@ class CoordinationStore:
             self._assert_transaction_identity()
             return result
 
+    def _current_recovery_epoch(self) -> int:
+        """Read the current global recovery epoch without opening a write path."""
+
+        try:
+            with self._shared_lifetime_gate():
+                connection = self._require_connection()
+                epoch = self._metadata_integer(
+                    connection,
+                    "recovery_epoch",
+                    "recovery_epoch",
+                )
+                self._assert_transaction_identity()
+                return epoch
+        except StoreError:
+            raise
+        except (sqlite3.DatabaseError, TypeError, ValueError, OverflowError) as exc:
+            _raise_recovery_read_error(exc, kind="recovery epoch")
+
     def _rehydrate_claim(self, operation_id: str) -> Claim | None:
         operation_id = _require_opaque_identifier(operation_id, "operation_id")
         try:
@@ -4613,6 +5041,185 @@ class _RecoveryStoreTx:
         )
         self.__store._assert_transaction_identity()
         return result
+
+    def recovery_effect(self, operation_id: str) -> ProviderEffect | None:
+        """Return identity-only effect evidence for an unknown operation."""
+
+        self._assert_active()
+        result = self.__store._rehydrate_recovery_effect_tx(
+            self.__connection,
+            operation_id,
+        )
+        self.__store._assert_transaction_identity()
+        return result
+
+    def recover_expired(
+        self,
+        snapshot: RecoverySnapshot,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Fail closed one lease after its exact expiry boundary."""
+
+        self._assert_active()
+        if snapshot.status not in {"FENCE_PENDING", "CLAIMED"}:
+            raise LeaseConflictError("operation is not an expiring lease")
+        self.__store._validate_event_values(
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=snapshot.status,
+            to_status=(
+                "FENCE_PENDING"
+                if snapshot.status == "FENCE_PENDING"
+                else "UNKNOWN_EFFECT"
+            ),
+            kind="recover",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="recover",
+            evidence_ref=evidence_ref,
+        )
+        effective = self.__store._record_clock(
+            self.__connection,
+            timestamp,
+            strict=True,
+        )
+        return self.__store._recover_expired_tx(
+            self.__connection,
+            snapshot,
+            actor=actor,
+            timestamp=effective,
+            evidence_ref=evidence_ref,
+        )
+
+    def force_recover(
+        self,
+        snapshot: RecoverySnapshot,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Fence one operation after a floor reservation was committed."""
+
+        self._assert_active()
+        floor = self.__advanced_floor
+        if floor is None:
+            raise LeaseConflictError("recovery floor must be advanced first")
+        if snapshot.status == "CLEANED":
+            raise LeaseConflictError("cleaned operation is immutable")
+        self.__store._validate_event_values(
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=snapshot.status,
+            to_status=(
+                "UNKNOWN_EFFECT"
+                if snapshot.status
+                in {
+                    "FENCE_PENDING",
+                    "FENCE_RESERVATION_STARTED",
+                    "CLAIMED",
+                    "EFFECT_PREPARED",
+                }
+                else snapshot.status
+            ),
+            kind="force_recover",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="force_recover",
+            evidence_ref=evidence_ref,
+        )
+        effective = self.__store._record_clock(
+            self.__connection,
+            timestamp,
+            strict=True,
+        )
+        return self.__store._force_recover_tx(
+            self.__connection,
+            snapshot,
+            floor=floor,
+            actor=actor,
+            timestamp=effective,
+            evidence_ref=evidence_ref,
+        )
+
+    def resolve_unknown_absent(
+        self,
+        snapshot: RecoverySnapshot,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Return only a provider-proven absent operation to INTENT."""
+
+        self._assert_active()
+        if snapshot.status not in {"UNKNOWN_EFFECT", "UNKNOWN"}:
+            raise LeaseConflictError("operation is not unknown")
+        self.__store._validate_event_values(
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=snapshot.status,
+            to_status="INTENT",
+            kind="resolve_unknown",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="resolve_unknown",
+            evidence_ref=evidence_ref,
+        )
+        effective = self.__store._record_clock(
+            self.__connection,
+            timestamp,
+            strict=True,
+        )
+        return self.__store._resolve_unknown_absent_tx(
+            self.__connection,
+            snapshot,
+            actor=actor,
+            timestamp=effective,
+            evidence_ref=evidence_ref,
+        )
+
+    def resolve_unknown_completed(
+        self,
+        snapshot: RecoverySnapshot,
+        receipt: VerifiedProviderReceipt,
+        *,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RecoverySnapshot:
+        """Persist a provider-proven completed result without execution."""
+
+        self._assert_active()
+        if snapshot.status not in {"UNKNOWN_EFFECT", "UNKNOWN"}:
+            raise LeaseConflictError("operation is not unknown")
+        self.__store._validate_event_values(
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=snapshot.status,
+            to_status="RECEIPTED",
+            kind="resolve_unknown",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="resolve_unknown",
+            evidence_ref=evidence_ref,
+        )
+        effective = self.__store._record_clock(
+            self.__connection,
+            timestamp,
+            strict=True,
+        )
+        return self.__store._resolve_unknown_completed_tx(
+            self.__connection,
+            snapshot,
+            receipt,
+            actor=actor,
+            timestamp=effective,
+            evidence_ref=evidence_ref,
+        )
 
     def receipt(self, operation_id: str) -> VerifiedProviderReceipt | None:
         self._assert_active()

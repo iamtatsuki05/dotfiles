@@ -115,3 +115,63 @@ object を canonical newline で終え、array、前後に余分な空白があ�
 `RESTORE_PREPARED` だけを許可する。primary DB、SQLite の exact sidecar、marker、
 ledger の basename は regular file に限定する。無関係な owner-only directory は
 inventory に残すが、開かない。
+
+## 明示的な recovery coordinator
+
+`agent_team.recovery.RecoveryCoordinator` は、この child issue が所有する
+recovery mutation の境界である。通常の `recover` は、正確な
+`CLAIMED` または `FENCE_PENDING` の identity と
+`now_ns >= lease_expires_ns` を要求する。private typed store transaction が
+state と event を CAS で一体更新するため、同時実行で負けた caller は
+conflict になる。provider effect の retry、close、execute は行わない。
+期限後の plain な `FENCE_PENDING` には provider marker がないため、typed
+store reclaim で未使用の次の attempt を割り当て、古い attempt と event 履歴を
+保持する。proof を持つ `CLAIMED` は外部結果が不明なため
+`UNKNOWN_EFFECT` に止める。
+
+`force_recover` には、正確な operator identity、有限集合
+`FORCE_REASON_CODES` に含まれる built-in の正確な文字列 reason、
+`RecoveryAuthorizer` が返す authorization が必要である。authorization の
+operation、operator、reason、audit reference も built-in の検証済み文字列として
+すべて一致しなければならない。比較を上書きした値、boolean、欠落・暗黙 default、
+自己申告の値は拒否する。epoch/token floor は store-issued の
+`RecoveryFloorReservation` で進め、coordinator は token を計算しない。
+claim と prepared effect の不確実性は force 後も保持する。既知の
+`INTENT`、`RECEIPTED`、`COMPLETED` は typed rebase authority を使い、
+`CLEANED` は不変のままにする。
+
+`resolve_unknown` が provider に行うのは `status` query だけである。adapter は
+完全な trusted `ProviderPort` の shape と、正確な runtime type の
+`ProviderCapabilities` を持たなければならず、status だけの object は拒否する。
+返された status も正確な `ProviderStatus` runtime type と全 field を手動検証する。
+operation、effect、provider、owner、attempt、epoch、fencing token、fence proof が現在の
+identity と完全一致し、strong consistency である場合だけ受理する。
+`ABSENT` だけを `INTENT` に戻し、一致する `COMPLETED` は verified receipt
+を保持した `RECEIPTED` にする。weak、old、timeout、WAL pending、identity
+不一致は blocked のままにし、`execute` は呼ばない。
+
+この query の前に、coordinator は store の read-only typed seam から現在の
+global recovery epoch を読む。operation が既に stale なら provider call は
+0 回で止める。query 後に epoch が変わる race は transaction の CAS が拒否する。
+
+`RecoveryLayout` は exact な frozen/slotted value である。marker identity と
+canonical な `recovery.ledger` basename を固定し、coordinator の全 public entry
+point が state の inspect/mutation 前に再検証する。pending restore ledger を隠す
+public setter はない。
+
+`agent_team.recovery` の writer が所有する basename は固定の
+`recovery.ledger` とする。初回作成には typed な
+`RecoveryLedgerInitialization` authority が必要で、通常の `append()` は
+欠損 ledger を作らない。`RECOVERY_LEDGER_VERSION=1` の record を
+`RecoveryLedgerReader` と互換な strict JSONL として出力する。検証済みの
+root descriptor を create/append/readback の間保持し、ledger の全 read/write open
+に `O_NONBLOCK` と no-follow/close-on-exec/append の必要 flag を付ける。
+FIFO や symlink への swap は block せず拒否する。`O_APPEND|O_NOFOLLOW`
+で追記し、ledger と containing directory を fsync する。欠損、duplicate、
+partial、version 不一致、sequence/generation/epoch/floor の逆行、空 ledger は
+拒否し、write 後の bytes 全体も検証する。backup、restore、checkpoint、sidecar
+cleanup、writer marker lifecycle は実装せず、#55/#56 の contract に残す。
+
+provider adapter は trusted composition root の依存である。full-shape の
+悪意ある同一 process adapter はこの Python value boundary の外側だが、task data
+や通常の caller が adapter を選択・注入する経路は持たない。
