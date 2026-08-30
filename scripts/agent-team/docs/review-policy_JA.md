@@ -2,8 +2,8 @@
 
 [English](review-policy.md)
 
-`agent_team.review_policy`は、normal laneのwrite taskに対する純粋なpolicy seamです。
-検証済みの`TeamDefinition`、v4の`TaskSpec`、v4の`TaskPolicyStateV4`を受け取り、
+`agent_team.review_policy`は、normal laneのwrite taskと、Issue #50でadmit済みのexpress laneのwrite taskに対する
+純粋なpolicy seamです。検証済みの`TeamDefinition`、v4の`TaskSpec`、v4の`TaskPolicyStateV4`を受け取り、
 不変なtyped update/effect intentを返します。provider、terminal、process、prompt、
 workspaceを調べたり、データを保存したりしません。
 
@@ -14,10 +14,12 @@ topologyの検証後は`resolve_worker_reviewer_pair(definition, worker_node)`�
 重複または曖昧なedge、unknown Reviewer、permissionの不一致は拒否対象です。
 返す`ReviewPair`は、canonicalなWorkerとReviewerのnode identityだけを持ち、入力順に左右されません。
 
-`SerialReviewPolicy`は`TaskLane.NORMAL`だけを受け付けます。pairのWorkerはworkspace-write、
-Reviewerはread-onlyでなければなりません。`max_review_rounds`は正の整数をcallerが明示し、
-task本文やpromptから推測しません。依存関係の観測値は`DependencyState`で明示します。
-宣言した全dependencyが存在し、`approved`または`completed`になるまでassignmentを受け付けません。
+`SerialReviewPolicy`は`TaskLane.NORMAL`と`TaskLane.EXPRESS`を受け付け、`TaskLane.RESEARCH`は拒否します。
+EXPRESS taskはIssue #50のadmissionを通過済みであることが前提です。express固有のsmall-change、single exact change、
+dependency、exclusive resourceの条件は#50が所有し、#49は推測・再判定しません。両laneは同じ固定Worker/Reviewer pairと
+serial gateを使います。pairのWorkerはworkspace-write、Reviewerはread-onlyでなければなりません。
+`max_review_rounds`は正の整数をcallerが明示し、task本文やpromptから推測しません。依存関係の観測値は`DependencyState`で
+明示します。宣言した全dependencyが存在し、`approved`または`completed`になるまでassignmentを受け付けません。
 active write assignmentが2件以上ある状態も拒否します。
 
 ## typed eventとstate
@@ -55,8 +57,8 @@ target、sequenceを検証し、その後でeventのexpected sequenceとcurrent 
 eventは、`last_event.expected_sequence == next_state.sequence - 1`として次のstateへ記録します。
 `ReviewPolicyUpdate`は、選択したteam/task spec、固定pair、round上限、dependency contractから計算した
 canonicalな`PolicyFingerprint`を保持します。callerがround上限をupdateごとに差し替えるfieldはありません。
-`validate_policy_update(update, policy)`は、event type、phase edge、wrapper identity、選択pair、normal lane、
-dependency、実際のround上限、next observation、origin event、effect identityを再検証します。
+`validate_policy_update(update, policy)`は、event type、phase edge、wrapper identity、選択pair、許可されたlane、dependency、
+実際のround上限、next observation、origin event、effect identityを再検証します。
 `ReviewPolicyUpdate.task_update(policy)`で、policy bindingを確認した後に既存の`ExpectedSequenceUpdate` seamへ渡せます。
 古いeventはcodeが`stale-sequence`の`ReviewPolicyError`になり、updateやeffect intentを返しません。
 transportや再構成後にstore adapterが再検証できるよう、公開関数`validate_policy_update`と
@@ -78,7 +80,7 @@ optionalな検証seamです。`validate_policy_update`の後にcanonical project
 sequence、eventとdecisionのidentity、review round、fingerprint、targetを含む全fieldの完全一致を要求します。特に
 approved projectionにはtarget identityを2つとも必須にします。この関数はraw projectionをauthorityへ昇格させません。
 
-normal laneの合法なpathは次のとおりです。
+normal taskとIssue #50でadmit済みexpress taskのserial pathは同じです。
 
 ```text
 pending -> assigned -> worker_done -> review_pending -> approved

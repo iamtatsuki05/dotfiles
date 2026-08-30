@@ -27,8 +27,8 @@ linked reference documents when changing the implementation or configuration.
 - [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
   `TaskSpec`, dependency order, and state observation contract without storage
   or workflow execution.
-- [Serial review policy](docs/review-policy.md) defines the typed normal-lane
-  Worker → independent Reviewer transitions without backend wiring.
+- [Serial review policy](docs/review-policy.md) defines the typed serial gate
+  shared by normal tasks and Issue #50-admitted express tasks, without backend wiring.
 
 The current configuration uses this team:
 

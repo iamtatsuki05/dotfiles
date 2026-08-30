@@ -365,13 +365,13 @@ class ReviewPolicyContractTest(unittest.TestCase):
                 reviewer_terminal_id=TerminalId("same-terminal"),
             )
 
-    def test_policy_is_normal_only_and_requires_explicit_positive_round_limit(
+    def test_policy_accepts_normal_and_express_but_rejects_research(
         self,
     ) -> None:
         cases = (
             (0, TaskLane.NORMAL, "max-review-rounds"),
             (-1, TaskLane.NORMAL, "max-review-rounds"),
-            (1, TaskLane.EXPRESS, "normal-lane"),
+            (1, TaskLane.RESEARCH, "review-lane"),
         )
         for max_rounds, lane, code in cases:
             with (
@@ -379,6 +379,50 @@ class ReviewPolicyContractTest(unittest.TestCase):
                 self.assertRaisesRegex(ReviewPolicyError, code),
             ):
                 policy(max_review_rounds=max_rounds, task_value=task(lane=lane))
+
+    def test_admitted_express_uses_the_same_serial_gate_and_handoff(self) -> None:
+        express_policy = policy(task_value=task(lane=TaskLane.EXPRESS))
+        pending = initial_review_policy_state(RunId("run-1"), state())
+        assigned = assignment()
+        assigned_update = reduce_policy(
+            pending,
+            AssignmentCommand(expected_sequence=0, assignment=assigned),
+            express_policy,
+        )
+        completed = completion(assigned)
+        worker_done_update = reduce_policy(
+            assigned_update.next_state,
+            completed,
+            express_policy,
+        )
+        review_update = reduce_policy(
+            worker_done_update.next_state,
+            review_request(completed),
+            express_policy,
+        )
+        approved_update = reduce_policy(
+            review_update.next_state,
+            decision(assigned),
+            express_policy,
+        )
+
+        self.assertEqual(
+            express_policy.pair, ReviewPair(NodeId("worker"), NodeId("reviewer"))
+        )
+        self.assertEqual(assigned_update.policy_fingerprint, express_policy.fingerprint)
+        self.assertEqual(review_update.policy_fingerprint, express_policy.fingerprint)
+        validate_policy_update(approved_update, express_policy)
+        effect = review_update.effects[0]
+        validate_reviewer_assignment(
+            effect, express_policy, worker_done_update.next_state
+        )
+        projection = policy_authority_projection(approved_update, express_policy)
+        self.assertEqual(projection.policy_fingerprint, express_policy.fingerprint)
+        validate_policy_authority_projection(
+            projection,
+            approved_update,
+            express_policy,
+        )
 
     def test_policy_rejects_unmet_or_missing_dependencies_and_multiple_assignments(
         self,

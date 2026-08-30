@@ -1,6 +1,7 @@
 """Pure serial Worker-to-Reviewer review policy.
 
-The module owns the policy seam for a normal-lane write task.  It accepts
+The module owns the policy seam for a normal-lane or admitted express-lane
+write task.  It accepts
 validated topology and task-policy values, validates typed lifecycle events,
 and returns immutable state-update/effect intents.  It does not inspect a
 terminal, process, prompt, workspace, backend, or persistence format.
@@ -48,6 +49,7 @@ MAX_REVIEW_ROUNDS: Final = 2**63 - 1
 _GIT_OBJECT_ID: Final = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _TREE_DIGEST: Final = re.compile(r"[0-9a-f]{64}\Z")
 _POLICY_FINGERPRINT: Final = re.compile(r"[0-9a-f]{64}\Z")
+_REVIEW_LANES: Final = frozenset((TaskLane.NORMAL, TaskLane.EXPRESS))
 
 
 class ReviewPolicyError(ValueError):
@@ -773,7 +775,7 @@ def _policy_fingerprint(
 
 @dataclass(frozen=True, slots=True)
 class SerialReviewPolicy:
-    """Static, validated inputs for one normal-lane serial review policy."""
+    """Static, validated inputs for one normal or admitted express task."""
 
     task: TaskSpec
     team_definition: TeamDefinition
@@ -791,9 +793,10 @@ class SerialReviewPolicy:
             raise _error(
                 "invalid-topology", "policy.team_definition must be a TeamDefinition"
             )
-        if self.task.lane is not TaskLane.NORMAL:
+        if self.task.lane not in _REVIEW_LANES:
             raise _error(
-                "normal-lane", "serial review policy accepts only the normal lane"
+                "review-lane",
+                "serial review policy accepts only normal or express lanes",
             )
         _positive_round(self.max_review_rounds, "max_review_rounds")
         pair = resolve_worker_reviewer_pair(self.team_definition, self.worker_node)
@@ -816,7 +819,7 @@ class SerialReviewPolicy:
         if len(self.active_assignments) > 1:
             raise _error(
                 "active-assignment",
-                "normal lane allows at most one active write assignment",
+                "normal and express lanes allow at most one active write assignment",
             )
         if any(
             not isinstance(item, WorkerAssignment) for item in self.active_assignments
@@ -841,8 +844,11 @@ class SerialReviewPolicy:
 def _validate_policy_instance(policy: SerialReviewPolicy) -> None:
     if not isinstance(policy.task, TaskSpec):
         raise _error("invalid-policy", "policy.task must be a TaskSpec")
-    if policy.task.lane is not TaskLane.NORMAL:
-        raise _error("normal-lane", "serial review policy accepts only the normal lane")
+    if policy.task.lane not in _REVIEW_LANES:
+        raise _error(
+            "review-lane",
+            "serial review policy accepts only normal or express lanes",
+        )
     _positive_round(policy.max_review_rounds, "max_review_rounds")
     resolved_pair = resolve_worker_reviewer_pair(
         policy.team_definition, policy.worker_node
@@ -863,7 +869,7 @@ def _validate_policy_instance(policy: SerialReviewPolicy) -> None:
     if len(policy.active_assignments) > 1:
         raise _error(
             "active-assignment",
-            "normal lane allows at most one active write assignment",
+            "normal and express lanes allow at most one active write assignment",
         )
 
 
@@ -1848,7 +1854,7 @@ def _validate_policy_update(
         if isinstance(event, AssignmentCommand) and policy.active_assignments:
             raise _error(
                 "active-assignment",
-                "normal lane already has an active write assignment",
+                "normal and express lanes already have an active write assignment",
             )
         if value.policy_fingerprint != policy.fingerprint:
             raise _error(
@@ -2322,7 +2328,7 @@ def reduce_policy(
         if policy.active_assignments:
             raise _error(
                 "active-assignment",
-                "normal lane already has an active write assignment",
+                "normal and express lanes already have an active write assignment",
             )
         if state.phase is TaskPhase.PENDING:
             if new_assignment.review_round != 1:

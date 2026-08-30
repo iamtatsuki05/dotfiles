@@ -3,7 +3,8 @@
 [日本語](review-policy_JA.md)
 
 `agent_team.review_policy` is the pure policy seam for a normal-lane write
-task. It consumes a validated `TeamDefinition`, a v4 `TaskSpec`, and a v4
+task and for an express-lane write task already admitted by Issue #50. It
+consumes a validated `TeamDefinition`, a v4 `TaskSpec`, and a v4
 `TaskPolicyStateV4` observation. It returns immutable typed update/effect
 intents; it does not start a provider, inspect a terminal or process, read a
 prompt, open a workspace, or persist data.
@@ -17,13 +18,18 @@ ambiguous edges, unknown reviewer nodes, and permission mismatches. The
 resulting `ReviewPair` is deterministic and contains only the canonical Worker
 and Reviewer node identities.
 
-`SerialReviewPolicy` accepts only `TaskLane.NORMAL`. Its Worker must be the
-workspace-write side of the pair and its Reviewer must be read-only. The
-caller must supply a positive `max_review_rounds`; no value is inferred from
-task prose or a prompt. Dependency observations are explicit
-`DependencyState` values. Every declared dependency must be present and in
-`approved` or `completed` before an assignment is accepted. The policy also
-rejects more than one active write assignment.
+`SerialReviewPolicy` accepts `TaskLane.NORMAL` and `TaskLane.EXPRESS`, and
+rejects `TaskLane.RESEARCH`. An EXPRESS task must already have passed Issue
+#50's admission policy; #49 owns neither express admission nor its
+small-change, single-exact-change, dependency, or exclusive-resource rules.
+Both accepted lanes use the same fixed Worker/Reviewer pair and serial gate.
+The Worker's node must be the workspace-write side of the pair and the
+Reviewer's node must be read-only. The caller must supply a positive
+`max_review_rounds`; no value is inferred from task prose or a prompt.
+Dependency observations are explicit `DependencyState` values. Every declared
+dependency must be present and in `approved` or `completed` before an
+assignment is accepted. The policy also rejects more than one active write
+assignment.
 
 ## Typed events and state
 
@@ -75,9 +81,9 @@ sequence, the canonical `PolicyFingerprint` computed from the selected
 team/task spec, fixed pair, round limit, and dependency contract, and typed
 effect intents. It does not carry a caller-chosen round limit.
 `validate_policy_update(update, policy)` revalidates the event type, phase
-edge, wrapper identity, selected pair, normal lane, dependencies, actual round
-limit, next observations, origin event, and effect identity before a future
-store can accept it. `ReviewPolicyUpdate.task_update(policy)` adapts to the
+edge, wrapper identity, selected pair, accepted lane, dependencies, actual
+round limit, next observations, origin event, and effect identity before a
+future store can accept it. `ReviewPolicyUpdate.task_update(policy)` adapts to the
 existing `ExpectedSequenceUpdate` seam after policy-bound validation. A stale
 event raises `ReviewPolicyError` with code `stale-sequence`, and no update or
 effect intent is returned. The public `validate_reviewer_assignment(effect,
@@ -107,7 +113,8 @@ decision identity, review round, fingerprint, and target. In particular, an
 approved projection must have both target identities. It does not turn a raw
 projection into authority.
 
-The legal normal-lane path is:
+The legal serial path is identical for normal tasks and Issue #50-admitted
+express tasks:
 
 ```text
 pending -> assigned -> worker_done -> review_pending -> approved
