@@ -7,19 +7,79 @@ readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 
 source "$TEST_DIR/lib/assertions.sh"
 
-run_chezmoi() {
+is_test_macos() {
+  [[ "$OSTYPE" == darwin* ]]
+}
+
+matrix_os_name() {
+  if is_test_macos; then
+    echo macos
+  else
+    echo linux
+  fi
+}
+
+emit_matrix_result() {
+  local line="$1"
+
+  echo "$line"
+  if [[ -n "${MATRIX_RESULT_LOG_DIR:-}" ]]; then
+    mkdir -p "$MATRIX_RESULT_LOG_DIR"
+    echo "$line" >> "$MATRIX_RESULT_LOG_DIR/matrix-results.log"
+  fi
+}
+
+bash_major_version() {
+  local bash_bin="$1"
+
+  "$bash_bin" -c 'printf "%s\n" "${BASH_VERSINFO[0]}"'
+}
+
+select_bash_for_major() {
+  local expected_major="$1"
+  local candidate
+  local actual_major
+  local -a candidates=()
+
+  if [[ "$expected_major" == 3 ]]; then
+    if [[ -n "${BASH32_BIN:-}" ]]; then
+      candidates=("$BASH32_BIN")
+    elif is_test_macos; then
+      candidates=(/bin/bash)
+    fi
+  else
+    if [[ -n "${BASH5_BIN:-}" ]]; then
+      candidates=("$BASH5_BIN")
+    else
+      candidates=(/run/current-system/sw/bin/bash /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash)
+    fi
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ "$candidate" == /* && -x "$candidate" ]] || continue
+    actual_major="$(bash_major_version "$candidate" 2>/dev/null)" || continue
+    if [[ "$actual_major" == "$expected_major" ]]; then
+      REPLY="$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+resolve_chezmoi() {
   local home_chezmoi_bin
   local mise_chezmoi_bin
   local mise_install_dir
 
   if command -v chezmoi >/dev/null 2>&1; then
-    chezmoi "$@"
+    REPLY="$(command -v chezmoi)"
     return
   fi
 
   home_chezmoi_bin="$HOME/.local/bin/chezmoi"
   if [[ -x "$home_chezmoi_bin" ]]; then
-    "$home_chezmoi_bin" "$@"
+    REPLY="$home_chezmoi_bin"
     return
   fi
 
@@ -27,17 +87,20 @@ run_chezmoi() {
     mise_install_dir="$(mise where chezmoi@latest 2>/dev/null)" || mise_install_dir=""
     mise_chezmoi_bin="$mise_install_dir/chezmoi"
     if [[ -x "$mise_chezmoi_bin" ]]; then
-      "$mise_chezmoi_bin" "$@"
+      REPLY="$mise_chezmoi_bin"
       return
     fi
   fi
 
-  if command -v mise >/dev/null 2>&1; then
-    mise exec chezmoi@latest -- chezmoi "$@"
-    return 0
-  fi
-
   return 127
+}
+
+run_chezmoi() {
+  local chezmoi_bin
+
+  resolve_chezmoi || return
+  chezmoi_bin="$REPLY"
+  "$chezmoi_bin" "$@"
 }
 
 test_chezmoi_renders_cli_profile_into_temp_home() {
@@ -45,6 +108,8 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   local temp_home
   local temp_config
   local bash_output
+  local apply_status=0
+  local matrix_os="$(matrix_os_name)"
 
   temp_dir="$(mktemp -d)"
   temp_home="$temp_dir/home"
@@ -53,7 +118,12 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   mkdir -p "$temp_home"
   : > "$temp_config"
 
-  if ! DOTFILES_PROFILE=cli DOTFILES_REPO_ROOT="$REPO_ROOT" run_chezmoi \
+  if ! resolve_chezmoi >/dev/null 2>&1; then
+    rm -rf "$temp_dir"
+    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=chezmoi|target=rendered-home|status=SKIP|requirement=required|reason=chezmoi-unavailable"
+    return 1
+  fi
+  DOTFILES_PROFILE=cli DOTFILES_REPO_ROOT="$REPO_ROOT" run_chezmoi \
     -S "$REPO_ROOT" \
     -D "$temp_home" \
     --cache "$temp_dir/cache" \
@@ -61,10 +131,11 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
     --persistent-state "$temp_dir/chezmoistate.boltdb" \
     --force \
     --no-tty \
-    apply; then
+    apply || apply_status=$?
+  if (( apply_status != 0 )); then
+    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=chezmoi|target=rendered-home|status=FAIL|requirement=required|reason=apply-failed"
     rm -rf "$temp_dir"
-    echo "SKIP: chezmoi is not installed"
-    return 0
+    return 1
   fi
 
   assert_file "$temp_home/.bashrc"
@@ -94,31 +165,62 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_contains "$temp_home/.config/mise/config.toml" "python3 scripts/agent_skill_upstreams.py update"
   assert_file "$temp_home/.config/shell/secrets.env"
 
-  if command -v bash >/dev/null 2>&1; then
-    mkdir -p "$temp_home/.local/bin"
-
-    HOME="$temp_home" \
-      XDG_CONFIG_HOME="$temp_home/.config" \
-      USER=dotfiles-test \
-      PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
-      bash --noprofile --norc -c '
-        . "$HOME/.bash_profile"
-        printf "dotfiles_shell_name=%s\n" "$dotfiles_shell_name"
-        printf "DOTFILES_REPO_ROOT=%s\n" "$DOTFILES_REPO_ROOT"
-        case ":$PATH:" in
-          *":$HOME/.local/bin:"*) printf "local_bin_in_path=yes\n" ;;
-          *) printf "local_bin_in_path=no\n" ;;
-        esac
-      ' > "$bash_output"
-
-    assert_contains "$bash_output" "dotfiles_shell_name=bash"
-    assert_contains "$bash_output" "DOTFILES_REPO_ROOT=$REPO_ROOT"
-    assert_contains "$bash_output" "local_bin_in_path=yes"
-  else
-    echo "SKIP: bash is not installed"
-  fi
+  mkdir -p "$temp_home/.local/bin"
+  local matrix_status=0
+  run_rendered_bash_matrix "$temp_home" "$bash_output" "$matrix_os" || matrix_status=$?
 
   rm -rf "$temp_dir"
+  return "$matrix_status"
+}
+
+run_rendered_bash_matrix() {
+  local temp_home="$1"
+  local bash_output="$2"
+  local matrix_os="$3"
+  local expected_major
+  local bash_bin
+  local bash_version
+  local bash_major
+  local smoke_status
+  local matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash_for_major "$expected_major"; then
+      bash_bin="$REPLY"
+      bash_version="$("$bash_bin" --version | head -1)"
+      bash_major="$(bash_major_version "$bash_bin")"
+      smoke_status=0
+      HOME="$temp_home" \
+        XDG_CONFIG_HOME="$temp_home/.config" \
+        USER=dotfiles-test \
+        PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
+        "$bash_bin" --noprofile --norc -c '
+          . "$HOME/.bash_profile"
+          printf "dotfiles_shell_name=%s\n" "$dotfiles_shell_name"
+          printf "DOTFILES_REPO_ROOT=%s\n" "$DOTFILES_REPO_ROOT"
+          case ":$PATH:" in
+            *":$HOME/.local/bin:"*) printf "local_bin_in_path=yes\n" ;;
+            *) printf "local_bin_in_path=no\n" ;;
+          esac
+        ' > "$bash_output" 2>&1 || smoke_status=$?
+      if (( smoke_status != 0 )); then
+        emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=FAIL|requirement=required|reason=smoke-failed"
+        matrix_status=1
+        continue
+      fi
+      assert_contains "$bash_output" "dotfiles_shell_name=bash"
+      assert_contains "$bash_output" "DOTFILES_REPO_ROOT=$REPO_ROOT"
+      assert_contains "$bash_output" "local_bin_in_path=yes"
+      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash$bash_major|target=rendered-home|status=PASS|requirement=required|reason=$bash_version"
+    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=SKIP|requirement=not-applicable|reason=macos-only"
+    else
+      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=SKIP|requirement=required|reason=bash${expected_major}-unavailable"
+      matrix_status=1
+    fi
+  done
+
+  return "$matrix_status"
 }
 
 main() {

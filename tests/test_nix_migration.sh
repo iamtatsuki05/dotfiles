@@ -68,6 +68,16 @@ readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
 source "$TEST_DIR/lib/assertions.sh"
 
+emit_matrix_result() {
+  local line="$1"
+
+  print -r -- "$line"
+  if [[ -n "${MATRIX_RESULT_LOG_DIR:-}" ]]; then
+    mkdir -p "$MATRIX_RESULT_LOG_DIR"
+    print -r -- "$line" >> "$MATRIX_RESULT_LOG_DIR/matrix-results.log"
+  fi
+}
+
 copy_script_libs() {
   local repo="$1"
 
@@ -79,8 +89,273 @@ copy_script_libs() {
   cp "$RUNTIME_LIB" "$repo/scripts/lib/runtime.sh"
 }
 
+write_strict_fake_sudo() {
+  local bin_dir="$1"
+
+  cat > "$bin_dir/sudo" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+event_log="${NIX_TEST_EVENT_LOG:-${DOTFILES_TEST_EVENT_LOG:-}}"
+fixture_root="${NIX_TEST_FIXTURE_ROOT:?}"
+fixture_root="$(cd -P "$fixture_root" && pwd -P)"
+event_log_parent="$(cd -P "${event_log:h}" 2>/dev/null && pwd -P)"
+[[ "$event_log_parent" == "$fixture_root" || "$event_log_parent" == "$fixture_root"/* ]] || {
+  print -u2 -- "rejected fake sudo event log: $event_log"
+  exit 125
+}
+
+reject_sudo() {
+  print -u2 -- "rejected fake sudo command: $*"
+  exit 125
+}
+
+is_fixture_path() {
+  local candidate="$1"
+  local candidate_parent
+
+  [[ "$candidate" == /* ]] || return 1
+  [[ "$candidate" != *'/../'* && "$candidate" != */.. && "$candidate" != *'/./'* && "$candidate" != */. ]] || return 1
+  candidate_parent="$(cd -P "${candidate:h}" 2>/dev/null && pwd -P)" || return 1
+  [[ "$candidate_parent" == "$fixture_root" || "$candidate_parent" == "$fixture_root"/* ]]
+}
+
+is_allowed_flake_ref() {
+  local flake_ref="$1"
+  local flake_path="${flake_ref%%#*}"
+  local flake_attr="${flake_ref#*#}"
+
+  [[ "$flake_attr" == (aarch64|x86_64)-(darwin|linux)-(cli|full) ]] || return 1
+  if [[ "$flake_path" == path:"$fixture_root" || "$flake_path" == "$fixture_root" ]]; then
+    return 0
+  fi
+  [[ "${NIX_TEST_ALLOW_GENERATED_FLAKE:-0}" == 1 \
+    && "$flake_path" == path:/private/tmp/dotfiles-flake.<->.<-> ]]
+}
+
+if (( $# == 8 )) && [[ "$1" == env && "$2" == HOME=/var/root && "$3" == DOTFILES_USERNAME=* \
+  && "$4" == darwin-rebuild && "$5" == switch && "$6" == --impure && "$7" == --flake ]]; then
+  flake_ref="$8"
+  is_allowed_flake_ref "$flake_ref" || reject_sudo "$*"
+  darwin_rebuild="$fixture_root/bin/darwin-rebuild"
+  [[ -x "$darwin_rebuild" && -f "$darwin_rebuild" && ! -L "$darwin_rebuild" ]] || reject_sudo "$*"
+  print -r -- "sudo:env HOME=/var/root $3 darwin-rebuild switch --impure --flake $flake_ref" >> "$event_log"
+  "$darwin_rebuild" switch --impure --flake "$flake_ref"
+  exit $?
+fi
+
+if (( $# == 14 )) && [[ "$1" == env && "$2" == HOME=/var/root && "$3" == DOTFILES_USERNAME=* \
+  && "$5" == --extra-experimental-features \
+  && "$6" == "nix-command flakes" && "$7" == run && "$8" == --impure \
+  && "${10}" == -- && "${11}" == switch && "${12}" == --impure \
+  && "${13}" == --flake ]]; then
+  nix_bin="$4"
+  [[ "${nix_bin:t}" == nix ]] && is_fixture_path "$nix_bin" \
+    && [[ -x "$nix_bin" && -f "$nix_bin" && ! -L "$nix_bin" ]] || reject_sudo "$*"
+  [[ "$9" == path:"$fixture_root"#darwin-rebuild || "$9" == "$fixture_root"#darwin-rebuild ]] \
+    || reject_sudo "$*"
+  is_allowed_flake_ref "${14}" || reject_sudo "$*"
+  [[ "${14}" == "${9%#darwin-rebuild}"#(aarch64|x86_64)-(darwin|linux)-(cli|full) ]] \
+    || reject_sudo "$*"
+  print -r -- "sudo:env HOME=/var/root $3 nix ${5} ${6} ${7} ${8} ${9} -- ${11} ${12} ${13} ${14}" >> "$event_log"
+  "$nix_bin" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}"
+  exit $?
+fi
+
+if (( $# == 3 )) && [[ "$1" == mv ]] && is_fixture_path "$2" && is_fixture_path "$3" \
+  && [[ "$3" == "$2.before-nix-darwin" ]] && [[ ! -L "$2" && ! -L "$3" ]]; then
+  mv_bin="/bin/mv"
+  [[ -x "$mv_bin" ]] || mv_bin="/usr/bin/mv"
+  [[ -x "$mv_bin" ]] || reject_sudo "$*"
+  print -r -- "sudo:mv $2 $3" >> "$event_log"
+  "$mv_bin" -- "$2" "$3"
+  exit $?
+fi
+
+reject_sudo "$*"
+EOF
+  chmod +x "$bin_dir/sudo"
+}
+
+write_strict_fake_find() {
+  local bin_dir="$1"
+
+  cat > "$bin_dir/find" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+event_log="${NIX_TEST_EVENT_LOG:-${DOTFILES_TEST_EVENT_LOG:-}}"
+forbidden_home="${NIX_TEST_FORBIDDEN_HOME:?}"
+forbidden_config="${NIX_TEST_FORBIDDEN_XDG_CONFIG:?}"
+event_log_parent="$(cd -P "${event_log:h}" 2>/dev/null && pwd -P)"
+fixture_root="${NIX_TEST_FIXTURE_ROOT:?}"
+fixture_root="$(cd -P "$fixture_root" && pwd -P)"
+[[ "$event_log_parent" == "$fixture_root" || "$event_log_parent" == "$fixture_root"/* ]] || {
+  print -u2 -- "rejected fake find event log: $event_log"
+  exit 125
+}
+
+candidate="${1:-}"
+[[ "$candidate" == "$fixture_root" || "$candidate" == "$fixture_root"/* \
+  || ( "$candidate" != "$forbidden_home" && "$candidate" != "$forbidden_home"/* \
+  && "$candidate" != "$forbidden_config" && "$candidate" != "$forbidden_config"/* ) ]] || {
+  print -u2 -- "rejected host HOME/config find path: $candidate"
+  exit 124
+}
+
+find_bin="/usr/bin/find"
+[[ -x "$find_bin" ]] || find_bin="/bin/find"
+[[ -x "$find_bin" ]] || {
+  print -u2 -- 'no system find available for fixture'
+  exit 125
+}
+print -r -- "find:$candidate" >> "$event_log"
+exec "$find_bin" "$@"
+EOF
+  chmod +x "$bin_dir/find"
+}
+
+write_strict_fake_bash() {
+  local bin_dir="$1"
+
+  cat > "$bin_dir/bash" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+event_log="${NIX_TEST_EVENT_LOG:-${DOTFILES_TEST_EVENT_LOG:-}}"
+target_bash="${NIX_TEST_TARGET_BASH:-${DOTFILES_TEST_TARGET_BASH:-}}"
+fixture_root="${NIX_TEST_FIXTURE_ROOT:?}"
+fixture_root="$(cd -P "$fixture_root" && pwd -P)"
+allowed_script="${NIX_TEST_ALLOWED_BASH_SCRIPT:?}"
+event_log_parent="$(cd -P "${event_log:h}" 2>/dev/null && pwd -P)"
+[[ "$event_log_parent" == "$fixture_root" || "$event_log_parent" == "$fixture_root"/* ]] || {
+  print -u2 -- "rejected fake bash event log: $event_log"
+  exit 126
+}
+[[ "$target_bash" == /* && "${target_bash:t}" == bash && -x "$target_bash" && ! -d "$target_bash" ]] || {
+  print -u2 -- "rejected fake bash target: $target_bash"
+  exit 126
+}
+(( $# >= 1 )) || {
+  print -u2 -- 'rejected fake bash invocation without a script'
+  exit 126
+}
+script_path="$1"
+shift
+[[ "$script_path" == "$allowed_script" ]] || {
+  print -u2 -- "rejected fake bash script: $script_path"
+  exit 126
+}
+[[ "$script_path" == /* && "$script_path" != *'/../'* && "$script_path" != */.. \
+  && "$script_path" != *'/./'* && "$script_path" != */. ]] || exit 126
+script_parent="$(cd -P "${script_path:h}" 2>/dev/null && pwd -P)" || exit 126
+[[ "$script_parent" == "$fixture_root" || "$script_parent" == "$fixture_root"/* ]] || exit 126
+resolve_existing_path() {
+  local candidate="$1"
+  local candidate_dir
+  local link_target
+
+  while [[ -L "$candidate" ]]; do
+    candidate_dir="$(cd -P "${candidate:h}" 2>/dev/null && pwd -P)" || return 1
+    link_target="$(readlink "$candidate")" || return 1
+    if [[ "$link_target" == /* ]]; then
+      candidate="$link_target"
+    else
+      candidate="$candidate_dir/$link_target"
+    fi
+  done
+  candidate_dir="$(cd -P "${candidate:h}" 2>/dev/null && pwd -P)" || return 1
+  print -r -- "$candidate_dir/${candidate:t}"
+}
+resolved_script="$(resolve_existing_path "$script_path")" || exit 126
+[[ "$resolved_script" == "$fixture_root"/* && -f "$resolved_script" ]] || exit 126
+
+case "$script_path" in
+  */nix_install.sh)
+    case "$#" in
+      1) [[ "$1" == --help ]] || exit 126; print -r -- "bash:$script_path --help" >> "$event_log"; exec "$target_bash" "$script_path" --help ;;
+      2) [[ "$1" == --profile && ( "$2" == cli || "$2" == full ) ]] || exit 126; print -r -- "bash:$script_path --profile $2" >> "$event_log"; exec "$target_bash" "$script_path" --profile "$2" ;;
+      3) [[ "$1" == --profile && "$2" == full && "$3" == --with-gui-apps ]] || exit 126; print -r -- "bash:$script_path --profile full --with-gui-apps" >> "$event_log"; exec "$target_bash" "$script_path" --profile full --with-gui-apps ;;
+      *) exit 126 ;;
+    esac
+    ;;
+  */setup_hermes_agent.sh)
+    [[ "$#" == 1 && "$1" == --update-only ]] || exit 126
+    print -r -- "bash:$script_path --update-only" >> "$event_log"
+    exec "$target_bash" "$script_path" --update-only
+    ;;
+  */remove_homebrew.sh)
+    [[ "$#" == 2 && "$1" == --apply && "$2" == --confirm-nix-ready ]] || exit 126
+    print -r -- "bash:$script_path --apply --confirm-nix-ready" >> "$event_log"
+    exec "$target_bash" "$script_path" --apply --confirm-nix-ready
+    ;;
+  *)
+    print -u2 -- "rejected fake bash script: $script_path"
+    exit 126
+    ;;
+esac
+EOF
+  chmod +x "$bin_dir/bash"
+}
+
 is_test_macos() {
   [[ "$OSTYPE" == darwin* ]]
+}
+
+bash_major_version() {
+  local bash_bin="$1"
+
+  "$bash_bin" -c 'printf "%s\n" "${BASH_VERSINFO[0]}"'
+}
+
+select_bash_for_major() {
+  local expected_major="$1"
+  local candidate
+  local actual_major
+  local -a candidates=()
+
+  if [[ "$expected_major" == "3" ]]; then
+    if [[ -n "${BASH32_BIN:-}" ]]; then
+      candidates=("$BASH32_BIN")
+    elif is_test_macos; then
+      candidates=(/bin/bash)
+    fi
+  else
+    if [[ -n "${BASH5_BIN:-}" ]]; then
+      candidates=("$BASH5_BIN")
+    else
+      candidates=(/run/current-system/sw/bin/bash /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash)
+    fi
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ "$candidate" == /* && -x "$candidate" ]] || continue
+    actual_major="$(bash_major_version "$candidate" 2>/dev/null)" || continue
+    if [[ "$actual_major" == "$expected_major" ]]; then
+      REPLY="$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+matrix_os_name() {
+  if is_test_macos; then
+    print -r -- "macos"
+  else
+    print -r -- "linux"
+  fi
+}
+
+emit_required_bash_skip() {
+  local target="$1"
+  local expected_major="$2"
+
+  emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=${target}|status=SKIP|requirement=required|reason=bash${expected_major}-unavailable"
+}
+
+emit_not_applicable_skip() {
+  local target="$1"
+
+  emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=any|target=${target}|status=SKIP|requirement=not-applicable|reason=macos-only"
 }
 
 skip_unless_macos() {
@@ -914,7 +1189,6 @@ test_nix_install_script_switches_nix_darwin_or_home_manager() {
   assert_contains "$INSTALL_SCRIPT" 'NIX_EXPERIMENTAL_ARGS=(--extra-experimental-features "nix-command flakes")'
   assert_contains "$INSTALL_SCRIPT" 'source "$SCRIPT_DIR/lib/runtime.sh"'
   assert_contains "$INSTALL_SCRIPT" 'dotfiles_resolve_command_from_path "nix-rootless"'
-  assert_contains "$INSTALL_SCRIPT" 'zmodload zsh/datetime'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"'
   assert_contains "$INSTALL_SCRIPT" 'HOME_MANAGER_BACKUP_ARCHIVE_EPOCH'
   assert_contains "$INSTALL_SCRIPT" 'DOTFILES_DARWIN_SUDO_LOCAL_PATH'
@@ -950,15 +1224,24 @@ test_nix_install_script_defaults_to_cli_profile_on_macos() {
   local bin_dir
   local log_file
   local output_file
+  local home_dir
+  local config_dir
+  local forbidden_home="$HOME"
+  local forbidden_config="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local guard_status=0
+  local host_machine
+  local expected_attr
 
   make_temp_dir
 
   repo="$REPLY"
   bin_dir="$repo/bin"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
 
-  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir" "$home_dir" "$config_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
   copy_script_libs "$repo"
   cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
@@ -991,24 +1274,48 @@ set -euo pipefail
 print -r -- "nix:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
+  write_strict_fake_find "$bin_dir"
 
-  chmod +x "$bin_dir/uname" "$bin_dir/darwin-rebuild" "$bin_dir/nix" "$bin_dir/sudo"
+  chmod +x "$bin_dir/uname" "$bin_dir/darwin-rebuild" "$bin_dir/nix" "$bin_dir/sudo" "$bin_dir/find"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_FORBIDDEN_HOME="$forbidden_home" NIX_TEST_FORBIDDEN_XDG_CONFIG="$forbidden_config" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" > "$output_file"
 
   assert_output_contains "$output_file" 'Nix profile: cli'
-  assert_output_contains "$output_file" 'Flake output: aarch64-darwin-cli'
+  host_machine="$(/usr/bin/uname -m)" || fail 'real /usr/bin/uname -m failed'
+  case "$host_machine" in
+    arm64)
+      expected_attr='aarch64-darwin-cli'
+      ;;
+    x86_64)
+      expected_attr='x86_64-darwin-cli'
+      ;;
+    *)
+      fail "unsupported macOS fixture architecture: $host_machine"
+      ;;
+  esac
+  assert_output_contains "$output_file" "Flake output: $expected_attr"
+  assert_contains "$log_file" "find:$home_dir"
+  assert_contains "$log_file" "find:$config_dir"
   assert_contains "$log_file" 'darwin-rebuild:switch --impure --flake'
   assert_not_contains "$output_file" 'aarch64-darwin-full'
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    "$bin_dir/sudo" env HOME=/var/root DOTFILES_USERNAME=dotfiles-test darwin-rebuild switch \
+    --impure --flake "$repo/etc" > "$repo/sudo-guard.log" 2>&1 || guard_status=$?
+  (( guard_status != 0 )) || fail "fake sudo must reject an unlisted flake path"
+  guard_status=0
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    "$bin_dir/sudo" /bin/true > "$repo/sudo-argv-guard.log" 2>&1 || guard_status=$?
+  (( guard_status != 0 )) || fail "fake sudo must reject unknown command argv"
 
   rm -rf "$repo"
 }
@@ -1020,15 +1327,21 @@ test_nix_install_script_uses_nix_run_impure_after_subcommand_when_darwin_rebuild
   local bin_dir
   local log_file
   local output_file
+  local home_dir
+  local config_dir
+  local forbidden_home="$HOME"
+  local forbidden_config="${XDG_CONFIG_HOME:-$HOME/.config}"
 
   make_temp_dir
 
   repo="$REPLY"
   bin_dir="$repo/bin"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
 
-  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir" "$home_dir" "$config_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
   copy_script_libs "$repo"
   cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
@@ -1055,20 +1368,21 @@ set -euo pipefail
 print -r -- "nix:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
+  write_strict_fake_find "$bin_dir"
 
-  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/sudo"
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/sudo" "$bin_dir/find"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_FORBIDDEN_HOME="$forbidden_home" NIX_TEST_FORBIDDEN_XDG_CONFIG="$forbidden_config" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
+  assert_contains "$log_file" "find:$home_dir"
+  assert_contains "$log_file" "find:$config_dir"
   assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
   assert_contains "$log_file" 'nix:--extra-experimental-features nix-command flakes run --impure'
   assert_not_contains "$log_file" 'nix:--extra-experimental-features nix-command flakes --impure run'
@@ -1086,18 +1400,24 @@ test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch() {
   local output_file
   local sudo_local
   local backup_file
+  local home_dir
+  local config_dir
+  local forbidden_home="$HOME"
+  local forbidden_config="${XDG_CONFIG_HOME:-$HOME/.config}"
 
   make_temp_dir
 
   repo="$REPLY"
   bin_dir="$repo/bin"
   etc_dir="$repo/etc/pam.d"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
   sudo_local="$etc_dir/sudo_local"
   backup_file="${sudo_local}.before-nix-darwin"
 
-  mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir"
+  mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir" "$home_dir" "$config_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
   copy_script_libs "$repo"
 
@@ -1124,14 +1444,10 @@ set -euo pipefail
 print -r -- "darwin-rebuild:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
+  write_strict_fake_find "$bin_dir"
 
-  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo" "$bin_dir/find"
 
   cat > "$sudo_local" <<'EOF'
 # sudo_local: local config file which survives system update and is included for sudo
@@ -1140,10 +1456,15 @@ auth sufficient pam_tid.so
 EOF
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_FORBIDDEN_HOME="$forbidden_home" NIX_TEST_FORBIDDEN_XDG_CONFIG="$forbidden_config" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$sudo_local" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
+  assert_contains "$log_file" "find:$home_dir"
+  assert_contains "$log_file" "find:$config_dir"
   assert_output_contains "$output_file" "Backing up existing $sudo_local to $backup_file before nix-darwin manages sudo Touch ID."
   assert_contains "$log_file" "sudo:mv $sudo_local $backup_file"
   assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
@@ -1165,18 +1486,24 @@ test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch() {
   local output_file
   local bashrc
   local zshrc
+  local home_dir
+  local config_dir
+  local forbidden_home="$HOME"
+  local forbidden_config="${XDG_CONFIG_HOME:-$HOME/.config}"
 
   make_temp_dir
 
   repo="$REPLY"
   bin_dir="$repo/bin"
   etc_dir="$repo/etc"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
   bashrc="$etc_dir/bashrc"
   zshrc="$etc_dir/zshrc"
 
-  mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir"
+  mkdir -p "$repo/scripts/lib" "$bin_dir" "$etc_dir" "$home_dir" "$config_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
   copy_script_libs "$repo"
 
@@ -1203,22 +1530,23 @@ set -euo pipefail
 print -r -- "darwin-rebuild:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
+  write_strict_fake_find "$bin_dir"
 
-  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+  chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo" "$bin_dir/find"
 
   print -r -- "# legacy bashrc" > "$bashrc"
   print -r -- "# legacy zshrc" > "$zshrc"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_FORBIDDEN_HOME="$forbidden_home" NIX_TEST_FORBIDDEN_XDG_CONFIG="$forbidden_config" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$bashrc:$zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
+  assert_contains "$log_file" "find:$home_dir"
+  assert_contains "$log_file" "find:$config_dir"
   assert_output_contains "$output_file" "Backing up existing $bashrc to $bashrc.before-nix-darwin before nix-darwin manages shell startup files."
   assert_output_contains "$output_file" "Backing up existing $zshrc to $zshrc.before-nix-darwin before nix-darwin manages shell startup files."
   assert_contains "$log_file" "sudo:mv $bashrc $bashrc.before-nix-darwin"
@@ -1287,12 +1615,7 @@ set -euo pipefail
 print -r -- "darwin-rebuild:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
 
   chmod +x "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
 
@@ -1304,6 +1627,7 @@ legacy xdg backup
 EOF
 
   HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
     DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="1700000000" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
@@ -1328,15 +1652,21 @@ test_nix_install_script_handles_dirty_worktree_without_hanging() {
   local bin_dir
   local log_file
   local output_file
+  local home_dir
+  local config_dir
+  local forbidden_home="$HOME"
+  local forbidden_config="${XDG_CONFIG_HOME:-$HOME/.config}"
 
   make_temp_dir
 
   repo="$REPLY"
   bin_dir="$repo/bin"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
 
-  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir" "$home_dir" "$config_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
   copy_script_libs "$repo"
   cat > "$repo/flake.nix" <<'EOF'
@@ -1382,20 +1712,21 @@ set -euo pipefail
 print -r -- "darwin-rebuild:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
+  write_strict_fake_find "$bin_dir"
 
-  chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+  chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo" "$bin_dir/find"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" NIX_TEST_ALLOW_GENERATED_FLAKE=1 \
+    NIX_TEST_FORBIDDEN_HOME="$forbidden_home" NIX_TEST_FORBIDDEN_XDG_CONFIG="$forbidden_config" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
+  assert_contains "$log_file" "find:$home_dir"
+  assert_contains "$log_file" "find:$config_dir"
   assert_output_contains "$output_file" 'Flake path: /private/tmp/dotfiles-flake.'
   assert_contains "$log_file" 'sudo:env HOME=/var/root DOTFILES_USERNAME='
   assert_contains "$log_file" 'darwin-rebuild switch --impure --flake path:/private/tmp/dotfiles-flake.'
@@ -1412,16 +1743,22 @@ test_nix_install_script_uses_git_aware_flake_ref_for_tracked_worktree() {
   local bin_dir
   local log_file
   local output_file
+  local home_dir
+  local config_dir
+  local forbidden_home="$HOME"
+  local forbidden_config="${XDG_CONFIG_HOME:-$HOME/.config}"
 
   make_temp_dir
 
   repo="$REPLY"
   repo_abs="${repo:A}"
   bin_dir="$repo/bin"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
   log_file="$repo/commands.log"
   output_file="$repo/output.log"
 
-  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$bin_dir" "$home_dir" "$config_dir"
   cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
   copy_script_libs "$repo"
   cat > "$repo/flake.nix" <<'EOF'
@@ -1469,20 +1806,21 @@ set -euo pipefail
 print -r -- "darwin-rebuild:\$*" >> "$log_file"
 exit 0
 EOF
-  cat > "$bin_dir/sudo" <<EOF
-#!/usr/bin/env zsh
-set -euo pipefail
-print -r -- "sudo:\$*" >> "$log_file"
-"\$@"
-EOF
+  write_strict_fake_sudo "$bin_dir"
+  write_strict_fake_find "$bin_dir"
 
-  chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+  chmod +x "$bin_dir/git" "$bin_dir/uname" "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo" "$bin_dir/find"
 
   PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_EVENT_LOG="$log_file" NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_FORBIDDEN_HOME="$forbidden_home" NIX_TEST_FORBIDDEN_XDG_CONFIG="$forbidden_config" \
     DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
     DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
     "$TEST_ZSH_BIN" "$repo/scripts/nix_install.sh" --profile full > "$output_file"
 
+  assert_contains "$log_file" "find:$home_dir"
+  assert_contains "$log_file" "find:$config_dir"
   assert_output_contains "$output_file" "Flake path: $repo_abs"
   assert_contains "$log_file" "darwin-rebuild switch --impure --flake $repo_abs#"
   assert_contains "$log_file" "darwin-rebuild:switch --impure --flake $repo_abs#"
@@ -3229,7 +3567,2473 @@ test_managed_update_script_updates_mise_and_nix() {
   rm -f "$output"
 }
 
+test_managed_update_all_bash_runs_real_helpers_in_order() {
+  local target_bash="${1:-/bin/bash}"
+  local expected_major="${2:-}"
+  local repo
+  local repo_real
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local events
+  local lock_line
+  local mise_line
+  local hermes_line
+  local apply_line
+  local expected_profile
+  local bash_major
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  repo_real="$(cd "$repo" && pwd -P)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  expected_profile="cli"
+  if is_test_macos; then
+    expected_profile="full"
+  fi
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$repo/config/mise" \
+    "$repo/home/.chezmoitemplates" "$home_dir" "$home_dir/.nix-profile/bin" "$bin_dir"
+  cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  cp "$REPO_ROOT/scripts/setup_hermes_agent.sh" "$repo/scripts/setup_hermes_agent.sh"
+  copy_script_libs "$repo"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+  cat > "$repo/config/mise/config.toml" <<'EOF'
+[tools]
+EOF
+  : > "$repo/home/.chezmoitemplates/mise-config.toml"
+
+  write_strict_fake_bash "$bin_dir"
+  cat > "$bin_dir/nix" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+if [[ "$1" == flake && "$2" == update ]]; then
+  print -r -- "lock-updated" > "$DOTFILES_TEST_LOCK_FILE"
+fi
+exit 0
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/mise" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "mise:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/hermes" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "hermes:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/usr/bin/env zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+  cp "$bin_dir/bash" "$home_dir/.nix-profile/bin/bash"
+
+  HOME="$home_dir" USER=dotfiles-test \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SHOW_PROGRESS=0 \
+    DOTFILES_TEST_EVENT_LOG="$event_log" \
+    DOTFILES_TEST_LOCK_FILE="$repo/flake.lock" \
+    DOTFILES_TEST_TARGET_BASH="$target_bash" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+    --only all --shell bash > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    echo "--- all bash output ---" >&2
+    sed -n '1,200p' "$output_file" >&2
+    echo "--- all bash events ---" >&2
+    if [[ -f "$event_log" ]]; then
+      sed -n '1,200p' "$event_log" >&2
+    fi
+    fail "expected all --shell bash to complete"
+  }
+
+  assert_file "$repo/flake.lock"
+  events="$(cat "$event_log")"
+  lock_line="$(grep -n '^nix:flake update$' "$event_log" | cut -d: -f1)"
+  if is_test_macos; then
+    apply_line="$(grep -n '^darwin-rebuild:switch ' "$event_log" | cut -d: -f1)"
+  else
+    apply_line="$(grep -n '^home-manager:' "$event_log" | cut -d: -f1)"
+  fi
+  mise_line="$(grep -n '^mise:upgrade --exclude java$' "$event_log" | cut -d: -f1)"
+  hermes_line="$(grep -n '^hermes:update --yes$' "$event_log" | cut -d: -f1)"
+  [[ -n "$lock_line" && -n "$apply_line" && -n "$mise_line" && -n "$hermes_line" ]] \
+    || fail "expected all helper stages in event log: $events"
+  (( lock_line < apply_line && apply_line < mise_line && mise_line < hermes_line )) \
+    || fail "expected lock, Nix, mise, Hermes order: $events"
+  assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile $expected_profile"
+  bash_major="$(bash_major_version "$target_bash")"
+  case "$bash_major" in
+    3|5) ;;
+    *) fail "managed all fixture must run Bash 3.x or 5.x" ;;
+  esac
+  [[ -z "$expected_major" || "$bash_major" == "$expected_major" ]] \
+    || fail "managed all fixture ran Bash $bash_major, expected Bash $expected_major"
+  emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${bash_major}|target=managed-default|status=PASS|requirement=required|reason=$target_bash"
+
+  : > "$event_log"
+  exit_status=0
+  HOME="$home_dir" USER=dotfiles-test \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SHOW_PROGRESS=0 \
+    DOTFILES_TEST_EVENT_LOG="$event_log" \
+    DOTFILES_TEST_LOCK_FILE="$repo/flake.lock" \
+    DOTFILES_TEST_TARGET_BASH="$target_bash" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+    --only all --shell bash --cli-only > "$output_file" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || fail "explicit CLI all flow should succeed on every OS"
+  assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile cli"
+  assert_not_contains "$event_log" 'brew:'
+  emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${bash_major}|target=managed-cli-only|status=PASS|requirement=required|reason=$target_bash"
+
+  rm -rf "$repo"
+}
+
+test_managed_update_all_bash_honors_cli_and_full_gui_profiles() {
+  local target_bash="${1:-/bin/bash}"
+  local expected_major="${2:-}"
+  local repo
+  local repo_real
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local exit_status
+  local apply_line
+  local brew_line
+  local mise_line
+  local hermes_line
+  local bash_major
+
+  if ! is_test_macos; then
+    emit_not_applicable_skip 'managed-macos-fallback-profiles'
+    return 0
+  fi
+  make_temp_dir
+  repo="$REPLY"
+  repo_real="$(cd "$repo" && pwd -P)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  bash_major="$(bash_major_version "$target_bash")"
+  [[ -z "$expected_major" || "$bash_major" == "$expected_major" ]] \
+    || fail "managed profile fixture ran Bash $bash_major, expected Bash $expected_major"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$repo/config/mise" "$home_dir/.chezmoitemplates" "$bin_dir"
+  cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  cp "$REPO_ROOT/scripts/setup_hermes_agent.sh" "$repo/scripts/setup_hermes_agent.sh"
+  copy_script_libs "$repo"
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+  brews = [
+    "example-tool"
+  ];
+  casks = [
+  ];
+  vscode = [
+  ];
+}
+EOF
+  : > "$repo/config/nix/mas-apps.nix"
+  cat > "$repo/config/mise/config.toml" <<'EOF'
+[tools]
+EOF
+  : > "$repo/home/.chezmoitemplates/mise-config.toml"
+
+  write_strict_fake_bash "$bin_dir"
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+if [[ "$1" == flake && "$2" == update ]]; then
+  print -r -- "lock-updated" > "$DOTFILES_TEST_LOCK_FILE"
+fi
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  cat > "$bin_dir/brew" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "brew:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/mise" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "mise:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/hermes" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "hermes:$*" >> "$DOTFILES_TEST_EVENT_LOG"
+EOF
+  chmod +x "$bin_dir"/*
+
+  if is_test_macos; then
+    : > "$event_log"
+    cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+  brews = [
+  ];
+  casks = [
+  ];
+  vscode = [
+  ];
+}
+EOF
+    exit_status=0
+    HOME="$home_dir" USER=dotfiles-test \
+      PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+      DOTFILES_SHOW_PROGRESS=0 \
+      DOTFILES_TEST_EVENT_LOG="$event_log" \
+      DOTFILES_TEST_LOCK_FILE="$repo/flake.lock" \
+      DOTFILES_TEST_TARGET_BASH="$target_bash" \
+      NIX_TEST_FIXTURE_ROOT="$repo" \
+      NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+      DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+      DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+      "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+      --only all --shell bash > "$output_file" 2>&1 || exit_status=$?
+    (( exit_status == 0 )) || fail "macOS default full profile without fallback should succeed"
+    assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile full"
+    assert_not_contains "$event_log" 'brew:update'
+    emit_matrix_result "MATRIX_RESULT|os=macos|shell=bash${bash_major}|target=managed-default-full|status=PASS|requirement=required|reason=fallback-free"
+
+    : > "$event_log"
+    cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+  brews = [
+  ];
+  casks = [
+    "example-gui"
+  ];
+  vscode = [
+  ];
+}
+EOF
+    exit_status=0
+    HOME="$home_dir" USER=dotfiles-test \
+      PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+      DOTFILES_SHOW_PROGRESS=0 \
+      DOTFILES_TEST_EVENT_LOG="$event_log" \
+      DOTFILES_TEST_LOCK_FILE="$repo/flake.lock" \
+      DOTFILES_TEST_TARGET_BASH="$target_bash" \
+      NIX_TEST_FIXTURE_ROOT="$repo" \
+      NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+      DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+      DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+      "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+      --only all --shell bash > "$output_file" 2>&1 || exit_status=$?
+    (( exit_status == 0 )) || fail "macOS GUI fallback default downgrade should succeed"
+    assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile cli"
+    assert_not_contains "$event_log" 'bash:'"$repo_real"'/scripts/nix_install.sh --profile full'
+    assert_not_contains "$event_log" 'brew:update'
+    assert_output_contains "$output_file" 'Managed update defaults to the CLI Nix profile on macOS'
+    emit_matrix_result "MATRIX_RESULT|os=macos|shell=bash${bash_major}|target=managed-default-gui-fallback|status=PASS|requirement=required|reason=cli-downgrade"
+
+    cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+  brews = [
+    "example-tool"
+  ];
+  casks = [
+  ];
+  vscode = [
+  ];
+}
+EOF
+  fi
+
+  : > "$event_log"
+  exit_status=0
+  HOME="$home_dir" USER=dotfiles-test \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SHOW_PROGRESS=0 \
+    DOTFILES_TEST_EVENT_LOG="$event_log" \
+    DOTFILES_TEST_LOCK_FILE="$repo/flake.lock" \
+    DOTFILES_TEST_TARGET_BASH="$target_bash" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+    --only all --shell bash --cli-only > "$output_file" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,180p' "$output_file" >&2
+    sed -n '1,180p' "$event_log" >&2
+    fail "expected explicit CLI all flow to succeed"
+  }
+  assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile cli"
+  assert_contains "$event_log" 'brew:update'
+  assert_contains "$event_log" 'brew:upgrade example-tool'
+  assert_contains "$event_log" 'mise:upgrade --exclude java'
+  assert_contains "$event_log" 'hermes:update --yes'
+  apply_line="$(grep -n '^darwin-rebuild:switch ' "$event_log" | cut -d: -f1)"
+  brew_line="$(grep -n '^brew:update$' "$event_log" | cut -d: -f1)"
+  mise_line="$(grep -n '^mise:upgrade --exclude java$' "$event_log" | cut -d: -f1)"
+  hermes_line="$(grep -n '^hermes:update --yes$' "$event_log" | cut -d: -f1)"
+  (( apply_line < brew_line && brew_line < mise_line && mise_line < hermes_line )) \
+    || fail "CLI all flow order was not preserved"
+  emit_matrix_result "MATRIX_RESULT|os=macos|shell=bash${bash_major}|target=managed-cli-fallback|status=PASS|requirement=required|reason=homebrew-fallback"
+
+  : > "$event_log"
+  exit_status=0
+  HOME="$home_dir" USER=dotfiles-test \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SHOW_PROGRESS=0 \
+    DOTFILES_TEST_EVENT_LOG="$event_log" \
+    DOTFILES_TEST_LOCK_FILE="$repo/flake.lock" \
+    DOTFILES_TEST_TARGET_BASH="$target_bash" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+    --only all --shell bash --profile full --with-gui-apps > "$output_file" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,180p' "$output_file" >&2
+    sed -n '1,180p' "$event_log" >&2
+    fail "expected explicit full GUI all flow to succeed"
+  }
+  assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile full --with-gui-apps"
+  assert_contains "$event_log" 'brew:update'
+  assert_contains "$event_log" 'brew:upgrade example-tool'
+  assert_contains "$event_log" 'mise:upgrade --exclude java'
+  assert_contains "$event_log" 'hermes:update --yes'
+  apply_line="$(grep -n '^darwin-rebuild:switch ' "$event_log" | cut -d: -f1)"
+  brew_line="$(grep -n '^brew:update$' "$event_log" | cut -d: -f1)"
+  mise_line="$(grep -n '^mise:upgrade --exclude java$' "$event_log" | cut -d: -f1)"
+  hermes_line="$(grep -n '^hermes:update --yes$' "$event_log" | cut -d: -f1)"
+  (( apply_line < brew_line && brew_line < mise_line && mise_line < hermes_line )) \
+    || fail "full GUI all flow order was not preserved"
+  emit_matrix_result "MATRIX_RESULT|os=macos|shell=bash${bash_major}|target=managed-full-gui|status=PASS|requirement=required|reason=homebrew-fallback"
+
+  rm -rf "$repo"
+}
+
+run_managed_all_bash_matrix() {
+  local expected_major
+  local target_bash
+  local matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash_for_major "$expected_major"; then
+      target_bash="$REPLY"
+      test_managed_update_all_bash_runs_real_helpers_in_order "$target_bash" "$expected_major" \
+        || matrix_status=1
+      if is_test_macos; then
+        test_managed_update_all_bash_honors_cli_and_full_gui_profiles "$target_bash" "$expected_major" \
+          || matrix_status=1
+      fi
+    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+      emit_not_applicable_skip 'managed-default'
+      emit_not_applicable_skip 'managed-cli-only'
+    else
+      emit_required_bash_skip 'managed-default' "$expected_major"
+      emit_required_bash_skip 'managed-cli-only' "$expected_major"
+      if is_test_macos; then
+        emit_required_bash_skip 'managed-default-full' "$expected_major"
+        emit_required_bash_skip 'managed-default-gui-fallback' "$expected_major"
+        emit_required_bash_skip 'managed-cli-fallback' "$expected_major"
+        emit_required_bash_skip 'managed-full-gui' "$expected_major"
+      fi
+      matrix_status=1
+    fi
+  done
+
+  if ! is_test_macos; then
+    emit_not_applicable_skip 'managed-macos-fallback-profiles'
+  fi
+  (( matrix_status == 0 )) || fail "managed all Bash matrix failed"
+}
+
+test_managed_update_propagates_nix_activation_failure() {
+  local target_bash="${1:-/bin/bash}"
+  local repo
+  local repo_real
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local backup_path
+  local archive_path
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  repo_real="$(cd "$repo" && pwd -P)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.failure.before-nix-darwin"
+  archive_path="$backup_path.stale-1700000000"
+
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$repo/config/mise" \
+    "$home_dir" "$bin_dir"
+  cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  cp "$REPO_ROOT/scripts/setup_hermes_agent.sh" "$repo/scripts/setup_hermes_agent.sh"
+  copy_script_libs "$repo"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+  cat > "$repo/config/mise/config.toml" <<'EOF'
+[tools]
+EOF
+  mkdir -p "$repo/home/.chezmoitemplates"
+  : > "$repo/home/.chezmoitemplates/mise-config.toml"
+  print -r -- 'lock-sentinel' > "$repo/flake.lock"
+  print -r -- 'backup-sentinel' > "$backup_path"
+
+  write_strict_fake_bash "$bin_dir"
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+if [[ "${1:-}" == flake && "${2:-}" == update ]]; then
+  print -r -- 'lock-updated' > "$NIX_TEST_LOCK_FILE"
+fi
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+exit 23
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+exit 23
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  cat > "$bin_dir/mise" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "mise:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/hermes" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "hermes:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/brew" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "brew:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_LOCK_FILE="$repo/flake.lock" \
+    NIX_TEST_TARGET_BASH="$target_bash" HOME="$home_dir" USER=dotfiles-test \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/nix_install.sh" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_SHOW_PROGRESS=0 \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$TEST_ZSH_BIN" "$repo/scripts/update_managed_versions.sh" \
+    --only all --shell bash --cli-only > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status != 0 )) || fail "Nix activation failure must reach the managed-update caller"
+  assert_file_content "$repo/flake.lock" 'lock-updated'
+  assert_file "$archive_path"
+  assert_not_exists "$backup_path"
+  if is_test_macos; then
+    assert_contains "$event_log" 'darwin-rebuild:switch '
+  else
+    assert_contains "$event_log" 'home-manager:switch '
+  fi
+  assert_not_contains "$event_log" 'mise:upgrade --exclude java'
+  assert_not_contains "$event_log" 'hermes:update --yes'
+  assert_not_contains "$event_log" 'brew:update'
+  assert_contains "$event_log" "bash:$repo_real/scripts/nix_install.sh --profile cli"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_parser_and_library_mode() {
+  local bash_bin="${1:-/bin/bash}"
+  local run_zsh_source="${2:-1}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local bash_status=0
+  local source_bash_status=0
+  local source_zsh_status=0
+  local source_output
+  local failures=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  mkdir -p "$home_dir" "$bin_dir"
+
+  for command_name in nix brew darwin-rebuild home-manager sudo mv find; do
+    cat > "$bin_dir/$command_name" <<EOF
+#!/bin/zsh
+set -euo pipefail
+print -r -- "$command_name:\$*" >> "$event_log"
+exit 99
+EOF
+    chmod +x "$bin_dir/$command_name"
+  done
+
+  "$bash_bin" -n "$INSTALL_SCRIPT" > "$repo/bash-n.log" 2>&1 || bash_status=$?
+  DOTFILES_NIX_INSTALL_LIBRARY_MODE=1 HOME="$home_dir" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    NIX_TEST_EVENT_LOG="$event_log" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$bash_bin" -c '. "$1"' _ "$INSTALL_SCRIPT" > "$repo/source-bash.log" 2>&1 \
+    || source_bash_status=$?
+  : > "$repo/source-zsh.log"
+  if [[ "$run_zsh_source" == 1 ]]; then
+    DOTFILES_NIX_INSTALL_LIBRARY_MODE=1 HOME="$home_dir" \
+      DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+      NIX_TEST_EVENT_LOG="$event_log" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+      "$TEST_ZSH_BIN" -c '. "$1"' _ "$INSTALL_SCRIPT" > "$repo/source-zsh.log" 2>&1 \
+      || source_zsh_status=$?
+  fi
+  source_output="$(cat "$repo/source-bash.log" "$repo/source-zsh.log")"
+
+  print -r -- "cycle2 parser rc=$bash_status source-bash rc=$source_bash_status source-zsh rc=$source_zsh_status"
+  if (( bash_status != 0 )); then
+    sed -n '1,80p' "$repo/bash-n.log" >&2
+    print -u2 -- "FAIL: nix_install.sh must parse under Bash"
+    failures=1
+  fi
+  if (( source_bash_status != 0 )); then
+    sed -n '1,120p' "$repo/source-bash.log" >&2
+    print -u2 -- "FAIL: nix_install.sh library mode must source under Bash: $source_output"
+    failures=1
+  fi
+  if (( source_zsh_status != 0 )); then
+    sed -n '1,120p' "$repo/source-zsh.log" >&2
+    print -u2 -- "FAIL: nix_install.sh library mode must source under zsh"
+    failures=1
+  fi
+  assert_not_exists "$event_log"
+
+  rm -rf "$repo"
+  return "$failures"
+}
+
+test_nix_install_cycle2_archives_backups_without_losing_pathnames() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local config_dir
+  local bin_dir
+  local event_log
+  local spaced_home
+  local newline_home
+  local linked_home
+  local directory_home
+  local spaced_xdg
+  local newline_xdg
+  local collision_archive
+  local deep_backup
+  local output_file
+  local exit_status=0
+
+  skip_unless_macos "$funcstack[1]" || return 0
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+
+  spaced_home="$home_dir/.space name.before-nix-darwin"
+  newline_home="$home_dir/.line
+name.before-nix-darwin"
+  linked_home="$home_dir/.linked.before-nix-darwin"
+  directory_home="$home_dir/.directory.before-nix-darwin"
+  spaced_xdg="$config_dir/mise/file name.before-nix-darwin"
+  newline_xdg="$config_dir/mise/line
+name.before-nix-darwin"
+  collision_archive="${spaced_home}.stale-1700000000"
+  deep_backup="$home_dir/nested/.deep.before-nix-darwin"
+
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$config_dir/mise" "$home_dir/nested" "$directory_home" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "space" > "$spaced_home"
+  print -r -- "newline" > "$newline_home"
+  print -r -- "target" > "$home_dir/linked-target"
+  ln -s "$home_dir/linked-target" "$linked_home"
+  print -r -- "directory" > "$directory_home/content"
+  print -r -- "xdg-space" > "$spaced_xdg"
+  print -r -- "xdg-newline" > "$newline_xdg"
+  print -r -- "deep" > "$deep_backup"
+  print -r -- 'collision-sentinel' > "$collision_archive"
+
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir/nix" "$bin_dir/darwin-rebuild" "$bin_dir/sudo"
+
+  NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  if (( exit_status != 0 )); then
+    sed -n '1,160p' "$output_file" >&2
+    print -u2 -- "FAIL: expected Bash Nix backup fixture to succeed"
+    rm -rf "$repo"
+    return 1
+  fi
+  assert_not_exists "$spaced_home"
+  assert_not_exists "$newline_home"
+  assert_not_exists "$linked_home"
+  assert_not_exists "$directory_home"
+  assert_not_exists "$spaced_xdg"
+  assert_not_exists "$newline_xdg"
+  assert_file "${spaced_home}.stale-1700000000-1"
+  assert_file_content "${spaced_home}.stale-1700000000-1" 'space'
+  assert_file "${newline_home}.stale-1700000000"
+  assert_file_content "${newline_home}.stale-1700000000" 'newline'
+  assert_file "${linked_home}.stale-1700000000"
+  [[ -L "${linked_home}.stale-1700000000" ]] || fail "expected archived Home Manager symlink to remain a symlink"
+  [[ "$(readlink "${linked_home}.stale-1700000000")" == "$home_dir/linked-target" ]] \
+    || fail "expected archived Home Manager symlink target to be preserved"
+  [[ -d "${directory_home}.stale-1700000000" ]] || fail "expected archived directory: ${directory_home}.stale-1700000000"
+  assert_file_content "${directory_home}.stale-1700000000/content" 'directory'
+  assert_file "${spaced_xdg}.stale-1700000000"
+  assert_file_content "${spaced_xdg}.stale-1700000000" 'xdg-space'
+  assert_file "${newline_xdg}.stale-1700000000"
+  assert_file_content "${newline_xdg}.stale-1700000000" 'xdg-newline'
+  assert_file "$deep_backup"
+  assert_file_content "$collision_archive" 'collision-sentinel'
+  assert_contains "$event_log" 'darwin-rebuild:switch --impure --flake'
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_uses_private_temp_lists_and_cleans_up() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local temp_dir
+  local real_mkdir
+  local real_mktemp
+  local real_chmod
+  local allowed_temp_root
+  local guard_status
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  real_mkdir="/bin/mkdir"
+  [[ -x "$real_mkdir" ]] || real_mkdir="/usr/bin/mkdir"
+  real_mktemp="/usr/bin/mktemp"
+  [[ -x "$real_mktemp" ]] || real_mktemp="/bin/mktemp"
+  real_chmod="/bin/chmod"
+  [[ -x "$real_chmod" ]] || real_chmod="/usr/bin/chmod"
+  allowed_temp_root="/private/tmp"
+  is_test_macos || allowed_temp_root="${TMPDIR:-/tmp}"
+
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "private" > "$home_dir/.private.before-nix-darwin"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/mkdir" <<EOF
+#!/bin/zsh
+set -euo pipefail
+if (( \$# != 1 )); then
+  print -u2 -- "rejected mkdir argv: \$*"
+  exit 126
+fi
+temp_path="\$1"
+temp_name="\${temp_path##*/}"
+[[ "\$temp_path" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 ]] || {
+  print -u2 -- "rejected mkdir path: \$temp_path"
+  exit 126
+}
+"$real_mkdir" "\$temp_path"
+if [[ -d "\$temp_path" ]]; then
+  mode=""
+  if [[ "\$OSTYPE" == darwin* ]]; then
+    mode="\$(stat -f '%Lp' "\$temp_path")"
+  else
+    mode="\$(stat -c '%a' "\$temp_path")"
+  fi
+  print -r -- "temp-dir=\$temp_path" >> "\$NIX_TEST_EVENT_LOG"
+  print -r -- "temp-dir-created-mode=\$mode" >> "\$NIX_TEST_EVENT_LOG"
+fi
+EOF
+  cat > "$bin_dir/chmod" <<EOF
+#!/bin/zsh
+set -euo pipefail
+if (( \$# == 2 )) && [[ "\$1" == 700 && "\$2" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 ]]; then
+  "$real_chmod" 700 "\$2"
+  mode=""
+  if [[ "\$OSTYPE" == darwin* ]]; then
+    mode="\$(stat -f '%Lp' "\$2")"
+  else
+    mode="\$(stat -c '%a' "\$2")"
+  fi
+  print -r -- "temp-dir-mode=\$mode" >> "\$NIX_TEST_EVENT_LOG"
+elif (( \$# == 3 )) && [[ "\$1" == 600 ]]; then
+  parent_one="\${2%/*}"
+  parent_two="\${3%/*}"
+  [[ "\$parent_one" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 && "\$parent_two" == "\$parent_one" ]] || exit 126
+  case "\${2##*/}" in
+    dotfiles-home-backups.*|dotfiles-config-backups.*) ;;
+    *) exit 126 ;;
+  esac
+  case "\${3##*/}" in
+    dotfiles-home-backups.*|dotfiles-config-backups.*) ;;
+    *) exit 126 ;;
+  esac
+  "$real_chmod" 600 "\$2" "\$3"
+else
+  print -u2 -- "rejected chmod argv: \$*"
+  exit 126
+fi
+EOF
+  cat > "$bin_dir/mktemp" <<EOF
+#!/bin/zsh
+set -euo pipefail
+if (( \$# != 1 )); then
+  print -u2 -- "rejected mktemp argv: \$*"
+  exit 126
+fi
+template="\$1"
+parent="\${template%/*}"
+[[ "\$parent" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 ]] || {
+  print -u2 -- "rejected mktemp parent: \$parent"
+  exit 126
+}
+case "\${template##*/}" in
+  dotfiles-home-backups.XXXXXX|dotfiles-config-backups.XXXXXX) ;;
+  *) print -u2 -- "rejected mktemp template: \$template"; exit 126 ;;
+esac
+mode=""
+if [[ "\$OSTYPE" == darwin* ]]; then
+  mode="\$(stat -f '%Lp' "\$parent")"
+else
+  mode="\$(stat -c '%a' "\$parent")"
+fi
+print -r -- "temp-list-parent=\$parent" >> "\$NIX_TEST_EVENT_LOG"
+print -r -- "temp-list-parent-mode=\$mode" >> "\$NIX_TEST_EVENT_LOG"
+exec "$real_mktemp" "\$template"
+EOF
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_TEMP_ROOT="$allowed_temp_root" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$output_file" >&2
+    sed -n '1,160p' "$event_log" >&2
+    fail "expected private Nix temporary list fixture to succeed"
+  }
+  temp_dir="$(grep '^temp-dir=' "$event_log" 2>/dev/null | head -1 | sed 's/^temp-dir=//' || true)"
+  [[ -n "$temp_dir" ]] || fail "expected a dedicated Nix temporary directory"
+  assert_contains "$event_log" 'temp-dir-created-mode=700'
+  assert_contains "$event_log" 'temp-dir-mode=700'
+  assert_contains "$event_log" 'temp-list-parent-mode=700'
+  assert_not_exists "$temp_dir"
+
+  guard_status=0
+  "$bin_dir/mkdir" "$repo/escaped" > "$repo/mkdir-guard.log" 2>&1 || guard_status=$?
+  (( guard_status != 0 )) || fail "fake mkdir must reject paths outside its exact allowlist"
+  guard_status=0
+  "$bin_dir/mktemp" "$repo/escaped.XXXXXX" > "$repo/mktemp-guard.log" 2>&1 || guard_status=$?
+  (( guard_status != 0 )) || fail "fake mktemp must reject paths outside its exact allowlist"
+  guard_status=0
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_FIXTURE_ROOT="$repo" \
+    "$bin_dir/sudo" mv /etc/hosts "$repo/escaped" > "$repo/sudo-guard.log" 2>&1 || guard_status=$?
+  (( guard_status != 0 )) || fail "fake sudo must reject out-of-fixture mv paths"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_cleans_private_lists_when_mv_fails() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local backup_path
+  local real_mkdir
+  local allowed_temp_root
+  local temp_dir
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.move-failure.before-nix-darwin"
+  real_mkdir="/bin/mkdir"
+  [[ -x "$real_mkdir" ]] || real_mkdir="/usr/bin/mkdir"
+  allowed_temp_root="/private/tmp"
+  is_test_macos || allowed_temp_root="${TMPDIR:-/tmp}"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- 'must-remain' > "$backup_path"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/mkdir" <<EOF
+#!/bin/zsh
+set -euo pipefail
+if (( \$# != 1 )); then
+  print -u2 -- "rejected mkdir argv: \$*"
+  exit 126
+fi
+temp_path="\$1"
+[[ "\$temp_path" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 ]] || {
+  print -u2 -- "rejected mkdir path: \$temp_path"
+  exit 126
+}
+"$real_mkdir" "\$temp_path"
+print -r -- "temp-dir=\$temp_path" >> "\$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/mv" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "mv:$*" >> "$NIX_TEST_EVENT_LOG"
+exit 88
+EOF
+  for command_name in nix home-manager darwin-rebuild sudo; do
+    cat > "$bin_dir/$command_name" <<EOF
+#!/bin/zsh
+set -euo pipefail
+print -r -- "$command_name:\$*" >> "$event_log"
+exit 99
+EOF
+  done
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status != 0 )) || fail "Nix archive mv failure must stop activation"
+  assert_file_content "$backup_path" 'must-remain'
+  assert_contains "$event_log" 'mv:'
+  assert_not_contains "$event_log" 'darwin-rebuild:'
+  assert_not_contains "$event_log" 'home-manager:'
+  temp_dir="$(grep '^temp-dir=' "$event_log" 2>/dev/null | head -1 | sed 's/^temp-dir=//' || true)"
+  [[ -n "$temp_dir" ]] || fail "expected private temp directory in mv failure fixture"
+  assert_not_exists "$temp_dir"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_dry_run_does_not_move_backups_or_use_sudo() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local backup_path
+  local output_file
+  local exit_status=0
+  local expected_stage
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.existing.before-nix-darwin"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "legacy" > "$backup_path"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --cli-only --dry-run \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$output_file" >&2
+    fail "expected Nix dry-run to succeed"
+  }
+  assert_file "$backup_path"
+  assert_not_contains "$event_log" 'sudo:'
+  if is_test_macos; then
+    expected_stage='darwin-rebuild:build --impure --flake'
+  else
+    expected_stage='home-manager:build --impure --flake'
+  fi
+  assert_contains "$event_log" "$expected_stage"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_uses_date_for_default_archive_epoch() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local backup_path
+  local output_file
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.default.before-nix-darwin"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "legacy" > "$backup_path"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/date" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+[[ "$1" == +%s ]] || exit 1
+print -r -- "1700000000"
+EOF
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  env -u DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH \
+    NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$output_file" >&2
+    fail "expected default archive epoch to succeed"
+  }
+  assert_file "$backup_path.stale-1700000000"
+  assert_not_exists "$backup_path"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_rejects_invalid_epoch_and_date_output() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local backup_path
+  local invalid_epoch
+  local date_mode
+  local exit_status
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.invalid.before-nix-darwin"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "must-remain" > "$backup_path"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  for command_name in nix home-manager darwin-rebuild sudo find mv; do
+    cat > "$bin_dir/$command_name" <<EOF
+#!/bin/zsh
+set -euo pipefail
+print -r -- "$command_name:\$*" >> "$event_log"
+exit 99
+EOF
+    chmod +x "$bin_dir/$command_name"
+  done
+  cat > "$bin_dir/date" <<EOF
+#!/bin/zsh
+set -euo pipefail
+print -r -- "date:\$*" >> "$event_log"
+case "\${NIX_TEST_DATE_MODE:-failure}" in
+  failure)
+    exit 71
+    ;;
+  empty)
+    ;;
+  nonnumeric)
+    print -r -- "not-a-number"
+    ;;
+esac
+EOF
+  chmod +x "$bin_dir/date"
+
+  for invalid_epoch in "not-a-number" "1700000000/../escape"; do
+    : > "$event_log"
+    exit_status=0
+    NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+      PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+      DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="$invalid_epoch" \
+      "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+      > "$output_file" 2>&1 || exit_status=$?
+    (( exit_status != 0 )) || fail "invalid epoch must fail before Nix activation: $invalid_epoch"
+    assert_output_contains "$output_file" 'Home Manager backup archive epoch must be a non-negative integer.'
+    assert_file_content "$backup_path" 'must-remain'
+    assert_not_contains "$event_log" 'date:'
+    assert_not_contains "$event_log" 'nix:'
+    assert_not_contains "$event_log" 'find:'
+    assert_not_contains "$event_log" 'mv:'
+  done
+
+  for date_mode in failure empty nonnumeric; do
+    : > "$event_log"
+    exit_status=0
+    env -u DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH \
+      NIX_TEST_DATE_MODE="$date_mode" NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+      PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+      "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+      > "$output_file" 2>&1 || exit_status=$?
+    (( exit_status != 0 )) || fail "date output must fail closed: $date_mode"
+    assert_file_content "$backup_path" 'must-remain'
+    assert_contains "$event_log" 'date:+%s'
+    assert_not_contains "$event_log" 'nix:'
+    assert_not_contains "$event_log" 'find:'
+    assert_not_contains "$event_log" 'mv:'
+  done
+
+  rm -rf "$repo"
+}
+
+test_nix_install_path_resolution_ignores_spoofed_bash_version() {
+  local output
+  local exit_status=0
+
+  make_temp_file
+  output="$REPLY"
+  BASH_VERSION=spoofed DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    "$TEST_ZSH_BIN" "$INSTALL_SCRIPT" --help > "$output" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,120p' "$output" >&2
+    fail "zsh must not enter the Bash path only because BASH_VERSION is exported"
+  }
+  assert_output_contains "$output" '--uninstall-homebrew'
+
+  rm -f "$output"
+}
+
+test_nix_install_rejects_spoofed_bash_source_and_ostype() {
+  local bash_bin="${1:-/bin/bash}"
+  local repo
+  local spoof_root
+  local event_log
+  local output_file
+  local bin_dir
+  local spoof_setup_profile
+  local spoofed_ostype
+  local actual_machine
+  local spoofed_machine
+  local expected_system
+  local spoofed_system
+  local expected_os_suffix
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  spoof_root="$repo/spoof"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  bin_dir="$repo/bin"
+  spoof_setup_profile="$spoof_root/scripts/lib/setup_profile.sh"
+  mkdir -p "$spoof_root/scripts/lib" "$bin_dir"
+  cp "$REPO_ROOT/scripts/lib/homebrew.sh" "$spoof_root/scripts/lib/homebrew.sh"
+  cp "$REPO_ROOT/scripts/lib/homebrew_fallback.sh" "$spoof_root/scripts/lib/homebrew_fallback.sh"
+  cp "$REPO_ROOT/scripts/lib/runtime.sh" "$spoof_root/scripts/lib/runtime.sh"
+  cat > "$spoof_setup_profile" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- 'spoofed-setup-profile' >> "$NIX_TEST_EVENT_LOG"
+. "$NIX_TEST_REAL_SETUP_PROFILE"
+EOF
+
+  BASH_SOURCE="$spoof_root/scripts/nix_install.sh" \
+    NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_REAL_SETUP_PROFILE="$REPO_ROOT/scripts/lib/setup_profile.sh" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    "$bash_bin" "$INSTALL_SCRIPT" --help > "$output_file" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,120p' "$output_file" >&2
+    fail "Bash direct execution must ignore an imported scalar BASH_SOURCE"
+  }
+  assert_output_contains "$output_file" '--uninstall-homebrew'
+  assert_not_exists "$event_log"
+
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+  mkdir -p "$repo/config/nix"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+  spoofed_ostype="darwin-spoof"
+  is_test_macos && spoofed_ostype="linux-spoof"
+  : > "$event_log"
+  exit_status=0
+  OSTYPE="$spoofed_ostype" NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_FIXTURE_ROOT="$repo" \
+    HOME="$repo/home" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    "$bash_bin" "$INSTALL_SCRIPT" --cli-only --dry-run > "$repo/os-output.log" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$repo/os-output.log" >&2
+    fail "Bash direct execution must use the host OS instead of OSTYPE"
+  }
+  if is_test_macos; then
+    assert_contains "$event_log" 'darwin-rebuild:build --impure --flake'
+    assert_not_contains "$event_log" 'home-manager:build'
+  else
+    assert_contains "$event_log" 'home-manager:build --impure --flake'
+    assert_not_contains "$event_log" 'darwin-rebuild:build'
+  fi
+
+  actual_machine="$(/usr/bin/uname -m)"
+  case "$actual_machine" in
+    arm64|aarch64)
+      spoofed_machine="x86_64"
+      expected_system="aarch64"
+      spoofed_system="x86_64"
+      ;;
+    x86_64|amd64)
+      spoofed_machine="arm64"
+      expected_system="x86_64"
+      spoofed_system="aarch64"
+      ;;
+    *)
+      fail "unsupported test machine: $actual_machine"
+      ;;
+  esac
+  expected_os_suffix="linux"
+  is_test_macos && expected_os_suffix="darwin"
+  : > "$event_log"
+  exit_status=0
+  CPUTYPE="$spoofed_machine" MACHTYPE="${spoofed_machine}-unknown" OSTYPE="$spoofed_ostype" \
+    NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_FIXTURE_ROOT="$repo" \
+    HOME="$repo/home" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    "$bash_bin" "$INSTALL_SCRIPT" --cli-only --dry-run > "$repo/arch-output.log" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$repo/arch-output.log" >&2
+    fail "Bash direct execution must use uname machine instead of CPUTYPE/MACHTYPE"
+  }
+  assert_contains "$event_log" "${expected_system}-${expected_os_suffix}-cli"
+  assert_not_contains "$event_log" "${spoofed_system}-${expected_os_suffix}-cli"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_fails_closed_when_find_producer_fails() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local config_dir
+  local bin_dir
+  local event_log
+  local backup_path
+  local xdg_backup_path
+  local output_file
+  local real_mkdir
+  local allowed_temp_root
+  local temp_dir
+  local guard_status
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.home.before-nix-darwin"
+  xdg_backup_path="$config_dir/mise/xdg.before-nix-darwin"
+  real_mkdir="/bin/mkdir"
+  [[ -x "$real_mkdir" ]] || real_mkdir="/usr/bin/mkdir"
+  allowed_temp_root="/private/tmp"
+  is_test_macos || allowed_temp_root="${TMPDIR:-/tmp}"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$config_dir/mise" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "home" > "$backup_path"
+  print -r -- "xdg" > "$xdg_backup_path"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/mkdir" <<EOF
+#!/bin/zsh
+set -euo pipefail
+if (( \$# != 1 )); then
+  print -u2 -- "rejected mkdir argv: \$*"
+  exit 126
+fi
+temp_path="\$1"
+[[ "\$temp_path" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 ]] || {
+  print -u2 -- "rejected mkdir path: \$temp_path"
+  exit 126
+}
+"$real_mkdir" "\$temp_path"
+print -r -- "temp-dir=\$temp_path" >> "\$NIX_TEST_EVENT_LOG"
+EOF
+
+  cat > "$bin_dir/find" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+fixture_root="${NIX_TEST_FIXTURE_ROOT:?}"
+fixture_root="$(cd -P "$fixture_root" && pwd -P)"
+fail_root="${NIX_TEST_FAIL_ROOT:?}"
+fail_root="$(cd -P "$fail_root" && pwd -P)"
+find_root="$(cd -P "$1" && pwd -P)"
+if [[ "$fail_root" == "$fixture_root/home" ]]; then
+  (( $# == 8 )) && [[ "$find_root" == "$fixture_root/home" && "$2" == -mindepth && "$3" == 1 \
+    && "$4" == -maxdepth && "$5" == 1 && "$6" == -name && "$7" == '.*.before-nix-darwin' \
+    && "$8" == -print0 ]] || {
+    print -u2 -- "rejected find argv: $*"
+    exit 126
+  }
+  print -r -- "find-failed:$1" >> "$NIX_TEST_EVENT_LOG"
+  exit 77
+fi
+if [[ "$fail_root" == "$fixture_root/config-home" ]]; then
+  if (( $# == 8 )) && [[ "$find_root" == "$fixture_root/home" && "$2" == -mindepth && "$3" == 1 \
+    && "$4" == -maxdepth && "$5" == 1 && "$6" == -name && "$7" == '.*.before-nix-darwin' \
+    && "$8" == -print0 ]]; then
+    exec /usr/bin/find "$fixture_root/home" -mindepth 1 -maxdepth 1 -name '.*.before-nix-darwin' -print0
+  fi
+  (( $# == 6 )) && [[ "$find_root" == "$fixture_root/config-home" && "$2" == -mindepth && "$3" == 1 \
+    && "$4" == -name && "$5" == '*.before-nix-darwin' && "$6" == -print0 ]] || {
+    print -u2 -- "rejected find argv: $*"
+    exit 126
+  }
+  print -r -- "find-failed:$1" >> "$NIX_TEST_EVENT_LOG"
+  exit 77
+fi
+print -u2 -- "rejected find root: $fail_root"
+exit 126
+EOF
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_FAIL_ROOT="$home_dir" NIX_TEST_EVENT_LOG="$event_log" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_TEMP_ROOT="$allowed_temp_root" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status != 0 )) || fail "expected HOME find producer failure"
+  assert_contains "$event_log" "find-failed:$home_dir"
+  assert_output_contains "$output_file" "ERROR: failed to discover existing Home Manager backups under $home_dir."
+  assert_file "$backup_path"
+  assert_file "$xdg_backup_path"
+  temp_dir="$(grep '^temp-dir=' "$event_log" 2>/dev/null | head -1 | sed 's/^temp-dir=//' || true)"
+  [[ -n "$temp_dir" ]] || fail "expected private temp directory in HOME find failure fixture"
+  assert_not_exists "$temp_dir"
+  assert_not_contains "$event_log" 'darwin-rebuild:'
+  assert_not_contains "$event_log" 'home-manager:'
+
+  guard_status=0
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_FIXTURE_ROOT="$repo" NIX_TEST_FAIL_ROOT="$home_dir" \
+    "$bin_dir/find" "$repo" -exec /bin/sh -c 'exit 0' \; > "$repo/find-guard.log" 2>&1 || guard_status=$?
+  (( guard_status != 0 )) || fail "fake find must reject arbitrary roots and -exec arguments"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_fails_closed_when_xdg_find_fails() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local config_dir
+  local bin_dir
+  local event_log
+  local backup_path
+  local xdg_backup_path
+  local output_file
+  local real_mkdir
+  local allowed_temp_root
+  local temp_dir
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  config_dir="$repo/config-home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  backup_path="$home_dir/.home.before-nix-darwin"
+  xdg_backup_path="$config_dir/mise/xdg.before-nix-darwin"
+  real_mkdir="/bin/mkdir"
+  [[ -x "$real_mkdir" ]] || real_mkdir="/usr/bin/mkdir"
+  allowed_temp_root="/private/tmp"
+  is_test_macos || allowed_temp_root="${TMPDIR:-/tmp}"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$config_dir/mise" "$bin_dir" "$repo/config/nix"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  print -r -- "home" > "$backup_path"
+  print -r -- "xdg" > "$xdg_backup_path"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/mkdir" <<EOF
+#!/bin/zsh
+set -euo pipefail
+if (( \$# != 1 )); then
+  print -u2 -- "rejected mkdir argv: \$*"
+  exit 126
+fi
+temp_path="\$1"
+[[ "\$temp_path" == "$allowed_temp_root"/dotfiles-nix-backups."\$PPID".0 ]] || {
+  print -u2 -- "rejected mkdir path: \$temp_path"
+  exit 126
+}
+"$real_mkdir" "\$temp_path"
+print -r -- "temp-dir=\$temp_path" >> "\$NIX_TEST_EVENT_LOG"
+EOF
+
+  cat > "$bin_dir/find" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+fixture_root="${NIX_TEST_FIXTURE_ROOT:?}"
+fixture_root="$(cd -P "$fixture_root" && pwd -P)"
+fail_root="${NIX_TEST_FAIL_ROOT:?}"
+fail_root="$(cd -P "$fail_root" && pwd -P)"
+find_root="$(cd -P "$1" && pwd -P)"
+if [[ "$fail_root" == "$fixture_root/config-home" ]]; then
+  if (( $# == 8 )) && [[ "$find_root" == "$fixture_root/home" && "$2" == -mindepth && "$3" == 1 \
+    && "$4" == -maxdepth && "$5" == 1 && "$6" == -name && "$7" == '.*.before-nix-darwin' \
+    && "$8" == -print0 ]]; then
+    exec /usr/bin/find "$fixture_root/home" -mindepth 1 -maxdepth 1 -name '.*.before-nix-darwin' -print0
+  fi
+  (( $# == 6 )) && [[ "$find_root" == "$fixture_root/config-home" && "$2" == -mindepth && "$3" == 1 \
+    && "$4" == -name && "$5" == '*.before-nix-darwin' && "$6" == -print0 ]] || {
+    print -u2 -- "rejected find argv: $*"
+    exit 126
+  }
+  print -r -- "find-failed:$1" >> "$NIX_TEST_EVENT_LOG"
+  exit 77
+fi
+print -u2 -- "rejected find root: $fail_root"
+exit 126
+EOF
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/home-manager" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "home-manager:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_FAIL_ROOT="$config_dir" NIX_TEST_EVENT_LOG="$event_log" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    NIX_TEST_ALLOWED_TEMP_ROOT="$allowed_temp_root" \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status != 0 )) || fail "expected XDG find producer failure"
+  assert_contains "$event_log" "find-failed:$config_dir"
+  assert_output_contains "$output_file" "ERROR: failed to discover existing Home Manager backups under $config_dir."
+  assert_file "$backup_path"
+  assert_file "$xdg_backup_path"
+  temp_dir="$(grep '^temp-dir=' "$event_log" 2>/dev/null | head -1 | sed 's/^temp-dir=//' || true)"
+  [[ -n "$temp_dir" ]] || fail "expected private temp directory in XDG find failure fixture"
+  assert_not_exists "$temp_dir"
+  assert_not_contains "$event_log" 'darwin-rebuild:'
+  assert_not_contains "$event_log" 'home-manager:'
+
+  rm -rf "$repo"
+}
+
+test_nix_install_cycle2_splits_darwin_paths_without_losing_characters() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local first_rc
+  local second_rc
+  local third_rc
+  local exit_status=0
+
+  skip_unless_macos "$funcstack[1]" || return 0
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  mkdir -p "$repo/scripts/lib" "$home_dir" "$bin_dir" "$repo/config/nix" "$repo/etc"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  first_rc="$repo/etc/space rc"
+  second_rc="$repo/etc/line
+rc"
+  third_rc="$repo/etc/back\\slash"
+  print -r -- "first" > "$first_rc"
+  print -r -- "second" > "$second_rc"
+  print -r -- "third" > "$third_rc"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_EVENT_LOG="$event_log" HOME="$home_dir" \
+    NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS=":$first_rc::$second_rc:$third_rc:" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$output_file" >&2
+    fail "expected Darwin colon-path fixture to succeed"
+  }
+  assert_file "$first_rc.before-nix-darwin"
+  assert_file "$second_rc.before-nix-darwin"
+  assert_file "$third_rc.before-nix-darwin"
+  assert_not_exists "$first_rc"
+  assert_not_exists "$second_rc"
+  assert_not_exists "$third_rc"
+  assert_contains "$event_log" 'darwin-rebuild:switch --impure --flake'
+
+  rm -rf "$repo"
+}
+
+test_nix_install_direct_copy_uses_bash_shebang() {
+  local target_bash="${1:-/bin/bash}"
+  local repo
+  local script_copy
+  local symlink_copy
+  local bin_dir
+  local event_log
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  script_copy="$repo/scripts/nix_install.sh"
+  symlink_copy="$repo/link/nix_install.sh"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  mkdir -p "$repo/scripts/lib" "$repo/link" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$script_copy"
+  cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  cp "$REPO_ROOT/scripts/lib/homebrew.sh" "$repo/scripts/lib/homebrew.sh"
+  cp "$REPO_ROOT/scripts/lib/homebrew_fallback.sh" "$repo/scripts/lib/homebrew_fallback.sh"
+  cp "$REPO_ROOT/scripts/lib/runtime.sh" "$repo/scripts/lib/runtime.sh"
+  chmod +x "$script_copy"
+  ln -s "$script_copy" "$symlink_copy"
+
+  write_strict_fake_bash "$bin_dir"
+  cat > "$bin_dir/zsh" <<EOF
+#!/bin/zsh
+set -euo pipefail
+print -r -- "zsh:\$*" >> "\$NIX_TEST_EVENT_LOG"
+print -u2 -- 'rejected fake zsh dispatch'
+exit 125
+EOF
+  chmod +x "$bin_dir/bash" "$bin_dir/zsh"
+
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_TARGET_BASH="$target_bash" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$script_copy" NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$script_copy" --help > "$repo/output.log" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,120p' "$repo/output.log" >&2
+    fail "expected direct Nix copy to run"
+  }
+  assert_contains "$event_log" "bash:$script_copy --help"
+  assert_not_contains "$event_log" 'zsh:'
+  assert_output_contains "$repo/output.log" '--uninstall-homebrew'
+
+  : > "$event_log"
+  exit_status=0
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_TARGET_BASH="$target_bash" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$symlink_copy" NIX_TEST_FIXTURE_ROOT="$repo" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$symlink_copy" --help > "$repo/symlink-output.log" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,120p' "$repo/symlink-output.log" >&2
+    fail "expected direct Nix symlink to resolve its target directory"
+  }
+  assert_contains "$event_log" "bash:$symlink_copy --help"
+  assert_not_contains "$event_log" 'zsh:'
+  assert_output_contains "$repo/symlink-output.log" '--uninstall-homebrew'
+
+  : > "$event_log"
+  exit_status=0
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_TARGET_BASH="$target_bash" \
+  NIX_TEST_ALLOWED_BASH_SCRIPT="$script_copy" NIX_TEST_FIXTURE_ROOT="$repo" \
+    "$bin_dir/bash" "$script_copy" --profile cli --host /etc > "$repo/bash-guard.log" 2>&1 || exit_status=$?
+  (( exit_status != 0 )) || fail "fake Bash must reject unlisted script arguments"
+  [[ ! -s "$event_log" ]] || fail "fake Bash must not log rejected invocations"
+
+  rm -rf "$repo"
+}
+
+test_nix_install_uninstall_homebrew_uses_bash_child() {
+  local runner_bin="${1:-$TEST_ZSH_BIN}"
+  local child_bash="${2:-/bin/bash}"
+  local repo
+  local repo_real
+  local home_dir
+  local bin_dir
+  local event_log
+  local output_file
+  local activation_line
+  local child_line
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  repo_real="$(cd "$repo" && pwd -P)"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  output_file="$repo/output.log"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$INSTALL_SCRIPT" "$repo/scripts/nix_install.sh"
+  copy_script_libs "$repo"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  : > "$repo/config/nix/mas-apps.nix"
+  cat > "$repo/scripts/remove_homebrew.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf 'remove:%s\n' "$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  chmod +x "$repo/scripts/remove_homebrew.sh"
+
+  write_strict_fake_bash "$bin_dir"
+  cat > "$bin_dir/zsh" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "zsh:$*" >> "$NIX_TEST_EVENT_LOG"
+print -u2 -- 'rejected fake zsh dispatch'
+exit 125
+EOF
+  cat > "$bin_dir/nix" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "nix:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  cat > "$bin_dir/darwin-rebuild" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "darwin-rebuild:$*" >> "$NIX_TEST_EVENT_LOG"
+EOF
+  write_strict_fake_sudo "$bin_dir"
+  chmod +x "$bin_dir"/*
+
+  NIX_TEST_EVENT_LOG="$event_log" NIX_TEST_TARGET_BASH="$child_bash" \
+    NIX_TEST_ALLOWED_BASH_SCRIPT="$repo_real/scripts/remove_homebrew.sh" \
+    NIX_TEST_FIXTURE_ROOT="$repo" HOME="$home_dir" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH=1700000000 \
+    DOTFILES_DARWIN_SUDO_LOCAL_PATH="$repo/etc/pam.d/sudo_local" \
+    DOTFILES_DARWIN_ETC_SHELL_RC_PATHS="$repo/etc/bashrc:$repo/etc/zshrc" \
+    "$runner_bin" "$repo/scripts/nix_install.sh" --profile cli --uninstall-homebrew \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,180p' "$output_file" >&2
+    sed -n '1,180p' "$event_log" >&2
+    fail "expected Nix Homebrew child delegation to succeed"
+  }
+  assert_contains "$event_log" "bash:$repo_real/scripts/remove_homebrew.sh --apply --confirm-nix-ready"
+  assert_not_contains "$event_log" 'zsh:'
+  assert_contains "$event_log" 'remove:--apply --confirm-nix-ready'
+  [[ "$(grep -cF "bash:$repo_real/scripts/remove_homebrew.sh --apply --confirm-nix-ready" "$event_log")" == 1 ]] \
+    || fail "expected exactly one Homebrew child dispatch"
+  activation_line="$(grep -n -E '^(darwin-rebuild:switch |home-manager:switch |nix:.* run )' "$event_log" | head -1 | cut -d: -f1)"
+  child_line="$(grep -nF "bash:$repo_real/scripts/remove_homebrew.sh --apply --confirm-nix-ready" "$event_log" | cut -d: -f1)"
+  [[ -n "$activation_line" && -n "$child_line" && "$activation_line" -lt "$child_line" ]] \
+    || fail "expected Homebrew child dispatch after Nix activation"
+
+  rm -rf "$repo"
+}
+
+test_remove_homebrew_dry_run_output_is_shell_neutral() {
+  local bash_bin="${1:-/bin/bash}"
+  local repo
+  local home_dir
+  local bin_dir
+  local bash_output
+  local zsh_output
+  local curl_log
+  local bash_status=0
+  local zsh_status=0
+  local apply_status=0
+  local expected_command
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  bash_output="$repo/bash-output.log"
+  zsh_output="$repo/zsh-output.log"
+  curl_log="$repo/curl.log"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$REMOVE_HOMEBREW_SCRIPT" "$repo/scripts/remove_homebrew.sh"
+  cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  cat > "$bin_dir/curl" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "curl-called" >> "$REMOVE_TEST_CURL_LOG"
+exit 99
+EOF
+  chmod +x "$bin_dir/curl"
+
+  expected_command='NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"'
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" "$bash_bin" "$repo/scripts/remove_homebrew.sh" --dry-run \
+    > "$bash_output" 2>&1 || bash_status=$?
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" "$TEST_ZSH_BIN" "$repo/scripts/remove_homebrew.sh" --dry-run \
+    > "$zsh_output" 2>&1 || zsh_status=$?
+
+  if (( bash_status != 0 )); then
+    sed -n '1,100p' "$bash_output" >&2
+  fi
+  if (( zsh_status != 0 )); then
+    sed -n '1,100p' "$zsh_output" >&2
+  fi
+  (( bash_status == 0 && zsh_status == 0 )) || fail "dry-run must run in Bash and zsh"
+  assert_output_contains "$bash_output" "Homebrew uninstall command:"
+  assert_output_contains "$bash_output" "$expected_command"
+  assert_output_contains "$bash_output" "DRY-RUN: Homebrew was not removed"
+  assert_output_contains "$zsh_output" "Homebrew uninstall command:"
+  assert_output_contains "$zsh_output" "$expected_command"
+  assert_output_contains "$zsh_output" "DRY-RUN: Homebrew was not removed"
+  [[ "$(sed -n '/^Homebrew uninstall command:/{N;p;}' "$bash_output")" == \
+    "$(sed -n '/^Homebrew uninstall command:/{N;p;}' "$zsh_output")" ]] \
+    || fail "Bash and zsh Homebrew dry-run command blocks differ"
+  assert_not_exists "$curl_log"
+
+  PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    HOME="$home_dir" REMOVE_TEST_CURL_LOG="$curl_log" \
+    "$bash_bin" "$repo/scripts/remove_homebrew.sh" --apply \
+    > "$repo/apply-output.log" 2>&1 || apply_status=$?
+  (( apply_status != 0 )) || fail "apply without confirmation must fail"
+  assert_output_contains "$repo/apply-output.log" "Refusing to remove Homebrew until Nix setup has been confirmed."
+  assert_not_exists "$curl_log"
+
+  rm -rf "$repo"
+}
+
+test_remove_homebrew_apply_propagates_curl_failure() {
+  local bash_bin="${1:-/bin/bash}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local mode
+  local exit_status
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$REMOVE_HOMEBREW_SCRIPT" "$repo/scripts/remove_homebrew.sh"
+  cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [
+  ];
+  brews = [
+  ];
+  casks = [
+  ];
+  vscode = [
+  ];
+}
+EOF
+  cat > "$bin_dir/curl" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+print -r -- "curl:$*" >> "$REMOVE_TEST_CURL_LOG"
+  case "$REMOVE_TEST_CURL_MODE" in
+  failure)
+    exit 73
+    ;;
+  empty)
+    exit 0
+    ;;
+  whitespace)
+    printf ' \t\n'
+    exit 0
+    ;;
+  *)
+    print -r -- 'unexpected curl test mode' >&2
+    exit 74
+    ;;
+esac
+EOF
+  chmod +x "$bin_dir/curl"
+
+  for mode in failure empty whitespace; do
+    : > "$event_log"
+    exit_status=0
+    REMOVE_TEST_CURL_LOG="$event_log" REMOVE_TEST_CURL_MODE="$mode" \
+      HOME="$home_dir" PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+      "$bash_bin" "$repo/scripts/remove_homebrew.sh" --apply --confirm-nix-ready \
+      > "$repo/$mode-output.log" 2>&1 || exit_status=$?
+    (( exit_status != 0 )) || fail "Homebrew apply must fail when curl is $mode"
+    if [[ "$mode" == failure ]]; then
+      assert_output_contains "$repo/$mode-output.log" 'failed to download Homebrew uninstall script'
+    else
+      assert_output_contains "$repo/$mode-output.log" 'Homebrew uninstall script download was empty'
+    fi
+    assert_contains "$event_log" 'curl:-fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh'
+  done
+
+  rm -rf "$repo"
+}
+
+test_remove_homebrew_apply_executes_downloaded_body_with_noninteractive() {
+  local bash_bin="${1:-/bin/bash}"
+  local repo
+  local home_dir
+  local bin_dir
+  local event_log
+  local body_log
+  local body_sentinel
+  local output_file
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  home_dir="$repo/home"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  body_log="$repo/body.log"
+  body_sentinel="$repo/body-complete"
+  output_file="$repo/output.log"
+  mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
+  cp "$REMOVE_HOMEBREW_SCRIPT" "$repo/scripts/remove_homebrew.sh"
+  cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
+  cat > "$repo/config/nix/homebrew-fallback.nix" <<'EOF'
+{
+  taps = [ ];
+  brews = [ ];
+  casks = [ ];
+  vscode = [ ];
+}
+EOF
+  cat > "$bin_dir/curl" <<'EOF'
+#!/bin/zsh
+set -euo pipefail
+(( $# == 2 )) && [[ "$1" == -fsSL && "$2" == https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh ]] || {
+  print -u2 -- "rejected curl argv: $*"
+  exit 126
+}
+print -r -- "curl:$*" >> "$REMOVE_TEST_EVENT_LOG"
+cat <<'PAYLOAD'
+set -euo pipefail
+case "${BASH_VERSINFO[0]}" in
+  3|5) ;;
+  *) exit 81 ;;
+esac
+[[ "${NONINTERACTIVE:-}" == 1 ]] || exit 82
+[[ "$#" == 0 ]] || exit 83
+printf '%s\n' 'payload-start' >> "$REMOVE_TEST_BODY_LOG"
+printf 'NONINTERACTIVE=%s\n' "$NONINTERACTIVE" >> "$REMOVE_TEST_BODY_LOG"
+: > "$REMOVE_TEST_BODY_SENTINEL"
+printf '%s\n' 'payload-complete' >> "$REMOVE_TEST_BODY_LOG"
+PAYLOAD
+EOF
+  chmod +x "$bin_dir/curl"
+
+  REMOVE_TEST_EVENT_LOG="$event_log" REMOVE_TEST_BODY_LOG="$body_log" \
+    REMOVE_TEST_BODY_SENTINEL="$body_sentinel" HOME="$home_dir" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$bash_bin" "$repo/scripts/remove_homebrew.sh" --apply --confirm-nix-ready \
+    > "$output_file" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,160p' "$output_file" >&2
+    fail "Homebrew apply should execute a successful downloaded body"
+  }
+  assert_contains "$event_log" 'curl:-fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh'
+  [[ "$(grep -c '^curl:' "$event_log")" == 1 ]] || fail "expected exactly one curl download"
+  assert_file "$body_sentinel"
+  assert_contains "$body_log" 'NONINTERACTIVE=1'
+  assert_contains "$body_log" 'payload-complete'
+  [[ "$(grep -c '^payload-complete$' "$body_log")" == 1 ]] || fail "expected downloaded body to finish once"
+
+  rm -rf "$repo"
+}
+
+test_remove_homebrew_direct_copy_uses_bash_shebang() {
+  local target_bash="${1:-/bin/bash}"
+  local repo
+  local script_copy
+  local symlink_copy
+  local bin_dir
+  local event_log
+  local exit_status=0
+
+  make_temp_dir
+  repo="$REPLY"
+  script_copy="$repo/scripts/remove_homebrew.sh"
+  symlink_copy="$repo/link/remove_homebrew.sh"
+  bin_dir="$repo/bin"
+  event_log="$repo/events.log"
+  mkdir -p "$repo/scripts/lib" "$repo/link" "$repo/config/nix" "$bin_dir"
+  cp "$REMOVE_HOMEBREW_SCRIPT" "$script_copy"
+  cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
+  : > "$repo/config/nix/homebrew-fallback.nix"
+  chmod +x "$script_copy"
+  ln -s "$script_copy" "$symlink_copy"
+  cat > "$bin_dir/bash" <<EOF
+#!/bin/zsh
+set -euo pipefail
+event_log="\${REMOVE_TEST_EVENT_LOG:?}"
+allowed_script="\${REMOVE_TEST_ALLOWED_BASH_SCRIPT:?}"
+fixture_root="\$(cd -P "$repo" && pwd -P)"
+if (( \$# != 2 )) || [[ "\$2" != --dry-run ]]; then
+  print -u2 -- 'rejected fake Bash arguments'
+  exit 126
+fi
+[[ "\$1" == "\$allowed_script" ]] || {
+  print -u2 -- "rejected fake Bash script: \$1"
+  exit 126
+}
+[[ "\$1" == /* && "\$1" != *'/../'* && "\$1" != */.. \
+  && "\$1" != *'/./'* && "\$1" != */. ]] || exit 126
+script_parent="\$(cd -P "\${1:h}" 2>/dev/null && pwd -P)" || exit 126
+[[ "\$script_parent" == "\$fixture_root" || "\$script_parent" == "\$fixture_root"/* ]] || exit 126
+resolve_existing_path() {
+  local candidate="\$1"
+  local candidate_dir
+  local link_target
+
+  while [[ -L "\$candidate" ]]; do
+    candidate_dir="\$(cd -P "\${candidate:h}" 2>/dev/null && pwd -P)" || return 1
+    link_target="\$(readlink "\$candidate")" || return 1
+    if [[ "\$link_target" == /* ]]; then
+      candidate="\$link_target"
+    else
+      candidate="\$candidate_dir/\$link_target"
+    fi
+  done
+  candidate_dir="\$(cd -P "\${candidate:h}" 2>/dev/null && pwd -P)" || return 1
+  print -r -- "\$candidate_dir/\${candidate:t}"
+}
+resolved_script="\$(resolve_existing_path "\$1")" || exit 126
+[[ "\$resolved_script" == "\$fixture_root"/* && -f "\$resolved_script" ]] || exit 126
+target_bash="$target_bash"
+[[ "\$target_bash" == /* && "\${target_bash:t}" == bash && -x "\$target_bash" && ! -d "\$target_bash" ]] || exit 126
+print -r -- "bash:\$1 --dry-run" >> "\$event_log"
+exec "\$target_bash" "\$1" --dry-run
+EOF
+  cat > "$bin_dir/zsh" <<EOF
+#!/bin/zsh
+set -euo pipefail
+print -r -- "zsh:\$*" >> "\$REMOVE_TEST_EVENT_LOG"
+print -u2 -- 'rejected fake zsh dispatch'
+exit 125
+EOF
+  chmod +x "$bin_dir/bash" "$bin_dir/zsh"
+
+  REMOVE_TEST_ALLOWED_BASH_SCRIPT="$script_copy" REMOVE_TEST_EVENT_LOG="$event_log" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$script_copy" --dry-run > "$repo/output.log" 2>&1 || exit_status=$?
+
+  (( exit_status == 0 )) || {
+    sed -n '1,120p' "$repo/output.log" >&2
+    fail "expected direct Homebrew helper copy to run"
+  }
+  assert_contains "$event_log" "bash:$script_copy --dry-run"
+  assert_not_contains "$event_log" 'zsh:'
+  assert_output_contains "$repo/output.log" "DRY-RUN: Homebrew was not removed"
+
+  : > "$event_log"
+  exit_status=0
+  REMOVE_TEST_ALLOWED_BASH_SCRIPT="$symlink_copy" REMOVE_TEST_EVENT_LOG="$event_log" \
+    PATH="$bin_dir:/bin:/usr/bin:/usr/sbin:/sbin" \
+    "$symlink_copy" --dry-run > "$repo/symlink-output.log" 2>&1 || exit_status=$?
+  (( exit_status == 0 )) || {
+    sed -n '1,120p' "$repo/symlink-output.log" >&2
+    fail "expected direct Homebrew symlink to resolve its target directory"
+  }
+  assert_contains "$event_log" "bash:$symlink_copy --dry-run"
+  assert_not_contains "$event_log" 'zsh:'
+  assert_output_contains "$repo/symlink-output.log" "DRY-RUN: Homebrew was not removed"
+
+  rm -rf "$repo"
+}
+
+run_nix_direct_shebang_matrix() {
+  local expected_major
+  local bash_bin
+  local matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash_for_major "$expected_major"; then
+      bash_bin="$REPLY"
+      test_nix_install_direct_copy_uses_bash_shebang "$bash_bin" || matrix_status=1
+      (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=nix-direct-shebang|status=PASS|requirement=required|reason=$bash_bin"
+    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+      emit_not_applicable_skip 'nix-direct-shebang-bash3'
+    else
+      emit_required_bash_skip 'nix-direct-shebang' "$expected_major"
+      matrix_status=1
+    fi
+  done
+  (( matrix_status == 0 )) || fail "Nix direct shebang matrix failed"
+}
+
+run_managed_activation_failure_matrix() {
+  local expected_major
+  local target_bash
+  local matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash_for_major "$expected_major"; then
+      target_bash="$REPLY"
+      test_managed_update_propagates_nix_activation_failure "$target_bash" || matrix_status=1
+      (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=managed-activation-failure|status=PASS|requirement=required|reason=$target_bash"
+    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+      emit_not_applicable_skip 'managed-activation-failure-bash3'
+    else
+      emit_required_bash_skip 'managed-activation-failure' "$expected_major"
+      matrix_status=1
+    fi
+  done
+  (( matrix_status == 0 )) || fail "managed activation failure matrix failed"
+}
+
+run_remove_shebang_matrix() {
+  local expected_major
+  local bash_bin
+  local matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash_for_major "$expected_major"; then
+      bash_bin="$REPLY"
+      test_remove_homebrew_direct_copy_uses_bash_shebang "$bash_bin" || matrix_status=1
+      (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=remove-direct-shebang|status=PASS|requirement=required|reason=$bash_bin"
+    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+      emit_not_applicable_skip 'remove-direct-shebang-bash3'
+    else
+      emit_required_bash_skip 'remove-direct-shebang' "$expected_major"
+      matrix_status=1
+    fi
+  done
+  (( matrix_status == 0 )) || fail "Homebrew direct shebang matrix failed"
+}
+
+run_remove_output_matrix() {
+  local expected_major
+  local bash_bin
+  local matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash_for_major "$expected_major"; then
+      bash_bin="$REPLY"
+      test_remove_homebrew_dry_run_output_is_shell_neutral "$bash_bin" || matrix_status=1
+      (( matrix_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=remove-output|status=PASS|requirement=required|reason=$bash_bin"
+    elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+      emit_not_applicable_skip 'remove-output-bash3'
+    else
+      emit_required_bash_skip 'remove-output' "$expected_major"
+      matrix_status=1
+    fi
+  done
+  (( matrix_status == 0 )) || fail "Homebrew output matrix failed"
+}
+
+run_nix_cycle2_zsh_cell() {
+  local parser_bash="/bin/bash"
+  local child_bash="/bin/bash"
+  local cell_status=0
+
+  if select_bash_for_major 3; then
+    parser_bash="$REPLY"
+  elif select_bash_for_major 5; then
+    parser_bash="$REPLY"
+  fi
+  if select_bash_for_major 3; then
+    child_bash="$REPLY"
+  elif select_bash_for_major 5; then
+    child_bash="$REPLY"
+  fi
+  test_nix_install_cycle2_parser_and_library_mode "$parser_bash" || cell_status=1
+  if is_test_macos; then
+    test_nix_install_cycle2_archives_backups_without_losing_pathnames "$TEST_ZSH_BIN" || cell_status=1
+    test_nix_install_cycle2_splits_darwin_paths_without_losing_characters "$TEST_ZSH_BIN" || cell_status=1
+  else
+    emit_not_applicable_skip 'nix-cycle2-darwin-backup'
+    emit_not_applicable_skip 'nix-cycle2-darwin-colon'
+  fi
+  test_nix_install_cycle2_uses_private_temp_lists_and_cleans_up "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_cycle2_cleans_private_lists_when_mv_fails "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_cycle2_dry_run_does_not_move_backups_or_use_sudo "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_cycle2_uses_date_for_default_archive_epoch "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_rejects_invalid_epoch_and_date_output "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_cycle2_fails_closed_when_find_producer_fails "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_cycle2_fails_closed_when_xdg_find_fails "$TEST_ZSH_BIN" || cell_status=1
+  test_nix_install_uninstall_homebrew_uses_bash_child "$TEST_ZSH_BIN" "$child_bash" || cell_status=1
+  (( cell_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=zsh|target=nix-cycle2|status=PASS|requirement=required|reason=$TEST_ZSH_BIN"
+  return "$cell_status"
+}
+
+run_nix_cycle2_bash_cell() {
+  local expected_major="$1"
+  local bash_bin
+  local cell_status=0
+
+  if ! select_bash_for_major "$expected_major"; then
+    if [[ "$expected_major" == "3" && ! is_test_macos ]]; then
+      emit_not_applicable_skip 'nix-cycle2-bash3'
+      return 0
+    fi
+    emit_required_bash_skip 'nix-cycle2' "$expected_major"
+    return 1
+  fi
+  bash_bin="$REPLY"
+
+  test_nix_install_cycle2_parser_and_library_mode "$bash_bin" 0 || cell_status=1
+  test_nix_install_cycle2_uses_private_temp_lists_and_cleans_up "$bash_bin" || cell_status=1
+  test_nix_install_cycle2_cleans_private_lists_when_mv_fails "$bash_bin" || cell_status=1
+  test_nix_install_cycle2_dry_run_does_not_move_backups_or_use_sudo "$bash_bin" || cell_status=1
+  test_nix_install_cycle2_uses_date_for_default_archive_epoch "$bash_bin" || cell_status=1
+  test_nix_install_rejects_invalid_epoch_and_date_output "$bash_bin" || cell_status=1
+  test_nix_install_cycle2_fails_closed_when_find_producer_fails "$bash_bin" || cell_status=1
+  test_nix_install_cycle2_fails_closed_when_xdg_find_fails "$bash_bin" || cell_status=1
+  test_nix_install_uninstall_homebrew_uses_bash_child "$bash_bin" "$bash_bin" || cell_status=1
+  if is_test_macos; then
+    test_nix_install_cycle2_archives_backups_without_losing_pathnames "$bash_bin" || cell_status=1
+    test_nix_install_cycle2_splits_darwin_paths_without_losing_characters "$bash_bin" || cell_status=1
+  else
+    emit_not_applicable_skip "nix-cycle2-bash${expected_major}-darwin"
+  fi
+  (( cell_status == 0 )) && emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash${expected_major}|target=nix-cycle2|status=PASS|requirement=required|reason=$bash_bin"
+  return "$cell_status"
+}
+
+run_nix_cycle2_matrix() {
+  local matrix_status=0
+
+  run_nix_cycle2_zsh_cell || matrix_status=1
+  run_nix_cycle2_bash_cell 3 || matrix_status=1
+  run_nix_cycle2_bash_cell 5 || matrix_status=1
+  (( matrix_status == 0 )) || fail "nix-cycle2 matrix failed"
+}
+
+collect_matrix_results() {
+  local log_dir="${MATRIX_RESULT_LOG_DIR:-}"
+  local manifest="${MATRIX_EXPECTED_FILE:-}"
+  local -a log_files
+
+  if [[ -z "$log_dir" || ! -d "$log_dir" ]]; then
+    print -u2 -- 'FAIL: matrix collector requires MATRIX_RESULT_LOG_DIR'
+    return 1
+  fi
+  if [[ -z "$manifest" || ! -f "$manifest" ]]; then
+    print -u2 -- 'FAIL: matrix collector requires MATRIX_EXPECTED_FILE'
+    return 1
+  fi
+
+  setopt local_options null_glob
+  if [[ -f "$log_dir/matrix-results.log" ]]; then
+    log_files=("$log_dir/matrix-results.log")
+  else
+    log_files=("$log_dir"/*.log(N))
+  fi
+  if (( ${#log_files[@]} == 0 )); then
+    print -u2 -- "FAIL: matrix collector found no .log files in $log_dir"
+    return 1
+  fi
+
+  awk -F '|' '
+    function fail(message) {
+      print "FAIL: matrix collector " message > "/dev/stderr"
+      invalid = 1
+    }
+    FILENAME == ARGV[1] {
+      if ($0 == "" || $0 ~ /^#/) next
+      if (NF != 4 || $1 == "" || $2 == "" || $3 == "" || $4 !~ /^(required|not-applicable)$/) {
+        fail("rejected manifest row: " $0)
+        next
+      }
+      key = $1 "|" $2 "|" $3
+      if (key in expected) fail("found duplicate manifest key: " key)
+      expected[key] = $4
+      expected_count++
+      next
+    }
+    $0 !~ /^MATRIX_RESULT\|/ { next }
+    {
+      if (NF != 7 || $1 != "MATRIX_RESULT" || $2 !~ /^os=/ || $3 !~ /^shell=/ || \
+        $4 !~ /^target=/ || $5 !~ /^status=/ || $6 !~ /^requirement=/ || $7 !~ /^reason=/) {
+        fail("rejected result row: " $0)
+        next
+      }
+      os = substr($2, 4)
+      shell = substr($3, 7)
+      target = substr($4, 8)
+      status = substr($5, 8)
+      requirement = substr($6, 13)
+      reason = substr($7, 8)
+      key = os "|" shell "|" target
+      if (os == "" || shell == "" || target == "" || reason == "") fail("rejected empty result field: " $0)
+      else if (!(key in expected)) fail("found unexpected result key: " key)
+      else if (expected[key] != requirement) fail("found requirement mismatch for " key)
+      else if (key in seen) fail("found duplicate result key: " key)
+      else if (requirement == "required" && status != "PASS") fail("required cell is not PASS: " key)
+      else if (requirement == "not-applicable" && status != "SKIP") fail("not-applicable cell is not SKIP: " key)
+      else if (requirement !~ /^(required|not-applicable)$/) fail("found unknown requirement: " requirement)
+      else seen[key] = 1
+      next
+    }
+    END {
+      if (expected_count == 0) fail("requires at least one manifest row")
+      for (key in expected) if (!(key in seen)) fail("missing result key: " key)
+      exit invalid
+    }
+  ' "$manifest" "${log_files[@]}"
+}
+
+run_matrix_collector() {
+  local repo="$1"
+  local log_dir="$2"
+  local manifest="$3"
+  local label="$4"
+  local expected_status="$5"
+  local collector_status=0
+
+  MATRIX_RESULT_LOG_DIR="$log_dir" MATRIX_EXPECTED_FILE="$manifest" \
+    collect_matrix_results > "$repo/$label.log" 2>&1 || collector_status=$?
+  (( collector_status == expected_status )) || {
+    sed -n '1,120p' "$repo/$label.log" >&2
+    fail "matrix collector returned $collector_status for $label, expected $expected_status"
+  }
+}
+
+test_matrix_collector_validates_required_and_not_applicable_cells() {
+  local repo
+  local log_dir
+  local manifest
+  local empty_manifest
+  local log_file
+
+  make_temp_dir
+  repo="$REPLY"
+  log_dir="$repo/results"
+  manifest="$repo/expected.matrix"
+  empty_manifest="$repo/empty.matrix"
+  log_file="$log_dir/matrix-results.log"
+  mkdir -p "$log_dir"
+  : > "$empty_manifest"
+  : > "$log_file"
+  run_matrix_collector "$repo" "$log_dir" "$empty_manifest" empty-manifest 1
+
+  print -r -- 'linux|bash5|collector-pass|required' > "$manifest"
+  print -r -- 'linux|bash3|collector-skip|not-applicable' >> "$manifest"
+  print -r -- 'MATRIX_RESULT|os=linux|shell=bash5|target=collector-pass|status=PASS|requirement=required|reason=fixture' > "$log_file"
+  print -r -- 'MATRIX_RESULT|os=linux|shell=bash3|target=collector-skip|status=SKIP|requirement=not-applicable|reason=macos-only' >> "$log_file"
+
+  run_matrix_collector "$repo" "$log_dir" "$manifest" valid 0
+
+  print -r -- 'MATRIX_RESULT|os=linux|shell=bash5|target=collector-pass|status=PASS|requirement=required|reason=duplicate' >> "$log_file"
+  run_matrix_collector "$repo" "$log_dir" "$manifest" duplicate-result 1
+
+  print -r -- 'MATRIX_RESULT|os=linux|shell=bash5|target=collector-pass|status=SKIP|requirement=required|reason=unavailable' > "$log_file"
+  print -r -- 'MATRIX_RESULT|os=linux|shell=bash3|target=collector-skip|status=SKIP|requirement=not-applicable|reason=macos-only' >> "$log_file"
+  run_matrix_collector "$repo" "$log_dir" "$manifest" required-skip 1
+
+  print -r -- 'MATRIX_RESULT|os=linux|shell=bash5|target=collector-pass|status=PASS|requirement=required|reason=fixture' > "$log_file"
+  print -r -- 'MATRIX_RESULT|os=linux|shell=unknown|target=collector-unknown|status=PASS|requirement=required|reason=fixture' >> "$log_file"
+  run_matrix_collector "$repo" "$log_dir" "$manifest" unknown-and-missing 1
+
+  rm -rf "$repo"
+}
+
 main() {
+  local path_matrix_status=0
+
+  if [[ "${1:-}" == "--focus" ]]; then
+    case "${2:-}" in
+      all-bash)
+        run_managed_all_bash_matrix
+        ;;
+      all-failure)
+        run_managed_activation_failure_matrix
+        ;;
+      nix-cycle2)
+        run_nix_cycle2_matrix
+        ;;
+      nix-private-temp)
+        test_nix_install_cycle2_uses_private_temp_lists_and_cleans_up
+        ;;
+      nix-invalid-epoch)
+        test_nix_install_rejects_invalid_epoch_and_date_output
+        ;;
+      nix-path-resolution)
+        test_nix_install_path_resolution_ignores_spoofed_bash_version
+        for expected_major in 3 5; do
+          if select_bash_for_major "$expected_major"; then
+            test_nix_install_rejects_spoofed_bash_source_and_ostype "$REPLY"
+          elif [[ "$expected_major" == 3 && ! is_test_macos ]]; then
+            emit_not_applicable_skip "nix-path-resolution-bash${expected_major}"
+          else
+            emit_required_bash_skip "nix-path-resolution" "$expected_major"
+            path_matrix_status=1
+          fi
+        done
+        (( path_matrix_status == 0 )) || fail "Nix path-resolution matrix failed"
+        ;;
+      direct-shebang)
+        run_nix_direct_shebang_matrix
+        ;;
+      nix-colon)
+        test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch
+        ;;
+      nix-homebrew-child)
+        test_nix_install_uninstall_homebrew_uses_bash_child
+        ;;
+      sudo-fixture-guards)
+        test_nix_install_script_defaults_to_cli_profile_on_macos
+        test_nix_install_script_uses_nix_run_impure_after_subcommand_when_darwin_rebuild_is_missing
+        test_nix_install_script_backs_up_existing_sudo_local_before_darwin_switch
+        test_nix_install_script_backs_up_existing_etc_shell_rc_before_darwin_switch
+        test_nix_install_script_archives_existing_home_manager_backups_before_switch
+        test_nix_install_script_handles_dirty_worktree_without_hanging
+        test_nix_install_script_uses_git_aware_flake_ref_for_tracked_worktree
+        ;;
+      remove-output)
+        run_remove_output_matrix
+        ;;
+      remove-curl-failure)
+        test_remove_homebrew_apply_propagates_curl_failure
+        test_remove_homebrew_apply_executes_downloaded_body_with_noninteractive
+        ;;
+      remove-shebang)
+        run_remove_shebang_matrix
+        ;;
+      matrix-collect)
+        if [[ -n "${MATRIX_EXPECTED_FILE:-}" ]]; then
+          collect_matrix_results
+        else
+          test_matrix_collector_validates_required_and_not_applicable_cells
+        fi
+        ;;
+      *)
+        fail "unknown focus: ${2:-}"
+        ;;
+    esac
+    return 0
+  fi
+
   test_brewfile_migration_writes_nix_lists_and_unmapped_report
   test_brewfile_migration_dry_run_does_not_write_outputs
   test_repository_migration_moves_available_formulae_and_gui_apps_to_nix
@@ -3238,6 +6042,14 @@ main() {
   test_waza_cli_agent_eval_script_preserves_cli_failure_status
   test_waza_cli_agent_eval_script_grades_successful_cli_output
   test_waza_eval_suites_cover_all_regular_agent_skills
+  run_managed_all_bash_matrix
+  run_managed_activation_failure_matrix
+  run_nix_cycle2_matrix
+  run_nix_direct_shebang_matrix
+  run_remove_output_matrix
+  test_remove_homebrew_apply_propagates_curl_failure
+  test_remove_homebrew_apply_executes_downloaded_body_with_noninteractive
+  run_remove_shebang_matrix
   test_agent_skills_use_supported_discovery_paths
   test_flake_exposes_nix_darwin_and_home_manager_profiles
   test_home_manager_and_darwin_modules_define_profiles_without_homebrew
