@@ -13,6 +13,8 @@ from threading import BrokenBarrierError
 from typing import cast
 
 from agent_team.store import (
+    EVENT_SCHEMA_VERSION,
+    LIFETIME_GATE_FILENAME,
     CoordinationStore,
     DuplicateOperationError,
     OperationSnapshot,
@@ -161,6 +163,51 @@ def _startup_lock_worker(
         result_queue.put("error")
 
 
+def _fresh_open_worker(
+    state_root: str,
+    barrier: multiprocessing.synchronize.Barrier,
+    result_queue: multiprocessing.queues.Queue[str],
+) -> None:
+    try:
+        barrier.wait(timeout=10)
+        with CoordinationStore(Path(state_root), busy_timeout_ms=300):
+            result_queue.put("opened")
+    except (BrokenBarrierError, OSError, StoreError, ValueError) as error:
+        result_queue.put(f"{type(error).__name__}: {error}; cause={error.__cause__!r}")
+
+
+def _hold_lifetime_gate(
+    state_root: str,
+    ready: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event,
+) -> None:
+    gate = Path(state_root).parent / LIFETIME_GATE_FILENAME
+    gate_fd = os.open(str(gate), os.O_RDWR)
+    try:
+        fcntl.flock(gate_fd, fcntl.LOCK_SH)
+        ready.set()
+        release.wait(timeout=10)
+    finally:
+        fcntl.flock(gate_fd, fcntl.LOCK_UN)
+        os.close(gate_fd)
+
+
+def _hold_lifetime_gate_exclusive(
+    state_root: str,
+    ready: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event,
+) -> None:
+    gate = Path(state_root).parent / LIFETIME_GATE_FILENAME
+    gate_fd = os.open(str(gate), os.O_RDWR)
+    try:
+        fcntl.flock(gate_fd, fcntl.LOCK_EX)
+        ready.set()
+        release.wait(timeout=10)
+    finally:
+        fcntl.flock(gate_fd, fcntl.LOCK_UN)
+        os.close(gate_fd)
+
+
 def _fifo_open_worker(
     state_root: str,
     result_queue: multiprocessing.queues.Queue[str],
@@ -264,7 +311,7 @@ class CoordinationStoreTest(unittest.TestCase):
                 (
                     1,
                     "op-1",
-                    1,
+                    EVENT_SCHEMA_VERSION,
                     0,
                     None,
                     "INTENT",
@@ -407,7 +454,7 @@ class CoordinationStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             TransitionEvent(
                 sequence=1,
-                event_schema_version=1,
+                event_schema_version=EVENT_SCHEMA_VERSION,
                 operation_id="op-1",
                 attempt=0,
                 from_status=None,
@@ -421,7 +468,7 @@ class CoordinationStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             TransitionEvent(
                 sequence=2**63,
-                event_schema_version=1,
+                event_schema_version=EVENT_SCHEMA_VERSION,
                 operation_id="op-1",
                 attempt=0,
                 from_status=None,
@@ -468,15 +515,25 @@ class CoordinationStoreTest(unittest.TestCase):
             )
             try:
                 connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute(
+                    """
+                    INSERT INTO operation_attempts(
+                        operation_id, attempt, owner, provider_id,
+                        lease_epoch, fencing_token, lease_heartbeat_ns,
+                        lease_expires_ns
+                    ) VALUES ('op-1', 1, 'owner', 'provider/op-1', 0, 1, 1, 2)
+                    """
+                )
                 with self.assertRaises(sqlite3.IntegrityError):
                     connection.execute(
                         """
                         INSERT INTO effect_receipts(
                             operation_id, attempt, effect_key, provider_effect_id,
-                            provider_status, owner, fencing_token, lease_epoch,
-                            received_ns
-                        ) VALUES ('missing', 0, 'effect/missing', 'provider/missing',
-                                  'COMPLETED', 'owner', 1, 0, 1)
+                            provider_status, provider_id, owner, fencing_token,
+                            lease_epoch, received_ns, proof_version, proof_ref
+                        ) VALUES ('missing', 1, 'effect/missing', 'provider/missing',
+                                  'COMPLETED', 'provider/missing', 'owner', 1, 0, 1,
+                                  1, 'proof/missing')
                         """
                     )
                 with self.assertRaises(sqlite3.IntegrityError):
@@ -486,7 +543,7 @@ class CoordinationStoreTest(unittest.TestCase):
                             event_id, event_schema_version, operation_id, attempt,
                             from_status, to_status, kind, actor, clock_ns,
                             reason_code, evidence_ref
-                        ) VALUES (99, 1, 'missing', 0, NULL, 'INTENT', 'intent',
+                        ) VALUES (99, 2, 'missing', 0, NULL, 'INTENT', 'intent',
                                   'actor', 1, 'intent_created', NULL)
                         """
                     )
@@ -495,10 +552,11 @@ class CoordinationStoreTest(unittest.TestCase):
                     """
                     INSERT INTO effect_receipts(
                         operation_id, attempt, effect_key, provider_effect_id,
-                        provider_status, owner, fencing_token, lease_epoch,
-                        received_ns
-                    ) VALUES ('op-1', 0, 'effect/op-1', 'provider/op-1',
-                              'COMPLETED', 'owner', 1, 0, 1)
+                        provider_status, provider_id, owner, fencing_token,
+                        lease_epoch, received_ns, proof_version, proof_ref
+                    ) VALUES ('op-1', 1, 'effect/op-1', 'provider/op-1',
+                              'COMPLETED', 'provider/op-1', 'owner', 1, 0, 1,
+                              1, 'proof/op-1')
                     """
                 )
                 with self.assertRaises(sqlite3.IntegrityError):
@@ -506,10 +564,11 @@ class CoordinationStoreTest(unittest.TestCase):
                         """
                         INSERT INTO effect_receipts(
                             operation_id, attempt, effect_key, provider_effect_id,
-                            provider_status, owner, fencing_token, lease_epoch,
-                            received_ns
-                        ) VALUES ('op-1', 0, 'effect/op-1', 'provider/op-1',
-                                  'COMPLETED', 'owner', 1, 0, 2)
+                            provider_status, provider_id, owner, fencing_token,
+                            lease_epoch, received_ns, proof_version, proof_ref
+                        ) VALUES ('op-1', 1, 'effect/op-1', 'provider/op-1',
+                                  'COMPLETED', 'provider/op-1', 'owner', 1, 0, 2,
+                                  1, 'proof/op-1')
                         """
                     )
                 with self.assertRaises(sqlite3.IntegrityError):
@@ -523,16 +582,147 @@ class CoordinationStoreTest(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     connection.execute(
                         """
+                        INSERT OR REPLACE INTO transition_events(
+                            event_id, event_schema_version, operation_id, attempt,
+                            from_status, to_status, kind, actor, clock_ns,
+                            reason_code, evidence_ref
+                        ) VALUES (1, 2, 'op-1', 0, NULL, 'INTENT', 'intent',
+                                  'actor', 2, 'intent_created', NULL)
+                        """
+                    )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        """
                         INSERT INTO transition_events(
                             event_id, event_schema_version, operation_id, attempt,
                             from_status, to_status, kind, actor, clock_ns,
                             reason_code, evidence_ref
-                        ) VALUES (1, 1, 'op-1', 0, NULL, 'INTENT', 'duplicate',
+                        ) VALUES (1, 2, 'op-1', 0, NULL, 'INTENT', 'duplicate',
                                   'actor', 2, 'intent_created', NULL)
                         """
                     )
             finally:
                 connection.close()
+
+    def test_receipt_sql_constraints_reject_unsupported_identity_rows(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            with CoordinationStore(state_root) as store:
+                store.create_intent("op-1", effect_key="effect/op-1", actor="main")
+
+            connection = sqlite3.connect(
+                str(_database(state_root)), isolation_level=None
+            )
+            try:
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        """
+                        INSERT INTO effect_receipts(
+                            operation_id, attempt, effect_key, provider_effect_id,
+                            provider_status, provider_id, owner, fencing_token,
+                            lease_epoch, received_ns, proof_version, proof_ref
+                        ) VALUES ('op-1', 0, 'effect/op-1', 'provider/op-1',
+                                  'GARBAGE', 'provider/op-1', 'owner', 0, 0, 1,
+                                  1, 'proof/op-1')
+                        """
+                    )
+            finally:
+                connection.close()
+
+    def test_private_event_append_rejects_free_form_actor_and_public_reason(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            with CoordinationStore(state_root) as store:
+                store.create_intent("op-1", effect_key="effect/op-1", actor="main")
+                with (
+                    self.assertRaises(ValueError),
+                    store._write_transaction() as connection,
+                ):
+                    store._append_event(
+                        connection,
+                        operation_id="op-1",
+                        attempt=0,
+                        from_status=None,
+                        to_status="INTENT",
+                        kind="intent",
+                        actor="prompt text",
+                        timestamp=2,
+                        reason_code="intent_created",
+                    )
+                with self.assertRaises(ValueError):
+                    store.create_intent(
+                        "op-2",
+                        effect_key="effect/op-2",
+                        actor="main",
+                        reason_code="recover",
+                    )
+
+    def test_lifetime_gate_is_external_and_never_unlinked(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            gate = state_root.parent / LIFETIME_GATE_FILENAME
+            with CoordinationStore(state_root, busy_timeout_ms=20) as store:
+                self.assertTrue(gate.is_file())
+                self.assertNotEqual(state_root, gate.parent)
+                gate_identity = (gate.stat().st_dev, gate.stat().st_ino)
+                context = multiprocessing.get_context("spawn")
+                ready = context.Event()
+                release = context.Event()
+                process = context.Process(
+                    target=_hold_lifetime_gate,
+                    args=(str(state_root), ready, release),
+                )
+                process.start()
+                try:
+                    self.assertTrue(ready.wait(timeout=10))
+                    with (
+                        self.assertRaises(StoreBusyError),
+                        store._exclusive_lifetime_gate(),
+                    ):
+                        pass
+                finally:
+                    release.set()
+                    process.join(timeout=10)
+                    if process.is_alive():
+                        process.kill()
+                        process.join()
+                self.assertEqual(0, process.exitcode)
+            self.assertTrue(gate.is_file())
+            self.assertEqual(
+                gate_identity,
+                (gate.stat().st_dev, gate.stat().st_ino),
+            )
+            with CoordinationStore._exclusive_lifetime_gate_for_root(
+                state_root,
+                busy_timeout_ms=20,
+            ):
+                pass
+
+    def test_reserve_floor_holds_shared_gate_for_entire_metadata_read(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            with CoordinationStore(state_root, busy_timeout_ms=20) as store:
+                context = multiprocessing.get_context("spawn")
+                ready = context.Event()
+                release = context.Event()
+                process = context.Process(
+                    target=_hold_lifetime_gate_exclusive,
+                    args=(str(state_root), ready, release),
+                )
+                process.start()
+                try:
+                    self.assertTrue(ready.wait(timeout=10))
+                    with self.assertRaises(StoreBusyError):
+                        store._reserve_floor()
+                finally:
+                    release.set()
+                    process.join(timeout=10)
+                    if process.is_alive():
+                        process.kill()
+                        process.join()
+                self.assertEqual(0, process.exitcode)
 
     def test_effective_pragmas_and_private_file_modes_are_verified_on_open(
         self,
@@ -571,6 +761,30 @@ class CoordinationStoreTest(unittest.TestCase):
     def test_schema_mismatch_state_json_and_bad_file_security_fail_fast(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
             root = Path(os.path.realpath(temporary))
+            invalid_root = root / "invalid-without-gate"
+            invalid_root.mkdir()
+            invalid_root.chmod(0o700)
+            invalid_database = _database(invalid_root)
+            raw = sqlite3.connect(str(invalid_database))
+            try:
+                raw.execute("CREATE TABLE invalid_schema(value TEXT NOT NULL)")
+                raw.commit()
+            finally:
+                raw.close()
+            invalid_database.chmod(0o600)
+            invalid_files_before = tuple(
+                sorted(path.name for path in invalid_root.iterdir())
+            )
+            invalid_bytes_before = invalid_database.read_bytes()
+            with self.assertRaises(StoreSchemaError):
+                CoordinationStore(invalid_root)
+            self.assertFalse((root / LIFETIME_GATE_FILENAME).exists())
+            self.assertEqual(
+                invalid_files_before,
+                tuple(sorted(path.name for path in invalid_root.iterdir())),
+            )
+            self.assertEqual(invalid_bytes_before, invalid_database.read_bytes())
+
             future_root = root / "future-state"
             future_root.mkdir()
             future_root.chmod(0o700)
@@ -898,7 +1112,58 @@ class CoordinationStoreTest(unittest.TestCase):
                 else:
                     old_database = state_root / "coordination.sqlite3-old"
                     self.assertEqual((1, 1), _row_counts(old_database))
-                    self.assertEqual((0, 0), _row_counts(_database(state_root)))
+                self.assertEqual((0, 0), _row_counts(_database(state_root)))
+
+    def test_c2_lease_commit_identity_loss_is_reported_as_unknown(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            with CoordinationStore(state_root) as store:
+                store.create_intent(
+                    "lease-operation",
+                    effect_key="effect/lease-operation",
+                    provider_id="provider/test",
+                    actor="main",
+                )
+            with (
+                self.assertRaises(StoreCommitUnknownError),
+                _IdentitySwapStore(state_root, "after_commit", "database") as store,
+            ):
+                store.claim(
+                    "lease-operation",
+                    owner="owner-a",
+                    provider_id="provider/test",
+                    lease_ttl_ns=20,
+                )
+            old_database = state_root / "coordination.sqlite3-old"
+            self.assertEqual((1, 2), _row_counts(old_database))
+
+    def test_c2_recovery_commit_identity_loss_closes_facade(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            with CoordinationStore(state_root) as store:
+                store.create_intent(
+                    "recovery-operation",
+                    effect_key="effect/recovery-operation",
+                    actor="main",
+                )
+            transaction = None
+            with (
+                self.assertRaises(StoreCommitUnknownError),
+                _IdentitySwapStore(state_root, "after_commit", "database") as store,
+                store._recovery_transaction() as active,
+            ):
+                transaction = active
+                snapshot = active.snapshot("recovery-operation")
+                active.append_event(
+                    snapshot,
+                    kind="recover",
+                    reason_code="recover",
+                    actor="operator",
+                    timestamp=snapshot.updated_ns + 1,
+                )
+            assert transaction is not None
+            with self.assertRaises(StoreClosedError):
+                transaction.snapshot("recovery-operation")
 
     def test_fault_points_leave_no_half_committed_intent_or_event(self) -> None:
         fault_points = (
@@ -982,6 +1247,31 @@ class CoordinationStoreTest(unittest.TestCase):
                 self.assertEqual(
                     list(range(1, 65)), [event.sequence for event in events]
                 )
+
+    def test_fresh_database_opens_concurrently_without_gate_deadlock(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            context = multiprocessing.get_context("spawn")
+            barrier = context.Barrier(2)
+            results = context.Queue()
+            processes = [
+                context.Process(
+                    target=_fresh_open_worker,
+                    args=(str(state_root), barrier, results),
+                )
+                for _ in range(2)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=15)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
+                    self.fail("fresh database opener did not exit")
+            self.assertEqual(
+                ["opened", "opened"], sorted(results.get() for _ in processes)
+            )
 
     def test_same_operation_concurrent_intent_has_one_winner(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:

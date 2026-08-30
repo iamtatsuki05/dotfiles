@@ -32,7 +32,8 @@ The evidence supports selecting SQLite. It does not approve a production LocalBa
 
 Production implementation remains blocked until its own contract tests cover:
 
-- restoring `RECEIPTED`, `COMPLETED`, and `CLEANED` operations without stranding or replaying them;
+- restoring `RECEIPTED` and `COMPLETED` operations without stranding or replaying them,
+  while leaving `CLEANED` tombstones unchanged;
 - a strongly consistent provider status query when its database has an uncheckpointed WAL;
 - both stale-call orderings around reclaim, including old-call-before-new-call;
 - opaque provider receipt provenance, effect identity, fencing token, and epoch verification;
@@ -51,6 +52,14 @@ The SQLite spike used Python SQLite 3.53.1, `WAL`, `synchronous=FULL`, `BEGIN IM
 - Require the provider to enforce lease epoch/fencing for both old-call-first and new-call-first orderings.
 - Use an external idempotency key or status lookup. SQLite is not an exactly-once effect mechanism.
 - Treat effect-without-receipt as `UNKNOWN_EFFECT`. `doctor` may report it but must not mutate or retry it.
+- A normal `CoordinationStore` reopen must not automatically change
+  `FENCE_RESERVATION_STARTED` or `EFFECT_PREPARED`. These remain recovery-required markers;
+  only the explicit trusted `RecoveryStoreTx.mark_prepared_unknown` authority may move them to
+  `UNKNOWN_EFFECT`.
+- A recovery-floor advance fences stale authority globally but never rewrites a `CLEANED`
+  tombstone row or its events. Typed rebasing is limited to `INTENT`, `RECEIPTED`, and `COMPLETED`.
+- The typed recovery seam maps SQLite snapshot-query failures and malformed persisted observation
+  values to stable `StoreIntegrityError`; existing store errors are preserved without double wrapping.
 - Use explicit transactions with `BEGIN IMMEDIATE`, bounded busy timeout, `foreign_keys=ON`, `WAL`, and `synchronous=FULL`.
 - Keep the database and sidecars in the private agent-team state root. Close every connection and checkpoint before cleanup.
 - Back up through SQLite's backup API. Migration and restore must be explicit operations with their own version and rollback checks.

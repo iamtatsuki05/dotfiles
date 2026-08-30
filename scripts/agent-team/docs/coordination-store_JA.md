@@ -32,7 +32,7 @@ SQLiteを選ぶ根拠は揃った。ただし、production LocalBackendの実装
 
 production実装では、次を専用contract testで閉じるまで完了扱いにしない。
 
-- `RECEIPTED`、`COMPLETED`、`CLEANED`をrestoreしても操作を孤立・再実行させない
+- `RECEIPTED`と`COMPLETED`をrestoreしても操作を孤立・再実行させず、`CLEANED`のtombstoneは変更しない
 - provider DBに未checkpoint WALがある場合も、status queryが誤って`ABSENT`を返さない
 - reclaim後のold-call-firstとnew-call-firstの両方でstale effectを拒否する
 - provider receiptのprovenance、effect identity、fencing token、epochを検証する
@@ -51,6 +51,13 @@ SQLite spikeではPython SQLite 3.53.1、`WAL`、`synchronous=FULL`、`BEGIN IMM
 - provider側でもlease epoch/fencingを検査し、old-call-firstとnew-call-firstの両方を拒否する
 - 外部側のidempotency keyまたはstatus照会を使う。SQLiteをexactly-once effect機構として扱わない
 - effect-without-receiptは`UNKNOWN_EFFECT`とする。`doctor`は報告だけを行い、変更やretryをしない
+- 通常の`CoordinationStore`再openでは`FENCE_RESERVATION_STARTED`や`EFFECT_PREPARED`を自動で
+  変更しない。これらはrecovery-required markerとして保持し、`UNKNOWN_EFFECT`への遷移は
+  trustedな`RecoveryStoreTx.mark_prepared_unknown`による明示操作だけに限定する
+- recovery floorのadvanceはglobalにstale authorityをfenceするが、`CLEANED`のtombstone rowと
+  eventは書き換えない。typed rebaseの対象は`INTENT`、`RECEIPTED`、`COMPLETED`に限る
+- typed recovery seamでは、SQLite snapshot queryの失敗と保存済み観測値のmalformed値を
+  stableな`StoreIntegrityError`へ正規化し、既存のStoreErrorは二重wrapしない
 - `BEGIN IMMEDIATE`、bounded busy timeout、`foreign_keys=ON`、`WAL`、`synchronous=FULL`を明示する
 - databaseとsidecarをprivateなagent-team state rootへ置く。cleanup前に全connectionを閉じ、checkpointする
 - SQLiteのbackup APIを使う。migrationとrestoreは、versionとrollbackを検証する明示操作にする
