@@ -22,6 +22,8 @@ Agent Client Protocol経由の`acp`で動きます。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
 - [Direct background adapter](docs/background-adapters_JA.md)はCopilot/OpenCode向けread-only
   adapter実装、snapshot境界、復旧方法を説明します。
+- [Coordination storeとrecovery](docs/coordination-store_JA.md)はSQLiteのschema境界、
+  stable writer marker、WAL sidecar controllerを説明します。
 
 現在の設定は次のとおりです。
 

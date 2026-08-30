@@ -48,11 +48,24 @@ from .lease import (
 STORE_SCHEMA: Final[int] = 2
 EVENT_SCHEMA_VERSION: Final[int] = 2
 DATABASE_FILENAME: Final[str] = "coordination.sqlite3"
+WRITER_MARKER_FILENAME: Final[str] = "writer.marker"
+WRITER_MARKER_VERSION: Final[int] = 1
+WRITER_MARKER_CLEAN_STATE: Final[str] = "CLEAN"
+WRITER_MARKER_PREPARED_STATE: Final[str] = "CLEANUP_PREPARED"
+WRITER_MARKER_CLEAN_CONTENT: Final[bytes] = b'{"version":1,"state":"CLEAN"}\n'
+WRITER_MARKER_PREPARED_CONTENT: Final[bytes] = (
+    b'{"version":1,"state":"CLEANUP_PREPARED"}\n'
+)
 LIFETIME_GATE_FILENAME: Final[str] = ".coordination-lifetime.lock"
 DEFAULT_BUSY_TIMEOUT_MS: Final[int] = 5_000
 MAX_BUSY_TIMEOUT_MS: Final[int] = 30_000
 SQLITE_INTEGER_MAX: Final[int] = 2**63 - 1
 MAX_IDENTIFIER_LENGTH: Final[int] = 128
+_CLEANUP_EXCEPTION: Final[type[BaseException]] = BaseException
+_WRITER_MARKER_CONTENTS: Final[dict[str, bytes]] = {
+    WRITER_MARKER_CLEAN_STATE: WRITER_MARKER_CLEAN_CONTENT,
+    WRITER_MARKER_PREPARED_STATE: WRITER_MARKER_PREPARED_CONTENT,
+}
 
 _VALID_STATUSES: Final[frozenset[str]] = frozenset(
     {
@@ -641,6 +654,42 @@ def _require_reason_code(value: object) -> str:
     return value
 
 
+def _require_writer_marker_state(value: object) -> str:
+    if type(value) is not str or value not in _WRITER_MARKER_CONTENTS:
+        raise StoreUnavailableError("writer marker state is invalid")
+    return value
+
+
+def _read_writer_marker_state(fd: int) -> str:
+    try:
+        metadata = os.fstat(fd)
+        _validate_private_file(metadata, sidecar=True)
+        content = os.pread(
+            fd, max(len(item) for item in _WRITER_MARKER_CONTENTS.values()) + 1, 0
+        )
+    except OSError as exc:
+        raise StoreUnavailableError("writer marker content cannot be read") from exc
+    for state, expected in _WRITER_MARKER_CONTENTS.items():
+        if content == expected:
+            return state
+    raise StoreUnavailableError("writer marker content is invalid")
+
+
+def _write_writer_marker_state(fd: int, state: str) -> None:
+    state = _require_writer_marker_state(state)
+    content = _WRITER_MARKER_CONTENTS[state]
+    try:
+        os.ftruncate(fd, 0)
+        offset = 0
+        while offset < len(content):
+            written = os.pwrite(fd, content[offset:], offset)
+            if written <= 0:
+                raise OSError("writer marker write was incomplete")
+            offset += written
+    except OSError as exc:
+        raise StoreUnavailableError("writer marker content cannot be written") from exc
+
+
 def _require_evidence_ref(value: object) -> str:
     if type(value) is not str or not _EVIDENCE_REF_RE.fullmatch(value):
         raise ValueError("evidence_ref must be a sha256 digest reference")
@@ -782,6 +831,23 @@ def _current_uid() -> int:
         return os.getuid()
     except AttributeError as exc:
         raise StoreUnavailableError("private state ownership is unsupported") from exc
+
+
+def _close_unowned_fd(fd: int) -> None:
+    """Close a just-opened descriptor, retrying a transient close failure."""
+
+    try:
+        os.close(fd)
+    except _CLEANUP_EXCEPTION as first_error:
+        try:
+            os.close(fd)
+        except _CLEANUP_EXCEPTION as retry_error:
+            raise StoreUnavailableError(
+                "private descriptor cannot be closed"
+            ) from retry_error
+        raise StoreUnavailableError(
+            "private descriptor close status is uncertain"
+        ) from first_error
 
 
 def _open_flags(*, directory: bool, writable: bool) -> int:
@@ -1399,20 +1465,65 @@ class CoordinationStore:
         self._lifetime_gate_condition = threading.Condition()
         self._lifetime_gate_shared_users = 0
         self._lifetime_gate_exclusive_owner: int | None = None
+        self._marker_probe_owner: int | None = None
         self._lifetime_gate_local = threading.local()
         self._database_fd: int | None = None
         self._database_identity: tuple[int, int] | None = None
+        self._marker_fd: int | None = None
+        self._marker_identity: tuple[int, int] | None = None
+        self._initial_marker_identity: tuple[int, int] | None = None
+        self._marker_shared = False
+        self._marker_probe_failed = False
         self._startup_lock_held = False
         self._sidecars_before_open: frozenset[str] = frozenset()
         self._schema_empty = False
+        self._marker_creation_allowed = False
+        self._fresh_bootstrap = False
         self._last_clock_ns = 0
         try:
             self._state_root_fd = _open_state_root(self.state_root)
             self._state_root_identity = _identity(os.fstat(self._state_root_fd))
             self._acquire_startup_lock()
-            self._database_fd = self._open_database_file()
+            initial_database = self._initial_entry(DATABASE_FILENAME)
+            initial_marker = self._initial_entry(WRITER_MARKER_FILENAME)
+            if initial_marker is not None:
+                self._validate_initial_writer_marker(initial_marker)
+                self._initial_marker_identity = _identity(initial_marker)
+                self._fault("after_initial_marker_validation")
+            if (initial_database is None) != (initial_marker is None):
+                raise StoreUnavailableError(
+                    "coordination database and writer marker must be created together"
+                )
+            if (
+                initial_database is None
+                and initial_marker is None
+                and self._initial_root_inventory()
+            ):
+                raise StoreUnavailableError(
+                    "fresh coordination state root must be entirely empty"
+                )
+            if initial_database is not None:
+                _validate_private_file(initial_database, sidecar=False)
+                if initial_database.st_size < 100:
+                    raise StoreUnavailableError(
+                        "existing coordination database is empty or truncated"
+                    )
+                self._reject_nonempty_rollback_journal()
+            self._fresh_bootstrap = initial_database is None and initial_marker is None
+            self._lifetime_gate_fd = self._open_lifetime_gate(create=True)
+            self._lifetime_gate_required = True
+            self._acquire_lifetime_gate(exclusive=False)
+            self._lifetime_gate_persistent = True
+            if not self._fresh_bootstrap:
+                self._open_writer_marker()
+            elif self._initial_root_inventory():
+                raise StoreUnavailableError(
+                    "fresh coordination state root changed before database creation"
+                )
+            self._database_fd = self._open_database_file(create=self._fresh_bootstrap)
             self._assert_state_root()
             self._sidecars_before_open = self._existing_sidecar_names()
+            self._reject_nonempty_rollback_journal()
             database_uri = self._database_uri()
             self._connection = sqlite3.connect(
                 database_uri,
@@ -1425,10 +1536,15 @@ class CoordinationStore:
             self._assert_database_identity()
             self._assert_connection_identity()
             self._preflight_schema()
-            self._lifetime_gate_fd = self._open_lifetime_gate()
-            self._lifetime_gate_required = True
-            self._acquire_lifetime_gate(exclusive=False)
-            self._lifetime_gate_persistent = True
+            if not self._fresh_bootstrap and self._schema_empty:
+                raise StoreUnavailableError(
+                    "an established coordination database is empty"
+                )
+            if not self._fresh_bootstrap and initial_marker is None:
+                raise StoreUnavailableError(
+                    "writer marker is missing from an initialized store"
+                )
+            self._marker_creation_allowed = self._fresh_bootstrap and self._schema_empty
             self._assert_state_root()
             self._assert_database_identity()
             self._assert_connection_identity()
@@ -1439,6 +1555,8 @@ class CoordinationStore:
             self._validate_schema()
             self._load_store_high_water()
             self._validate_prepared_markers()
+            if self._fresh_bootstrap:
+                self._open_writer_marker()
             self._assert_database_identity()
             self._release_startup_lock()
             self._release_lifetime_gate()
@@ -1471,7 +1589,72 @@ class CoordinationStore:
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         self.close()
 
-    def _open_lifetime_gate(self) -> int:
+    def _initial_entry(self, filename: str) -> os.stat_result | None:
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        try:
+            return os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"private SQLite entry {filename} cannot be inspected"
+            ) from exc
+
+    def _initial_root_inventory(self) -> frozenset[str]:
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        try:
+            names = frozenset(os.listdir(root_fd))
+            for name in names:
+                os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            return names
+        except FileNotFoundError as exc:
+            raise StoreUnavailableError(
+                "state root entry disappeared during bootstrap inventory"
+            ) from exc
+        except OSError as exc:
+            raise StoreUnavailableError(
+                "state root cannot be inventoried before bootstrap"
+            ) from exc
+
+    def _validate_initial_writer_marker(self, before: os.stat_result) -> None:
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        _validate_private_file(before, sidecar=True)
+        marker_fd: int | None = None
+        try:
+            marker_fd = os.open(
+                WRITER_MARKER_FILENAME,
+                _open_flags(directory=False, writable=False)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=root_fd,
+            )
+            metadata = os.fstat(marker_fd)
+            after = os.stat(
+                WRITER_MARKER_FILENAME,
+                dir_fd=root_fd,
+                follow_symlinks=False,
+            )
+            if _identity(metadata) != _identity(before) or _identity(
+                after
+            ) != _identity(metadata):
+                raise StoreUnavailableError("writer marker changed during bootstrap")
+            state = _read_writer_marker_state(marker_fd)
+            if state != WRITER_MARKER_CLEAN_STATE:
+                raise StoreUnavailableError("writer marker is not clean")
+        except StoreError:
+            raise
+        except OSError as exc:
+            raise StoreUnavailableError("writer marker cannot be inspected") from exc
+        finally:
+            if marker_fd is not None:
+                _close_unowned_fd(marker_fd)
+
+    def _open_lifetime_gate(self, *, create: bool) -> int:
         """Open the stable, never-unlinked gate beside the state root."""
 
         gate_path = self.state_root.parent / LIFETIME_GATE_FILENAME
@@ -1480,11 +1663,16 @@ class CoordinationStore:
                 before = os.stat(gate_path, follow_symlinks=False)
             except FileNotFoundError:
                 before = None
+            if before is None and not create:
+                raise StoreUnavailableError("coordination lifetime gate is missing")
             if before is not None:
                 _validate_private_file(before, sidecar=True)
+            flags = _open_flags(directory=False, writable=True)
+            if create:
+                flags |= os.O_CREAT
             gate_fd = os.open(
                 gate_path,
-                _open_flags(directory=False, writable=True) | os.O_CREAT,
+                flags,
                 0o600,
             )
             try:
@@ -1502,7 +1690,7 @@ class CoordinationStore:
                 self._lifetime_gate_identity = _identity(metadata)
                 return gate_fd
             except BaseException:
-                os.close(gate_fd)
+                _close_unowned_fd(gate_fd)
                 raise
         except StoreError:
             raise
@@ -1510,6 +1698,126 @@ class CoordinationStore:
             raise StoreUnavailableError(
                 "coordination lifetime gate cannot be opened"
             ) from exc
+
+    def _open_writer_marker(self) -> None:
+        """Create once, then hold the canonical writer marker shared."""
+
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        filename = WRITER_MARKER_FILENAME
+        marker_fd: int | None = None
+        try:
+            try:
+                before = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                before = None
+            if before is not None:
+                _validate_private_file(before, sidecar=True)
+                if self._fresh_bootstrap:
+                    raise StoreUnavailableError(
+                        "writer marker appeared during bootstrap"
+                    )
+            if before is None:
+                if not self._marker_creation_allowed:
+                    raise StoreUnavailableError(
+                        "writer marker is missing from an initialized store"
+                    )
+                self._fault("before_marker_create")
+                try:
+                    marker_fd = os.open(
+                        filename,
+                        _open_flags(directory=False, writable=True)
+                        | getattr(os, "O_NONBLOCK", 0)
+                        | os.O_CREAT
+                        | os.O_EXCL,
+                        0o600,
+                        dir_fd=root_fd,
+                    )
+                except FileExistsError as exc:
+                    raise StoreUnavailableError(
+                        "writer marker appeared while creating"
+                    ) from exc
+                os.fchmod(marker_fd, 0o600)
+                _write_writer_marker_state(marker_fd, WRITER_MARKER_CLEAN_STATE)
+                self._fault("after_marker_create")
+                try:
+                    self._fault("before_marker_fsync")
+                    os.fsync(marker_fd)
+                    os.fsync(root_fd)
+                    self._fault("after_marker_fsync")
+                except OSError as exc:
+                    raise StoreUnavailableError(
+                        "writer marker directory cannot be synchronized"
+                    ) from exc
+            else:
+                marker_fd = os.open(
+                    filename,
+                    _open_flags(directory=False, writable=True)
+                    | getattr(os, "O_NONBLOCK", 0),
+                    dir_fd=root_fd,
+                )
+            metadata = os.fstat(marker_fd)
+            _validate_private_file(metadata, sidecar=True)
+            after = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
+            if before is not None and _identity(before) != _identity(metadata):
+                raise StoreUnavailableError("writer marker changed while opening")
+            if (
+                self._initial_marker_identity is not None
+                and _identity(metadata) != self._initial_marker_identity
+            ):
+                raise StoreUnavailableError("writer marker changed while opening")
+            if _identity(after) != _identity(metadata):
+                raise StoreUnavailableError("writer marker changed while opening")
+            self._fault("before_marker_lock")
+            self._lock_lifetime_gate_fd(
+                marker_fd,
+                exclusive=False,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            if _read_writer_marker_state(marker_fd) != WRITER_MARKER_CLEAN_STATE:
+                raise StoreUnavailableError("writer marker is not clean")
+            self._marker_fd = marker_fd
+            self._marker_identity = _identity(metadata)
+            self._marker_shared = True
+            self._marker_creation_allowed = False
+            self._fresh_bootstrap = False
+            marker_fd = None
+            self._fault("after_marker_lock")
+        except StoreError:
+            raise
+        except OSError as exc:
+            raise StoreUnavailableError("writer marker cannot be opened") from exc
+        finally:
+            if marker_fd is not None:
+                try:
+                    fcntl.flock(marker_fd, fcntl.LOCK_UN)
+                finally:
+                    _close_unowned_fd(marker_fd)
+
+    def _assert_marker_identity(self) -> None:
+        if self._marker_probe_failed:
+            raise StoreUnavailableError("writer marker lock cannot be recovered")
+        root_fd = self._state_root_fd
+        marker_fd = self._marker_fd
+        expected = self._marker_identity
+        if root_fd is None or marker_fd is None or expected is None:
+            raise StoreClosedError("coordination store is closed")
+        try:
+            fd_metadata = os.fstat(marker_fd)
+            path_metadata = os.stat(
+                WRITER_MARKER_FILENAME,
+                dir_fd=root_fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise StoreUnavailableError("writer marker is unavailable") from exc
+        _validate_private_file(fd_metadata, sidecar=True)
+        _validate_private_file(path_metadata, sidecar=True)
+        if _identity(fd_metadata) != expected or _identity(path_metadata) != expected:
+            raise StoreUnavailableError("writer marker changed while open")
+        if _read_writer_marker_state(marker_fd) != WRITER_MARKER_CLEAN_STATE:
+            raise StoreUnavailableError("writer marker records an incomplete cleanup")
 
     def _assert_lifetime_gate(self) -> None:
         gate_fd = self._lifetime_gate_fd
@@ -1643,6 +1951,9 @@ class CoordinationStore:
             while (
                 self._lifetime_gate_exclusive_owner is not None
                 and self._lifetime_gate_exclusive_owner != owner
+            ) or (
+                self._marker_probe_owner is not None
+                and self._marker_probe_owner != owner
             ):
                 remaining_ns = deadline_ns - time.monotonic_ns()
                 if remaining_ns <= 0:
@@ -1686,6 +1997,8 @@ class CoordinationStore:
     def _exclusive_lifetime_gate(self) -> Iterator[None]:
         """Reserve the gate for cooperating restore/replacement operations."""
 
+        if self._marker_probe_failed:
+            raise StoreUnavailableError("writer marker lock cannot be recovered")
         if getattr(self._lifetime_gate_local, "shared_depth", 0):
             raise StoreBusyError(
                 "coordination lifetime gate is already shared by this operation"
@@ -1725,6 +2038,78 @@ class CoordinationStore:
                 with self._lifetime_gate_condition:
                     self._lifetime_gate_exclusive_owner = None
                     self._lifetime_gate_condition.notify_all()
+
+    @contextmanager
+    def _marker_exclusive_probe(self) -> Iterator[None]:
+        """Temporarily release this store's marker for a doctor probe.
+
+        The store keeps its lifetime shared guard while its own marker lock is
+        released.  Local store operations are paused, while a peer process that
+        still holds the shared marker makes the doctor's normal exclusive probe
+        report ``WRITER_ACTIVE``.  The marker is reacquired before the lifetime
+        guard is released.
+        """
+
+        if getattr(self._lifetime_gate_local, "shared_depth", 0):
+            raise StoreBusyError(
+                "writer marker probe cannot run inside a store operation"
+            )
+        owner = threading.get_ident()
+        with self._shared_lifetime_gate():
+            deadline_ns = time.monotonic_ns() + self.busy_timeout_ms * 1_000_000
+            with self._lifetime_gate_condition:
+                while self._marker_probe_owner not in {None, owner}:
+                    remaining_ns = deadline_ns - time.monotonic_ns()
+                    if remaining_ns <= 0:
+                        raise StoreBusyError("writer marker probe is busy")
+                    self._lifetime_gate_condition.wait(remaining_ns / 1_000_000_000)
+                self._marker_probe_owner = owner
+                while self._lifetime_gate_shared_users > 1:
+                    remaining_ns = deadline_ns - time.monotonic_ns()
+                    if remaining_ns <= 0:
+                        self._marker_probe_owner = None
+                        self._lifetime_gate_condition.notify_all()
+                        raise StoreBusyError("writer marker probe has active users")
+                    self._lifetime_gate_condition.wait(remaining_ns / 1_000_000_000)
+            marker_fd = self._marker_fd
+            if marker_fd is None or not self._marker_shared:
+                with self._lifetime_gate_condition:
+                    self._marker_probe_owner = None
+                    self._lifetime_gate_condition.notify_all()
+                raise StoreUnavailableError("writer marker is not held")
+            try:
+                self._assert_marker_identity()
+            except BaseException:
+                with self._lifetime_gate_condition:
+                    self._marker_probe_owner = None
+                    self._lifetime_gate_condition.notify_all()
+                raise
+            try:
+                fcntl.flock(marker_fd, fcntl.LOCK_UN)
+                self._marker_shared = False
+                yield
+            finally:
+                try:
+                    self._lock_lifetime_gate_fd(
+                        marker_fd,
+                        exclusive=False,
+                        busy_timeout_ms=self.busy_timeout_ms,
+                    )
+                    self._marker_shared = True
+                    self._assert_marker_identity()
+                except BaseException:
+                    self._marker_probe_failed = True
+                    if self._marker_shared:
+                        try:
+                            fcntl.flock(marker_fd, fcntl.LOCK_UN)
+                        except OSError:
+                            pass
+                    self._marker_shared = False
+                    raise
+                finally:
+                    with self._lifetime_gate_condition:
+                        self._marker_probe_owner = None
+                        self._lifetime_gate_condition.notify_all()
 
     @classmethod
     @contextmanager
@@ -1792,35 +2177,106 @@ class CoordinationStore:
                     os.close(gate_fd)
 
     def close(self) -> None:
+        first_error: BaseException | None = None
+
+        def attempt(action: Callable[[], None]) -> None:
+            nonlocal first_error
+            try:
+                action()
+            except _CLEANUP_EXCEPTION as exc:
+                if first_error is None:
+                    first_error = exc
+
         connection = self._connection
-        self._connection = None
-        database_fd = self._database_fd
-        self._database_fd = None
-        root_fd = self._state_root_fd
-        self._state_root_fd = None
-        lifetime_gate_fd = self._lifetime_gate_fd
-        self._lifetime_gate_fd = None
-        self._lifetime_gate_required = False
-        self._state_root_identity = None
-        self._lifetime_gate_identity = None
-        self._database_identity = None
-        if self._startup_lock_held and root_fd is not None:
-            try:
-                fcntl.flock(root_fd, fcntl.LOCK_UN)
-            finally:
-                self._startup_lock_held = False
         if connection is not None:
-            connection.close()
-        if database_fd is not None:
-            os.close(database_fd)
-        if root_fd is not None:
-            os.close(root_fd)
-        if lifetime_gate_fd is not None:
             try:
-                fcntl.flock(lifetime_gate_fd, fcntl.LOCK_UN)
-            finally:
-                os.close(lifetime_gate_fd)
-        self._lifetime_gate_shared = False
+                connection.close()
+            except _CLEANUP_EXCEPTION:
+                try:
+                    connection.close()
+                except _CLEANUP_EXCEPTION as retry_error:
+                    if first_error is None:
+                        first_error = retry_error
+                else:
+                    self._connection = None
+            else:
+                self._connection = None
+
+        def close_fd(
+            attr_name: str,
+            identity_attr_name: str,
+            fd: int | None,
+            *,
+            unlock: bool,
+            lock_state_attr_name: str | None = None,
+        ) -> None:
+            nonlocal first_error
+            if fd is None:
+                return
+            unlock_error: BaseException | None = None
+            if unlock:
+                lock_state = (
+                    bool(getattr(self, lock_state_attr_name))
+                    if lock_state_attr_name is not None
+                    else False
+                )
+                if lock_state:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    except _CLEANUP_EXCEPTION as exc:
+                        unlock_error = exc
+                    else:
+                        setattr(self, cast(str, lock_state_attr_name), False)
+            close_error: BaseException | None = None
+            try:
+                os.close(fd)
+            except _CLEANUP_EXCEPTION as exc:
+                close_error = exc
+            else:
+                setattr(self, attr_name, None)
+                setattr(self, identity_attr_name, None)
+                if lock_state_attr_name is not None:
+                    setattr(self, lock_state_attr_name, False)
+                if attr_name == "_lifetime_gate_fd":
+                    self._lifetime_gate_required = False
+            if unlock_error is not None and first_error is None:
+                first_error = unlock_error
+            if close_error is not None and first_error is None:
+                first_error = close_error
+
+        close_fd(
+            "_marker_fd",
+            "_marker_identity",
+            self._marker_fd,
+            unlock=True,
+            lock_state_attr_name="_marker_shared",
+        )
+        close_fd(
+            "_lifetime_gate_fd",
+            "_lifetime_gate_identity",
+            self._lifetime_gate_fd,
+            unlock=True,
+            lock_state_attr_name="_lifetime_gate_shared",
+        )
+        close_fd(
+            "_database_fd",
+            "_database_identity",
+            self._database_fd,
+            unlock=False,
+        )
+        close_fd(
+            "_state_root_fd",
+            "_state_root_identity",
+            self._state_root_fd,
+            unlock=True,
+            lock_state_attr_name="_startup_lock_held",
+        )
+        if self._lifetime_gate_fd is None:
+            self._lifetime_gate_required = False
+        if first_error is not None:
+            raise StoreUnavailableError(
+                "coordination store close failed"
+            ) from first_error
 
     def _acquire_startup_lock(self) -> None:
         root_fd = self._state_root_fd
@@ -4430,6 +4886,8 @@ class CoordinationStore:
         self._assert_state_root()
         self._assert_database_identity()
         self._assert_connection_identity()
+        if self._marker_fd is not None:
+            self._assert_marker_identity()
         self._existing_sidecar_names()
         return connection
 
@@ -4495,7 +4953,7 @@ class CoordinationStore:
             database_path = proc_root / DATABASE_FILENAME
         return f"file:{quote(str(database_path), safe='/')}?mode=rw"
 
-    def _open_database_file(self) -> int:
+    def _open_database_file(self, *, create: bool) -> int:
         root_fd = self._state_root_fd
         if root_fd is None:
             raise StoreClosedError("coordination store is closed")
@@ -4507,9 +4965,14 @@ class CoordinationStore:
                 before = None
             if before is not None:
                 _validate_private_file(before, sidecar=False)
+            if not create and before is None:
+                raise StoreUnavailableError("coordination database disappeared")
+            flags = _open_flags(directory=False, writable=True)
+            if create:
+                flags |= os.O_CREAT | os.O_EXCL
             database_fd = os.open(
                 filename,
-                _open_flags(directory=False, writable=True) | os.O_CREAT,
+                flags,
                 0o600,
                 dir_fd=root_fd,
             )
@@ -4525,8 +4988,27 @@ class CoordinationStore:
                     raise StoreUnavailableError(
                         "private SQLite database changed while opening"
                     )
+                if not create:
+                    if metadata.st_size < 100:
+                        raise StoreUnavailableError(
+                            "existing coordination database is empty or truncated"
+                        )
+                    try:
+                        header = os.pread(database_fd, 100, 0)
+                    except OSError as exc:
+                        raise StoreUnavailableError(
+                            "existing coordination database header cannot be read"
+                        ) from exc
+                    if len(header) < 100 or header[:16] != b"SQLite format 3\x00":
+                        raise StoreUnavailableError(
+                            "existing coordination database is truncated"
+                        )
                 self._database_identity = _identity(metadata)
                 return database_fd
+            except FileExistsError as exc:
+                raise StoreUnavailableError(
+                    "coordination database appeared during bootstrap"
+                ) from exc
             except BaseException:
                 os.close(database_fd)
                 raise
@@ -4555,6 +5037,27 @@ class CoordinationStore:
             _validate_private_file(before, sidecar=True)
             names.add(filename)
         return frozenset(names)
+
+    def _reject_nonempty_rollback_journal(self) -> None:
+        """Refuse to let SQLite consume a pending hot rollback journal."""
+
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        filename = f"{DATABASE_FILENAME}-journal"
+        try:
+            metadata = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise StoreUnavailableError(
+                "SQLite rollback journal cannot be inspected"
+            ) from exc
+        _validate_private_file(metadata, sidecar=True)
+        if metadata.st_size > 0:
+            raise StoreUnavailableError(
+                "SQLite rollback journal is pending before open"
+            )
 
     def _enforce_sidecar_modes(self) -> None:
         root_fd = self._state_root_fd
@@ -4734,6 +5237,8 @@ class CoordinationStore:
         self._assert_state_root()
         self._assert_database_identity()
         self._assert_connection_identity()
+        if self._marker_fd is not None:
+            self._assert_marker_identity()
         self._existing_sidecar_names()
 
     @contextmanager

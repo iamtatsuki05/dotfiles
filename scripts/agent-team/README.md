@@ -23,6 +23,8 @@ linked reference documents when changing the implementation or configuration.
   ACP is not a sandbox.
 - [Direct background adapters](docs/background-adapters.md) documents the
   Copilot/OpenCode read-only adapter implementation, snapshot boundary, and recovery.
+- [Coordination store and recovery](docs/coordination-store.md) documents the
+  SQLite schema boundary, stable writer marker, and WAL sidecar controller.
 
 The current configuration uses this team:
 

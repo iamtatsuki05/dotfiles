@@ -15,6 +15,7 @@ from typing import cast
 from agent_team.store import (
     EVENT_SCHEMA_VERSION,
     LIFETIME_GATE_FILENAME,
+    WRITER_MARKER_CLEAN_CONTENT,
     CoordinationStore,
     DuplicateOperationError,
     OperationSnapshot,
@@ -772,13 +773,15 @@ class CoordinationStoreTest(unittest.TestCase):
             finally:
                 raw.close()
             invalid_database.chmod(0o600)
+            (invalid_root / "writer.marker").write_bytes(WRITER_MARKER_CLEAN_CONTENT)
+            (invalid_root / "writer.marker").chmod(0o600)
             invalid_files_before = tuple(
                 sorted(path.name for path in invalid_root.iterdir())
             )
             invalid_bytes_before = invalid_database.read_bytes()
             with self.assertRaises(StoreSchemaError):
                 CoordinationStore(invalid_root)
-            self.assertFalse((root / LIFETIME_GATE_FILENAME).exists())
+            self.assertTrue((root / LIFETIME_GATE_FILENAME).exists())
             self.assertEqual(
                 invalid_files_before,
                 tuple(sorted(path.name for path in invalid_root.iterdir())),
@@ -801,6 +804,8 @@ class CoordinationStoreTest(unittest.TestCase):
             finally:
                 raw.close()
             future_database.chmod(0o600)
+            (future_root / "writer.marker").write_bytes(WRITER_MARKER_CLEAN_CONTENT)
+            (future_root / "writer.marker").chmod(0o600)
             future_bytes = future_database.read_bytes()
             with self.assertRaises(StoreSchemaError):
                 CoordinationStore(future_root)
@@ -817,6 +822,10 @@ class CoordinationStoreTest(unittest.TestCase):
             finally:
                 raw.close()
             empty_future_database.chmod(0o600)
+            (empty_future_root / "writer.marker").write_bytes(
+                WRITER_MARKER_CLEAN_CONTENT
+            )
+            (empty_future_root / "writer.marker").chmod(0o600)
             with self.assertRaises(StoreSchemaError):
                 CoordinationStore(empty_future_root)
 
@@ -855,6 +864,30 @@ class CoordinationStoreTest(unittest.TestCase):
 
             with self.assertRaises(StoreUnavailableError):
                 CoordinationStore(root / "missing-parent")
+
+    def test_fresh_bootstrap_rechecks_root_before_database_creation(self) -> None:
+        class LateEntryStore(CoordinationStore):
+            inventory_calls = 0
+
+            def _initial_root_inventory(self) -> frozenset[str]:
+                names = super()._initial_root_inventory()
+                type(self).inventory_calls += 1
+                if type(self).inventory_calls == 1:
+                    late = self.state_root / "late-entry"
+                    late.write_bytes(b"preserve")
+                    late.chmod(0o600)
+                return names
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-store-") as temporary:
+            state_root = _make_state_root(temporary)
+            with self.assertRaises(StoreUnavailableError):
+                LateEntryStore(state_root)
+            self.assertEqual(
+                ["late-entry"],
+                sorted(path.name for path in state_root.iterdir()),
+            )
+            self.assertFalse(_database(state_root).exists())
+            self.assertFalse((state_root / "writer.marker").exists())
 
     def test_schema_validator_rejects_extra_objects_and_trigger_body_changes(
         self,
@@ -1335,7 +1368,7 @@ class CoordinationStoreTest(unittest.TestCase):
                 self.assertIsNone(store.operation("contender"))
                 self.assertEqual((), store.events())
             self.assertEqual(
-                ["coordination.sqlite3"],
+                ["coordination.sqlite3", "writer.marker"],
                 sorted(path.name for path in state_root.iterdir()),
             )
             with self.assertRaises(StoreClosedError):

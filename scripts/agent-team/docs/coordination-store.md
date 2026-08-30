@@ -22,7 +22,7 @@ Both prototypes used Python 3.13.15 on macOS arm64 and only the standard library
 | Crash diagnosis | Distinguished intent-only from effect-without-receipt after reopen | Distinguished partial temp, complete candidate, renamed primary, and backup |
 | Lock contention | `BEGIN IMMEDIATE` returned `database is locked` after the bounded timeout | Non-blocking `flock` returned `LockBusyError` |
 | Backup | `Connection.backup()` restored an integrity-checked copy | One previous revision could be explicitly restored |
-| Cleanup burden | Close connections, checkpoint WAL, verify/remove WAL/SHM sidecars | Classify known temp files, preserve unrelated files, fsync file and directory |
+| Cleanup burden | Close connections, checkpoint WAL, and verify SQLite-owned WAL/SHM lifecycle | Classify known temp files, preserve unrelated files, fsync file and directory |
 | Portability | Python `sqlite3` on supported platforms | POSIX `fcntl.flock`; not a Windows implementation |
 | Implementation risk | Schema and transaction code | Custom database, lock, CAS, backup, and recovery protocol |
 
@@ -94,7 +94,7 @@ not invent a filename, construct `CoordinationStore`, or execute recovery.
 
 The filesystem reader opens only an existing owner-only directory/file through
 `O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK`, holds the existing lifetime gate
-with a shared lock when present, and inventories every root-direct name. It
+and stable writer marker with shared locks when present, and inventories every root-direct name. It
 retains type, owner, mode,
 link count, device/inode, size, timestamps, and SHA-256 for safe regular files.
 It rejects unsafe root entries and identity changes, and compares the complete
@@ -182,3 +182,83 @@ those phases remain the contract of #55/#56.
 The provider adapter is a trusted composition-root dependency. A malicious
 full-shape in-process adapter is outside this Python value boundary; task data
 and ordinary callers do not select or inject provider adapters.
+
+## Stable writer marker and WAL sidecar controller
+
+`agent_team.wal.WalSidecarController` owns the exact marker basename
+`writer.marker` and the SQLite sidecars `coordination.sqlite3-wal`,
+`coordination.sqlite3-shm`, and `coordination.sqlite3-journal`. Only a truly
+empty root (no database, marker, sidecar, ledger, unknown entry, FIFO, or
+symlink) may bootstrap. A valid
+`CoordinationStore` creates `writer.marker` once with
+`O_CREAT|O_EXCL|O_NOFOLLOW`, owner-only mode `0600`, and a containing-directory
+`fsync`. Store and read-only filesystem users hold a shared marker lock from
+open until close. The marker is never unlinked or recreated, so its path and
+device/inode remain stable across store and cleanup cycles. Invalid schema and
+read-only doctor paths do not create it. A missing database/marker pair, a
+zero-byte or truncated database, a database-without-marker, or a
+marker-without-database fails before SQLite or schema initialization can
+mutate state. A non-zero database with an empty schema is rejected immediately
+after read-only SQLite schema inspection and before initialization.
+
+The marker contains one canonical version-1 record: `CLEAN` during normal
+operation or `CLEANUP_PREPARED` while sidecars are being removed. A prepared or
+malformed marker makes normal store open fail closed and makes doctor require
+operator review. A missing marker in an already initialized database also
+fails closed; only the first empty-store initialization may create it.
+
+The mutation lock order is lifetime gate first, then writer marker. Both
+exclusive guards use `LOCK_NB` with a finite deadline; failure is a typed busy
+result/error and never a fallback. After both guards are held, the controller
+keeps validated root, gate, marker, and database descriptors and rechecks their
+type, owner, mode, link count, device, and inode before any effect.
+
+Backup/restore consumers can call `hold_quiescence()` to receive an opaque
+`QuiescenceSession`. Its typed `checkpoint`, `cleanup`, `assert_identity`, and
+`copy_database_to` methods retain the same exclusive guards across multiple
+phases, so a later restore implementation does not duplicate marker/lifetime
+locking. `copy_database_to` requires its exact checkpoint request, performs one
+controller-owned SQLite backup call into memory, and writes the serialized image
+to a newly created `O_CREAT|O_EXCL|O_NOFOLLOW` mode-`0600` target held by file
+descriptor. It validates source/target identities, exact target sidecars, and
+the final target bytes, and returns the target `sha256:` digest together with
+the identities. A #56 consumer must no-follow open the basename and
+revalidate its identity, size, and digest immediately before consumption; the
+result is not a publication or restore authority. The controller never
+overwrites an existing known or unknown file. The package-private database
+rebind refreshes the held descriptor after an authorized primary replacement;
+backup, restore, and replacement policy remain outside this module.
+
+Checkpoint callers must pass one `CheckpointRequest` whose mode is exactly
+`PASSIVE`, `FULL`, `RESTART`, or `TRUNCATE`. The returned
+`CheckpointResult` preserves SQLite's `(busy, log, checkpointed)` values.
+When the held database was opened from a snapshot with no pre-existing WAL or
+rollback journal, a non-safe checkpoint tuple cannot be inode-bound by the
+standard-library pathname connection and is therefore recovery-required, even
+if serialized bytes happen to match. A safe tuple still requires the
+serialize-to-held-bytes binding check. An explicit checkpoint of a canonical
+pre-existing WAL may return SQLite's exact busy tuple after sidecar identity
+validation; cleanup and source-copy reject that WAL before opening SQLite.
+Cleanup performs no Python `unlink`. A non-empty rollback journal or any
+pre-existing non-zero WAL is blocked before SQLite opens; these preflight
+results have no checkpoint tuple and the WAL is not parsed or consumed. An
+established `CoordinationStore` applies the same pending-journal check before
+its SQLite connection is opened. Otherwise, `busy != 0`,
+`log != checkpointed`, or an active reader/writer returns a typed blocked
+result. The controller then durably writes `CLEANUP_PREPARED` and lets
+SQLite own the exact transition `journal_mode=DELETE`,
+`locking_mode=EXCLUSIVE`, `journal_mode=WAL`. A journal or non-zero WAL
+appearing after `CLEANUP_PREPARED` is a recovery-required failure and leaves
+the marker prepared; only an actual busy DELETE transition (including SQLite
+returning the original `wal` mode) restores `CLEAN` and returns blocked. Any
+later transition, sidecar, identity, or durability uncertainty leaves the
+marker prepared for operator review. Exact
+sidecar absence and root-directory `fsync` are checked while the exclusive
+SQLite connection is held, then the marker is durably returned to `CLEAN` and
+the connection is closed. A sidecar created after that close is new activity
+and is not consumed by the completed cleanup. Exact WAL/SHM structure and
+rollback-journal state are rechecked immediately before the SQLite transition;
+an arbitrary filesystem writer after that final check is outside this
+SQLite-lock protocol and is reported conservatively when observed, rather than
+claimed impossible. Unknown provider, terminal, prompt, and other files are
+never globbed or removed.

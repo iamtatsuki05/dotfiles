@@ -22,7 +22,7 @@
 | crash診断 | reopen後にintent-onlyとeffect-without-receiptを区別 | partial temp、complete candidate、renamed primary、backupを区別 |
 | lock競合 | `BEGIN IMMEDIATE`がtimeout後に`database is locked`を返す | non-blocking `flock`が`LockBusyError`を返す |
 | backup | `Connection.backup()`でintegrity確認済みcopyを復元 | 直前の1 revisionを明示的に復元 |
-| cleanup | connection close、WAL checkpoint、WAL/SHM確認 | known tempの分類、file/directory fsync、backup管理 |
+| cleanup | connection close、WAL checkpoint、SQLite管理のWAL/SHM lifecycle確認 | known tempの分類、file/directory fsync、backup管理 |
 | portability | 対応platformのPython `sqlite3` | POSIX `fcntl.flock`。Windows実装ではない |
 | 実装risk | schemaとtransactionの実装 | database、lock、CAS、backup、recoveryを独自実装 |
 
@@ -92,7 +92,7 @@ stable writer marker と recovery ledger の basename は、後続の marker/led
 ない。
 
 filesystem reader は、既存の owner-only directory/file だけを
-`O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK` で開き、存在する lifetime gate を shared lock で保持して
+`O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK` で開き、存在する lifetime gate と stable writer marker を shared lock で保持して
 root 直下の全 name を inventory に記録する。安全な regular file について type、owner、
 mode、link 数、device/inode、size、timestamp、SHA-256 を保持する。unsafe な root entry
 と identity の変化は拒否し、report を返す前に fileset 全体も再確認する。missing
@@ -175,3 +175,71 @@ cleanup、writer marker lifecycle は実装せず、#55/#56 の contract に残�
 provider adapter は trusted composition root の依存である。full-shape の
 悪意ある同一 process adapter はこの Python value boundary の外側だが、task data
 や通常の caller が adapter を選択・注入する経路は持たない。
+
+## stable writer marker と WAL sidecar controller
+
+`agent_team.wal.WalSidecarController` は、exact な marker basename
+`writer.marker` と、SQLite の `coordination.sqlite3-wal`、
+`coordination.sqlite3-shm`、`coordination.sqlite3-journal` だけを所有する。
+database、marker、sidecar、ledger、unknown entry、FIFO、symlink のいずれもない
+完全に空の root だけが bootstrap できる。有効な
+`CoordinationStore` は `O_CREAT|O_EXCL|O_NOFOLLOW`、owner-only の
+mode `0600`、containing directory の `fsync` で `writer.marker` を一度だけ
+作成する。store と read-only filesystem user は open から close まで marker の
+shared lock を保持する。marker は unlink/recreate しないため、store と cleanup
+cycle をまたいで path と device/inode が安定する。schema が不正な経路と
+read-only doctor は marker を作成しない。database/marker の片方だけ、zero-byte または
+truncated DB は SQLite open/schema initialization 前に fail closed し、既存 state を
+再初期化しない。non-zero DB で schema が空の場合は、read-only SQLite schema inspection
+直後、initialization 前に拒否する。
+
+marker の内容は version 1 の canonical record とし、通常時は `CLEAN`、sidecar
+削除中は `CLEANUP_PREPARED` とする。prepared または malformed marker があれば
+通常の store open は fail closed し、doctor は operator review を要求する。
+初期化済み DB で marker が欠落した場合も fail closed とし、作成できるのは最初の
+empty-store initialization だけに限定する。
+
+mutation の lock order は lifetime gate、次に writer marker とする。両方の
+exclusive guard は `LOCK_NB` と有限 deadline を使い、取得できなければ typed busy
+error/result にして fallback しない。guard を両方取得した後は、root、gate、marker、
+database の検証済み descriptor を保持し、effect の前に type、owner、mode、link 数、
+device、inode を再確認する。
+
+backup/restore consumer は `hold_quiescence()` で opaque な
+`QuiescenceSession` を取得できる。typed な `checkpoint`、`cleanup`、
+`assert_identity`、`copy_database_to` は同じ exclusive guard を複数 phase にわたって
+保持するため、後続の restore 実装が marker/lifetime lock を複製しない。
+`copy_database_to` は exact な checkpoint request を必須とし、controller 管理の
+SQLite backup call を memory に一度だけ実行する。その serialized image を、
+`O_CREAT|O_EXCL|O_NOFOLLOW` と mode `0600` で新規作成して held descriptor に書き込む。
+source/target identity、target の exact sidecar、最後の target bytes を検証し、identity と
+target の `sha256:` digest を返す。#56 consumer は basename を no-follow で open し、消費直前に
+identity、size、digest を再検証する。result 自体は publish/restore authority ではない。既存の
+known/unknown file は上書きしない。authorized な primary replacement 後は package-private
+の database rebind で held descriptor を更新する。backup、restore、replacement policy
+自体はこの module の責務に含めない。
+
+checkpoint caller は、mode が `PASSIVE`、`FULL`、`RESTART`、`TRUNCATE` のいずれか
+一つである exact な `CheckpointRequest` を渡す。`CheckpointResult` は SQLite が返す
+`(busy, log, checkpointed)` を保持する。non-empty rollback journal または pre-existing
+non-zero WAL は SQLite open 前に blocked にし、この preflight result の checkpoint tuple
+は `None` とする。open 前 snapshot に WAL/journal がなかった場合は、standard library の
+pathname connection で non-safe tuple を inode に bind できないため、serialized bytes が
+一致しても recovery-required とする。safe tuple でも held bytes との serialize binding を
+必須とする。canonical な pre-existing WAL は sidecar identity を検証した明示的 checkpoint
+に限り SQLite の busy tuple を返せるが、cleanup と source-copy は SQLite open 前に拒否する。
+WAL は parse/consume しない。既存の `CoordinationStore` も SQLite
+connection を開く前に pending journal を拒否する。その他の `busy != 0`、
+`log != checkpointed`、reader/writer active は typed blocked とする。cleanup は Python の `unlink` を行わず、`CLEANUP_PREPARED` を durable にしてから
+SQLite の `journal_mode=DELETE` → `locking_mode=EXCLUSIVE` → `journal_mode=WAL` を
+exact に確認する。`CLEANUP_PREPARED` 後に journal または non-zero WAL が現れた場合は
+recovery-required とし、marker は prepared のままにする。実際の DELETE transition の
+busy（SQLite が元の `wal` mode を返す場合を含む）だけは `CLEAN` に戻して blocked とし、
+後続 transition・sidecar・identity・durability の不確実性は prepared のまま operator review
+に渡す。
+exact sidecar が消え、root directory を fsync し、exclusive connection を保持したまま
+marker を `CLEAN` に戻してから close する。SQLite transition の直前には WAL/SHM の構造と
+rollback journal の状態を再確認する。close 後に新しく作られた sidecar は後続 activity として
+扱い、完了した cleanup が消費しない。最後の確認後に arbitrary filesystem writer が直接介入
+する場合は SQLite lock protocol の保証範囲外であり、観測できた場合は保守的に扱うが、不可能
+とは主張しない。provider、terminal、prompt、その他 unknown file は glob で探索・削除しない。

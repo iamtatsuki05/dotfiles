@@ -44,7 +44,7 @@ from .lease import (
 
 RECOVERY_LEDGER_VERSION: Final[int] = 1
 RECOVERY_LEDGER_BASENAME: Final[str] = "recovery.ledger"
-WRITER_MARKER_BASENAME: Final[str] = "writer.marker"
+WRITER_MARKER_BASENAME: Final[str] = _store.WRITER_MARKER_FILENAME
 MAX_LEDGER_BYTES: Final[int] = _doctor.MAX_LEDGER_BYTES
 
 RecoveryAction = Literal[
@@ -94,6 +94,8 @@ class RecoveryLayout:
         if type(self.marker_name) is not str:
             raise TypeError("marker_name is invalid")
         _doctor._require_basename(self.marker_name, "marker_name")
+        if self.marker_name != WRITER_MARKER_BASENAME:
+            raise ValueError("marker_name is not canonical")
         if type(self.ledger_name) is not str:
             raise TypeError("ledger_name is invalid")
         if self.ledger_name != RECOVERY_LEDGER_BASENAME:
@@ -559,6 +561,8 @@ class RecoveryLedgerWriter:
         if type(marker_name) is not str:
             raise TypeError("marker_name is invalid")
         self.marker_name = _doctor._require_basename(marker_name, "marker_name")
+        if self.marker_name != WRITER_MARKER_BASENAME:
+            raise ValueError("marker_name is not canonical")
         if self.marker_name == RECOVERY_LEDGER_BASENAME:
             raise ValueError("marker_name and ledger basename must differ")
         if (
@@ -991,6 +995,8 @@ class RecoveryCoordinator:
         if not isinstance(store, _store.CoordinationStore):
             raise TypeError("store is invalid")
         marker_name = _doctor._require_basename(marker_name, "marker_name")
+        if marker_name != WRITER_MARKER_BASENAME:
+            raise ValueError("marker_name is not canonical")
         layout = RecoveryLayout(marker_name=marker_name)
         if ledger is not None and not isinstance(ledger, RecoveryLedgerWriter):
             raise TypeError("ledger is invalid")
@@ -1073,10 +1079,11 @@ class RecoveryCoordinator:
         )
         if root != self.store.state_root:
             raise ValueError("state_root does not match store")
-        return _doctor.ReadOnlyDoctor(
-            marker_name=self.marker_name,
-            ledger_name=self.ledger_name,
-        ).inspect(root, operation_id)
+        with self.store._marker_exclusive_probe():
+            return _doctor.ReadOnlyDoctor(
+                marker_name=self.marker_name,
+                ledger_name=self.ledger_name,
+            ).inspect(root, operation_id)
 
     def recover(
         self,

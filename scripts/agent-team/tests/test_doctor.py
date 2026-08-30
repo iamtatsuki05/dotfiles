@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from unittest import mock
 
 from test_lease_provider import FakeClock, FakeProvider
@@ -27,7 +27,7 @@ from agent_team.doctor import (
     StateFilesystemError,
     UnstableSnapshotError,
 )
-from agent_team.store import CoordinationStore
+from agent_team.store import WRITER_MARKER_CLEAN_CONTENT, CoordinationStore
 
 MARKER_NAME = "writer.marker"
 LEDGER_NAME = "recovery.ledger"
@@ -58,6 +58,199 @@ def _root_listing(root: Path) -> tuple[tuple[str, int, int, int, int, int, int],
 
 
 class DoctorValueTest(unittest.TestCase):
+    def test_public_layout_names_reject_evil_str_subclasses_before_stat(self) -> None:
+        class EvilName(str):
+            def __contains__(self, value: object) -> bool:
+                del value
+                return False
+
+            def encode(self, *args: object, **kwargs: object) -> bytes:
+                del args, kwargs
+                return b"safe-name"
+
+            def __eq__(self, other: object) -> bool:
+                del other
+                return False
+
+            def __ne__(self, other: object) -> bool:
+                del other
+                return False
+
+            def __hash__(self) -> int:
+                return hash("safe-name")
+
+        evil = EvilName("../victim")
+        with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            victim = root.parent / "victim"
+            victim.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
+            victim.chmod(0o600)
+            with self.assertRaises((TypeError, ValueError)):
+                StateFilesystem.open_existing(
+                    root,
+                    marker_name=evil,
+                    ledger_name=LEDGER_NAME,
+                )
+            with self.assertRaises((TypeError, ValueError)):
+                StateFilesystem.open_existing(
+                    root,
+                    marker_name=MARKER_NAME,
+                    ledger_name=evil,
+                )
+            self.assertEqual(WRITER_MARKER_CLEAN_CONTENT, victim.read_bytes())
+
+    def test_digest_temporary_fd_close_failure_is_typed_and_not_success(self) -> None:
+        class CaptureFilesystem(StateFilesystem):
+            digest_fd: int | None = None
+
+            def _open_regular(
+                self,
+                name: str,
+            ) -> tuple[int, os.stat_result]:
+                fd, metadata = super()._open_regular(name)
+                if name == _database_name():
+                    self.digest_fd = fd
+                return fd, metadata
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
+            root = _create_pending_claim_root(temporary)
+            filesystem = cast(
+                CaptureFilesystem,
+                CaptureFilesystem.open_existing(
+                    root,
+                    marker_name=MARKER_NAME,
+                    ledger_name=LEDGER_NAME,
+                ),
+            )
+            original_close = os.close
+            failed = True
+
+            def close(fd: int) -> None:
+                nonlocal failed
+                if fd == filesystem.digest_fd and failed:
+                    failed = False
+                    raise OSError("injected digest close failure")
+                original_close(fd)
+
+            try:
+                with (
+                    mock.patch("agent_team.doctor.os.close", side_effect=close),
+                    self.assertRaises(StateFilesystemError),
+                ):
+                    filesystem.inventory()
+                digest_fd = filesystem.digest_fd
+                self.assertIsNotNone(digest_fd)
+                assert digest_fd is not None
+                with self.assertRaises(OSError):
+                    os.fstat(digest_fd)
+            finally:
+                filesystem.close()
+
+    def test_ledger_temporary_fd_close_failure_is_typed_and_not_success(self) -> None:
+        class CaptureFilesystem(StateFilesystem):
+            ledger_fd: int | None = None
+
+            def open_existing_regular(self, name: str) -> int:
+                fd = super().open_existing_regular(name)
+                if name == LEDGER_NAME:
+                    self.ledger_fd = fd
+                return fd
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
+            root = _make_root(temporary)
+            digest = "sha256:" + "a" * 64
+            ledger = root / LEDGER_NAME
+            ledger.write_text(
+                '{"version":1,"sequence":1,"phase":"RESTORE_PREPARED",'
+                f'"restore_generation":1,"recovery_epoch":1,"fencing_token_floor":1,"backup_digest":"{digest}",'
+                '"actor":"operator","audit_ref":"audit/1"}\n',
+                encoding="utf-8",
+            )
+            ledger.chmod(0o600)
+            filesystem = cast(
+                CaptureFilesystem,
+                CaptureFilesystem.open_existing(
+                    root,
+                    marker_name=MARKER_NAME,
+                    ledger_name=LEDGER_NAME,
+                ),
+            )
+            original_close = os.close
+            failed = True
+
+            def close(fd: int) -> None:
+                nonlocal failed
+                if fd == filesystem.ledger_fd and failed:
+                    failed = False
+                    raise OSError("injected ledger close failure")
+                original_close(fd)
+
+            try:
+                with (
+                    mock.patch("agent_team.doctor.os.close", side_effect=close),
+                    self.assertRaises(StateFilesystemError),
+                ):
+                    RecoveryLedgerReader().read(filesystem)
+                ledger_fd = filesystem.ledger_fd
+                self.assertIsNotNone(ledger_fd)
+                assert ledger_fd is not None
+                with self.assertRaises(OSError):
+                    os.fstat(ledger_fd)
+            finally:
+                filesystem.close()
+
+    def test_open_regular_exception_close_failure_is_typed_and_retriable(self) -> None:
+        class FailingFilesystem(StateFilesystem):
+            lstat_calls = 0
+
+            def _lstat(self, name: str) -> os.stat_result | None:
+                if name == _database_name():
+                    type(self).lstat_calls += 1
+                    if type(self).lstat_calls == 2:
+                        raise StateFilesystemError("injected post-open stat failure")
+                return super()._lstat(name)
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
+            root = _create_pending_claim_root(temporary)
+            filesystem = FailingFilesystem.open_existing(
+                root,
+                marker_name=MARKER_NAME,
+                ledger_name=LEDGER_NAME,
+            )
+            original_open = os.open
+            original_close = os.close
+            opened_fd: int | None = None
+            failed = True
+
+            def open_file(path: object, *args: object, **kwargs: object) -> int:
+                nonlocal opened_fd
+                fd = original_open(path, *args, **kwargs)  # type: ignore[arg-type]
+                if path == _database_name():
+                    opened_fd = fd
+                return fd
+
+            def close(fd: int) -> None:
+                nonlocal failed
+                if fd == opened_fd and failed:
+                    failed = False
+                    raise OSError("injected open helper close failure")
+                original_close(fd)
+
+            try:
+                with (
+                    mock.patch("agent_team.doctor.os.open", side_effect=open_file),
+                    mock.patch("agent_team.doctor.os.close", side_effect=close),
+                    self.assertRaises(StateFilesystemError),
+                ):
+                    filesystem.open_existing_regular(_database_name())
+                self.assertIsNotNone(opened_fd)
+                with self.assertRaises(OSError):
+                    os.fstat(opened_fd)  # type: ignore[arg-type]
+            finally:
+                filesystem.close()
+
     def test_reports_and_inventory_are_immutable_and_sorted(self) -> None:
         report = DoctorReport(
             observed_state="EMPTY_ROOT",
@@ -369,7 +562,7 @@ class DoctorFilesystemTest(unittest.TestCase):
             root = _make_root(temporary)
             marker = root / MARKER_NAME
             ledger = root / LEDGER_NAME
-            marker.write_bytes(b"marker")
+            marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
             ledger.write_bytes(b"ledger")
             marker.chmod(0o600)
             ledger.chmod(0o600)
@@ -421,7 +614,7 @@ class DoctorFilesystemTest(unittest.TestCase):
             ).inspect(root, "op-status")
             self.assertEqual("UNKNOWN_EFFECT", pending.observed_state)
             self.assertEqual("owner-a", pending.owner)
-            self.assertEqual("OPERATOR_REVIEW", pending.safe_action)
+            self.assertEqual("QUERY_PROVIDER_THEN_RESOLVE", pending.safe_action)
             self.assertEqual("LOW", pending.confidence)
             self.assertEqual(claim.attempt, 1)
 
@@ -447,7 +640,7 @@ class DoctorFilesystemTest(unittest.TestCase):
                 claim = store.reserve_fence(claim, provider)
                 store.execute_effect(claim, provider, now_ns=102)
             marker = root / MARKER_NAME
-            marker.write_bytes(b"stable")
+            marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
             marker.chmod(0o600)
             receipt_report = ReadOnlyDoctor(
                 marker_name=MARKER_NAME,
@@ -471,7 +664,7 @@ class DoctorFilesystemTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
             root = _make_root(temporary)
             marker = root / MARKER_NAME
-            marker.write_bytes(b"stable")
+            marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
             marker.chmod(0o600)
             marker_fd = os.open(marker, os.O_RDWR)
             try:
@@ -888,7 +1081,7 @@ class DoctorFilesystemTest(unittest.TestCase):
                     clock_ns=1,
                 )
             marker = root / MARKER_NAME
-            marker.write_bytes(b"stable")
+            marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
             marker.chmod(0o600)
             report = ReadOnlyDoctor(
                 marker_name=MARKER_NAME,
@@ -1133,7 +1326,7 @@ def _create_receipted_root(temporary: str) -> Path:
         claim = store.reserve_fence(claim, provider)
         store.execute_effect(claim, provider, now_ns=102)
     marker = root / MARKER_NAME
-    marker.write_bytes(b"stable")
+    marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
     marker.chmod(0o600)
     return root
 
@@ -1157,7 +1350,7 @@ def _create_pending_claim_root(temporary: str) -> Path:
             now_ns=100,
         )
     marker = root / MARKER_NAME
-    marker.write_bytes(b"stable")
+    marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
     marker.chmod(0o600)
     return root
 

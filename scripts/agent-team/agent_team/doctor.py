@@ -85,6 +85,7 @@ LedgerPhase = Literal[
 
 DOCTOR_PROTOCOL_VERSION: Final[int] = 1
 RECOVERY_LEDGER_VERSION: Final[int] = 1
+WRITER_MARKER_BASENAME: Final[str] = _store.WRITER_MARKER_FILENAME
 MAX_LEDGER_BYTES: Final[int] = 4 * 1024 * 1024
 MAX_DATABASE_BYTES: Final[int] = 256 * 1024 * 1024
 _CLEANUP_EXCEPTION: Final[type[BaseException]] = BaseException
@@ -194,7 +195,7 @@ def _require_int(value: object, name: str, *, minimum: int = 0) -> int:
 
 
 def _require_basename(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value or value in {".", ".."}:
+    if type(value) is not str or not value or value in {".", ".."}:
         msg = f"{name} must be one basename"
         raise ValueError(msg)
     if "\x00" in value or "/" in value or "\\" in value:
@@ -427,6 +428,10 @@ def _metadata_signature(metadata: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _metadata_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
 def _file_type(mode: int) -> FileType:
     if stat.S_ISDIR(mode):
         return "directory"
@@ -465,13 +470,55 @@ def _read_only_open_flags(*, directory: bool) -> int:
     return flags | nonblock
 
 
-def _close_quietly(fd: int | None) -> None:
-    if fd is None:
-        return
+def _close_temporary_fd(
+    fd: int,
+    expected_identity: tuple[int, int] | None,
+    label: str,
+) -> None:
+    """Close a temporary descriptor with an identity-checked retry."""
+
     try:
         os.close(fd)
-    except OSError:
-        pass
+    except _CLEANUP_EXCEPTION:
+        try:
+            metadata = os.fstat(fd)
+        except OSError as status_error:
+            if status_error.errno == errno.EBADF:
+                raise StateFilesystemError(
+                    f"{label} close status is unknown"
+                ) from status_error
+            raise StateFilesystemError(
+                f"{label} close status is unknown"
+            ) from status_error
+        if (
+            expected_identity is not None
+            and (
+                metadata.st_dev,
+                metadata.st_ino,
+            )
+            != expected_identity
+        ):
+            raise StateFilesystemError(f"{label} descriptor was reused")
+        try:
+            os.close(fd)
+        except _CLEANUP_EXCEPTION as retry_error:
+            raise StateFilesystemError(f"{label} cannot be closed") from retry_error
+        raise StateFilesystemError(f"{label} close failed before retry")
+
+
+def _close_temporary_connection(
+    connection: sqlite3.Connection,
+    label: str,
+) -> None:
+    """Close a temporary SQLite connection, retrying an idempotent failure."""
+
+    try:
+        connection.close()
+    except _CLEANUP_EXCEPTION:
+        try:
+            connection.close()
+        except _CLEANUP_EXCEPTION as retry_error:
+            raise StateFilesystemError(f"{label} cannot be closed") from retry_error
 
 
 def _deserialize_database_from_fd(fd: int) -> sqlite3.Connection:
@@ -527,7 +574,7 @@ def _deserialize_database_from_fd(fd: int) -> sqlite3.Connection:
         connection.deserialize(bytes(image))
     except (AttributeError, sqlite3.DatabaseError) as exc:
         if connection is not None:
-            connection.close()
+            _close_temporary_connection(connection, "SQLite in-memory database")
         raise _store.StoreIntegrityError(
             "SQLite in-memory database deserialization failed"
         ) from exc
@@ -546,8 +593,8 @@ class StateFilesystem:
         busy_timeout_ms: int,
     ) -> None:
         self.state_root = state_root
-        self.marker_name = marker_name
-        self.ledger_name = ledger_name
+        self.marker_name = _require_basename(marker_name, "marker_name")
+        self.ledger_name = _require_basename(ledger_name, "ledger_name")
         self.busy_timeout_ms = busy_timeout_ms
         self._root_fd: int | None = None
         self._root_identity: tuple[int, int] | None = None
@@ -556,6 +603,12 @@ class StateFilesystem:
         self._gate_fd: int | None = None
         self._gate_identity: tuple[int, int] | None = None
         self._marker_fd: int | None = None
+        self._marker_identity: tuple[int, int] | None = None
+        self._marker_signature: tuple[int, ...] | None = None
+        self._marker_state: str | None = None
+        self._marker_shared = False
+        self._marker_exclusive = False
+        self._orphan_fds: list[tuple[int, tuple[int, int] | None, str]] = []
         self._closed = False
 
     @classmethod
@@ -574,6 +627,8 @@ class StateFilesystem:
             msg = "marker_name and ledger_name must differ"
             raise ValueError(msg)
         marker_name = _require_basename(marker_name, "marker_name")
+        if marker_name != _store.WRITER_MARKER_FILENAME:
+            raise ValueError("marker_name is not canonical")
         ledger_name = _require_basename(ledger_name, "ledger_name")
         root = _coerce_root(state_root)
         instance = cls(
@@ -607,6 +662,7 @@ class StateFilesystem:
             instance._root_identity = (metadata.st_dev, metadata.st_ino)
             instance._root_signature = _metadata_signature(metadata)
             instance._open_existing_gate()
+            instance._open_existing_marker()
             instance._assert_root_identity()
             return instance
         except BaseException:
@@ -685,7 +741,63 @@ class StateFilesystem:
             self._gate_fd = gate_fd
             self._gate_identity = (metadata.st_dev, metadata.st_ino)
         except BaseException:
-            _close_quietly(gate_fd)
+            self._close_owned_temporary_fd(
+                gate_fd,
+                _metadata_identity(before),
+                "lifetime gate",
+            )
+            raise
+
+    def _open_existing_marker(self) -> None:
+        """Hold a shared marker lock for a reader without creating it."""
+
+        root_fd = self._assert_open()
+        marker = self._lstat(self.marker_name)
+        if marker is None:
+            return
+        if _unsafe_regular(marker):
+            raise UnsafeFilesystemError("writer marker is unsafe")
+        self._fault("after_marker_lstat")
+        try:
+            marker_fd = os.open(
+                self.marker_name,
+                _read_only_open_flags(directory=False),
+                dir_fd=root_fd,
+            )
+        except OSError as exc:
+            raise StateFilesystemError("writer marker cannot be opened") from exc
+        try:
+            metadata = os.fstat(marker_fd)
+            after = self._lstat(self.marker_name)
+            if (
+                after is None
+                or _metadata_signature(metadata) != _metadata_signature(marker)
+                or _metadata_signature(metadata) != _metadata_signature(after)
+            ):
+                raise UnstableSnapshotError("writer marker changed while opening")
+            try:
+                fcntl.flock(marker_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
+                    raise WriterActiveError(
+                        "writer marker is held exclusively"
+                    ) from exc
+                raise StateFilesystemError("writer marker cannot be locked") from exc
+            try:
+                marker_state = _store._read_writer_marker_state(marker_fd)
+            except _store.StoreError as exc:
+                raise UnsafeFilesystemError("writer marker content is invalid") from exc
+            self._marker_fd = marker_fd
+            self._marker_identity = (metadata.st_dev, metadata.st_ino)
+            self._marker_signature = _metadata_signature(metadata)
+            self._marker_state = marker_state
+            self._marker_shared = True
+        except BaseException:
+            self._close_owned_temporary_fd(
+                marker_fd,
+                _metadata_identity(marker),
+                "writer marker",
+            )
             raise
 
     def _lstat(self, name: str) -> os.stat_result | None:
@@ -696,6 +808,69 @@ class StateFilesystem:
             return None
         except OSError as exc:
             raise StateFilesystemError("state entry cannot be inspected") from exc
+
+    def _assert_marker_identity(self) -> None:
+        marker_fd = self._marker_fd
+        expected_identity = self._marker_identity
+        expected_signature = self._marker_signature
+        if marker_fd is None:
+            if expected_identity is not None or self._marker_state is not None:
+                raise UnstableSnapshotError("writer marker descriptor is unavailable")
+            return
+        if expected_identity is None or expected_signature is None:
+            raise UnstableSnapshotError("writer marker identity is unavailable")
+        try:
+            fd_metadata = os.fstat(marker_fd)
+        except OSError as exc:
+            raise UnstableSnapshotError(
+                "writer marker descriptor is unavailable"
+            ) from exc
+        path_metadata = self._lstat(self.marker_name)
+        if path_metadata is None:
+            raise UnstableSnapshotError("writer marker disappeared while observed")
+        if (
+            (fd_metadata.st_dev, fd_metadata.st_ino) != expected_identity
+            or (path_metadata.st_dev, path_metadata.st_ino) != expected_identity
+            or _metadata_signature(fd_metadata) != expected_signature
+            or _metadata_signature(path_metadata) != expected_signature
+        ):
+            raise UnstableSnapshotError("writer marker changed while observed")
+        try:
+            state = _store._read_writer_marker_state(marker_fd)
+        except _store.StoreError as exc:
+            raise UnstableSnapshotError("writer marker content changed") from exc
+        if state != self._marker_state:
+            raise UnstableSnapshotError("writer marker state changed while observed")
+
+    def _close_owned_temporary_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> None:
+        try:
+            _close_temporary_fd(fd, expected_identity, label)
+        except StateFilesystemError as close_error:
+            try:
+                metadata = os.fstat(fd)
+            except OSError as status_error:
+                if status_error.errno == errno.EBADF:
+                    raise close_error
+                raise StateFilesystemError(
+                    f"{label} descriptor status is unknown"
+                ) from status_error
+            if (
+                expected_identity is not None
+                and (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                )
+                != expected_identity
+            ):
+                raise StateFilesystemError(f"{label} descriptor was reused")
+            if not any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+                self._orphan_fds.append((fd, expected_identity, label))
+            raise
 
     def _open_regular(self, name: str) -> tuple[int, os.stat_result]:
         root_fd = self._assert_open()
@@ -727,7 +902,11 @@ class StateFilesystem:
                 raise UnstableSnapshotError("state entry changed while opening")
             return fd, metadata
         except BaseException:
-            _close_quietly(fd)
+            self._close_owned_temporary_fd(
+                fd,
+                _metadata_identity(before),
+                "state entry",
+            )
             raise
 
     def open_existing_regular(self, name: str) -> int:
@@ -757,7 +936,11 @@ class StateFilesystem:
         except OSError as exc:
             raise StateFilesystemError("state entry cannot be read") from exc
         finally:
-            _close_quietly(fd)
+            self._close_owned_temporary_fd(
+                fd,
+                _metadata_identity(opened),
+                "state entry digest",
+            )
         return f"sha256:{digest.hexdigest()}"
 
     def _entry(self, name: str, metadata: os.stat_result) -> FilesystemEntry:
@@ -801,11 +984,18 @@ class StateFilesystem:
             }
         )
 
+    @property
+    def marker_state(self) -> str | None:
+        """Return the validated stable-marker lifecycle state, if present."""
+
+        return self._marker_state
+
     def inventory(self) -> FilesetInventory:
         """Return all root-direct entries, including unrelated names."""
 
         root_fd = self._assert_open()
         self._assert_root_identity()
+        self._assert_marker_identity()
         names: list[str]
         try:
             names = sorted(os.listdir(root_fd))
@@ -853,6 +1043,7 @@ class StateFilesystem:
                 gate_path_metadata
             ):
                 raise UnstableSnapshotError("lifetime gate changed while observing")
+        self._assert_marker_identity()
         return FilesetInventory(
             root_identity=self._root_identity,
             lifetime_gate_identity=gate_identity,
@@ -876,42 +1067,201 @@ class StateFilesystem:
     def try_marker_exclusive(self) -> bool:
         """Try a non-blocking exclusive lock on an existing stable marker."""
 
-        if self._marker_fd is not None:
+        if self._marker_fd is not None and self._marker_exclusive:
+            self._assert_marker_identity()
             return True
+        if self._marker_fd is not None and self._marker_shared:
+            marker_fd = self._marker_fd
+            expected_identity = self._marker_identity
+            expected_signature = self._marker_signature
+            expected_state = self._marker_state
+            self._assert_marker_identity()
+            self._marker_shared = False
+            try:
+                fcntl.flock(marker_fd, fcntl.LOCK_UN)
+            except OSError as exc:
+                self._marker_shared = True
+                raise StateFilesystemError("writer marker cannot be released") from exc
+            marker_path = self._lstat(self.marker_name)
+            if (
+                marker_path is None
+                or expected_identity is None
+                or expected_signature is None
+                or (marker_path.st_dev, marker_path.st_ino) != expected_identity
+                or _metadata_signature(marker_path) != expected_signature
+            ):
+                _close_temporary_fd(
+                    marker_fd,
+                    expected_identity,
+                    "writer marker",
+                )
+                self._marker_fd = None
+                self._marker_identity = None
+                self._marker_signature = None
+                self._marker_state = None
+                raise UnstableSnapshotError("writer marker changed before reacquire")
+            fd: int | None = None
+            retained_old_descriptor = False
+            try:
+                fd, metadata = self._open_regular(self.marker_name)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as exc:
+                    if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
+                        _close_temporary_fd(fd, expected_identity, "writer marker")
+                        self._marker_fd = marker_fd
+                        try:
+                            fcntl.flock(marker_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        except OSError as reacquire_exc:
+                            _close_temporary_fd(
+                                marker_fd,
+                                expected_identity,
+                                "writer marker",
+                            )
+                            self._marker_fd = None
+                            self._marker_identity = None
+                            self._marker_signature = None
+                            self._marker_state = None
+                            raise UnstableSnapshotError(
+                                "writer marker cannot be reacquired"
+                            ) from reacquire_exc
+                        self._marker_shared = True
+                        self._marker_exclusive = False
+                        self._marker_state = expected_state
+                        self._assert_marker_identity()
+                        return False
+                    raise StateFilesystemError(
+                        "writer marker cannot be locked"
+                    ) from exc
+                if (
+                    expected_identity is None
+                    or expected_signature is None
+                    or (metadata.st_dev, metadata.st_ino) != expected_identity
+                    or _metadata_signature(metadata) != expected_signature
+                ):
+                    raise UnstableSnapshotError(
+                        "writer marker changed while reacquiring"
+                    )
+                try:
+                    state = _store._read_writer_marker_state(fd)
+                except _store.StoreError as exc:
+                    raise UnstableSnapshotError(
+                        "writer marker content changed while reacquiring"
+                    ) from exc
+                if state != expected_state:
+                    raise UnstableSnapshotError(
+                        "writer marker state changed while reacquiring"
+                    )
+                try:
+                    old_metadata = os.fstat(marker_fd)
+                except OSError as status_error:
+                    raise StateFilesystemError(
+                        "writer marker old descriptor is unavailable"
+                    ) from status_error
+                if (
+                    expected_identity is None
+                    or _metadata_identity(old_metadata) != expected_identity
+                ):
+                    raise StateFilesystemError(
+                        "writer marker old descriptor was reused"
+                    )
+                try:
+                    os.close(marker_fd)
+                except _CLEANUP_EXCEPTION as exc:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    except _CLEANUP_EXCEPTION:
+                        pass
+                    try:
+                        _close_temporary_fd(
+                            fd,
+                            expected_identity,
+                            "writer marker handoff",
+                        )
+                    except StateFilesystemError:
+                        try:
+                            metadata = os.fstat(fd)
+                        except OSError as status_error:
+                            if status_error.errno != errno.EBADF:
+                                self._orphan_fds.append(
+                                    (
+                                        fd,
+                                        expected_identity,
+                                        "writer marker handoff",
+                                    )
+                                )
+                        else:
+                            if (
+                                expected_identity is None
+                                or _metadata_identity(metadata) == expected_identity
+                            ):
+                                self._orphan_fds.append(
+                                    (
+                                        fd,
+                                        expected_identity,
+                                        "writer marker handoff",
+                                    )
+                                )
+                    self._marker_fd = marker_fd
+                    self._marker_identity = expected_identity
+                    self._marker_signature = expected_signature
+                    self._marker_state = expected_state
+                    self._marker_shared = False
+                    self._marker_exclusive = False
+                    fd = None
+                    marker_fd = -1
+                    retained_old_descriptor = True
+                    raise StateFilesystemError(
+                        "writer marker handoff cannot close old descriptor"
+                    ) from exc
+                marker_fd = -1
+                self._marker_fd = fd
+                self._marker_identity = expected_identity
+                self._marker_signature = expected_signature
+                self._marker_state = state
+                self._marker_shared = False
+                self._marker_exclusive = True
+                self._assert_marker_identity()
+                return True
+            except BaseException:
+                if retained_old_descriptor:
+                    raise
+                if fd is not None:
+                    _close_temporary_fd(fd, expected_identity, "writer marker")
+                if marker_fd != -1:
+                    _close_temporary_fd(
+                        marker_fd,
+                        expected_identity,
+                        "writer marker",
+                    )
+                self._marker_fd = None
+                self._marker_identity = None
+                self._marker_signature = None
+                self._marker_state = None
+                self._marker_shared = False
+                self._marker_exclusive = False
+                raise
         marker = self._lstat(self.marker_name)
         if marker is None:
             return False
-        fd, _ = self._open_regular(self.marker_name)
-        try:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
-                    _close_quietly(fd)
-                    return False
-                raise StateFilesystemError("writer marker cannot be locked") from exc
-            self._marker_fd = fd
-            return True
-        except BaseException:
-            _close_quietly(fd)
-            raise
+        return False
 
     def close(self) -> None:
-        if self._closed and all(
-            fd is None
-            for fd in (
-                self._marker_fd,
-                self._gate_fd,
-                self._root_fd,
-                self._parent_fd,
+        if (
+            self._closed
+            and all(
+                fd is None
+                for fd in (
+                    self._marker_fd,
+                    self._gate_fd,
+                    self._root_fd,
+                    self._parent_fd,
+                )
             )
+            and not self._orphan_fds
         ):
             return
         self._closed = True
-        marker_fd, self._marker_fd = self._marker_fd, None
-        gate_fd, self._gate_fd = self._gate_fd, None
-        root_fd, self._root_fd = self._root_fd, None
-        parent_fd, self._parent_fd = self._parent_fd, None
         first_error: BaseException | None = None
 
         def remember(error: BaseException) -> None:
@@ -931,17 +1281,91 @@ class StateFilesystem:
             except _CLEANUP_EXCEPTION:
                 remember_current_exception()
 
+        marker_fd = self._marker_fd
         if marker_fd is not None:
-            attempt_cleanup(lambda: fcntl.flock(marker_fd, fcntl.LOCK_UN))
-            attempt_cleanup(lambda: os.close(marker_fd))
+            if self._marker_shared or self._marker_exclusive:
+                try:
+                    fcntl.flock(marker_fd, fcntl.LOCK_UN)
+                except _CLEANUP_EXCEPTION:
+                    remember_current_exception()
+                else:
+                    self._marker_shared = False
+                    self._marker_exclusive = False
+            try:
+                os.close(marker_fd)
+            except _CLEANUP_EXCEPTION:
+                remember_current_exception()
+            else:
+                self._marker_fd = None
+                self._marker_identity = None
+                self._marker_signature = None
+                self._marker_state = None
+                self._marker_shared = False
+                self._marker_exclusive = False
+
+        gate_fd = self._gate_fd
         if gate_fd is not None:
             attempt_cleanup(lambda: fcntl.flock(gate_fd, fcntl.LOCK_UN))
-            attempt_cleanup(lambda: os.close(gate_fd))
+            try:
+                os.close(gate_fd)
+            except _CLEANUP_EXCEPTION:
+                remember_current_exception()
+            else:
+                self._gate_fd = None
+
+        root_fd = self._root_fd
         if root_fd is not None:
-            attempt_cleanup(lambda: os.close(root_fd))
+            try:
+                os.close(root_fd)
+            except _CLEANUP_EXCEPTION:
+                remember_current_exception()
+            else:
+                self._root_fd = None
+                self._root_identity = None
+                self._root_signature = None
+
+        parent_fd = self._parent_fd
         if parent_fd is not None:
-            attempt_cleanup(lambda: os.close(parent_fd))
+            try:
+                os.close(parent_fd)
+            except _CLEANUP_EXCEPTION:
+                remember_current_exception()
+            else:
+                self._parent_fd = None
+        remaining_orphans: list[tuple[int, tuple[int, int] | None, str]] = []
+        for orphan_fd, expected_identity, label in self._orphan_fds:
+            try:
+                os.close(orphan_fd)
+            except _CLEANUP_EXCEPTION as first_error:
+                try:
+                    metadata = os.fstat(orphan_fd)
+                except OSError as status_error:
+                    if status_error.errno == errno.EBADF:
+                        continue
+                    remember(status_error)
+                    remaining_orphans.append((orphan_fd, expected_identity, label))
+                    continue
+                if (
+                    expected_identity is not None
+                    and (
+                        metadata.st_dev,
+                        metadata.st_ino,
+                    )
+                    != expected_identity
+                ):
+                    remember(UnstableSnapshotError(f"{label} descriptor was reused"))
+                    continue
+                try:
+                    os.close(orphan_fd)
+                except _CLEANUP_EXCEPTION:
+                    remember(first_error)
+                    remaining_orphans.append((orphan_fd, expected_identity, label))
+        self._orphan_fds = remaining_orphans
         if first_error is not None:
+            if isinstance(first_error, Exception):
+                raise StateFilesystemError(
+                    "state filesystem close failed"
+                ) from first_error
             raise first_error
 
     def __enter__(self) -> Self:
@@ -1047,7 +1471,11 @@ class RecoveryLedgerReader:
         except OSError as exc:
             raise LedgerReadError("recovery ledger cannot be read") from exc
         finally:
-            _close_quietly(fd)
+            filesystem._close_owned_temporary_fd(
+                fd,
+                entry.identity,
+                "recovery ledger",
+            )
         raw = b"".join(chunks)
         records = _ledger_records(raw)
         snapshots = [_ledger_snapshot(record) for record in records]
@@ -1195,6 +1623,8 @@ class ReadOnlyDoctor:
             raise TypeError(msg)
         if marker_name is not None:
             marker_name = _require_basename(marker_name, "marker_name")
+            if marker_name != _store.WRITER_MARKER_FILENAME:
+                raise ValueError("marker_name is not canonical")
         if ledger_name is not None:
             ledger_name = _require_basename(ledger_name, "ledger_name")
         if (
@@ -1231,6 +1661,8 @@ class ReadOnlyDoctor:
             msg = "marker_name and ledger_name are required layout inputs"
             raise ValueError(msg)
         marker = _require_basename(marker, "marker_name")
+        if marker != _store.WRITER_MARKER_FILENAME:
+            raise ValueError("marker_name is not canonical")
         ledger = _require_basename(ledger, "ledger_name")
         if marker == ledger:
             msg = "marker_name and ledger_name must differ"
@@ -1295,6 +1727,12 @@ class ReadOnlyDoctor:
                 _assert_stable(filesystem, before)
                 return _report("RESTORE_INCOMPLETE", "HIGH", None, "OPERATOR_REVIEW")
             marker_present = marker_entry is not None
+            if (
+                marker_present
+                and filesystem.marker_state == _store.WRITER_MARKER_PREPARED_STATE
+            ):
+                _assert_stable(filesystem, before)
+                return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
             if marker_present and not filesystem.try_marker_exclusive():
                 _assert_stable(filesystem, before)
                 return _report("WRITER_ACTIVE", "MEDIUM", None, "OPERATOR_REVIEW")
@@ -1334,9 +1772,21 @@ class ReadOnlyDoctor:
                 _assert_stable(filesystem, before)
                 return result
             finally:
+                cleanup_error: BaseException | None = None
                 if connection is not None:
-                    connection.close()
-                _close_quietly(db_fd)
+                    try:
+                        _close_temporary_connection(
+                            connection, "SQLite doctor database"
+                        )
+                    except _CLEANUP_EXCEPTION as error:
+                        cleanup_error = error
+                try:
+                    _close_temporary_fd(db_fd, None, "SQLite doctor database")
+                except _CLEANUP_EXCEPTION as error:
+                    if cleanup_error is None:
+                        cleanup_error = error
+                if cleanup_error is not None:
+                    raise cleanup_error
         except LedgerReadError:
             try:
                 _assert_stable(filesystem, before)
@@ -1382,6 +1832,7 @@ def doctor(
 __all__ = [
     "DOCTOR_PROTOCOL_VERSION",
     "RECOVERY_LEDGER_VERSION",
+    "WRITER_MARKER_BASENAME",
     "Confidence",
     "DoctorError",
     "DoctorReport",
