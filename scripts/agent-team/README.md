@@ -29,6 +29,9 @@ linked reference documents when changing the implementation or configuration.
   or workflow execution.
 - [Serial review policy](docs/review-policy.md) defines the typed serial gate
   shared by normal tasks and Issue #50-admitted express tasks, without backend wiring.
+- [Path/resource policy](docs/path-resource-policy.md) defines canonical path
+  admission, explicit resource modes, reservation-port handoff, and the
+  normal/express/research lane matrix without filesystem or provider effects.
 
 The current configuration uses this team:
 

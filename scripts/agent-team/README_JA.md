@@ -27,6 +27,9 @@ Agent Client Protocol経由の`acp`で動きます。
   保存やworkflow実行を含まないstate観測契約を説明します。
 - [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
   express laneで共通する、Workerから独立Reviewerへ進むtyped serial gateを説明します。
+- [Path/resource policy](docs/path-resource-policy_JA.md)は、filesystemやproviderを操作せず、
+  canonical path admission、明示的なresource mode、reservation port、normal/express/researchの
+  lane matrixを説明します。
 
 現在の設定は次のとおりです。
 
