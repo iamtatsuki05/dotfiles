@@ -40,6 +40,10 @@ Agent Client Protocol経由の`acp`で動きます。
 このprojectはPython標準libraryだけで動きます。Python 3.11以降が必要です。checkoutからは
 launcherを直接実行できます。
 
+Orcaのライフサイクルbackendとbounded provider runnerはPOSIX専用です。現在のruntime metadataが
+Unix socketとprocess groupを必要とするため、Windowsでは実行前に明示的に拒否します。
+CLI名はplatformごとに固定し、macOSでは`orca`、Linuxでは`orca-ide`を使います。PATH fallbackや環境変数overrideは行いません。
+
 ```bash
 scripts/agent-team/agent-team harnesses
 scripts/agent-team/agent-team start --dry-run
@@ -71,18 +75,30 @@ config/promptsを`$XDG_CONFIG_HOME/agent-team`へlinkします。Python package�
 
 ## 起動前の条件を満たす
 
-現在の実装はmacOSで検証しています。起動前に次を確認してください。
+現在の実装でlive Orca runtimeを使ったsmoke testを行ったのはmacOSです。
+Linuxの実行ファイルは実装上`orca-ide`に固定されていますが、このcheckoutではLinuxの
+Orca実機smoke testを行っていません。Windowsは非対応で、実行前に明示的に拒否します。
+Orcaの実行ファイルはplatformごとに固定し、PATH fallbackや環境変数overrideは行いません。
 
-1. `orca`、`claude`、`codex`、Node.js、`npx`を利用できる。
-2. Orcaを起動し、`orca status --json`のruntimeとgraphがreadyである。
+- macOS: `orca`
+- Linux: `orca-ide`
+
+起動前に次を確認してください。
+
+1. 上記のplatform固有のOrca実行ファイル、`claude`、`codex`、Node.js、`npx`を利用できる。
+2. Orcaを起動し、platform固有の`status --json`でruntimeとgraphがreadyである。
 3. 利用するClaude/Codex accountへloginしている。
 4. 対象repositoryをOrcaへ一度登録している。
 
 ```bash
 claude auth status
 codex login status
+# macOS
 orca status --json
 orca repo add --path "$PWD"
+# Linux
+orca-ide status --json
+orca-ide repo add --path "$PWD"
 ```
 
 ACP Plannerは`acpx@0.13.2`と
@@ -168,7 +184,7 @@ agent-team status \
 
 | 症状 | 確認する内容 |
 |---|---|
-| `workspace is not managed by Orca` | `orca repo add --path "$PWD"`を実行する。 |
+| `workspace is not managed by Orca` | macOSでは`orca repo add --path "$PWD"`、Linuxでは`orca-ide repo add --path "$PWD"`を実行する。 |
 | `agent-team state already exists` | 2つ目を起動せず、`status`、`attach`、`stop`を使う。 |
 | `role has no active Orca Dispatch` | Mainがそのroleを未起動か、すでにrelease済み。 |
 | authenticationを求められる | agent-team外で`claude auth status`か`codex login status`を確認する。 |
