@@ -880,6 +880,484 @@ def _validate_private_file(
         raise StoreUnavailableError(f"private SQLite {label} file is unsafe")
 
 
+def _schema_objects_for_connection(
+    connection: sqlite3.Connection,
+) -> dict[tuple[str, str], str]:
+    """Read the exact schema object contract from an existing connection."""
+
+    objects: dict[tuple[str, str], str] = {}
+    rows = connection.execute(
+        """
+        SELECT type, name, sql
+        FROM sqlite_master
+        WHERE type IN ('table', 'index', 'trigger', 'view')
+          AND name NOT LIKE 'sqlite_autoindex_%'
+        """
+    ).fetchall()
+    for row in rows:
+        sql = row[2]
+        if not isinstance(sql, str):
+            raise StoreSchemaError("SQLite store object SQL is invalid")
+        objects[(str(row[0]), str(row[1]))] = _normalize_sql(sql)
+    return objects
+
+
+def _index_contract_for_connection(
+    connection: sqlite3.Connection,
+    table: str,
+) -> tuple[tuple[int, str, tuple[str, ...]], ...]:
+    contracts: list[tuple[int, str, tuple[str, ...]]] = []
+    for row in connection.execute(f"PRAGMA index_list({table})").fetchall():
+        index_name = str(row[1])
+        columns = tuple(
+            str(column[2])
+            for column in connection.execute(
+                f"PRAGMA index_info({index_name})"
+            ).fetchall()
+        )
+        contracts.append((int(row[2]), str(row[3]), columns))
+    return tuple(sorted(contracts))
+
+
+def _foreign_key_contract_for_connection(
+    connection: sqlite3.Connection,
+    table: str,
+) -> tuple[tuple[str, str, str, str, str], ...]:
+    contracts = [
+        (
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            str(row[5]).upper(),
+            str(row[6]).upper(),
+        )
+        for row in connection.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+    ]
+    return tuple(sorted(contracts))
+
+
+def _validate_existing_schema(connection: sqlite3.Connection) -> None:
+    """Validate an existing SQLite database without configuring or writing it.
+
+    This is the read-only counterpart of ``CoordinationStore._validate_schema``.
+    The schema constants and exact contracts remain owned by this module; a
+    doctor can therefore inspect an immutable connection without constructing a
+    store or duplicating DDL/version definitions.
+    """
+
+    try:
+        objects = _schema_objects_for_connection(connection)
+        expected_objects = {
+            key: _normalize_sql(sql) for key, sql in _EXPECTED_OBJECT_SQL.items()
+        }
+        user_version_row = connection.execute("PRAGMA user_version").fetchone()
+        if user_version_row is None:
+            raise StoreSchemaError("SQLite user_version is unavailable")
+        user_version = _require_sqlite_integer(user_version_row[0], "user_version")
+        if not objects:
+            if user_version != 0:
+                raise StoreSchemaError(
+                    "empty SQLite database has an unsupported version"
+                )
+            raise StoreSchemaError("SQLite database has no coordination schema")
+        if objects != expected_objects:
+            raise StoreSchemaError("SQLite store objects do not match schema")
+        metadata = {
+            str(row[0]): row[1]
+            for row in connection.execute(
+                "SELECT key, value FROM store_meta"
+            ).fetchall()
+        }
+        if frozenset(metadata) != _EXPECTED_META_KEYS:
+            raise StoreSchemaError("SQLite store metadata keys do not match schema")
+        if (
+            type(metadata["store_schema"]) is not int
+            or metadata["store_schema"] != STORE_SCHEMA
+            or type(metadata["recovery_epoch"]) is not int
+            or not 0 <= metadata["recovery_epoch"] <= SQLITE_INTEGER_MAX
+            or type(metadata["fencing_token_floor"]) is not int
+            or not 0 <= metadata["fencing_token_floor"] <= SQLITE_INTEGER_MAX
+            or type(metadata["last_clock_ns"]) is not int
+            or not 0 <= metadata["last_clock_ns"] <= SQLITE_INTEGER_MAX
+        ):
+            raise StoreSchemaError("SQLite store metadata is invalid")
+        if user_version != STORE_SCHEMA:
+            raise StoreSchemaError("SQLite user_version does not match store schema")
+        for table, expected_columns in _EXPECTED_COLUMNS.items():
+            rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
+            actual_columns = tuple(
+                (
+                    str(row[1]),
+                    str(row[2]).upper(),
+                    int(row[3]),
+                    int(row[5]),
+                )
+                for row in rows
+            )
+            if actual_columns != expected_columns:
+                raise StoreSchemaError("SQLite store columns do not match schema")
+        for table, expected_indexes in _EXPECTED_INDEX_CONTRACT.items():
+            actual_indexes = _index_contract_for_connection(connection, table)
+            if actual_indexes != tuple(sorted(expected_indexes)):
+                raise StoreSchemaError("SQLite store indexes do not match schema")
+        for table, expected_foreign_keys in _EXPECTED_FOREIGN_KEYS.items():
+            actual_foreign_keys = _foreign_key_contract_for_connection(
+                connection,
+                table,
+            )
+            if actual_foreign_keys != tuple(sorted(expected_foreign_keys)):
+                raise StoreSchemaError("SQLite store foreign keys do not match schema")
+        integrity_row = connection.execute("PRAGMA integrity_check").fetchone()
+        if integrity_row is None or str(integrity_row[0]).lower() != "ok":
+            raise StoreIntegrityError("SQLite integrity_check failed")
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise StoreIntegrityError("SQLite foreign_key_check failed")
+        for row in connection.execute(
+            """
+            SELECT event_id, event_schema_version, operation_id, attempt,
+                   from_status, to_status, kind, actor, clock_ns,
+                   reason_code, evidence_ref
+            FROM transition_events
+            ORDER BY event_id
+            """
+        ).fetchall():
+            try:
+                TransitionEvent(
+                    sequence=row[0],
+                    event_schema_version=row[1],
+                    operation_id=row[2],
+                    attempt=row[3],
+                    from_status=row[4],
+                    to_status=row[5],
+                    kind=row[6],
+                    actor=row[7],
+                    clock_ns=row[8],
+                    reason_code=row[9],
+                    evidence_ref=row[10],
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise StoreIntegrityError("SQLite transition event is invalid") from exc
+    except (StoreError, sqlite3.DatabaseError):
+        raise
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoreSchemaError("SQLite store schema data is invalid") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingOperationObservation:
+    """Minimal validated operation view shared with read-only recovery code."""
+
+    operation_id: str
+    status: str
+    owner: str | None
+    attempt: int
+
+    def __post_init__(self) -> None:
+        _require_opaque_identifier(self.operation_id, "operation_id")
+        _require_status(self.status)
+        if self.owner is not None:
+            _require_opaque_identifier(self.owner, "owner")
+        _require_sqlite_integer(self.attempt, "attempt")
+
+
+def _read_existing_operation(
+    connection: sqlite3.Connection,
+    operation_id: str,
+) -> ExistingOperationObservation | None:
+    """Read one operation through pure recovery-row validation."""
+
+    try:
+        row, receipt_row = _existing_operation_rows(connection, operation_id)
+        if row is None:
+            return None
+        return _validate_existing_operation_rows(row, receipt_row)
+    except StoreError:
+        raise
+    except sqlite3.DatabaseError as exc:
+        raise StoreIntegrityError("SQLite operation observation failed") from exc
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoreIntegrityError("SQLite operation observation is invalid") from exc
+
+
+def _existing_operation_rows(
+    connection: sqlite3.Connection,
+    operation_id: str,
+) -> tuple[sqlite3.Row | None, sqlite3.Row | None]:
+    """Fetch operation/attempt/receipt rows and distinguish missing attempts."""
+
+    operation_id = _require_opaque_identifier(operation_id, "operation_id")
+    row = CoordinationStore._fetch_attempt(connection, operation_id)
+    if row is None:
+        operation_row = connection.execute(
+            "SELECT operation_id FROM operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if operation_row is not None:
+            raise StoreIntegrityError("SQLite operation current attempt is unavailable")
+        return None, None
+    receipt_row = connection.execute(
+        """
+        SELECT operation_id, attempt, effect_key, provider_effect_id,
+               provider_status, provider_id, owner, fencing_token,
+               lease_epoch, received_ns, proof_version, proof_ref
+        FROM effect_receipts
+        WHERE operation_id = ? AND attempt = ?
+        """,
+        (operation_id, row["attempt"]),
+    ).fetchone()
+    return row, receipt_row
+
+
+def _validate_existing_receipt_row(
+    row: sqlite3.Row,
+    receipt_row: sqlite3.Row,
+) -> None:
+    """Validate persisted receipt/proof identity without issuing authority values."""
+
+    operation_id = row["operation_id"]
+    effect_key = row["effect_key"]
+    attempt = row["attempt"]
+    owner = row["owner"]
+    provider_id = row["attempt_provider_id"]
+    lease_epoch = row["lease_epoch"]
+    fencing_token = row["fencing_token"]
+    proof_version = row["fence_proof_version"]
+    proof_ref = row["fence_proof_ref"]
+    if (
+        receipt_row["operation_id"] != operation_id
+        or receipt_row["attempt"] != attempt
+        or receipt_row["effect_key"] != effect_key
+        or receipt_row["provider_id"] != provider_id
+        or receipt_row["owner"] != owner
+        or receipt_row["lease_epoch"] != lease_epoch
+        or receipt_row["fencing_token"] != fencing_token
+        or receipt_row["proof_version"] != proof_version
+        or receipt_row["proof_ref"] != proof_ref
+    ):
+        raise StoreIntegrityError("SQLite provider receipt identity is inconsistent")
+    _require_opaque_identifier(receipt_row["operation_id"], "operation_id")
+    _require_sqlite_integer(receipt_row["attempt"], "receipt attempt", minimum=1)
+    _require_opaque_identifier(receipt_row["effect_key"], "effect_key")
+    _require_opaque_identifier(receipt_row["provider_effect_id"], "provider_effect_id")
+    if receipt_row["provider_status"] != "COMPLETED":
+        raise StoreIntegrityError("SQLite receipt status is invalid")
+    _require_opaque_identifier(receipt_row["provider_id"], "provider_id")
+    _require_opaque_identifier(receipt_row["owner"], "owner")
+    _require_sqlite_integer(receipt_row["fencing_token"], "fencing_token", minimum=1)
+    _require_sqlite_integer(receipt_row["lease_epoch"], "lease_epoch")
+    _require_sqlite_integer(receipt_row["received_ns"], "received_ns")
+    _require_sqlite_integer(receipt_row["proof_version"], "proof_version", minimum=1)
+    _require_opaque_identifier(receipt_row["proof_ref"], "proof_ref")
+
+
+def _validate_existing_operation_rows(
+    row: sqlite3.Row,
+    receipt_row: sqlite3.Row | None,
+    *,
+    allow_recovery_epoch_mismatch: bool = False,
+) -> ExistingOperationObservation:
+    """Validate one operation projection using #31's typed value contracts."""
+
+    try:
+        operation_id = _require_opaque_identifier(row["operation_id"], "operation_id")
+        _require_opaque_identifier(row["effect_key"], "effect_key")
+        status = _require_status(row["status"])
+        current_attempt = _require_sqlite_integer(
+            row["current_attempt"],
+            "current_attempt",
+        )
+        attempt = _require_sqlite_integer(row["attempt"], "attempt")
+        if attempt != current_attempt:
+            raise StoreIntegrityError(
+                "SQLite operation current attempt is inconsistent"
+            )
+        operation_provider_id = row["operation_provider_id"]
+        attempt_provider_id = row["attempt_provider_id"]
+        if operation_provider_id is not None:
+            _require_opaque_identifier(operation_provider_id, "provider_id")
+        if attempt_provider_id is not None:
+            _require_opaque_identifier(attempt_provider_id, "provider_id")
+        owner = row["owner"]
+        if owner is not None:
+            _require_opaque_identifier(owner, "owner")
+        recovery_epoch = _require_sqlite_integer(
+            row["recovery_epoch"],
+            "recovery_epoch",
+        )
+        lease_epoch = _require_sqlite_integer(row["lease_epoch"], "lease_epoch")
+        fencing_token = _require_sqlite_integer(
+            row["fencing_token"],
+            "fencing_token",
+        )
+        lease_heartbeat_ns = row["lease_heartbeat_ns"]
+        lease_expires_ns = row["lease_expires_ns"]
+        fence_proof_version = row["fence_proof_version"]
+        fence_proof_ref = row["fence_proof_ref"]
+        effect_started_ns = row["effect_started_ns"]
+        fence_started_ns = row["fence_started_ns"]
+        for value, field_name in (
+            (lease_heartbeat_ns, "lease_heartbeat_ns"),
+            (lease_expires_ns, "lease_expires_ns"),
+            (effect_started_ns, "effect_started_ns"),
+            (fence_started_ns, "fence_started_ns"),
+        ):
+            if value is not None:
+                _require_sqlite_integer(value, field_name)
+        if (fence_proof_version is None) != (fence_proof_ref is None):
+            raise StoreIntegrityError("SQLite fence proof is incomplete")
+        if fence_proof_version is not None:
+            _require_sqlite_integer(
+                fence_proof_version, "fence_proof_version", minimum=1
+            )
+            _require_opaque_identifier(fence_proof_ref, "fence_proof_ref")
+        if current_attempt == 0:
+            if (
+                status != "INTENT"
+                or attempt_provider_id is not None
+                or owner is not None
+                or fencing_token != 0
+                or lease_heartbeat_ns is not None
+                or lease_expires_ns is not None
+                or fence_proof_version is not None
+                or fence_proof_ref is not None
+                or effect_started_ns is not None
+                or fence_started_ns is not None
+            ):
+                raise StoreIntegrityError("SQLite intent lease identity is invalid")
+        else:
+            if (
+                status == "INTENT"
+                or operation_provider_id is None
+                or attempt_provider_id is None
+                or operation_provider_id != attempt_provider_id
+                or owner is None
+                or (recovery_epoch != lease_epoch and not allow_recovery_epoch_mismatch)
+                or fencing_token < 1
+                or lease_heartbeat_ns is None
+                or lease_expires_ns is None
+                or lease_expires_ns <= lease_heartbeat_ns
+            ):
+                raise StoreIntegrityError("SQLite operation lease identity is invalid")
+        snapshot = RecoverySnapshot(
+            operation_id=operation_id,
+            effect_key=row["effect_key"],
+            provider_id=operation_provider_id,
+            status=status,
+            updated_ns=row["updated_ns"],
+            current_attempt=attempt,
+            recovery_epoch=recovery_epoch,
+            owner=owner,
+            lease_heartbeat_ns=lease_heartbeat_ns,
+            lease_expires_ns=lease_expires_ns,
+            lease_epoch=lease_epoch,
+            fencing_token=fencing_token,
+            fence_proof_version=fence_proof_version,
+            fence_proof_ref=fence_proof_ref,
+            effect_started_ns=effect_started_ns,
+            fence_started_ns=fence_started_ns,
+        )
+        _validate_recovery_marker_fields(snapshot)
+        if status in {"RECEIPTED", "COMPLETED"}:
+            if receipt_row is None:
+                raise StoreIntegrityError("SQLite receipted operation has no receipt")
+            _validate_existing_receipt_row(row, receipt_row)
+        elif receipt_row is not None:
+            raise StoreIntegrityError("SQLite non-receipted operation has a receipt")
+        return ExistingOperationObservation(
+            operation_id=operation_id,
+            status=status,
+            owner=owner,
+            attempt=attempt,
+        )
+    except StoreError:
+        raise
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoreIntegrityError("SQLite operation observation is invalid") from exc
+
+
+def _validate_recovery_marker_fields(snapshot: RecoverySnapshot) -> None:
+    """Apply the #31 marker invariants to one validated recovery snapshot."""
+
+    if snapshot.status == "FENCE_PENDING":
+        if (
+            snapshot.fence_started_ns is not None
+            or snapshot.fence_proof_version is not None
+            or snapshot.effect_started_ns is not None
+        ):
+            raise StoreIntegrityError("SQLite pending lease marker is invalid")
+    elif snapshot.status == "FENCE_RESERVATION_STARTED":
+        if (
+            snapshot.fence_started_ns is None
+            or snapshot.fence_proof_version is not None
+            or snapshot.effect_started_ns is not None
+        ):
+            raise StoreIntegrityError("SQLite fence reservation marker is invalid")
+    elif snapshot.status == "CLAIMED":
+        if (
+            snapshot.fence_started_ns is None
+            or snapshot.fence_proof_version is None
+            or snapshot.effect_started_ns is not None
+        ):
+            raise StoreIntegrityError("SQLite activated lease marker is invalid")
+    elif snapshot.status in {"EFFECT_PREPARED", "RECEIPTED", "COMPLETED"} and (
+        snapshot.fence_started_ns is None
+        or snapshot.fence_proof_version is None
+        or snapshot.effect_started_ns is None
+    ):
+        raise StoreIntegrityError("SQLite prepared effect marker is incomplete")
+
+
+def _read_existing_recovery_snapshot(
+    connection: sqlite3.Connection,
+    operation_id: str,
+) -> RecoverySnapshot | None:
+    """Read through the canonical typed recovery/receipt validation path."""
+
+    operation_id = _require_opaque_identifier(operation_id, "operation_id")
+    try:
+        row, receipt_row = _existing_operation_rows(connection, operation_id)
+        if row is None:
+            return None
+        _validate_existing_operation_rows(
+            row,
+            receipt_row,
+            allow_recovery_epoch_mismatch=True,
+        )
+        receipt: VerifiedProviderReceipt | None = None
+        if receipt_row is not None:
+            receipt = CoordinationStore._receipt_from_row(row, receipt_row)
+        status = row["status"]
+        if status in {"RECEIPTED", "COMPLETED"} and receipt is None:
+            raise StoreIntegrityError("SQLite receipted operation has no receipt")
+        snapshot = RecoverySnapshot(
+            operation_id=row["operation_id"],
+            effect_key=row["effect_key"],
+            provider_id=row["operation_provider_id"],
+            status=status,
+            updated_ns=row["updated_ns"],
+            current_attempt=row["attempt"],
+            recovery_epoch=row["recovery_epoch"],
+            owner=row["owner"],
+            lease_heartbeat_ns=row["lease_heartbeat_ns"],
+            lease_expires_ns=row["lease_expires_ns"],
+            lease_epoch=row["lease_epoch"],
+            fencing_token=row["fencing_token"],
+            fence_proof_version=row["fence_proof_version"],
+            fence_proof_ref=row["fence_proof_ref"],
+            effect_started_ns=row["effect_started_ns"],
+            fence_started_ns=row["fence_started_ns"],
+            verified_receipt_identity=receipt,
+        )
+        _validate_recovery_marker_fields(snapshot)
+        return snapshot
+    except StoreError:
+        raise
+    except sqlite3.DatabaseError as exc:
+        raise StoreIntegrityError("SQLite recovery snapshot query failed") from exc
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoreIntegrityError("SQLite recovery snapshot data is invalid") from exc
+
+
 class CoordinationStore:
     """Private SQLite store for durable intent and journal state.
 
@@ -3274,54 +3752,10 @@ class CoordinationStore:
         connection: sqlite3.Connection,
         operation_id: str,
     ) -> RecoverySnapshot:
-        operation_id = _require_opaque_identifier(operation_id, "operation_id")
-        try:
-            row = self._fetch_attempt(connection, operation_id)
-            if row is None:
-                raise LeaseConflictError("operation is unavailable")
-            receipt: VerifiedProviderReceipt | None = None
-            receipt_row = connection.execute(
-                """
-                SELECT operation_id, attempt, effect_key, provider_effect_id,
-                       provider_status, provider_id, owner, fencing_token,
-                       lease_epoch, received_ns, proof_version, proof_ref
-                FROM effect_receipts
-                WHERE operation_id = ? AND attempt = ?
-                """,
-                (operation_id, row["attempt"]),
-            ).fetchone()
-            if receipt_row is not None:
-                receipt = self._receipt_from_row(row, receipt_row)
-            status = row["status"]
-            if status in {"RECEIPTED", "COMPLETED"} and receipt is None:
-                raise StoreIntegrityError("SQLite receipted operation has no receipt")
-            return RecoverySnapshot(
-                operation_id=row["operation_id"],
-                effect_key=row["effect_key"],
-                provider_id=row["operation_provider_id"],
-                status=status,
-                updated_ns=row["updated_ns"],
-                current_attempt=row["attempt"],
-                recovery_epoch=row["recovery_epoch"],
-                owner=row["owner"],
-                lease_heartbeat_ns=row["lease_heartbeat_ns"],
-                lease_expires_ns=row["lease_expires_ns"],
-                lease_epoch=row["lease_epoch"],
-                fencing_token=row["fencing_token"],
-                fence_proof_version=row["fence_proof_version"],
-                fence_proof_ref=row["fence_proof_ref"],
-                effect_started_ns=row["effect_started_ns"],
-                fence_started_ns=row["fence_started_ns"],
-                verified_receipt_identity=receipt,
-            )
-        except StoreError:
-            raise
-        except sqlite3.DatabaseError as exc:
-            raise StoreIntegrityError("SQLite recovery snapshot query failed") from exc
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise StoreIntegrityError(
-                "SQLite recovery snapshot data is invalid"
-            ) from exc
+        snapshot = _read_existing_recovery_snapshot(connection, operation_id)
+        if snapshot is None:
+            raise LeaseConflictError("operation is unavailable")
+        return snapshot
 
     def _rehydrate_claim_tx(
         self,
@@ -3569,23 +4003,6 @@ class CoordinationStore:
                 )
                 if snapshot.status != row["status"]:
                     raise StoreIntegrityError("SQLite prepared state changed")
-                if row["status"] == "EFFECT_PREPARED":
-                    if (
-                        snapshot.effect_started_ns is None
-                        or snapshot.fence_proof_version is None
-                        or snapshot.fence_proof_ref is None
-                    ):
-                        raise StoreIntegrityError(
-                            "SQLite prepared effect marker is incomplete"
-                        )
-                elif (
-                    snapshot.fence_started_ns is None
-                    or snapshot.fence_proof_version is not None
-                    or snapshot.fence_proof_ref is not None
-                ):
-                    raise StoreIntegrityError(
-                        "SQLite fence reservation marker is invalid"
-                    )
         except StoreError:
             raise
         except LeaseError as exc:
@@ -3887,113 +4304,20 @@ class CoordinationStore:
             connection.execute(f"PRAGMA user_version = {STORE_SCHEMA}")
 
     def _validate_schema(self) -> None:
-        connection = self._require_connection()
-        objects = self._schema_objects()
-        expected_objects = {
-            key: _normalize_sql(sql) for key, sql in _EXPECTED_OBJECT_SQL.items()
-        }
-        if objects != expected_objects:
-            raise StoreSchemaError("SQLite store objects do not match schema")
-        metadata = {
-            str(row["key"]): row["value"]
-            for row in connection.execute(
-                "SELECT key, value FROM store_meta"
-            ).fetchall()
-        }
-        if frozenset(metadata) != _EXPECTED_META_KEYS:
-            raise StoreSchemaError("SQLite store metadata keys do not match schema")
-        if (
-            type(metadata["store_schema"]) is not int
-            or metadata["store_schema"] != STORE_SCHEMA
-            or type(metadata["recovery_epoch"]) is not int
-            or not 0 <= metadata["recovery_epoch"] <= SQLITE_INTEGER_MAX
-            or type(metadata["fencing_token_floor"]) is not int
-            or not 0 <= metadata["fencing_token_floor"] <= SQLITE_INTEGER_MAX
-            or type(metadata["last_clock_ns"]) is not int
-            or not 0 <= metadata["last_clock_ns"] <= SQLITE_INTEGER_MAX
-        ):
-            raise StoreSchemaError("SQLite store metadata is invalid")
-        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if user_version != STORE_SCHEMA:
-            raise StoreSchemaError("SQLite user_version does not match store schema")
-        for table, expected_columns in _EXPECTED_COLUMNS.items():
-            rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
-            actual_columns = tuple(
-                (
-                    str(row["name"]),
-                    str(row["type"]).upper(),
-                    int(row["notnull"]),
-                    int(row["pk"]),
-                )
-                for row in rows
-            )
-            if actual_columns != expected_columns:
-                raise StoreSchemaError("SQLite store columns do not match schema")
-        for table, expected_indexes in _EXPECTED_INDEX_CONTRACT.items():
-            actual_indexes = self._index_contract(table)
-            if actual_indexes != tuple(sorted(expected_indexes)):
-                raise StoreSchemaError("SQLite store indexes do not match schema")
-        for table, expected_foreign_keys in _EXPECTED_FOREIGN_KEYS.items():
-            actual_foreign_keys = self._foreign_key_contract(table)
-            if actual_foreign_keys != tuple(sorted(expected_foreign_keys)):
-                raise StoreSchemaError("SQLite store foreign keys do not match schema")
-        integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
-        if integrity.lower() != "ok":
-            raise StoreIntegrityError("SQLite integrity_check failed")
-        if connection.execute("PRAGMA foreign_key_check").fetchall():
-            raise StoreIntegrityError("SQLite foreign_key_check failed")
+        _validate_existing_schema(self._require_connection())
 
     def _schema_objects(self) -> dict[tuple[str, str], str]:
-        connection = self._require_connection()
-        objects: dict[tuple[str, str], str] = {}
-        rows = connection.execute(
-            """
-            SELECT type, name, sql
-            FROM sqlite_master
-            WHERE type IN ('table', 'index', 'trigger', 'view')
-              AND name NOT LIKE 'sqlite_autoindex_%'
-            """
-        ).fetchall()
-        for row in rows:
-            sql = row["sql"]
-            if not isinstance(sql, str):
-                raise StoreSchemaError("SQLite store object SQL is invalid")
-            objects[(str(row["type"]), str(row["name"]))] = _normalize_sql(sql)
-        return objects
+        return _schema_objects_for_connection(self._require_connection())
 
     def _index_contract(
         self, table: str
     ) -> tuple[tuple[int, str, tuple[str, ...]], ...]:
-        connection = self._require_connection()
-        contracts: list[tuple[int, str, tuple[str, ...]]] = []
-        for row in connection.execute(f"PRAGMA index_list({table})").fetchall():
-            index_name = str(row["name"])
-            columns = tuple(
-                str(column["name"])
-                for column in connection.execute(
-                    f"PRAGMA index_info({index_name})"
-                ).fetchall()
-            )
-            contracts.append((int(row["unique"]), str(row["origin"]), columns))
-        return tuple(sorted(contracts))
+        return _index_contract_for_connection(self._require_connection(), table)
 
     def _foreign_key_contract(
         self, table: str
     ) -> tuple[tuple[str, str, str, str, str], ...]:
-        connection = self._require_connection()
-        contracts = [
-            (
-                str(row[2]),
-                str(row[3]),
-                str(row[4]),
-                str(row[5]).upper(),
-                str(row[6]).upper(),
-            )
-            for row in connection.execute(
-                f"PRAGMA foreign_key_list({table})"
-            ).fetchall()
-        ]
-        return tuple(sorted(contracts))
+        return _foreign_key_contract_for_connection(self._require_connection(), table)
 
     def _assert_transaction_identity(self) -> None:
         self._assert_lifetime_gate()

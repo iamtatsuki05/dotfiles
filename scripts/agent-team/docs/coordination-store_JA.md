@@ -81,3 +81,37 @@ throwaway codeと詳細な測定結果はruntime packageへ入れず、実行ses
 - atomic-file harness SHA-256: `3798bdeef42629555b08aca4a0ef222efad476f257ffd15d4eae5099785ec490`
 
 prototypeは使い捨ての証拠である。production codeはこのcontractから実装し、別のtestで検証する。
+
+## read-only doctor substrate
+
+`agent_team.doctor` は、復旧処理から共有する read-only の
+`ReadOnlyDoctor`、`StateFilesystem`、`RecoveryLedgerReader` seam を提供する。
+stable writer marker と recovery ledger の basename は、後続の marker/ledger
+実装が所有するため、呼び出し側が明示的に渡す。doctor がファイル名を暗黙に
+補完したり、`CoordinationStore` を構築したり、recovery を実行したりすることは
+ない。
+
+filesystem reader は、既存の owner-only directory/file だけを
+`O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK` で開き、存在する lifetime gate を shared lock で保持して
+root 直下の全 name を inventory に記録する。安全な regular file について type、owner、
+mode、link 数、device/inode、size、timestamp、SHA-256 を保持する。unsafe な root entry
+と identity の変化は拒否し、report を返す前に fileset 全体も再確認する。missing
+root/gate は観測するが、作成しない。non-zero WAL、pending restore ledger、active
+writer marker、schema mismatch、identity race は fail-closed のまま扱う。report は
+有限の state/action/mutation と検証済み opaque owner identity だけを含み、path、
+SQLite row、provider payload は公開しない。
+
+既存の primary DB を読むときは、検証済みの read-only descriptor を開いたまま、
+descriptor から bounded に読み込んだ bytes を in-memory SQLite DB へ deserialize
+する。SQLite が state pathname を再 open する経路はないため、path が FIFO や別 DB に
+置き換わっても保持した fd を読み、最後の fileset 検証で unreadable に倒す。
+deserialize または in-memory validator に失敗した場合も pathname fallback は行わない。
+
+recovery ledger は strict な append-only JSONL とする。各行は完全な JSON
+object を canonical newline で終え、array、前後に余分な空白がある行、空行、
+途中で切れた最終 record、terminal phase から始まる世代を受け付けない。各世代は
+`RESTORE_PREPARED`、`RESTORE_REPLACED`、`RESTORE_COMMITTED` または契約で
+許可した `RESTORE_ABORTED` edge の順に進み、terminal の後は次の世代の
+`RESTORE_PREPARED` だけを許可する。primary DB、SQLite の exact sidecar、marker、
+ledger の basename は regular file に限定する。無関係な owner-only directory は
+inventory に残すが、開かない。

@@ -83,3 +83,39 @@ The throwaway code and detailed measurements are stored in the execution session
 - Atomic-file harness SHA-256: `3798bdeef42629555b08aca4a0ef222efad476f257ffd15d4eae5099785ec490`
 
 The prototypes are disposable evidence. Production code must be implemented from this contract and covered by its own tests.
+
+## Read-only doctor substrate
+
+`agent_team.doctor` provides the read-only `ReadOnlyDoctor`, `StateFilesystem`,
+and `RecoveryLedgerReader` seams for recovery work. Callers must pass the
+stable writer-marker and recovery-ledger basenames explicitly because their
+names are owned by the later marker/ledger implementations. The doctor does
+not invent a filename, construct `CoordinationStore`, or execute recovery.
+
+The filesystem reader opens only an existing owner-only directory/file through
+`O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK`, holds the existing lifetime gate
+with a shared lock when present, and inventories every root-direct name. It
+retains type, owner, mode,
+link count, device/inode, size, timestamps, and SHA-256 for safe regular files.
+It rejects unsafe root entries and identity changes, and compares the complete
+fileset again before returning a report. Missing roots and gates are observed;
+they are never created. A non-zero SQLite WAL, pending restore ledger, active
+writer marker, schema mismatch, or identity race remains fail-closed. Reports
+contain only finite states/actions/mutations and validated opaque owner
+identities; they do not expose paths, SQLite rows, or provider payloads.
+
+For an existing primary database, the already validated read-only descriptor
+remains open while bounded bytes are deserialized into an in-memory SQLite
+database. SQLite never reopens the state pathname, so a path swap cannot make
+it open a FIFO or replacement database; the final fileset check returns an
+unreadable observation. If deserialization or the in-memory validator fails,
+the doctor stops without a pathname fallback.
+
+The recovery ledger is strict append-only JSONL: every line is one complete
+object terminated by the canonical newline, with no arrays, padded/blank
+lines, partial final records, or terminal-first generation. Each generation
+must progress through `RESTORE_PREPARED`, `RESTORE_REPLACED`, and then
+`RESTORE_COMMITTED` or the contractually allowed `RESTORE_ABORTED` edge; only
+a later generation may begin with a new `RESTORE_PREPARED` record. The primary database, exact SQLite
+sidecars, marker, and ledger basenames are regular files only; unrelated
+owner-only directories remain inventory entries but are never opened.
