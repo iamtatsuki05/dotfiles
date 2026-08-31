@@ -16,7 +16,8 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
 - [teamを起動する](#teamを起動する)は通常の利用手順です。
 - [アーキテクチャ](docs/architecture_JA.md)はruntimeと安全境界を説明します。
 - [設定リファレンス](docs/configuration_JA.md)はconfig version 3と、対応する
-  provider/transportの組み合わせを説明します。
+  provider/transportの組み合わせを説明します。[Version 4の設定](docs/configuration-v4_JA.md)
+  では、明示的なteam選択とtopologyの確認を説明します。
 - [Harness対応matrix](docs/support-matrix_JA.md)は、認識済み・利用可能・実行可能・
   拒否を区別します。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
@@ -25,6 +26,16 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
 - [Coordination store、recovery、backup、restore](docs/coordination-store_JA.md)は
   SQLiteのschema境界、stable writer marker、WAL sidecar controller、backup artifact、
   candidate-first restoreを説明します。
+- [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
+  保存やworkflow実行を含まないstate観測契約を説明します。
+- [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
+  express laneで共通する、Workerから独立Reviewerへ進むtyped serial gateを説明します。
+- [Path/resource policy](docs/path-resource-policy_JA.md)は、filesystemやproviderを操作せず、
+  canonical path admission、明示的なresource mode、reservation port、normal/express/researchの
+  lane matrixを説明します。
+- [Fixed-argv verification gate](docs/verification-gate_JA.md)は、write task を completed に
+  する前提となる typed approval、固定 verification request、before/after snapshot の束縛、
+  normalized receipt を説明します。
 
 現在の設定は次のとおりです。
 

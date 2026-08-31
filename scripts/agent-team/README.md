@@ -16,7 +16,8 @@ linked reference documents when changing the implementation or configuration.
 - [Architecture](docs/architecture.md) explains the runtime and safety
   boundaries.
 - [Configuration](docs/configuration.md) lists the version-3 schema and the
-  supported provider/transport combinations.
+  supported provider/transport combinations. [Version-4 configuration](docs/configuration-v4.md)
+  describes explicit team selection and pure topology inspection.
 - [Harness support matrix](docs/support-matrix.md) separates recognized,
   available, runnable, and rejected harnesses.
 - [ACP boundary](docs/acp.md) explains adapter pins, authentication, and why
@@ -26,6 +27,17 @@ linked reference documents when changing the implementation or configuration.
 - [Coordination store, recovery, backup, and restore](docs/coordination-store.md)
   documents the SQLite schema boundary, stable writer marker, WAL sidecar
   controller, backup artifact, and candidate-first restore protocol.
+- [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
+  `TaskSpec`, dependency order, and state observation contract without storage
+  or workflow execution.
+- [Serial review policy](docs/review-policy.md) defines the typed serial gate
+  shared by normal tasks and Issue #50-admitted express tasks, without backend wiring.
+- [Path/resource policy](docs/path-resource-policy.md) defines canonical path
+  admission, explicit resource modes, reservation-port handoff, and the
+  normal/express/research lane matrix without filesystem or provider effects.
+- [Fixed-argv verification gate](docs/verification-gate.md) defines the typed
+  approval, pinned verification request, before/after snapshot binding, and
+  normalized receipt required before a write task can be completed.
 
 The current configuration uses this team:
 

@@ -25,6 +25,16 @@ from .adapters import (
 )
 from .backend import OrcaBackend, OrcaClient
 from .cleanup import StartupCleanup
+from .config_v4 import (
+    V4Config,
+    V4ConfigError,
+    build_v4_launch_plan,
+    load_v4_config_data,
+    read_config_file,
+    render_v4_team,
+    select_v4_team,
+    v4_teams_json,
+)
 from .contracts import (
     Attach,
     ErrorCode,
@@ -78,6 +88,7 @@ ACP_TERMINATE_WAIT_SECONDS: Final = 2
 ACP_KILL_WAIT_SECONDS: Final = 2
 MAX_ACP_OUTPUT_CHARS: Final = 100_000
 MAX_RUNTIME_ERROR_CHARS: Final = 240
+MAX_CLI_ERROR_CHARS: Final = 16_384
 PROVIDER_EFFORTS: Final = {
     "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
     "codex": frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
@@ -201,13 +212,8 @@ def parse_role(
     )
 
 
-def load_config(config_path: Path) -> TeamConfig:
+def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
     resolved_path = config_path.expanduser().resolve()
-    if not resolved_path.is_file():
-        raise ConfigError(f"config does not exist: {resolved_path}")
-    with resolved_path.open("rb") as config_file:
-        data = tomllib.load(config_file)
-
     version = data.get("version")
     if (
         not isinstance(version, int)
@@ -215,6 +221,10 @@ def load_config(config_path: Path) -> TeamConfig:
         or version != CONFIG_VERSION
     ):
         raise ConfigError(f"version must be integer {CONFIG_VERSION}")
+    if "teams" in data:
+        raise ConfigError(
+            "v4 field 'teams' requires config version 4; v3 config is unchanged"
+        )
     runtime = require_string(data, "runtime", "config")
     if runtime != "orca":
         raise ConfigError("runtime must be 'orca'")
@@ -259,6 +269,17 @@ def load_config(config_path: Path) -> TeamConfig:
         main=main,
         roles=roles,
     )
+
+
+def load_config(config_path: Path) -> TeamConfig:
+    """Load the unchanged version-3 configuration contract."""
+
+    resolved_path = config_path.expanduser().resolve()
+    if not resolved_path.is_file():
+        raise ConfigError(f"config does not exist: {resolved_path}")
+    with resolved_path.open("rb") as config_file:
+        data = tomllib.load(config_file)
+    return _load_config_data(resolved_path, data)
 
 
 def slugify(value: str) -> str:
@@ -1598,6 +1619,57 @@ def default_config_path() -> Path:
         ) from exc
 
 
+def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
+    """Dispatch pure v4 inspection commands without entering the v3 runtime."""
+
+    if args.command == "teams":
+        print(v4_teams_json(config), end="")
+        return 0 if all(team.validation.valid for team in config.teams) else 1
+    if args.command == "graph":
+        print(
+            render_v4_team(config, args.team, args.format),
+            end="",
+        )
+        return 0
+    if args.command == "start":
+        if args.no_attach:
+            raise ConfigError(
+                "config version 4 does not support --no-attach with dry-run"
+            )
+        launch_plan = build_v4_launch_plan(config, args.cwd, args.team)
+        if not args.dry_run:
+            raise ConfigError(
+                "config version 4 start currently supports --dry-run only"
+            )
+        print(json.dumps(launch_plan.as_dict(), ensure_ascii=False, indent=2))
+        return 0
+    if args.command in {"status", "attach", "stop"}:
+        config.require_valid()
+        select_v4_team(config, args.team)
+        raise ConfigError(
+            f"config version 4 {args.command} is not available before runtime integration"
+        )
+    raise ConfigError(f"command {args.command} requires config version 3")
+
+
+def render_cli_error(error: BaseException) -> str:
+    """Keep ordinary messages unchanged and escape only unsafe user text."""
+
+    if isinstance(error, UnicodeDecodeError):
+        return "config is not valid UTF-8"
+    message = str(error)
+    if not any(
+        ord(character) < 0x20
+        or 0x7F <= ord(character) <= 0x9F
+        or 0xD800 <= ord(character) <= 0xDFFF
+        for character in message
+    ):
+        return message
+    if len(message) > MAX_CLI_ERROR_CHARS:
+        message = message[:MAX_CLI_ERROR_CHARS] + "...<truncated>"
+    return json.dumps(message, ensure_ascii=True)
+
+
 def add_context_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", type=Path, default=default_config_path())
     caller_cwd = os.environ.get("AGENT_TEAM_CALLER_CWD")
@@ -1613,19 +1685,29 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     start = subparsers.add_parser("start", help="start an Orca-backed agent team")
     add_context_arguments(start)
+    start.add_argument("--team", action="append")
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--no-attach", action="store_true")
     status = subparsers.add_parser("status", help="show the derived Orca team state")
     add_context_arguments(status)
+    status.add_argument("--team", action="append")
     attach = subparsers.add_parser("attach", help="focus one role in Orca")
     attach.add_argument("role", choices=ALL_ROLES)
     add_context_arguments(attach)
+    attach.add_argument("--team", action="append")
     stop = subparsers.add_parser("stop", help="stop this team's exact Orca terminals")
     add_context_arguments(stop)
+    stop.add_argument("--team", action="append")
     harnesses = subparsers.add_parser(
         "harnesses", help="show recognized harnesses and static availability"
     )
     harnesses.add_argument("--json", action="store_true", dest="as_json")
+    teams = subparsers.add_parser("teams", help="list version-4 configured teams")
+    add_context_arguments(teams)
+    graph = subparsers.add_parser("graph", help="render one version-4 team topology")
+    add_context_arguments(graph)
+    graph.add_argument("--team", action="append", required=True)
+    graph.add_argument("--format", choices=("json", "ascii", "mermaid"), required=True)
     role = subparsers.add_parser("_role-run", help=argparse.SUPPRESS)
     role.add_argument("role", choices=ALL_ROLES)
     role.add_argument("--orca-socket", type=Path)
@@ -1685,8 +1767,14 @@ def main(argv: list[str] | None = None) -> int:
                 prompt_path=args.prompt,
                 launch_nonce=args.launch_nonce,
             )
-        except (ConfigError, RuntimeError, OSError, TypeError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+        except (
+            ConfigError,
+            RuntimeError,
+            OSError,
+            TypeError,
+            UnicodeDecodeError,
+        ) as exc:
+            print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
             return 1
     if args.command == "_background-run":
         try:
@@ -1699,14 +1787,45 @@ def main(argv: list[str] | None = None) -> int:
                 prompt_path=args.prompt,
                 launch_nonce=args.launch_nonce,
             )
-        except (ConfigError, RuntimeError, OSError, TypeError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+        except (
+            ConfigError,
+            RuntimeError,
+            OSError,
+            TypeError,
+            UnicodeDecodeError,
+        ) as exc:
+            print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
             return 1
     try:
+        if args.command in {"teams", "graph"}:
+            resolved_config_path, config_data = read_config_file(args.config)
+            version = config_data.get("version")
+            if (
+                isinstance(version, int)
+                and not isinstance(version, bool)
+                and version == 4
+            ):
+                return run_v4_command(
+                    args, load_v4_config_data(resolved_config_path, config_data)
+                )
+            raise ConfigError(f"{args.command} requires config version 4")
+
+        team_values = getattr(args, "team", None)
+        if team_values is not None:
+            resolved_config_path, config_data = read_config_file(args.config)
+            return run_v4_command(
+                args, load_v4_config_data(resolved_config_path, config_data)
+            )
         config = load_config(args.config)
         plan = build_plan(config, args.cwd, getattr(args, "orca_socket", None))
-    except (ConfigError, OSError, tomllib.TOMLDecodeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except (
+        ConfigError,
+        V4ConfigError,
+        OSError,
+        UnicodeDecodeError,
+        tomllib.TOMLDecodeError,
+    ) as exc:
+        print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
         return 2
 
     try:
@@ -1723,8 +1842,8 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeFailure as exc:
         print(f"ERROR: {_runtime_failure_message(exc)}", file=sys.stderr)
         return 1
-    except (ConfigError, RuntimeError, OSError, TypeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except (ConfigError, RuntimeError, OSError, TypeError, UnicodeDecodeError) as exc:
+        print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

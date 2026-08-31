@@ -3,8 +3,10 @@
 [English](configuration.md) · [README](../README_JA.md) ·
 [アーキテクチャ](architecture_JA.md)
 
-`agent-team`が受け付けるのはconfig version 3だけです。必須値の欠落や未対応の
-組み合わせは、roleを起動する前に拒否します。
+`agent-team`は既存のversion 3固定role設定を維持しながら、明示的なversion 4の
+topology設定も受け付けます。必須値の欠落や未対応の組み合わせは、roleを起動する
+前に拒否します。topology schemaとresourceを起動しない確認commandは
+[Version 4の設定](configuration-v4_JA.md)を参照してください。
 
 ## canonical configから始める
 
