@@ -10,6 +10,7 @@ readonly TEST_PYTHON_BIN="${DOTFILES_TEST_PYTHON:-python3}"
 source "$TEST_DIR/lib/assertions.sh"
 
 typeset -g SELECTOR=""
+typeset -g SKIP_CHEZMOI=0
 typeset -g CHEZMOI_BIN=""
 typeset -g FIXTURE=""
 typeset -g FAKE_BIN=""
@@ -18,18 +19,38 @@ typeset -g SECRET_MODE=""
 typeset -g SECRET_DIGEST=""
 
 usage() {
-  print -u2 -r -- 'Usage: zsh tests/test_multi_shell_config.sh --selector source|render'
+  print -u2 -r -- 'Usage: zsh tests/test_multi_shell_config.sh --selector source|render [--skip-chezmoi]'
 }
 
 parse_selector() {
-  if (( $# != 2 )) || [[ "$1" != --selector ]]; then
+  local selector_seen=0
+  while (( $# )); do
+    case "$1" in
+      --selector)
+        if (( $# < 2 )); then
+          usage
+          return 2
+        fi
+        case "$2" in
+          source|render) SELECTOR="$2"; selector_seen=1 ;;
+          *) usage; return 2 ;;
+        esac
+        shift 2
+        ;;
+      --skip-chezmoi)
+        SKIP_CHEZMOI=1
+        shift
+        ;;
+      *)
+        usage
+        return 2
+        ;;
+    esac
+  done
+  if (( ! selector_seen )) || (( SKIP_CHEZMOI )) && [[ "$SELECTOR" != source ]]; then
     usage
     return 2
   fi
-  case "$2" in
-    source|render) SELECTOR="$2" ;;
-    *) usage; return 2 ;;
-  esac
 }
 
 matrix_os_name() {
@@ -78,13 +99,6 @@ select_bash() {
     [[ "$actual" == "$wanted" ]] && { REPLY="$candidate"; return 0; }
   done
   return 1
-}
-
-resolve_chezmoi() {
-  local candidate
-  candidate="$(command -v chezmoi 2>/dev/null || true)"
-  [[ "$candidate" == /* && -x "$candidate" ]] || return 1
-  CHEZMOI_BIN="$candidate"
 }
 
 resolve_fish() {
@@ -708,6 +722,78 @@ assert_bash_activation() {
   [[ "$(grep -c '^activate fish$' "$FIXTURE/mise.log" 2>/dev/null || true)" -eq 0 ]] || fail 'Bash common invoked Fish mise activation'
 }
 
+run_source_matrix() {
+  local src="$1" dest="$2" matrix_os="$(matrix_os_name)" expected_major bin out smoke_status matrix_status=0
+
+  for expected_major in 3 5; do
+    if select_bash "$expected_major"; then
+      bin="$REPLY"
+      out="$FIXTURE/source-bash${expected_major}.log"
+      : > "$GCLOUD_LOG"
+      : > "$FIXTURE/mise.log"
+      smoke_status=0
+      run_bash_probe "$bin" "$dest" "$out" || smoke_status=$?
+      if (( smoke_status != 0 )); then
+        emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=chezmoi-source|status=FAIL|requirement=required|reason=runtime-smoke-failed"
+        matrix_status=1
+        continue
+      fi
+      assert_shell_output "$out" "$dest"
+      assert_bash_activation "$out"
+      assert_output_contains "$out" "root=$src"
+      assert_posix_path_order "$out" "$dest" "$FIXTURE"
+      assert_alias_log
+      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=chezmoi-source|status=PASS|requirement=required|reason=rendered-artifact"
+    elif [[ "$expected_major" == 3 && "$OSTYPE" != darwin* ]]; then
+      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash3|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=macos-only"
+    else
+      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=chezmoi-source|status=SKIP|requirement=required|reason=bash${expected_major}-unavailable"
+      matrix_status=1
+    fi
+  done
+
+  if [[ ! -x "$TEST_ZSH_BIN" || ! -f "$TEST_ZSH_BIN" ]]; then
+    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=zsh|target=chezmoi-source|status=SKIP|requirement=required|reason=zsh-unavailable"
+    return 1
+  fi
+
+  out="$FIXTURE/source-zsh.log"
+  : > "$GCLOUD_LOG"
+  smoke_status=0
+  run_zsh_probe "$dest" "$out" || smoke_status=$?
+  if (( smoke_status != 0 )); then
+    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=zsh|target=chezmoi-source|status=FAIL|requirement=required|reason=runtime-smoke-failed"
+    matrix_status=1
+  else
+    assert_shell_output "$out" "$dest" zsh
+    assert_output_contains "$out" "root=$src"
+    assert_posix_path_order "$out" "$dest" "$FIXTURE"
+    assert_alias_log
+    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=zsh|target=chezmoi-source|status=PASS|requirement=required|reason=rendered-artifact"
+  fi
+
+  return "$matrix_status"
+}
+
+run_source() {
+  local src="$FIXTURE/source-state-source" dest="$FIXTURE/source-state-home" matrix_os="$(matrix_os_name)" rc=0
+  mkdir -p "$FIXTURE/tmp" "$dest/.config/shell" "$dest/.fixture-config/shell" "$dest/.fixture-bin" "$dest/.nix-profile/bin" \
+    "$FIXTURE/homebrew-sbin" "$FIXTURE/homebrew-bin" "$FIXTURE/absolute-one" "$FIXTURE/absolute-two"
+  copy_source "$src"
+  mutate_data "$src/home/.chezmoidata.toml"
+  write_fakes
+  print -r -- 'export DOTFILES_FOREIGN_SECRET_SENTINEL=foreign-secret' > "$dest/.fixture-config/shell/secrets.env"
+  chmod 600 "$dest/.fixture-config/shell/secrets.env"
+  if ! run_apply "$src" "$dest" "$src"; then
+    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=chezmoi|target=chezmoi-source|status=FAIL|requirement=required|reason=apply-failed"
+    return 1
+  fi
+  assert_rendered "$dest" 1
+  emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=chezmoi|target=chezmoi-source|status=PASS|requirement=required|reason=rendered-artifact"
+  run_source_matrix "$src" "$dest" || rc=$?
+  return "$rc"
+}
+
 run_csh_shared_smoke() {
   local shell_bin="$1" home="$2" out="$FIXTURE/csh.log" rc=0
   mkdir -p "$FIXTURE/mise data/shims"
@@ -1177,8 +1263,30 @@ main() {
   FIXTURE="${FIXTURE:A}"
   trap '[[ -n "$FIXTURE" ]] && rm -rf -- "$FIXTURE"' EXIT HUP INT TERM
   case "$SELECTOR" in
-    source) test_source; print -r -- 'multi-shell source checks passed' ;;
-    render) resolve_chezmoi || { emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=chezmoi|target=multi-shell|status=SKIP|requirement=required|reason=chezmoi-unavailable"; return 1; }; run_render ;;
+    source)
+      test_source
+      if (( SKIP_CHEZMOI )); then
+        emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-skipped"
+        print -r -- 'multi-shell source checks passed'
+        return 0
+      fi
+      if ! resolve_chezmoi; then
+        emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-unavailable"
+        print -r -- 'multi-shell source checks passed'
+        return 0
+      fi
+      CHEZMOI_BIN="$REPLY"
+      run_source
+      print -r -- 'multi-shell source checks passed'
+      ;;
+    render)
+      if ! resolve_chezmoi; then
+        emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=chezmoi|target=multi-shell|status=SKIP|requirement=required|reason=chezmoi-unavailable"
+        return 1
+      fi
+      CHEZMOI_BIN="$REPLY"
+      run_render
+      ;;
   esac
 }
 

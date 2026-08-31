@@ -67,34 +67,6 @@ select_bash_for_major() {
   return 1
 }
 
-resolve_chezmoi() {
-  local home_chezmoi_bin
-  local mise_chezmoi_bin
-  local mise_install_dir
-
-  if command -v chezmoi >/dev/null 2>&1; then
-    REPLY="$(command -v chezmoi)"
-    return
-  fi
-
-  home_chezmoi_bin="$HOME/.local/bin/chezmoi"
-  if [[ -x "$home_chezmoi_bin" ]]; then
-    REPLY="$home_chezmoi_bin"
-    return
-  fi
-
-  if command -v mise >/dev/null 2>&1; then
-    mise_install_dir="$(mise where chezmoi@latest 2>/dev/null)" || mise_install_dir=""
-    mise_chezmoi_bin="$mise_install_dir/chezmoi"
-    if [[ -x "$mise_chezmoi_bin" ]]; then
-      REPLY="$mise_chezmoi_bin"
-      return
-    fi
-  fi
-
-  return 127
-}
-
 run_chezmoi() {
   local chezmoi_bin
 

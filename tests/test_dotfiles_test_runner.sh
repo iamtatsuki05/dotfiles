@@ -46,7 +46,7 @@ create_runner_fixture() {
     print -r -- "#!$TEST_ZSH_BIN"
     print -r -- 'set -euo pipefail'
     print -r -- 'case "$*" in'
-    print -r -- '  *"--selector source"*) print -r -- multi-shell-source ;;'
+    print -r -- '  *"--selector source"*) if [[ "$*" == *"--skip-chezmoi"* ]]; then print -r -- source-resolver-skipped; print -r -- "MATRIX_RESULT|os=linux|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-skipped"; else print -r -- source-resolver-called; print -r -- "MATRIX_RESULT|os=linux|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-unavailable"; fi; print -r -- multi-shell-source ;;'
     print -r -- '  *"--selector render"*) print -r -- multi-shell-render ;;'
     print -r -- '  *) print -u2 -r -- "unexpected multi-shell selector: $*"; exit 1 ;;'
     print -r -- 'esac'
@@ -105,6 +105,292 @@ test_test_runner_references_existing_test_files() {
   done
 }
 
+test_shared_chezmoi_resolver_finds_home_local_bin_outside_path() {
+  local fixture home_dir chezmoi_bin output rc=0
+
+  make_temp_dir "chezmoi-resolver-test"
+  fixture="${REPLY:A}"
+  home_dir="$fixture/home"
+  chezmoi_bin="$home_dir/.local/bin/chezmoi"
+  mkdir -p "$chezmoi_bin:h"
+  print -r -- '#!/bin/sh' > "$chezmoi_bin"
+  chmod +x "$chezmoi_bin"
+
+  output="$(
+    env -i HOME="$home_dir" PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
+      "$TEST_ZSH_BIN" -f -c '
+        source "$1"
+        resolve_chezmoi
+        print -r -- "$REPLY"
+      ' _ "$TEST_DIR/lib/assertions.sh"
+  )" || rc=$?
+  (( rc == 0 )) || fail 'shared chezmoi resolver failed in a temp HOME'
+  [[ "$output" == "$chezmoi_bin" ]] || fail "shared chezmoi resolver selected an unexpected path: $output"
+
+  rm -rf "$fixture"
+}
+
+write_resolver_executable() {
+  local file_path="$1"
+
+  mkdir -p "$file_path:h"
+  print -r -- '#!/bin/sh' > "$file_path"
+  chmod +x "$file_path"
+}
+
+write_resolver_mise() {
+  local file_path="$1" mise_status="${2:-0}"
+
+  mkdir -p "$file_path:h"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'set -eu'
+    print -r -- 'if [ "${1:-}" = where ] && [ "${2:-}" = chezmoi@latest ]; then'
+    print -r -- '  printf "%s\n" "resolver warning" >&2'
+    print -r -- '  printf "%s\n" "$MISE_CHEZMOI_INSTALL_DIR"'
+    print -r -- "  exit $mise_status"
+    print -r -- 'fi'
+    print -r -- 'exit 1'
+  } > "$file_path"
+  chmod +x "$file_path"
+}
+
+resolver_probe() {
+  local home_dir="$1" path_result="$2" mise_bin="$3" mise_install_dir="$4"
+
+  env -i HOME="$home_dir" PATH="/bin:/usr/bin" \
+    RESOLVER_PATH_RESULT="$path_result" MISE_BIN="$mise_bin" \
+    MISE_CHEZMOI_INSTALL_DIR="$mise_install_dir" \
+    "$TEST_ZSH_BIN" -f -c '
+      command() {
+        if [[ "$1" == -v && "$2" == chezmoi ]]; then
+          if [[ -n "${RESOLVER_PATH_RESULT:-}" ]]; then
+            print -r -- "$RESOLVER_PATH_RESULT"
+            return 0
+          fi
+          return 1
+        fi
+        if [[ "$1" == -v && "$2" == mise ]]; then
+          print -r -- "$MISE_BIN"
+          return 0
+        fi
+        builtin command "$@"
+      }
+      source "$1"
+      resolve_chezmoi || exit $?
+      print -r -- "$REPLY"
+    ' _ "$TEST_DIR/lib/assertions.sh"
+}
+
+test_shared_chezmoi_resolver_rejects_path_directory_and_falls_back_to_mise() {
+  local fixture path_candidate mise_bin mise_install_dir mise_candidate output rc=0
+
+  make_temp_dir "chezmoi-path-directory-test"
+  fixture="${REPLY:A}"
+  path_candidate="$fixture/path/chezmoi"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  mise_candidate="$mise_install_dir/chezmoi"
+  mkdir -p "$path_candidate"
+  chmod +x "$path_candidate"
+  write_resolver_mise "$mise_bin"
+  write_resolver_executable "$mise_candidate"
+
+  output="$(resolver_probe "$fixture/home" "$path_candidate" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 0 )) || fail 'resolver must continue after rejecting a PATH directory'
+  [[ "$output" == "$mise_candidate" ]] || fail "PATH directory must fall back to mise: $output"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_rejects_home_directory_and_falls_back_to_mise() {
+  local fixture home_dir home_candidate mise_bin mise_install_dir mise_candidate output rc=0
+
+  make_temp_dir "chezmoi-home-directory-test"
+  fixture="${REPLY:A}"
+  home_dir="$fixture/home"
+  home_candidate="$home_dir/.local/bin/chezmoi"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  mise_candidate="$mise_install_dir/chezmoi"
+  mkdir -p "$home_candidate"
+  chmod +x "$home_candidate"
+  write_resolver_mise "$mise_bin"
+  write_resolver_executable "$mise_candidate"
+
+  output="$(resolver_probe "$home_dir" "" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 0 )) || fail 'resolver must continue after rejecting a HOME directory'
+  [[ "$output" == "$mise_candidate" ]] || fail "HOME directory must fall back to mise: $output"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_rejects_path_control_byte_and_falls_back_to_mise() {
+  local fixture control_dir path_candidate mise_bin mise_install_dir mise_candidate output rc=0
+
+  make_temp_dir "chezmoi-path-control-test"
+  fixture="${REPLY:A}"
+  control_dir="$fixture/path"$'\n''segment'
+  path_candidate="$control_dir/chezmoi"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  mise_candidate="$mise_install_dir/chezmoi"
+  write_resolver_executable "$path_candidate"
+  write_resolver_mise "$mise_bin"
+  write_resolver_executable "$mise_candidate"
+
+  output="$(resolver_probe "$fixture/home" "$path_candidate" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 0 )) || fail 'resolver must continue after rejecting a PATH control-byte path'
+  [[ "$output" == "$mise_candidate" ]] || fail "PATH control-byte path must fall back to mise: $output"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_rejects_home_control_byte_and_falls_back_to_mise() {
+  local fixture home_dir home_candidate mise_bin mise_install_dir mise_candidate output rc=0
+
+  make_temp_dir "chezmoi-home-control-test"
+  fixture="${REPLY:A}"
+  home_dir="$fixture/home"$'\t''segment'
+  home_candidate="$home_dir/.local/bin/chezmoi"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  mise_candidate="$mise_install_dir/chezmoi"
+  write_resolver_executable "$home_candidate"
+  write_resolver_mise "$mise_bin"
+  write_resolver_executable "$mise_candidate"
+
+  output="$(resolver_probe "$home_dir" "" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 0 )) || fail 'resolver must continue after rejecting a HOME control-byte path'
+  [[ "$output" == "$mise_candidate" ]] || fail "HOME control-byte path must fall back to mise: $output"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_rejects_mise_directory_candidate() {
+  local fixture mise_bin mise_install_dir output rc=0
+
+  make_temp_dir "chezmoi-mise-directory-test"
+  fixture="${REPLY:A}"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  mkdir -p "$mise_install_dir/chezmoi"
+  chmod +x "$mise_install_dir/chezmoi"
+  write_resolver_mise "$mise_bin"
+
+  output="$(resolver_probe "$fixture/home" "" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 127 )) || fail "resolver must reject a mise ChezMoi directory with rc=127 (got $rc)"
+  [[ -z "$output" ]] || fail "rejected mise directory must not produce a selected candidate: $output"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_rejects_mise_control_byte_output() {
+  local fixture mise_bin mise_install_dir output rc=0
+
+  make_temp_dir "chezmoi-mise-control-test"
+  fixture="${REPLY:A}"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"$'\n''segment'
+  write_resolver_mise "$mise_bin"
+  write_resolver_executable "$mise_install_dir/chezmoi"
+
+  output="$(resolver_probe "$fixture/home" "" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 127 )) || fail "resolver must reject a mise control-byte output with rc=127 (got $rc)"
+  [[ -z "$output" ]] || fail "rejected mise control-byte output must not produce a selected candidate: $output"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_rejects_mise_nonzero_status_with_valid_output() {
+  local fixture mise_bin mise_install_dir mise_candidate stderr output rc=0
+
+  make_temp_dir "chezmoi-mise-status-test"
+  fixture="${REPLY:A}"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  mise_candidate="$mise_install_dir/chezmoi"
+  stderr="$fixture/stderr.log"
+  write_resolver_mise "$mise_bin" 23
+  write_resolver_executable "$mise_candidate"
+
+  output="$(resolver_probe "$fixture/home" "" "$mise_bin" "$mise_install_dir" 2> "$stderr")" || rc=$?
+  (( rc == 127 )) || fail "resolver must reject mise output when where exits non-zero (got $rc)"
+  [[ -z "$output" ]] || fail "non-zero mise where must not produce a selected candidate: $output"
+  [[ ! -s "$stderr" ]] || fail "mise stderr must not leak from resolver candidate lookup"
+
+  rm -rf "$fixture"
+}
+
+test_shared_chezmoi_resolver_accepts_symlink_to_regular_executable() {
+  local fixture path_candidate target mise_bin mise_install_dir output rc=0
+
+  make_temp_dir "chezmoi-symlink-test"
+  fixture="${REPLY:A}"
+  path_candidate="$fixture/path/chezmoi"
+  target="$fixture/target/chezmoi"
+  mise_bin="$fixture/bin/mise"
+  mise_install_dir="$fixture/mise-install"
+  write_resolver_executable "$target"
+  mkdir -p "$path_candidate:h"
+  ln -s "$target" "$path_candidate"
+  write_resolver_mise "$mise_bin"
+  write_resolver_executable "$mise_install_dir/chezmoi"
+
+  output="$(resolver_probe "$fixture/home" "$path_candidate" "$mise_bin" "$mise_install_dir")" || rc=$?
+  (( rc == 0 )) || fail 'resolver must accept a symlink to a regular executable'
+  [[ "$output" == "$path_candidate" ]] || fail "resolver must retain the valid symlink candidate: $output"
+
+  rm -rf "$fixture"
+}
+
+test_multi_shell_source_skips_only_when_chezmoi_is_unavailable() {
+  local fixture output python_bin rc=0
+
+  make_temp_dir "chezmoi-source-skip-test"
+  fixture="${REPLY:A}"
+  output="$fixture/output.log"
+  python_bin="$(command -v python3)"
+
+  env -i HOME="$fixture/home" PATH="$fixture/bin:/bin:/usr/bin:/usr/sbin:/sbin" \
+    DOTFILES_TEST_PYTHON="$python_bin" DOTFILES_TEST_ZSH_BIN="$TEST_ZSH_BIN" \
+    "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector source > "$output" 2>&1 || rc=$?
+  (( rc == 0 )) || fail 'source selector must remain not-applicable when chezmoi is unavailable'
+  grep -Eq '^MATRIX_RESULT\|os=(linux|macos)\|shell=chezmoi\|target=chezmoi-source\|status=SKIP\|requirement=not-applicable\|reason=chezmoi-unavailable$' "$output" \
+    || fail 'source selector must emit the explicit seven-field chezmoi skip row'
+
+  rm -rf "$fixture"
+}
+
+test_multi_shell_source_skip_avoids_chezmoi_resolution() {
+  local fixture output resolver_log python_bin rc=0
+
+  make_temp_dir "chezmoi-source-explicit-skip-test"
+  fixture="${REPLY:A}"
+  output="$fixture/output.log"
+  resolver_log="$fixture/resolver.log"
+  python_bin="$(command -v python3)"
+  mkdir -p "$fixture/bin"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'printf "%s\\n" invoked >> "$RESOLVER_LOG"'
+    print -r -- 'exit 1'
+  } > "$fixture/bin/mise"
+  chmod +x "$fixture/bin/mise"
+
+  env -i HOME="$fixture/home" PATH="$fixture/bin:/bin:/usr/bin:/usr/sbin:/sbin" \
+    RESOLVER_LOG="$resolver_log" DOTFILES_TEST_PYTHON="$python_bin" DOTFILES_TEST_ZSH_BIN="$TEST_ZSH_BIN" \
+    "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector source --skip-chezmoi > "$output" 2>&1 || rc=$?
+  (( rc == 0 )) || fail 'explicit source skip must return success'
+  assert_output_contains "$output" 'MATRIX_RESULT|os='
+  assert_output_contains "$output" '|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-skipped'
+  assert_not_exists "$resolver_log"
+  assert_not_contains "$output" 'target=chezmoi-source|status=PASS'
+  assert_output_contains "$output" 'multi-shell source checks passed'
+
+  rm -rf "$fixture"
+}
+
 test_test_runner_syntax_only_stops_before_unit_tests() {
   local repo
   local output
@@ -157,9 +443,12 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:nix"
   assert_output_contains "$output" "source-state"
   assert_output_contains "$output" "multi-shell-source"
+  assert_output_contains "$output" "source-resolver-skipped"
+  assert_output_contains "$output" "MATRIX_RESULT|os=linux|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-skipped"
   assert_output_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
   assert_output_contains "$output" "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
   assert_output_contains "$output" "dotfiles tests passed"
+  assert_not_contains "$output" "source-resolver-called"
   assert_not_contains "$output" "chezmoi-render-test-ran"
   assert_not_contains "$output" "multi-shell-render"
   assert_contains "$nix_log" "nix-static:--parse $repo/flake.nix"
@@ -179,6 +468,8 @@ test_test_runner_runs_render_checks_by_default() {
 
   assert_output_contains "$output" "chezmoi-render-test-ran"
   assert_output_contains "$output" "multi-shell-render"
+  assert_output_contains "$output" "source-resolver-called"
+  assert_output_contains "$output" "MATRIX_RESULT|os=linux|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-unavailable"
   assert_not_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
   assert_not_contains "$output" "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
   assert_output_contains "$output" "dotfiles tests passed"
@@ -340,6 +631,17 @@ test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
 main() {
   test_test_runner_exists_and_lists_checks
   test_test_runner_references_existing_test_files
+  test_shared_chezmoi_resolver_finds_home_local_bin_outside_path
+  test_shared_chezmoi_resolver_rejects_path_directory_and_falls_back_to_mise
+  test_shared_chezmoi_resolver_rejects_home_directory_and_falls_back_to_mise
+  test_shared_chezmoi_resolver_rejects_path_control_byte_and_falls_back_to_mise
+  test_shared_chezmoi_resolver_rejects_home_control_byte_and_falls_back_to_mise
+  test_shared_chezmoi_resolver_rejects_mise_directory_candidate
+  test_shared_chezmoi_resolver_rejects_mise_control_byte_output
+  test_shared_chezmoi_resolver_rejects_mise_nonzero_status_with_valid_output
+  test_shared_chezmoi_resolver_accepts_symlink_to_regular_executable
+  test_multi_shell_source_skips_only_when_chezmoi_is_unavailable
+  test_multi_shell_source_skip_avoids_chezmoi_resolution
   test_test_runner_syntax_only_stops_before_unit_tests
   test_test_runner_skip_chezmoi_keeps_fast_checks
   test_test_runner_runs_render_checks_by_default

@@ -5,6 +5,47 @@ fail() {
   exit 1
 }
 
+is_valid_executable_file() {
+  local candidate="${1:-}"
+
+  [[ "$candidate" == /* ]] || return 1
+  [[ "$candidate" != *[[:cntrl:]]* ]] || return 1
+  [[ -f "$candidate" && -x "$candidate" ]]
+}
+
+resolve_chezmoi() {
+  local candidate mise_bin install_dir
+
+  candidate="$(command -v chezmoi 2>/dev/null || true)"
+  if is_valid_executable_file "$candidate"; then
+    REPLY="$candidate"
+    return 0
+  fi
+
+  if [[ -n "${HOME:-}" ]]; then
+    candidate="$HOME/.local/bin/chezmoi"
+    if is_valid_executable_file "$candidate"; then
+      REPLY="$candidate"
+      return 0
+    fi
+  fi
+
+  mise_bin="$(command -v mise 2>/dev/null || true)"
+  if is_valid_executable_file "$mise_bin"; then
+    if install_dir="$("$mise_bin" where chezmoi@latest 2>/dev/null)"; then
+      if [[ "$install_dir" == /* && "$install_dir" != *[[:cntrl:]]* ]]; then
+        candidate="$install_dir/chezmoi"
+        if is_valid_executable_file "$candidate"; then
+          REPLY="$candidate"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  return 127
+}
+
 file_mode() {
   local mode
   mode="$(stat -c '%a' "$1" 2>/dev/null)" || mode=""

@@ -19,7 +19,7 @@ Usage:
 Options:
   --list          List checks without running them.
   --syntax-only   Run only zsh syntax checks.
-  --skip-chezmoi  Skip chezmoi rendered-home integration checks.
+  --skip-chezmoi  Skip chezmoi source/rendered-home integration checks.
   -h, --help      Show this help.
 EOF
 }
@@ -100,7 +100,11 @@ run_unit_tests() {
 run_source_state_tests() {
   log_step "Checking chezmoi source state"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_source_state.sh"
-  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector source
+  if (( SKIP_CHEZMOI )); then
+    "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector source --skip-chezmoi
+  else
+    "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector source
+  fi
 }
 
 run_chezmoi_render_test() {
