@@ -27,6 +27,7 @@ English version: [README.md](README.md)
 - 実 secret は commit しません。追跡する template は `shell/secrets.env.example` を使います。
 - Nix package / module の変更では通常 `nix/README_JA.md` の確認も必要です。
 - mise tool 変更は `home/.chezmoitemplates/mise-config.toml` と同期させます。
+- shell ごとの管理境界と起動ルールは、[Shell の役割と起動境界](../docs/configuration-ownership_JA.md#shell-の役割と起動境界) にまとめています。
 
 ## よく使う確認コマンド
 

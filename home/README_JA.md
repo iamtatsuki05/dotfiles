@@ -19,6 +19,7 @@ repo root の `.chezmoiroot` はここを指しています。
 - `config/` に対応 source がある場合は、generated source state と source 側を揃えます。
 - 実 secret は commit しません。secret 関連は template または example にします。
 - live home に適用する前に `scripts/chezmoi_apply.sh --dry-run` を使います。
+- shell ごとの管理境界と起動ルールは、[Shell の役割と起動境界](../docs/configuration-ownership_JA.md#shell-の役割と起動境界) にまとめています。
 
 ## よく使う確認コマンド
 

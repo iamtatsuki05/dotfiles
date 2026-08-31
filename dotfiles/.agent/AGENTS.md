@@ -124,6 +124,8 @@
 
 - skill と CLI コマンドを MCP より優先してください。MCP は、必要な context が外部サービス側にある場合など、限られた場面でだけ使ってください。
 - コマンドが見つからない場合や、global install せずに一時実行したい場合は、`missing-tools` skill を使ってください。
+- shell の役割を混同しないでください。ローカルの対話 shell は zsh、server の対話 shell は Bash とします。新しく portable script を追加する場合は Bash として書き、shebang も実行する shell に合わせてください。既存 script は宣言済みの shebang と shell 固有の実装を尊重し、全 script を Bash へ移行したとは扱わないでください。
+- Fish と csh/tcsh は optional integration の範囲に限ります。full zsh UI は提供しません。Fish adapter は shared non-secret の環境変数と PATH、interactive な safe alias を提供し、interactive session では公式の `mise activate fish` hook も source します。generator または source の失敗を隠さず明示してください。Bash/Zsh common 固有の `DOTFILES_REPO_ROOT` と `secrets.env` は Fish/csh adapter に提供しません。csh/tcsh の activation は未対応です。mise shim、`mise exec`、`mise run` を使い、既存の `.cshrc`/`.tcshrc` から standalone adapter を `if (-r ...) source ...` で手動 opt-in してください。csh/tcsh adapter は限定した非 secret の環境変数、PATH、prompt 内の safe alias を提供します。Fish runtime は binary または cached Nix runtime があれば required check を行い、成功は `PASS`、失敗は `FAIL`、不在時だけ `SKIP` とします。genuine csh runtime の未検証境界を PASS とみなさないでください。
 
 # Skill 作成
 

@@ -19,6 +19,7 @@ The repository root `.chezmoiroot` points here.
 - Keep generated source state aligned with the corresponding files under `config/` when both exist.
 - Do not commit real secrets. Use templates or examples for secret-related files.
 - Use `scripts/chezmoi_apply.sh --dry-run` before applying changes to the live home.
+- Shell ownership and startup boundaries are documented in [Shell roles and startup boundaries](../docs/configuration-ownership.md#shell-roles-and-startup-boundaries).
 
 ## Common Checks
 

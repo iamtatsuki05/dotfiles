@@ -50,6 +50,16 @@ chezmoi は bash 起動ファイルと `~/.config/shell/dotfiles-shell-common.sh
 source します。共通の環境読込は canonical template に置き、secret value を
 各 shell config に複製しないでください。
 
+Bash/Zsh の共通 file は `~/.config/shell/secrets.env` を source できる管理経路であり、
+Bash/Zsh 固有の `DOTFILES_REPO_ROOT` も持ちます。任意の Fish adapter は非 secret の
+環境変数、PATH、interactive な safe alias を提供し、interactive な Fish session では
+公式の `mise activate fish` hook も source します。standalone の csh/tcsh adapter は
+限定した非 secret の環境変数、PATH、prompt 内の safe alias を提供しますが、mise
+activation は行いません。どちらの adapter も `secrets.env` を source せず、その値を
+展開・shell state へ複製せず、`DOTFILES_REPO_ROOT` も提供しません。Fish または csh/tcsh
+から認証が必要な tool を使う場合は、承認済みの credential store か明示的な command
+を使ってください。
+
 ## 適用前に変更内容を確認する
 
 状態を書き換えない mode がある場合は、先に利用します。

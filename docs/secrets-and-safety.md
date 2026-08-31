@@ -50,6 +50,17 @@ Chezmoi renders bash startup files and
 sources the same common file when it exists. Put shared environment loading in
 the canonical templates; do not copy secret values into each shell config.
 
+The Bash/Zsh common file is the managed path that may source
+`~/.config/shell/secrets.env`; it also carries the Bash/Zsh-only
+`DOTFILES_REPO_ROOT`. The optional Fish adapter provides the non-secret
+environment and PATH, interactive safe aliases, and, in an interactive Fish
+session, the official `mise activate fish` hook. The standalone csh/tcsh
+adapter provides its limited non-secret environment, PATH, and prompt safe
+aliases, but no mise activation. Neither adapter may source `secrets.env`,
+expand its values, or copy them into shell state or provide
+`DOTFILES_REPO_ROOT`. Use the tool's approved credential store or an explicit
+command when authentication is needed from Fish or csh/tcsh.
+
 ## Preview changes before applying them
 
 Use non-mutating modes whenever they are available:

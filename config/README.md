@@ -27,6 +27,7 @@ Check the scripts that consume a directory before removing it.
 - Do not commit real secrets. Use `shell/secrets.env.example` as the tracked template.
 - Nix package and module changes usually require checks from `nix/README.md`.
 - mise tool changes should stay aligned with `home/.chezmoitemplates/mise-config.toml`.
+- Shell ownership and startup boundaries are documented in [Shell roles and startup boundaries](../docs/configuration-ownership.md#shell-roles-and-startup-boundaries).
 
 ## Common Checks
 
