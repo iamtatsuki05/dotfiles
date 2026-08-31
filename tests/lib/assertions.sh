@@ -5,6 +5,94 @@ fail() {
   exit 1
 }
 
+file_mode() {
+  local mode
+  mode="$(stat -c '%a' "$1" 2>/dev/null)" || mode=""
+  if [[ "$mode" =~ '^[0-7]{3,4}$' ]]; then
+    print -r -- "$mode"
+    return 0
+  fi
+  mode="$(stat -f '%Lp' "$1" 2>/dev/null)" || mode=""
+  if [[ "$mode" =~ '^[0-7]{3,4}$' ]]; then
+    print -r -- "$mode"
+    return 0
+  fi
+  return 1
+}
+
+assert_file_mode_portability() {
+  local root stat_dir stat_bin target stat_log mode output rc=0 regression_status=0
+
+  make_temp_dir file-mode-portability
+  root="$REPLY"
+  stat_dir="$root/bin"
+  stat_bin="$stat_dir/stat"
+  target="$root/target"
+  stat_log="$root/stat.log"
+  mkdir -p "$stat_dir"
+  print -r -- 'synthetic file-mode target' > "$target"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'set -eu'
+    print -r -- 'printf "%s %s\n" "${1:-}" "${2:-}" >> "$FAKE_STAT_LOG"'
+    print -r -- 'case "${FAKE_STAT_MODE:-}" in'
+    print -r -- '  gnu)'
+    print -r -- '    if [ "${1:-}" = "-f" ]; then printf "%s\n" "File: synthetic-target" "Blocks: $$" "600"; exit 0; fi'
+    print -r -- '    if [ "${1:-}" = "-c" ]; then printf "%s\n" "600"; exit 0; fi'
+    print -r -- '    ;;'
+    print -r -- '  bsd)'
+    print -r -- '    if [ "${1:-}" = "-c" ]; then exit 2; fi'
+    print -r -- '    if [ "${1:-}" = "-f" ]; then printf "%s\n" "600"; exit 0; fi'
+    print -r -- '    ;;'
+    print -r -- '  invalid)'
+    print -r -- '    printf "%s\n" "not-a-mode"'
+    print -r -- '    exit 0'
+    print -r -- '    ;;'
+    print -r -- '  *) exit 64 ;;'
+    print -r -- 'esac'
+    print -r -- 'exit 64'
+  } > "$stat_bin"
+  chmod +x "$stat_bin"
+
+  (
+    for mode in gnu bsd; do
+      : > "$stat_log"
+      output="$(
+        PATH="$stat_dir:/bin:/usr/bin:/usr/sbin:/sbin"
+        FAKE_STAT_MODE="$mode"
+        FAKE_STAT_LOG="$stat_log"
+        export PATH FAKE_STAT_MODE FAKE_STAT_LOG
+        rehash
+        file_mode "$target"
+      )" || { rc=$?; fail "file_mode $mode portability probe failed with status $rc"; }
+      [[ "$output" == 600 ]] || fail "file_mode $mode must return a canonical mode"
+      if [[ "$mode" == gnu ]]; then
+        assert_file_content "$stat_log" '-c %a'
+      else
+        [[ "$(sed -n '1p' "$stat_log")" == '-c %a' ]] || fail 'BSD mode probe must try GNU stat first'
+        [[ "$(sed -n '2p' "$stat_log")" == '-f %Lp' ]] || fail 'BSD mode probe must fall back to BSD stat'
+      fi
+    done
+
+    : > "$stat_log"
+    rc=0
+    output="$(
+      PATH="$stat_dir:/bin:/usr/bin:/usr/sbin:/sbin"
+      FAKE_STAT_MODE=invalid
+      FAKE_STAT_LOG="$stat_log"
+      export PATH FAKE_STAT_MODE FAKE_STAT_LOG
+      rehash
+      file_mode "$target"
+    )" || rc=$?
+    (( rc != 0 )) || fail 'file_mode must fail when both stat formats are invalid'
+    [[ "$(sed -n '1p' "$stat_log")" == '-c %a' ]] || fail 'invalid mode probe must try GNU stat first'
+    [[ "$(sed -n '2p' "$stat_log")" == '-f %Lp' ]] || fail 'invalid mode probe must try BSD stat before failing'
+  ) || regression_status=$?
+
+  rm -rf "$root"
+  return "$regression_status"
+}
+
 assert_file() {
   local file_path="$1"
   [[ -f "$file_path" ]] || fail "expected file: $file_path"

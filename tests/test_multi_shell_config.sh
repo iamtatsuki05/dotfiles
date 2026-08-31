@@ -45,28 +45,9 @@ emit_matrix_result() {
   fi
 }
 
-file_mode() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
-}
-
 file_digest() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
   else sha256sum "$1" | awk '{print $1}'; fi
-}
-
-emit_foreign_secret_debug() {
-  local target="$1" before_mode="$2" before_digest="$3"
-  local after_mode after_digest digest_equal chezmoi_version uname_value
-  after_mode="$(file_mode "$target" 2>/dev/null || print -r -- unavailable)"
-  after_digest="$(file_digest "$target" 2>/dev/null || print -r -- unavailable)"
-  if [[ "$after_digest" == "$before_digest" ]]; then digest_equal=true; else digest_equal=false; fi
-  if chezmoi_version="$("$CHEZMOI_BIN" --version 2>/dev/null | sed -n '1p')"; then
-    [[ -n "$chezmoi_version" ]] || chezmoi_version=unavailable
-  else
-    chezmoi_version=unavailable
-  fi
-  uname_value="$(uname -srm 2>/dev/null || print -r -- unavailable)"
-  print -u2 -r -- "[DEBUG-pr68-secret] target_type=foreign-secret|before_mode=$before_mode|after_mode=$after_mode|digest_equal=$digest_equal|chezmoi_path=$CHEZMOI_BIN|chezmoi_version=$chezmoi_version|os=$(matrix_os_name)|uname=$uname_value" || :
 }
 
 bash_major() {
@@ -1013,6 +994,7 @@ run_render() {
   mkdir -p "$FIXTURE/tmp" "$dest/.config/fish/conf.d" "$dest/.config/shell" "$dest/.fixture-bin" "$dest/.nix-profile/bin" \
     "$dest/.fixture-config/shell" "$FIXTURE/homebrew-sbin" "$FIXTURE/homebrew-bin" "$FIXTURE/absolute-one" "$FIXTURE/absolute-two"
   copy_source "$src"; mutate_data "$src/home/.chezmoidata.toml"; write_fakes
+  assert_file_mode_portability
   assert_bash_version_probe_isolated
   print -r -- 'set -gx UV_FOREIGN_SENTINEL foreign' > "$dest/.config/fish/conf.d/uv.env.fish"
   print -r -- 'foreign-csh' > "$dest/.cshrc"; print -r -- 'foreign-tcsh' > "$dest/.tcshrc"
@@ -1026,10 +1008,7 @@ run_render() {
   run_apply "$src" "$dest" "$src"
   assert_rendered "$dest"; assert_file "$dest/.config/fish/conf.d/zz-dotfiles.fish"; assert_file "$dest/.config/shell/dotfiles-shell-common.csh"
   assert_not_exists "$dest/.chezmoidata.toml"
-  if ! [[ "$(file_mode "$secret")" == "$SECRET_MODE" && "$(file_digest "$secret")" == "$SECRET_DIGEST" ]]; then
-    emit_foreign_secret_debug "$secret" "$SECRET_MODE" "$SECRET_DIGEST"
-    fail "foreign secret target changed"
-  fi
+  [[ "$(file_mode "$secret")" == "$SECRET_MODE" && "$(file_digest "$secret")" == "$SECRET_DIGEST" ]] || fail "foreign secret target changed"
   [[ "$(file_mode "$mutated_secret")" == "$mutated_secret_mode" && "$(file_digest "$mutated_secret")" == "$mutated_secret_digest" ]] || fail "foreign mutated-config secret target changed"
   assert_file_content "$dest/.config/fish/conf.d/uv.env.fish" 'set -gx UV_FOREIGN_SENTINEL foreign'
   assert_file_content "$dest/.cshrc" 'foreign-csh'; assert_file_content "$dest/.tcshrc" 'foreign-tcsh'

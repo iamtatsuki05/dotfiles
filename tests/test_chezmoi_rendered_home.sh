@@ -117,6 +117,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   bash_output="$temp_dir/bash-output"
   mkdir -p "$temp_home"
   : > "$temp_config"
+  assert_file_mode_portability
 
   if ! resolve_chezmoi >/dev/null 2>&1; then
     rm -rf "$temp_dir"
@@ -166,7 +167,7 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_contains "$temp_home/.config/mise/config.toml" "[tasks.agent-skill-update]"
   assert_contains "$temp_home/.config/mise/config.toml" "python3 scripts/agent_skill_upstreams.py update"
   assert_file "$temp_home/.config/shell/secrets.env"
-  local secrets_mode="$(stat -f '%Lp' "$temp_home/.config/shell/secrets.env" 2>/dev/null || stat -c '%a' "$temp_home/.config/shell/secrets.env")"
+  local secrets_mode="$(file_mode "$temp_home/.config/shell/secrets.env")"
   [[ "$secrets_mode" == 600 ]] || fail "rendered private secrets target should be owner-only"
   assert_not_exists "$temp_home/.cshrc"
   assert_not_exists "$temp_home/.tcshrc"
