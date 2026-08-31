@@ -1143,11 +1143,20 @@ run_render() {
   fi
   copy_source "$hostile_src"; mutate_data "$hostile_src/home/.chezmoidata.toml"; run_apply "$hostile_src" "$hostile_dest" "$hostile_root"
   assert_rendered "$hostile_dest" 1
-  if select_bash 3; then bin="$REPLY"; else select_bash 5; bin="$REPLY"; fi
-  out="$FIXTURE/hostile.log"; env -i HOME="$hostile_dest" PATH="$FAKE_BIN:/bin:/usr/bin:/usr/sbin:/sbin" USER=fixture-user "$bin" --noprofile --norc -c '. "$HOME/.config/shell/dotfiles-shell-common.sh"; printf "root=%s\n" "$DOTFILES_REPO_ROOT"' > "$out"
-  assert_output_has_token "$out" "root=$hostile_root" 'hostile repo-root shell quoting check failed'; assert_not_exists "$FIXTURE/side-effect"
-  assert_not_exists "$FIXTURE/backtick-side-effect"
-  emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash|target=hostile-repo-root|status=PASS|requirement=required|reason=shell-quoted-assignment"
+  if select_bash 3; then
+    bin="$REPLY"
+  elif select_bash 5; then
+    bin="$REPLY"
+  else
+    emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash|target=hostile-repo-root|status=SKIP|requirement=not-applicable|reason=no-supported-bash"
+    bin=""
+  fi
+  if [[ -n "$bin" ]]; then
+    out="$FIXTURE/hostile.log"; env -i HOME="$hostile_dest" PATH="$FAKE_BIN:/bin:/usr/bin:/usr/sbin:/sbin" USER=fixture-user "$bin" --noprofile --norc -c '. "$HOME/.config/shell/dotfiles-shell-common.sh"; printf "root=%s\n" "$DOTFILES_REPO_ROOT"' > "$out"
+    assert_output_has_token "$out" "root=$hostile_root" 'hostile repo-root shell quoting check failed'; assert_not_exists "$FIXTURE/side-effect"
+    assert_not_exists "$FIXTURE/backtick-side-effect"
+    emit_matrix_result "MATRIX_RESULT|os=$(matrix_os_name)|shell=bash|target=hostile-repo-root|status=PASS|requirement=required|reason=shell-quoted-assignment"
+  fi
   local control_src="$FIXTURE/control-src" control_dest="$FIXTURE/control-home" control_root="$FIXTURE/root"$'\n'"bad"
   copy_source "$control_src"; mutate_data "$control_src/home/.chezmoidata.toml"
   if run_apply "$control_src" "$control_dest" "$control_root" > "$FIXTURE/control-render.log" 2>&1; then

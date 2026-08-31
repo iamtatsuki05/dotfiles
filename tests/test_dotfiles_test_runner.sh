@@ -229,12 +229,13 @@ test_multi_shell_required_bash5_skip_has_failure_summary() {
   chmod +x "$fake_fish"
 
   set +e
-  PATH="$repo:$PATH" BASH5_BIN="$fake_bash" "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render > "$output" 2>&1
+  PATH="$repo:$PATH" BASH32_BIN="$fake_bash" BASH5_BIN="$fake_bash" "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render > "$output" 2>&1
   exit_status=$?
   set -e
 
   (( exit_status != 0 )) || fail 'required Bash 5 skip must keep a non-zero status'
   assert_output_contains "$output" 'shell=bash5|target=rendered-home|status=SKIP|requirement=required|reason=bash5-unavailable'
+  assert_output_contains "$output" 'shell=bash|target=hostile-repo-root|status=SKIP|requirement=not-applicable|reason=no-supported-bash'
   assert_output_contains "$output" 'multi-shell render/runtime checks failed'
   assert_not_contains "$output" 'multi-shell render/runtime checks passed'
 
