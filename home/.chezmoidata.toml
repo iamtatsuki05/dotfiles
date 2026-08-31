@@ -1,0 +1,29 @@
+[shell]
+editor = "nvim"
+
+[shell.xdg]
+config = ".config"
+cache = ".cache"
+data = ".local/share"
+state = ".local/state"
+
+[shell.path]
+home_relative = [".local/bin", ".nix-profile/bin"]
+darwin_homebrew = ["/opt/homebrew/sbin", "/opt/homebrew/bin"]
+linuxbrew_user_relative = [".linuxbrew/sbin", ".linuxbrew/bin"]
+linuxbrew_system = ["/home/linuxbrew/.linuxbrew/sbin", "/home/linuxbrew/.linuxbrew/bin"]
+user_profile_root = "/etc/profiles/per-user"
+user_profile_suffix = "bin"
+absolute = ["/run/current-system/sw/bin", "/nix/var/nix/profiles/default/bin"]
+state_relative = "nix/profile/bin"
+
+[shell.aliases]
+ginit = ["gcloud", "init"]
+gauth = ["gcloud", "auth", "login"]
+gls = ["gcloud", "compute", "instances", "list"]
+
+[shell.mise]
+fish = "interactive-only"
+csh = "unsupported-activation"
+tcsh = "unsupported-activation"
+shim_root_precedence = ["MISE_DATA_DIR", "XDG_DATA_HOME", "HOME"]

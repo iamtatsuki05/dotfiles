@@ -141,6 +141,8 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_file "$temp_home/.bashrc"
   assert_file "$temp_home/.bash_profile"
   assert_file "$temp_home/.config/shell/dotfiles-shell-common.sh"
+  assert_file "$temp_home/.config/fish/conf.d/zz-dotfiles.fish"
+  assert_file "$temp_home/.config/shell/dotfiles-shell-common.csh"
   assert_same_file "$REPO_ROOT/dotfiles/.tmux.conf" "$temp_home/.tmux.conf"
   assert_not_exists "$temp_home/.Brewfile"
   assert_not_exists "$temp_home/.zshrc"
@@ -164,6 +166,10 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_contains "$temp_home/.config/mise/config.toml" "[tasks.agent-skill-update]"
   assert_contains "$temp_home/.config/mise/config.toml" "python3 scripts/agent_skill_upstreams.py update"
   assert_file "$temp_home/.config/shell/secrets.env"
+  local secrets_mode="$(stat -f '%Lp' "$temp_home/.config/shell/secrets.env" 2>/dev/null || stat -c '%a' "$temp_home/.config/shell/secrets.env")"
+  [[ "$secrets_mode" == 600 ]] || fail "rendered private secrets target should be owner-only"
+  assert_not_exists "$temp_home/.cshrc"
+  assert_not_exists "$temp_home/.tcshrc"
 
   mkdir -p "$temp_home/.local/bin"
   local matrix_status=0
@@ -193,6 +199,7 @@ run_rendered_bash_matrix() {
       HOME="$temp_home" \
         XDG_CONFIG_HOME="$temp_home/.config" \
         USER=dotfiles-test \
+        DOTFILES_REPO_ROOT="$REPO_ROOT" \
         PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
         "$bash_bin" --noprofile --norc -c '
           . "$HOME/.bash_profile"

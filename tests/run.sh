@@ -100,16 +100,19 @@ run_unit_tests() {
 run_source_state_tests() {
   log_step "Checking chezmoi source state"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_source_state.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector source
 }
 
 run_chezmoi_render_test() {
   if (( SKIP_CHEZMOI )); then
     echo "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
+    echo "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
     return 0
   fi
 
   log_step "Rendering chezmoi source state into a temporary home"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_rendered_home.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render
 }
 
 run_nix_static_tests() {

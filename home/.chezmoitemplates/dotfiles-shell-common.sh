@@ -1,4 +1,75 @@
-export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"
+{{- $dotfilesRepoRoot := .dotfilesRepoRoot -}}
+{{- if not (kindIs "map" $dotfilesRepoRoot) }}{{ fail "invalid DOTFILES_REPO_ROOT template context" }}{{ end -}}
+{{- if not (kindIs "string" $dotfilesRepoRoot.raw) }}{{ fail "invalid DOTFILES_REPO_ROOT raw template context" }}{{ end -}}
+{{- if not (kindIs "string" $dotfilesRepoRoot.prequoted) }}{{ fail "invalid DOTFILES_REPO_ROOT quoted template context" }}{{ end -}}
+{{- $shell := .shell -}}
+{{- $safeWord := "^[A-Za-z0-9._+%:@/-]+$" -}}
+{{- $safeXdgPath := "^\\.[A-Za-z0-9._/-]+$" -}}
+{{- $safeRelativePath := "^[A-Za-z0-9._/-]+$" -}}
+{{- $safeAbsolutePath := "^/[A-Za-z0-9._/-]+$" -}}
+{{- if not (kindIs "map" $shell) }}{{ fail "invalid canonical shell data" }}{{ end -}}
+{{- if not (kindIs "string" $shell.editor) }}{{ fail "invalid canonical shell editor" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._+-]+$" $shell.editor) }}{{ fail "invalid canonical shell editor" }}{{ end -}}
+{{- if not (kindIs "map" $shell.xdg) }}{{ fail "invalid canonical shell XDG data" }}{{ end -}}
+{{- range $name := (list "config" "cache" "data" "state") -}}
+  {{- $value := index $shell.xdg $name -}}
+  {{- if not (kindIs "string" $value) }}{{ fail "invalid canonical shell XDG value" }}{{ end -}}
+  {{- if not (regexMatch $safeXdgPath $value) }}{{ fail "invalid canonical shell XDG value" }}{{ end -}}
+  {{- if or (contains ".." $value) (contains "//" $value) (contains ":" $value) }}{{ fail "invalid canonical shell XDG value" }}{{ end -}}
+{{- end -}}
+{{- if not (kindIs "map" $shell.path) }}{{ fail "invalid canonical shell PATH data" }}{{ end -}}
+{{- range $name := (list "home_relative" "darwin_homebrew" "linuxbrew_user_relative" "linuxbrew_system" "absolute") -}}
+  {{- $values := index $shell.path $name -}}
+  {{- if not (kindIs "slice" $values) }}{{ fail "invalid canonical shell PATH list" }}{{ end -}}
+  {{- if ne (len $values) 2 }}{{ fail "invalid canonical shell PATH list" }}{{ end -}}
+  {{- if ne (len (uniq $values)) 2 }}{{ fail "invalid canonical shell PATH list" }}{{ end -}}
+  {{- range $value := $values -}}
+    {{- if not (kindIs "string" $value) }}{{ fail "invalid canonical shell PATH value" }}{{ end -}}
+    {{- if or (eq $name "home_relative") (eq $name "linuxbrew_user_relative") }}
+      {{- if not (regexMatch $safeRelativePath $value) }}{{ fail "invalid canonical shell relative PATH" }}{{ end -}}
+      {{- if or (contains ".." $value) (contains "//" $value) (contains ":" $value) (hasPrefix "/" $value) (hasPrefix "~" $value) }}{{ fail "invalid canonical shell relative PATH" }}{{ end -}}
+    {{- else }}
+      {{- if not (regexMatch $safeAbsolutePath $value) }}{{ fail "invalid canonical shell absolute PATH" }}{{ end -}}
+      {{- if or (contains ".." $value) (contains "//" $value) (contains ":" $value) }}{{ fail "invalid canonical shell absolute PATH" }}{{ end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $profileRoot := $shell.path.user_profile_root -}}
+{{- if not (kindIs "string" $profileRoot) }}{{ fail "invalid canonical shell profile root" }}{{ end -}}
+{{- if not (regexMatch $safeAbsolutePath $profileRoot) }}{{ fail "invalid canonical shell profile root" }}{{ end -}}
+{{- if or (contains ".." $profileRoot) (contains "//" $profileRoot) (contains ":" $profileRoot) }}{{ fail "invalid canonical shell profile root" }}{{ end -}}
+{{- $profileSuffix := $shell.path.user_profile_suffix -}}
+{{- if not (kindIs "string" $profileSuffix) }}{{ fail "invalid canonical shell profile suffix" }}{{ end -}}
+{{- if not (regexMatch $safeRelativePath $profileSuffix) }}{{ fail "invalid canonical shell profile suffix" }}{{ end -}}
+{{- if or (contains ".." $profileSuffix) (contains "//" $profileSuffix) (contains ":" $profileSuffix) (hasPrefix "/" $profileSuffix) (hasPrefix "~" $profileSuffix) }}{{ fail "invalid canonical shell profile suffix" }}{{ end -}}
+{{- $stateRelative := $shell.path.state_relative -}}
+{{- if not (kindIs "string" $stateRelative) }}{{ fail "invalid canonical shell state PATH" }}{{ end -}}
+{{- if not (regexMatch $safeRelativePath $stateRelative) }}{{ fail "invalid canonical shell state PATH" }}{{ end -}}
+{{- if or (contains ".." $stateRelative) (contains "//" $stateRelative) (contains ":" $stateRelative) (hasPrefix "/" $stateRelative) (hasPrefix "~" $stateRelative) }}{{ fail "invalid canonical shell state PATH" }}{{ end -}}
+{{- if not (kindIs "map" $shell.aliases) }}{{ fail "invalid canonical shell aliases" }}{{ end -}}
+{{- range $name := (list "ginit" "gauth" "gls") -}}
+  {{- if not (hasKey $shell.aliases $name) }}{{ fail "invalid canonical shell alias set" }}{{ end -}}
+{{- end -}}
+{{- range $name, $argv := $shell.aliases -}}
+  {{- if not (regexMatch "^[A-Za-z][A-Za-z0-9_-]*$" $name) }}{{ fail "invalid canonical shell alias name" }}{{ end -}}
+  {{- $expectedLength := index (dict "ginit" 2 "gauth" 3 "gls" 4) $name -}}
+  {{- if not $expectedLength }}{{ fail "invalid canonical shell alias name" }}{{ end -}}
+  {{- if not (kindIs "slice" $argv) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+  {{- if ne (len $argv) $expectedLength }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+  {{- range $value := $argv -}}
+    {{- if not (kindIs "string" $value) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+    {{- if not (regexMatch $safeWord $value) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+if [ -z "${DOTFILES_REPO_ROOT:-}" ]; then
+  DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}
+fi
+export DOTFILES_REPO_ROOT
+export EDITOR="${EDITOR:-{{ shellQuote .shell.editor }}}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/{{ shellQuote .shell.xdg.config }}}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/{{ shellQuote .shell.xdg.cache }}}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/{{ shellQuote .shell.xdg.data }}}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/{{ shellQuote .shell.xdg.state }}}"
 
 dotfiles_prepend_path() {
   local candidate="$1"
@@ -16,28 +87,34 @@ dotfiles_prepend_path() {
   esac
 }
 
-if [ -d "/opt/homebrew/bin" ]; then
-  dotfiles_prepend_path "/opt/homebrew/sbin"
-  dotfiles_prepend_path "/opt/homebrew/bin"
-elif [ -d "$HOME/.linuxbrew/bin" ]; then
-  dotfiles_prepend_path "$HOME/.linuxbrew/sbin"
-  dotfiles_prepend_path "$HOME/.linuxbrew/bin"
-elif [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
-  dotfiles_prepend_path "/home/linuxbrew/.linuxbrew/sbin"
-  dotfiles_prepend_path "/home/linuxbrew/.linuxbrew/bin"
+if [ -d "{{ shellQuote (index .shell.path.darwin_homebrew 1) }}" ]; then
+  dotfiles_prepend_path "{{ shellQuote (index .shell.path.darwin_homebrew 0) }}"
+  dotfiles_prepend_path "{{ shellQuote (index .shell.path.darwin_homebrew 1) }}"
+elif [ -d "$HOME/{{ shellQuote (index .shell.path.linuxbrew_user_relative 1) }}" ]; then
+  dotfiles_prepend_path "$HOME/{{ shellQuote (index .shell.path.linuxbrew_user_relative 0) }}"
+  dotfiles_prepend_path "$HOME/{{ shellQuote (index .shell.path.linuxbrew_user_relative 1) }}"
+elif [ -d "{{ shellQuote (index .shell.path.linuxbrew_system 1) }}" ]; then
+  dotfiles_prepend_path "{{ shellQuote (index .shell.path.linuxbrew_system 0) }}"
+  dotfiles_prepend_path "{{ shellQuote (index .shell.path.linuxbrew_system 1) }}"
 fi
 
-dotfiles_prepend_path "$HOME/.local/bin"
+dotfiles_prepend_path "$HOME/{{ shellQuote (index .shell.path.home_relative 0) }}"
+{{- if eq (index .shell.path.home_relative 1) ".nix-profile/bin" }}
 dotfiles_prepend_path "$HOME/.nix-profile/bin"
-dotfiles_prepend_path "/etc/profiles/per-user/$USER/bin"
-dotfiles_prepend_path "/run/current-system/sw/bin"
-dotfiles_prepend_path "/nix/var/nix/profiles/default/bin"
-dotfiles_prepend_path "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin"
+{{- else }}
+dotfiles_prepend_path "$HOME/{{ shellQuote (index .shell.path.home_relative 1) }}"
+{{- end }}
+if [ -n "${USER:-}" ]; then
+  dotfiles_prepend_path "{{ shellQuote .shell.path.user_profile_root }}/$USER/{{ shellQuote .shell.path.user_profile_suffix }}"
+fi
+dotfiles_prepend_path "{{ shellQuote (index .shell.path.absolute 0) }}"
+dotfiles_prepend_path "{{ shellQuote (index .shell.path.absolute 1) }}"
+dotfiles_prepend_path "${XDG_STATE_HOME:-$HOME/{{ shellQuote .shell.xdg.state }}}/{{ shellQuote .shell.path.state_relative }}"
 export PATH
 
 for dotfiles_hm_vars in \
   "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
-  "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
+  "{{ shellQuote .shell.path.user_profile_root }}/$USER/etc/profile.d/hm-session-vars.sh"
 do
   if [ -r "$dotfiles_hm_vars" ]; then
     . "$dotfiles_hm_vars"
@@ -220,9 +297,9 @@ fgrs() {
   done
 }
 
-alias ginit='gcloud init'
-alias gauth='gcloud auth login'
-alias gls='gcloud compute instances list'
+alias ginit={{ shellQuote (printf "%s %s" (index .shell.aliases.ginit 0) (index .shell.aliases.ginit 1)) }}
+alias gauth={{ shellQuote (printf "%s %s %s" (index .shell.aliases.gauth 0) (index .shell.aliases.gauth 1) (index .shell.aliases.gauth 2)) }}
+alias gls={{ shellQuote (printf "%s %s %s %s" (index .shell.aliases.gls 0) (index .shell.aliases.gls 1) (index .shell.aliases.gls 2) (index .shell.aliases.gls 3)) }}
 
 if command -v claude >/dev/null 2>&1; then
   alias claude-auto='claude --dangerously-skip-permissions'

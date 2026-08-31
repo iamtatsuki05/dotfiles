@@ -3439,7 +3439,8 @@ EOF
 test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$BASHRC_TEMPLATE_FILE" 'dotfiles-shell-common.sh'
   assert_contains "$BASH_PROFILE_TEMPLATE_FILE" '. "$HOME/.bashrc"'
-  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
+  assert_not_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '$HOME/.nix-profile/bin'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '[ "$dotfiles_shell_name" = "bash" ]'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'mise activate "$dotfiles_shell_name"'

@@ -42,6 +42,16 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_agent_skill_upstreams.sh" "unit:skill-upstreams"
   write_fixture_zsh_script "$repo/tests/test_claude_account.sh" "unit:claude-account"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_migration.sh" "unit:chezmoi"
+  {
+    print -r -- "#!$TEST_ZSH_BIN"
+    print -r -- 'set -euo pipefail'
+    print -r -- 'case "$*" in'
+    print -r -- '  *"--selector source"*) print -r -- multi-shell-source ;;'
+    print -r -- '  *"--selector render"*) print -r -- multi-shell-render ;;'
+    print -r -- '  *) print -u2 -r -- "unexpected multi-shell selector: $*"; exit 1 ;;'
+    print -r -- 'esac'
+  } > "$repo/tests/test_multi_shell_config.sh"
+  chmod +x "$repo/tests/test_multi_shell_config.sh"
   write_fixture_zsh_script "$repo/tests/test_dotfiles_test_runner.sh" "unit:runner"
   write_fixture_zsh_script "$repo/tests/test_hermes_agent_setup.sh" "unit:hermes"
   write_fixture_zsh_script "$repo/tests/test_japanese_prose_lint.sh" "unit:japanese-prose-lint"
@@ -67,6 +77,9 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "tests/test_agent_skill_upstreams.sh"
   assert_contains "$TEST_RUNNER" "tests/test_claude_account.sh"
   assert_contains "$TEST_RUNNER" "tests/test_hermes_agent_setup.sh"
+  assert_contains "$TEST_RUNNER" "tests/test_multi_shell_config.sh"
+  assert_contains "$TEST_RUNNER" "--selector source"
+  assert_contains "$TEST_RUNNER" "--selector render"
   assert_contains "$TEST_RUNNER" "tests/test_japanese_prose_lint.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
@@ -143,10 +156,87 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:japanese-prose-lint"
   assert_output_contains "$output" "unit:nix"
   assert_output_contains "$output" "source-state"
+  assert_output_contains "$output" "multi-shell-source"
   assert_output_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
+  assert_output_contains "$output" "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
   assert_output_contains "$output" "dotfiles tests passed"
   assert_not_contains "$output" "chezmoi-render-test-ran"
+  assert_not_contains "$output" "multi-shell-render"
   assert_contains "$nix_log" "nix-static:--parse $repo/flake.nix"
+
+  rm -rf "$repo"
+}
+
+test_test_runner_runs_render_checks_by_default() {
+  local repo output
+
+  make_temp_dir "dotfiles-runner-test"
+  repo="${REPLY:A}"
+  output="$repo/output.log"
+  create_runner_fixture "$repo"
+
+  "$TEST_ZSH_BIN" "$repo/tests/run.sh" > "$output"
+
+  assert_output_contains "$output" "chezmoi-render-test-ran"
+  assert_output_contains "$output" "multi-shell-render"
+  assert_not_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
+  assert_not_contains "$output" "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
+  assert_output_contains "$output" "dotfiles tests passed"
+
+  rm -rf "$repo"
+}
+
+test_multi_shell_required_bash5_skip_has_failure_summary() {
+  local repo fake_bash fake_fish output exit_status
+
+  make_temp_dir "dotfiles-required-skip-test"
+  repo="${REPLY:A}"
+  fake_bash="$repo/fake-bash"
+  output="$repo/output.log"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'for arg in "$@"; do'
+    print -r -- '  if [ "$arg" = -c ]; then printf "%s\\n" 4; exit 0; fi'
+    print -r -- 'done'
+    print -r -- 'exit 4'
+  } > "$fake_bash"
+  chmod +x "$fake_bash"
+  [[ "$("$fake_bash" --noprofile --norc -c true)" == 4 ]] || fail 'fake Bash unavailable fixture must report deterministic unsupported major 4'
+  fake_fish="$repo/fish"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'set -eu'
+    print -r -- 'mise_path="$(command -v mise)"'
+    print -r -- 'fixture_dir="$(dirname "$mise_path")/.."'
+    print -r -- 'gcloud_log="$fixture_dir/gcloud.log"'
+    print -r -- 'mise_log="$fixture_dir/mise.log"'
+    print -r -- 'interactive=0'
+    print -r -- 'for arg in "$@"; do [ "$arg" = -i ] && interactive=1; done'
+    print -r -- 'if [ "$interactive" -eq 1 ] && [ -n "${FAKE_MISE_MODE:-}" ]; then'
+    print -r -- '  printf "%s\\n" "dotfiles: mise activate fish failed" >&2'
+    print -r -- '  printf "%s\\n" "source_status=1" "activation_failed=1" "after_status=0"'
+    print -r -- '  printf "%s\\n" "activate fish" >> "$mise_log"'
+    print -r -- '  exit 0'
+    print -r -- 'fi'
+    print -r -- 'if [ "$interactive" -eq 1 ]; then'
+    print -r -- '  printf "%s\\n" "mise=$mise_path" "activated=yes" "activation_failed=0" "interactive=yes"'
+    print -r -- '  printf "%s\\n" "init" "auth login" "compute instances list" > "$gcloud_log"'
+    print -r -- '  printf "%s\\n" "activate fish" >> "$mise_log"'
+    print -r -- 'else'
+    print -r -- '  printf "%s\\n" "editor=fixture-editor" "config=$HOME/.config" "cache=$HOME/.fixture-cache" "data=$HOME/.fixture-data" "state=$HOME/.fixture-state" "mise=$mise_path" "foreign=foreign" "ginit=absent" "activation_failed=0" "path=$HOME/.fixture-bin"'
+    print -r -- 'fi'
+  } > "$fake_fish"
+  chmod +x "$fake_fish"
+
+  set +e
+  PATH="$repo:$PATH" BASH5_BIN="$fake_bash" "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render > "$output" 2>&1
+  exit_status=$?
+  set -e
+
+  (( exit_status != 0 )) || fail 'required Bash 5 skip must keep a non-zero status'
+  assert_output_contains "$output" 'shell=bash5|target=rendered-home|status=SKIP|requirement=required|reason=bash5-unavailable'
+  assert_output_contains "$output" 'multi-shell render/runtime checks failed'
+  assert_not_contains "$output" 'multi-shell render/runtime checks passed'
 
   rm -rf "$repo"
 }
@@ -251,6 +341,8 @@ main() {
   test_test_runner_references_existing_test_files
   test_test_runner_syntax_only_stops_before_unit_tests
   test_test_runner_skip_chezmoi_keeps_fast_checks
+  test_test_runner_runs_render_checks_by_default
+  test_multi_shell_required_bash5_skip_has_failure_summary
   test_mise_task_runs_test_runner_from_repo_root
   test_mise_tasks_include_nix_migration_flow
   test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu
