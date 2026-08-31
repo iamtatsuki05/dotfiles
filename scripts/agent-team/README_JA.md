@@ -3,9 +3,9 @@
 [English](README.md)
 
 `agent-team`は、通常の`claude`や`codex`の設定を変えずに、project単位の
-Planner → Worker → ReviewerフローをOrca上で起動します。Task、message、
-terminal、lifecycleはOrcaが管理します。各roleは通常のCLIを使う`direct`か、
-Agent Client Protocol経由の`acp`で動きます。
+Planner → Worker → ReviewerフローをOrca上で起動します。Task、message、terminal、
+lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはAgent Client Protocol
+経由の`acp`で動く構成です。
 
 初めて使う場合は、「managed commandを導入する」「起動前の条件を満たす」
 「teamを起動する」を読んでください。実装や設定を変える場合は、詳細ドキュメントも
@@ -22,8 +22,9 @@ Agent Client Protocol経由の`acp`で動きます。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
 - [Direct background adapter](docs/background-adapters_JA.md)はCopilot/OpenCode向けread-only
   adapter実装、snapshot境界、復旧方法を説明します。
-- [Coordination storeとrecovery](docs/coordination-store_JA.md)はSQLiteのschema境界、
-  stable writer marker、WAL sidecar controllerを説明します。
+- [Coordination store、recovery、backup、restore](docs/coordination-store_JA.md)は
+  SQLiteのschema境界、stable writer marker、WAL sidecar controller、backup artifact、
+  candidate-first restoreを説明します。
 
 現在の設定は次のとおりです。
 
@@ -163,6 +164,11 @@ agent-team status \
   identityが一致したときだけlifecycleを進めます。
 - Claude ACPはambientな`claude.ai` loginを使い、API keyをchild processへ
   渡しません。ただしsubscription billing ledgerそのものは未確認です。
+- backupのdestinationは1つのexactなbasenameに限ります。database/manifest pairのidentityと
+  contentをfinal readbackで確認できた場合だけ成功し、partialやmixedなpairは拒否します。
+  restore candidate namespaceの`.coordination.sqlite3.restore-`は予約済みで、destinationには使えません。
+- restoreはcandidate-firstで、providerを呼びません。resumeはtombstone、次にledgerの順で
+  durability barrierを通し、logを暗黙に修復したり外部effectをretryしたりしません。
 
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 

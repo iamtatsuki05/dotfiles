@@ -14,6 +14,7 @@ import hashlib
 import os
 import sqlite3
 import stat
+import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -38,15 +39,23 @@ SIDECAR_BASENAMES: Final[tuple[str, ...]] = (
 _ROOT_MUTABLE_NAMES: Final[frozenset[str]] = frozenset(
     {WAL_BASENAME, SHM_BASENAME, JOURNAL_BASENAME}
 )
+_ROOT_INTERNAL_NAMES: Final[frozenset[str]] = frozenset(
+    {"recovery.ledger", "recovery.tombstones"}
+)
 _ROOT_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
     {
         _store.DATABASE_FILENAME,
         WRITER_MARKER_BASENAME,
-        "recovery.ledger",
+        _store.LIFETIME_GATE_FILENAME,
+        *_ROOT_INTERNAL_NAMES,
         *_ROOT_MUTABLE_NAMES,
     }
 )
+MAX_ALLOWED_ROOT_NAMES: Final[int] = 16
 _CLEANUP_EXCEPTION: Final[type[BaseException]] = BaseException
+_MAX_PENDING_FDS: Final[int] = 16
+_MAX_PENDING_RESOURCES: Final[int] = 4
+_MAX_RESOURCE_ORPHANS: Final[int] = 16
 
 CheckpointMode = Literal["PASSIVE", "FULL", "RESTART", "TRUNCATE"]
 CHECKPOINT_MODES: Final[tuple[CheckpointMode, ...]] = (
@@ -150,6 +159,35 @@ class DatabaseCopyTarget:
             raise ValueError("database copy target must be one non-reserved basename")
 
 
+def _canonical_allowed_root_names(value: object) -> frozenset[str]:
+    if type(value) is not tuple:
+        raise TypeError("allowed_root_names must be an exact tuple")
+    if len(value) > MAX_ALLOWED_ROOT_NAMES:
+        raise ValueError("too many allowed root names")
+    names: list[str] = []
+    for name in value:
+        if type(name) is not str:
+            raise TypeError("allowed root names must be built-in strings")
+        try:
+            encoded = name.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("allowed root name is invalid") from exc
+        if (
+            not name
+            or name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+            or any(char in name for char in "*?[]")
+            or len(encoded) > 255
+            or name in _ROOT_RESERVED_NAMES
+            or name in names
+        ):
+            raise ValueError("allowed root name is invalid")
+        names.append(name)
+    return frozenset(names)
+
+
 def _canonical_checkpoint_request(value: object) -> CheckpointRequest:
     if type(value) is not CheckpointRequest:
         raise TypeError("request must be a CheckpointRequest")
@@ -211,6 +249,86 @@ class DatabaseCopyResult:
             bytes.fromhex(digest_hex)
         except ValueError as exc:
             raise ValueError("digest is invalid") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseCandidate:
+    """Unprivileged observation of one root-relative replacement candidate."""
+
+    name: str
+    identity: tuple[int, int]
+    size: int
+    digest: str
+
+    def __post_init__(self) -> None:
+        if type(self.name) is not str:
+            raise TypeError("candidate name is invalid")
+        try:
+            encoded = self.name.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("candidate name is invalid") from exc
+        if (
+            not self.name
+            or self.name in {".", ".."}
+            or "/" in self.name
+            or "\\" in self.name
+            or "\x00" in self.name
+            or len(encoded) > 255
+            or self.name in _ROOT_RESERVED_NAMES
+        ):
+            raise ValueError("candidate name is invalid")
+        if (
+            type(self.identity) is not tuple
+            or len(self.identity) != 2
+            or any(type(item) is not int or item < 0 for item in self.identity)
+        ):
+            raise ValueError("candidate identity is invalid")
+        if type(self.size) is not int or not 0 <= self.size <= MAX_COPY_BYTES:
+            raise ValueError("candidate size is invalid")
+        if type(self.digest) is not str or not self.digest.startswith("sha256:"):
+            raise ValueError("candidate digest is invalid")
+        digest_hex = self.digest.removeprefix("sha256:")
+        if len(digest_hex) != 64 or any(
+            char not in "0123456789abcdef" for char in digest_hex
+        ):
+            raise ValueError("candidate digest is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseReplacementResult:
+    """Verified observation returned after one descriptor-relative replacement."""
+
+    previous_primary_identity: tuple[int, int]
+    primary_identity: tuple[int, int]
+    candidate: DatabaseCandidate
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("previous_primary_identity", self.previous_primary_identity),
+            ("primary_identity", self.primary_identity),
+        ):
+            if (
+                type(value) is not tuple
+                or len(value) != 2
+                or any(type(item) is not int or item < 0 for item in value)
+            ):
+                raise ValueError(f"{name} is invalid")
+        if type(self.candidate) is not DatabaseCandidate:
+            raise TypeError("candidate is invalid")
+
+
+def _canonical_database_candidate(value: object) -> DatabaseCandidate:
+    if type(value) is not DatabaseCandidate:
+        raise TypeError("candidate must be a DatabaseCandidate")
+    try:
+        return DatabaseCandidate(
+            name=value.name,
+            identity=value.identity,
+            size=value.size,
+            digest=value.digest,
+        )
+    except AttributeError as exc:
+        raise ValueError("candidate is invalid") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +432,17 @@ class SidecarCleanupResult:
 
 
 @dataclass(slots=True)
+class _PendingFD:
+    """One descriptor retained while its close/unlock result is uncertain."""
+
+    fd: int
+    expected_identity: tuple[int, int] | None
+    label: str
+    unlock: bool
+    locked: bool
+
+
+@dataclass(slots=True)
 class _Resources:
     root: Path
     root_fd: int
@@ -344,76 +473,57 @@ class _Resources:
     )
     _closed_fds: set[str] = field(default_factory=set, init=False, repr=False)
     _failed_fds: set[str] = field(default_factory=set, init=False, repr=False)
+    _unlocked_fds: set[str] = field(default_factory=set, init=False, repr=False)
+
+    @property
+    def _has_pending_cleanup(self) -> bool:
+        return bool(self._orphan_connections or self._orphan_fds or self._failed_fds)
+
+    def _retain_connection(self, connection: sqlite3.Connection) -> None:
+        if any(orphan is connection for orphan in self._orphan_connections):
+            return
+        if len(self._orphan_connections) >= _MAX_RESOURCE_ORPHANS:
+            raise _overflow_cleanup_error(
+                "quiescence connection",
+                self.close,
+                _DetachedConnection(
+                    connection,
+                    "SQLite connection",
+                ).retry_cleanup,
+            )
+        self._orphan_connections.append(connection)
 
     def close(self) -> None:
         first_error: BaseException | None = None
 
-        def attempt(action: Callable[[], None]) -> None:
+        def remember(error: BaseException) -> None:
             nonlocal first_error
+            if first_error is None:
+                first_error = error
+
+        def attempt(action: Callable[[], None]) -> None:
             try:
                 action()
             except _CLEANUP_EXCEPTION as error:
-                if first_error is None:
-                    first_error = error
+                remember(error)
 
         connection = self.connection
-        if connection is not None:
+        if connection is not None and not any(
+            orphan is connection for orphan in self._orphan_connections
+        ):
             try:
-                connection.close()
-            except _CLEANUP_EXCEPTION:
-                try:
-                    connection.close()
-                except _CLEANUP_EXCEPTION as retry_error:
-                    if first_error is None:
-                        first_error = retry_error
-            else:
-                self.connection = None
-            if self.connection is connection and first_error is None:
-                self.connection = None
-
-        def close_fd(
-            name: str,
-            fd: int,
-            expected_identity: tuple[int, int],
-            *,
-            unlock: bool,
-        ) -> None:
-            if name in self._closed_fds:
-                return
-            if name in self._failed_fds:
-                try:
-                    metadata = os.fstat(fd)
-                except OSError as error:
-                    if error.errno == errno.EBADF:
-                        self._closed_fds.add(name)
-                        self._failed_fds.discard(name)
-                        return
-                    raise WalSidecarRecoveryRequiredError(
-                        f"{name} descriptor status is unknown"
-                    ) from error
-                if _identity(metadata) != expected_identity:
-                    self._closed_fds.add(name)
-                    self._failed_fds.discard(name)
-                    raise WalSidecarRecoveryRequiredError(
-                        f"{name} descriptor was reused"
-                    )
-            close_error: BaseException | None = None
-            if unlock:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                except _CLEANUP_EXCEPTION as error:
-                    close_error = error
-            try:
-                os.close(fd)
+                _close_temporary_connection(
+                    connection,
+                    "SQLite checkpoint connection",
+                )
             except _CLEANUP_EXCEPTION as error:
-                self._failed_fds.add(name)
-                if close_error is None:
-                    close_error = error
+                try:
+                    self._retain_connection(connection)
+                except _CLEANUP_EXCEPTION as retention_error:
+                    remember(retention_error)
+                remember(error)
             else:
-                self._closed_fds.add(name)
-                self._failed_fds.discard(name)
-            if close_error is not None:
-                raise close_error
+                self.connection = None
 
         remaining_connections: list[sqlite3.Connection] = []
         for orphan_connection in self._orphan_connections:
@@ -424,63 +534,160 @@ class _Resources:
                 )
             except _CLEANUP_EXCEPTION as error:
                 remaining_connections.append(orphan_connection)
-                if first_error is None:
-                    first_error = error
+                remember(error)
+            else:
+                if self.connection is orphan_connection:
+                    self.connection = None
         self._orphan_connections = remaining_connections
+
+        def close_fd(
+            name: str,
+            fd: int,
+            expected_identity: tuple[int, int],
+            *,
+            unlock: bool,
+        ) -> None:
+            if name in self._closed_fds:
+                return
+            had_previous_failure = name in self._failed_fds
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as error:
+                if isinstance(error, OSError) and error.errno == errno.EBADF:
+                    self._closed_fds.add(name)
+                    self._failed_fds.discard(name)
+                    self._unlocked_fds.discard(name)
+                    if had_previous_failure:
+                        return
+                    status_error = WalSidecarRecoveryRequiredError(
+                        f"{name} close status is unknown"
+                    )
+                    status_error.__cause__ = error
+                    raise status_error
+                self._failed_fds.add(name)
+                status_error = WalSidecarRecoveryRequiredError(
+                    f"{name} descriptor status is unknown"
+                )
+                status_error.__cause__ = error
+                raise status_error
+            if _identity(metadata) != expected_identity:
+                self._closed_fds.add(name)
+                self._failed_fds.discard(name)
+                self._unlocked_fds.discard(name)
+                raise WalSidecarRecoveryRequiredError(f"{name} descriptor was reused")
+            close_error: BaseException | None = None
+            if unlock and name not in self._unlocked_fds:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except _CLEANUP_EXCEPTION as error:
+                    close_error = error
+                else:
+                    self._unlocked_fds.add(name)
+            try:
+                _checked_fd_identity(fd, expected_identity, name)
+            except _CLEANUP_EXCEPTION as error:
+                if _fd_identity_failure_is_terminal(error):
+                    self._closed_fds.add(name)
+                    self._failed_fds.discard(name)
+                    self._unlocked_fds.discard(name)
+                else:
+                    self._failed_fds.add(name)
+                if close_error is not None:
+                    error.__context__ = close_error
+                raise
+            try:
+                os.close(fd)
+            except _CLEANUP_EXCEPTION as error:
+                self._failed_fds.add(name)
+                if close_error is None:
+                    close_error = error
+            else:
+                self._closed_fds.add(name)
+                self._failed_fds.discard(name)
+                self._unlocked_fds.discard(name)
+            if close_error is not None:
+                raise close_error
 
         remaining_fds: list[tuple[int, tuple[int, int] | None, str]] = []
         for orphan_fd, expected_identity, label in self._orphan_fds:
-            try:
-                metadata = os.fstat(orphan_fd)
-            except OSError as error:
-                if error.errno == errno.EBADF:
-                    continue
-                remaining_fds.append((orphan_fd, expected_identity, label))
-                if first_error is None:
-                    first_error = WalSidecarRecoveryRequiredError(
+            if expected_identity is None:
+                try:
+                    os.fstat(orphan_fd)
+                except _CLEANUP_EXCEPTION as error:
+                    if isinstance(error, OSError) and error.errno == errno.EBADF:
+                        continue
+                    remaining_fds.append((orphan_fd, None, label))
+                    status_error = WalSidecarRecoveryRequiredError(
                         f"{label} descriptor status is unknown"
                     )
-                continue
-            if (
-                expected_identity is not None
-                and _identity(metadata) != expected_identity
-            ):
-                if first_error is None:
-                    first_error = WalSidecarRecoveryRequiredError(
-                        f"{label} descriptor was reused"
+                    status_error.__cause__ = error
+                    remember(status_error)
+                    continue
+                remaining_fds.append((orphan_fd, None, label))
+                remember(
+                    WalSidecarRecoveryRequiredError(
+                        f"{label} descriptor identity is unavailable"
                     )
+                )
+                continue
+            try:
+                metadata = os.fstat(orphan_fd)
+            except _CLEANUP_EXCEPTION as error:
+                if isinstance(error, OSError) and error.errno == errno.EBADF:
+                    remember(
+                        WalSidecarRecoveryRequiredError(
+                            f"{label} close status is unknown"
+                        )
+                    )
+                    continue
+                remaining_fds.append((orphan_fd, expected_identity, label))
+                status_error = WalSidecarRecoveryRequiredError(
+                    f"{label} descriptor status is unknown"
+                )
+                status_error.__cause__ = error
+                remember(status_error)
+                continue
+            if _identity(metadata) != expected_identity:
+                remember(
+                    WalSidecarRecoveryRequiredError(f"{label} descriptor was reused")
+                )
                 continue
             try:
                 os.close(orphan_fd)
-            except _CLEANUP_EXCEPTION:
+            except _CLEANUP_EXCEPTION as error:
                 try:
                     retry_metadata = os.fstat(orphan_fd)
+                except _CLEANUP_EXCEPTION as status_error:
                     if (
-                        expected_identity is not None
-                        and _identity(retry_metadata) != expected_identity
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
                     ):
-                        if first_error is None:
-                            first_error = WalSidecarRecoveryRequiredError(
-                                f"{label} descriptor was reused"
-                            )
-                        continue
-                    os.close(orphan_fd)
-                except OSError as retry_error:
-                    if retry_error.errno == errno.EBADF:
+                        close_error = WalSidecarRecoveryRequiredError(
+                            f"{label} close status is unknown"
+                        )
+                        close_error.__cause__ = error
+                        remember(close_error)
                         continue
                     remaining_fds.append((orphan_fd, expected_identity, label))
-                    if first_error is None:
-                        first_error = WalSidecarRecoveryRequiredError(
-                            f"{label} cannot be closed"
-                        )
+                    close_error = WalSidecarRecoveryRequiredError(
+                        f"{label} descriptor status is unknown"
+                    )
+                    close_error.__cause__ = status_error
+                    remember(close_error)
                     continue
-                except _CLEANUP_EXCEPTION:
-                    remaining_fds.append((orphan_fd, expected_identity, label))
-                    if first_error is None:
-                        first_error = WalSidecarRecoveryRequiredError(
-                            f"{label} cannot be closed"
+                if _identity(retry_metadata) != expected_identity:
+                    remember(
+                        WalSidecarRecoveryRequiredError(
+                            f"{label} descriptor was reused"
                         )
+                    )
                     continue
+                remaining_fds.append((orphan_fd, expected_identity, label))
+                close_error = WalSidecarRecoveryRequiredError(
+                    f"{label} cannot be closed"
+                )
+                close_error.__cause__ = error
+                remember(close_error)
         self._orphan_fds = remaining_fds
 
         attempt(
@@ -597,6 +804,19 @@ def _validate_regular(metadata: os.stat_result, label: str) -> None:
         raise WalSidecarUnsafeError(f"{label} is unsafe")
 
 
+def _validate_root_entries(root_fd: int, names: frozenset[str]) -> None:
+    """Validate existing planned/owner files without opening them."""
+
+    for name in names:
+        try:
+            metadata = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise WalSidecarUnsafeError(f"{name} cannot be inspected") from exc
+        _validate_regular(metadata, name)
+
+
 def _open_file_flags(*, writable: bool) -> int:
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     nonblock = getattr(os, "O_NONBLOCK", 0)
@@ -622,9 +842,10 @@ def _lock_nonblocking(fd: int, *, exclusive: bool, timeout_ms: int, label: str) 
         except OSError as exc:
             if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
                 raise WalSidecarUnsafeError(f"{label} cannot be locked") from exc
-            if time.monotonic_ns() >= deadline_ns:
+            remaining_ns = deadline_ns - time.monotonic_ns()
+            if remaining_ns <= 0:
                 raise WalSidecarBusyError(f"{label} is busy") from exc
-            time.sleep(min(0.005, (deadline_ns - time.monotonic_ns()) / 1e9))
+            time.sleep(min(0.005, remaining_ns / 1e9))
         else:
             return
 
@@ -634,23 +855,11 @@ def _close_temporary_fd(
     expected_identity: tuple[int, int] | None,
     label: str,
 ) -> None:
+    bound_identity = _checked_fd_identity(fd, expected_identity, label)
     try:
         os.close(fd)
     except _CLEANUP_EXCEPTION as first_error:
-        try:
-            metadata = os.fstat(fd)
-        except OSError as status_error:
-            if status_error.errno == errno.EBADF:
-                raise WalSidecarRecoveryRequiredError(
-                    f"{label} close status is unknown"
-                ) from first_error
-            raise WalSidecarRecoveryRequiredError(
-                f"{label} descriptor status is unknown"
-            ) from status_error
-        if expected_identity is not None and _identity(metadata) != expected_identity:
-            raise WalSidecarRecoveryRequiredError(
-                f"{label} descriptor was reused"
-            ) from first_error
+        _checked_fd_identity(fd, bound_identity, label)
         try:
             os.close(fd)
         except _CLEANUP_EXCEPTION as retry_error:
@@ -660,6 +869,102 @@ def _close_temporary_fd(
         raise WalSidecarRecoveryRequiredError(
             f"{label} close failed before retry"
         ) from first_error
+
+
+def _checked_fd_identity(
+    fd: int,
+    expected_identity: tuple[int, int] | None,
+    label: str,
+) -> tuple[int, int]:
+    try:
+        metadata = os.fstat(fd)
+    except _CLEANUP_EXCEPTION as error:
+        if isinstance(error, OSError) and error.errno == errno.EBADF:
+            status_error = WalSidecarRecoveryRequiredError(
+                f"{label} close status is unknown"
+            )
+        else:
+            status_error = WalSidecarRecoveryRequiredError(
+                f"{label} descriptor status is unknown"
+            )
+        status_error.__cause__ = error
+        raise status_error
+    actual_identity = _identity(metadata)
+    if expected_identity is not None and actual_identity != expected_identity:
+        raise WalSidecarRecoveryRequiredError(f"{label} descriptor was reused")
+    return actual_identity
+
+
+def _fd_identity_failure_is_terminal(error: BaseException) -> bool:
+    """Classify a post-close identity result that proves the original fd is gone."""
+
+    if not isinstance(error, WalSidecarRecoveryRequiredError):
+        return False
+    cause = error.__cause__
+    if isinstance(cause, OSError) and cause.errno == errno.EBADF:
+        return True
+    return cause is None and "descriptor was reused" in str(error)
+
+
+@dataclass(slots=True)
+class _DetachedFD:
+    """Opaque retry owner for a descriptor that could not enter a full registry."""
+
+    fd: int
+    expected_identity: tuple[int, int] | None
+    label: str
+    _done: bool = False
+
+    def retry_cleanup(self) -> None:
+        if self._done:
+            return
+        if self.expected_identity is None:
+            try:
+                os.fstat(self.fd)
+            except _CLEANUP_EXCEPTION as error:
+                if isinstance(error, OSError) and error.errno == errno.EBADF:
+                    self._done = True
+                    return
+                raise WalSidecarRecoveryRequiredError(
+                    f"{self.label} descriptor status is unknown"
+                ) from error
+            raise WalSidecarRecoveryRequiredError(
+                f"{self.label} descriptor identity is unavailable"
+            )
+        try:
+            metadata = os.fstat(self.fd)
+        except _CLEANUP_EXCEPTION as error:
+            if isinstance(error, OSError) and error.errno == errno.EBADF:
+                self._done = True
+                return
+            raise WalSidecarRecoveryRequiredError(
+                f"{self.label} descriptor status is unknown"
+            ) from error
+        if _identity(metadata) != self.expected_identity:
+            self._done = True
+            raise WalSidecarRecoveryRequiredError(f"{self.label} descriptor was reused")
+        try:
+            os.close(self.fd)
+        except _CLEANUP_EXCEPTION as error:
+            raise WalSidecarRecoveryRequiredError(
+                f"{self.label} cannot be closed"
+            ) from error
+        self._done = True
+
+
+@dataclass(slots=True)
+class _DetachedConnection:
+    """Opaque retry owner for a connection excluded by a full registry."""
+
+    connection: sqlite3.Connection
+    label: str
+    _done: bool = False
+
+    def retry_cleanup(self) -> None:
+        if self._done:
+            return
+        _close_temporary_connection(self.connection, self.label)
+        self._done = True
 
 
 def _retain_failed_fd(
@@ -672,16 +977,64 @@ def _retain_failed_fd(
 
     try:
         metadata = os.fstat(fd)
-    except OSError as error:
-        if error.errno == errno.EBADF:
+    except _CLEANUP_EXCEPTION as error:
+        if isinstance(error, OSError) and error.errno == errno.EBADF:
             return
-        raise WalSidecarRecoveryRequiredError(
-            f"{label} descriptor status is unknown"
-        ) from error
-    if expected_identity is not None and _identity(metadata) != expected_identity:
-        raise WalSidecarRecoveryRequiredError(f"{label} descriptor was reused")
-    if not any(existing_fd == fd for existing_fd, _, _ in resources._orphan_fds):
+        for index, (existing_fd, existing_identity, _) in enumerate(
+            resources._orphan_fds
+        ):
+            if existing_fd != fd:
+                continue
+            if (
+                expected_identity is not None
+                and existing_identity is not None
+                and expected_identity != existing_identity
+            ):
+                raise WalSidecarRecoveryRequiredError(f"{label} descriptor was reused")
+            retained_identity = (
+                expected_identity
+                if expected_identity is not None
+                else existing_identity
+            )
+            resources._orphan_fds[index] = (fd, retained_identity, label)
+            status_error = WalSidecarRecoveryRequiredError(
+                f"{label} descriptor status is unknown"
+            )
+            status_error.__cause__ = error
+            _raise_cleanup_with_owner(status_error, resources.close, label)
+        if len(resources._orphan_fds) >= _MAX_RESOURCE_ORPHANS:
+            raise _overflow_cleanup_error(
+                "quiescence descriptor",
+                resources.close,
+                _DetachedFD(fd, expected_identity, label).retry_cleanup,
+            )
         resources._orphan_fds.append((fd, expected_identity, label))
+        status_error = WalSidecarRecoveryRequiredError(
+            f"{label} descriptor status is unknown"
+        )
+        status_error.__cause__ = error
+        _raise_cleanup_with_owner(status_error, resources.close, label)
+    actual_identity = _identity(metadata)
+    if expected_identity is not None and actual_identity != expected_identity:
+        raise WalSidecarRecoveryRequiredError(f"{label} descriptor was reused")
+    if len(resources._orphan_fds) >= _MAX_RESOURCE_ORPHANS and not any(
+        existing_fd == fd for existing_fd, _, _ in resources._orphan_fds
+    ):
+        raise _overflow_cleanup_error(
+            "quiescence descriptor",
+            resources.close,
+            _DetachedFD(fd, expected_identity, label).retry_cleanup,
+        )
+    if expected_identity is None:
+        expected_identity = actual_identity
+    for index, (existing_fd, existing_identity, _) in enumerate(resources._orphan_fds):
+        if existing_fd != fd:
+            continue
+        if existing_identity is not None and existing_identity != expected_identity:
+            raise WalSidecarRecoveryRequiredError(f"{label} descriptor was reused")
+        resources._orphan_fds[index] = (fd, expected_identity, label)
+        return
+    resources._orphan_fds.append((fd, expected_identity, label))
 
 
 def _close_temporary_connection(
@@ -699,6 +1052,43 @@ def _close_temporary_connection(
             ) from retry_error
 
 
+def _close_fd_into_resources(
+    resources: _Resources,
+    fd: int,
+    expected_identity: tuple[int, int] | None,
+    label: str,
+) -> None:
+    try:
+        _close_temporary_fd(fd, expected_identity, label)
+    except _CLEANUP_EXCEPTION as close_error:
+        try:
+            _retain_failed_fd(resources, fd, expected_identity, label)
+        except _CLEANUP_EXCEPTION as retention_error:
+            attached = _adopt_cleanup_owner(close_error, retention_error, label)
+            if attached is close_error:
+                raise close_error from retention_error
+            raise attached from close_error
+        raise
+
+
+def _close_connection_into_resources(
+    resources: _Resources,
+    connection: sqlite3.Connection,
+    label: str,
+) -> None:
+    try:
+        _close_temporary_connection(connection, label)
+    except _CLEANUP_EXCEPTION as close_error:
+        try:
+            resources._retain_connection(connection)
+        except _CLEANUP_EXCEPTION as retention_error:
+            attached = _adopt_cleanup_owner(close_error, retention_error, label)
+            if attached is close_error:
+                raise close_error from retention_error
+            raise attached from close_error
+        raise
+
+
 def _run_cleanup_actions(actions: tuple[Callable[[], None], ...], label: str) -> None:
     first_error: BaseException | None = None
     for action in actions:
@@ -707,11 +1097,84 @@ def _run_cleanup_actions(actions: tuple[Callable[[], None], ...], label: str) ->
         except _CLEANUP_EXCEPTION as error:
             if first_error is None:
                 first_error = error
+            else:
+                first_error = _adopt_cleanup_owner(first_error, error, label)
     if first_error is None:
         return
     if isinstance(first_error, WalSidecarError):
         raise first_error
-    raise WalSidecarRecoveryRequiredError(f"{label} cleanup failed") from first_error
+    wrapped = WalSidecarRecoveryRequiredError(f"{label} cleanup failed")
+    adopted = _adopt_cleanup_owner(wrapped, first_error, label)
+    raise adopted from first_error
+
+
+def _attach_cleanup_owner(
+    error: BaseException,
+    retry: Callable[[], None],
+    label: str,
+) -> BaseException:
+    """Attach one opaque retry owner, wrapping exceptions without attributes."""
+
+    capability = _store._CleanupCapability(retry)
+    if isinstance(error, _store.StoreError):
+        _store._attach_cleanup_capability(error, capability)
+        return error
+    try:
+        vars(error)
+    except _CLEANUP_EXCEPTION:
+        wrapped = WalSidecarRecoveryRequiredError(f"{label} requires cleanup retry")
+        wrapped.__cause__ = error
+        _store._attach_cleanup_capability(wrapped, capability)
+        return wrapped
+    return _store._attach_cleanup_capability(error, capability)
+
+
+def _adopt_cleanup_owner(
+    wrapper: BaseException,
+    lower_error: BaseException,
+    label: str,
+) -> BaseException:
+    del label
+    return _store._adopt_cleanup_capability(wrapper, lower_error)
+
+
+def _overflow_cleanup_error(
+    label: str,
+    existing_retry: Callable[[], None],
+    current_retry: Callable[[], None],
+) -> BaseException:
+    error = WalSidecarRecoveryRequiredError(f"{label} retry registry is full")
+    attached = _attach_cleanup_owner(error, existing_retry, label)
+    return _attach_cleanup_owner(attached, current_retry, label)
+
+
+def _raise_body_with_cleanup_owner(
+    body_error: BaseException,
+    cleanup_error: BaseException | None,
+    retry: Callable[[], None],
+    label: str,
+) -> NoReturn:
+    attached = _attach_cleanup_owner(body_error, retry, label)
+    if cleanup_error is not None:
+        attached = _adopt_cleanup_owner(attached, cleanup_error, label)
+    if attached is body_error:
+        if cleanup_error is None:
+            raise body_error
+        raise body_error from cleanup_error
+    if cleanup_error is not None:
+        attached.__context__ = cleanup_error
+    raise attached from body_error
+
+
+def _raise_cleanup_with_owner(
+    cleanup_error: BaseException,
+    retry: Callable[[], None],
+    label: str,
+) -> NoReturn:
+    attached = _attach_cleanup_owner(cleanup_error, retry, label)
+    if attached is cleanup_error:
+        raise cleanup_error
+    raise attached from cleanup_error
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -727,6 +1190,7 @@ class QuiescenceSession:
     _resources: _Resources
     _token: object
     _closed: bool
+    _owner_tokens: set[object]
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -744,6 +1208,7 @@ class QuiescenceSession:
         object.__setattr__(instance, "_resources", resources)
         object.__setattr__(instance, "_token", token)
         object.__setattr__(instance, "_closed", False)
+        object.__setattr__(instance, "_owner_tokens", set())
         controller._active_sessions[token] = instance
         return instance
 
@@ -766,9 +1231,22 @@ class QuiescenceSession:
         return controller, resources, token, closed
 
     def _assert_active(self) -> None:
-        _, _, _, closed = self._provenance()
+        _, resources, _, closed = self._provenance()
         if closed:
             raise WalSidecarClosedError("quiescence session is closed")
+        if resources._has_pending_cleanup:
+            _raise_cleanup_with_owner(
+                WalSidecarRecoveryRequiredError(
+                    "quiescence resources require cleanup retry"
+                ),
+                self.close,
+                "quiescence session",
+            )
+
+    def _raise_if_cleanup_pending(self, error: BaseException) -> NoReturn:
+        if self._resources._has_pending_cleanup:
+            _raise_cleanup_with_owner(error, self.close, "quiescence session")
+        raise error
 
     def __copy__(self) -> NoReturn:
         raise TypeError("QuiescenceSession instances cannot be copied")
@@ -794,18 +1272,30 @@ class QuiescenceSession:
         self._assert_active()
         self._controller._assert_resources(self._resources)
 
+    def issue_owner(self) -> QuiescenceOwner:
+        """Issue one opaque owner for package-private root operations."""
+
+        self._assert_active()
+        return QuiescenceOwner._issue(self)
+
     def checkpoint(self, request: CheckpointRequest) -> CheckpointResult:
         """Run one checkpoint while retaining the exclusive guards."""
 
         request = _canonical_checkpoint_request(request)
         self._assert_active()
-        return self._controller._checkpoint_for_session(self._resources, request)
+        try:
+            return self._controller._checkpoint_for_session(self._resources, request)
+        except _CLEANUP_EXCEPTION as error:
+            self._raise_if_cleanup_pending(error)
 
     def _rebind_database(self) -> None:
         """Refresh the held database descriptor after an authorized replace."""
 
         self._assert_active()
-        self._controller._rebind_database(self._resources)
+        try:
+            self._controller._rebind_database(self._resources)
+        except _CLEANUP_EXCEPTION as error:
+            self._raise_if_cleanup_pending(error)
 
     def copy_database_to(
         self,
@@ -817,26 +1307,58 @@ class QuiescenceSession:
         request = _canonical_checkpoint_request(request)
         target = _canonical_copy_target(target)
         self._assert_active()
-        return self._controller._copy_database_to(self._resources, request, target)
+        try:
+            return self._controller._copy_database_to(self._resources, request, target)
+        except _CLEANUP_EXCEPTION as error:
+            self._raise_if_cleanup_pending(error)
+
+    def verify_candidate(self, candidate: DatabaseCandidate) -> DatabaseCandidate:
+        """Revalidate one existing restore candidate without exposing resources."""
+
+        candidate = _canonical_database_candidate(candidate)
+        self._assert_active()
+        try:
+            return self._controller._verify_candidate(self._resources, candidate)
+        except _CLEANUP_EXCEPTION as error:
+            self._raise_if_cleanup_pending(error)
+
+    def replace_database(
+        self,
+        candidate: DatabaseCandidate,
+    ) -> DatabaseReplacementResult:
+        """Replace the held primary with one verified candidate."""
+
+        candidate = _canonical_database_candidate(candidate)
+        self._assert_active()
+        try:
+            return self._controller._replace_database(self._resources, candidate)
+        except _CLEANUP_EXCEPTION as error:
+            self._raise_if_cleanup_pending(error)
 
     def cleanup(self, request: CheckpointRequest) -> SidecarCleanupResult:
         """Clean exact sidecars while retaining the exclusive guards."""
 
         request = _canonical_checkpoint_request(request)
         self._assert_active()
-        return self._controller._cleanup_locked(self._resources, request)
+        try:
+            return self._controller._cleanup_locked(self._resources, request)
+        except _CLEANUP_EXCEPTION as error:
+            self._raise_if_cleanup_pending(error)
 
     def close(self) -> None:
         """Release exclusive guards; the stable marker itself remains."""
 
         controller, resources, _, closed = self._provenance()
-        if closed:
-            if controller._active_sessions.get(self._token) is self:
-                resources.close()
-                controller._active_sessions.pop(self._token, None)
+        if closed and controller._active_sessions.get(self._token) is not self:
             return
-        object.__setattr__(self, "_closed", True)
-        resources.close()
+        if not closed:
+            object.__setattr__(self, "_closed", True)
+        try:
+            resources.close()
+        except _CLEANUP_EXCEPTION as error:
+            _raise_cleanup_with_owner(error, self.close, "quiescence session")
+        for owner_token in self._owner_tokens:
+            controller._active_owners.pop(owner_token, None)
         controller._active_sessions.pop(self._token, None)
 
     def __enter__(self) -> Self:
@@ -844,14 +1366,174 @@ class QuiescenceSession:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        del exc_type, exc_value, traceback
-        self.close()
+        del exc_type, traceback
+        try:
+            self.close()
+        except _CLEANUP_EXCEPTION as cleanup_error:
+            if isinstance(exc_value, BaseException):
+                _raise_body_with_cleanup_owner(
+                    exc_value,
+                    cleanup_error,
+                    self.close,
+                    "quiescence session",
+                )
+            _raise_cleanup_with_owner(
+                cleanup_error,
+                self.close,
+                "quiescence session",
+            )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class QuiescenceOwner:
+    """Opaque owner for package-private descriptor-relative root work."""
+
+    _session: QuiescenceSession
+    _token: object
+    _cleanup_done: bool
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("QuiescenceOwner instances are controller-issued")
+
+    @classmethod
+    def _issue(cls, session: QuiescenceSession) -> QuiescenceOwner:
+        session._assert_active()
+        controller, _, _, _ = session._provenance()
+        token = object()
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "_session", session)
+        object.__setattr__(instance, "_token", token)
+        object.__setattr__(instance, "_cleanup_done", False)
+        session._owner_tokens.add(token)
+        controller._active_owners[token] = instance
+        return instance
+
+    def _provenance(
+        self,
+    ) -> tuple[WalSidecarController, QuiescenceSession, _Resources]:
+        try:
+            session = self._session
+            token = self._token
+        except AttributeError as exc:
+            raise WalSidecarClosedError("quiescence owner is uninitialized") from exc
+        controller, resources, _, closed = session._provenance()
+        try:
+            active_owner = controller._active_owners.get(token)
+        except (AttributeError, TypeError) as exc:
+            raise WalSidecarClosedError(
+                "quiescence owner provenance is invalid"
+            ) from exc
+        if closed or active_owner is not self:
+            raise WalSidecarClosedError("quiescence owner provenance is invalid")
+        return controller, session, resources
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("QuiescenceOwner instances cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("QuiescenceOwner instances cannot be deep-copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("QuiescenceOwner instances cannot be pickled")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        del protocol
+        raise TypeError("QuiescenceOwner instances cannot be pickled")
+
+    def __repr__(self) -> str:
+        _, _, _ = self._provenance()
+        return "QuiescenceOwner(active=True)"
+
+    def assert_identity(self) -> None:
+        """Revalidate the session behind this owner without exposing resources."""
+
+        controller, session, resources = self._provenance()
+        session._assert_active()
+        controller._assert_resources(resources)
+
+    def _retry_cleanup(self) -> None:
+        """Drain this genuine owner's session after a cleanup handoff."""
+
+        try:
+            session = self._session
+            token = self._token
+            cleanup_done = self._cleanup_done
+        except AttributeError as exc:
+            raise WalSidecarClosedError("quiescence owner is uninitialized") from exc
+        if cleanup_done:
+            return
+        try:
+            controller, _, _, _ = session._provenance()
+            active_owner = controller._active_owners.get(token)
+        except (AttributeError, TypeError) as exc:
+            raise WalSidecarClosedError(
+                "quiescence owner provenance is invalid"
+            ) from exc
+        if active_owner is not self:
+            raise WalSidecarClosedError("quiescence owner provenance is invalid")
+        session.close()
+        object.__setattr__(self, "_cleanup_done", True)
+
+    def _retain_failed_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> None:
+        """Retain a borrowed temporary descriptor in this session's cleanup."""
+
+        # Recovery teardown calls this callback for several pair members; all
+        # descriptors must reach the same bounded owner after the first fails.
+        if label.startswith("recovery file "):
+            self._retain_failed_fd_for_cleanup(fd, expected_identity, label)
+            return
+        controller, session, resources = self._provenance()
+        session._assert_active()
+        controller._assert_resources(resources)
+        _retain_failed_fd(resources, fd, expected_identity, label)
+
+    def _retain_failed_fd_for_cleanup(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> None:
+        """Retain one member of an already-started recovery pair cleanup."""
+
+        _, _, resources = self._provenance()
+        _retain_failed_fd(resources, fd, expected_identity, label)
+
+    @contextmanager
+    def _borrow_root(self, state_root: Path) -> Iterator[int]:
+        """Borrow the held root fd only inside a revalidated private context."""
+
+        controller, session, resources = self._provenance()
+        root = _store._coerce_state_root(state_root)
+        if root != resources.root:
+            raise WalSidecarUnsafeError("quiescence owner root does not match")
+        session._assert_active()
+        controller._assert_resources(resources)
+        try:
+            yield resources.root_fd
+        finally:
+            body_error = sys.exc_info()[1]
+            if body_error is None:
+                session._assert_active()
 
 
 class WalSidecarController:
     """Checkpoint SQLite and remove only its exact, safe sidecars."""
 
-    __slots__ = ("_active_sessions", "_busy_timeout_ms", "_state_root")
+    __slots__ = (
+        "_active_owners",
+        "_active_sessions",
+        "_busy_timeout_ms",
+        "_pending_fds",
+        "_pending_resources",
+        "_state_root",
+    )
 
     def __init__(
         self,
@@ -871,7 +1553,10 @@ class WalSidecarController:
             raise ValueError("marker_name is not canonical")
         self._state_root = _store._coerce_state_root(state_root)
         self._busy_timeout_ms = busy_timeout_ms
+        self._active_owners: dict[object, QuiescenceOwner] = {}
         self._active_sessions: dict[object, QuiescenceSession] = {}
+        self._pending_fds: list[_PendingFD] = []
+        self._pending_resources: list[_Resources] = []
 
     @property
     def state_root(self) -> Path:
@@ -890,10 +1575,27 @@ class WalSidecarController:
 
     def __enter__(self) -> Self:
         self._assert_initialized()
+        self._drain_pending_cleanup()
+        self._reject_pending_session_cleanup()
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        del exc_type, exc_value, traceback
+        del exc_type, traceback
+        try:
+            self.close()
+        except _CLEANUP_EXCEPTION as cleanup_error:
+            if isinstance(exc_value, BaseException):
+                _raise_body_with_cleanup_owner(
+                    exc_value,
+                    cleanup_error,
+                    self.close,
+                    "WAL sidecar controller",
+                )
+            _raise_cleanup_with_owner(
+                cleanup_error,
+                self.close,
+                "WAL sidecar controller",
+            )
 
     def _fault(self, point: str) -> None:
         """Deterministic fault-injection seam; production implementation is a no-op."""
@@ -902,21 +1604,333 @@ class WalSidecarController:
 
     def _assert_initialized(self) -> None:
         try:
-            _ = (self._state_root, self._busy_timeout_ms, self._active_sessions)
+            _ = (
+                self._state_root,
+                self._busy_timeout_ms,
+                self._active_sessions,
+                self._active_owners,
+            )
         except AttributeError as exc:
             raise WalSidecarClosedError(
                 "WAL sidecar controller is uninitialized"
             ) from exc
 
+    def _cleanup_callback_for_resources(
+        self,
+        resources: _Resources,
+    ) -> Callable[[], None]:
+        for session in self._active_sessions.values():
+            if session._resources is resources:
+                return session.close
+        return resources.close
+
+    def _reject_pending_session_cleanup(self) -> None:
+        pending_error: BaseException | None = None
+        for session in tuple(self._active_sessions.values()):
+            if not session._closed and not session._resources._has_pending_cleanup:
+                continue
+            if pending_error is None:
+                pending_error = WalSidecarRecoveryRequiredError(
+                    "quiescence session cleanup is pending"
+                )
+            pending_error = _attach_cleanup_owner(
+                pending_error,
+                session.close,
+                "quiescence session",
+            )
+        if pending_error is not None:
+            _raise_cleanup_with_owner(
+                pending_error,
+                self.close,
+                "WAL sidecar controller",
+            )
+
+    @staticmethod
+    def _pending_fd_error(
+        label: str,
+        message: str,
+        cause: BaseException | None = None,
+    ) -> WalSidecarRecoveryRequiredError:
+        error = WalSidecarRecoveryRequiredError(f"{label} {message}")
+        if cause is not None:
+            error.__cause__ = cause
+        return error
+
+    def _retain_pending_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+        *,
+        unlock: bool,
+        locked: bool,
+    ) -> None:
+        """Retain one acquisition fd after binding it to its actual identity."""
+
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as error:
+            if isinstance(error, OSError) and error.errno == errno.EBADF:
+                return
+            for pending in self._pending_fds:
+                if pending.fd != fd:
+                    continue
+                if (
+                    expected_identity is not None
+                    and pending.expected_identity is not None
+                    and expected_identity != pending.expected_identity
+                ):
+                    raise self._pending_fd_error(label, "descriptor was reused")
+                if expected_identity is not None:
+                    pending.expected_identity = expected_identity
+                pending.label = label
+                pending.unlock = pending.unlock or unlock
+                pending.locked = pending.locked or locked
+                error = self._pending_fd_error(
+                    label,
+                    "descriptor status is unknown",
+                    error,
+                )
+                _raise_cleanup_with_owner(error, self.close, label)
+            if len(self._pending_fds) >= _MAX_PENDING_FDS:
+                raise _overflow_cleanup_error(
+                    "coordination descriptor",
+                    self.close,
+                    _DetachedFD(fd, expected_identity, label).retry_cleanup,
+                )
+            self._pending_fds.append(
+                _PendingFD(
+                    fd=fd,
+                    expected_identity=expected_identity,
+                    label=label,
+                    unlock=unlock,
+                    locked=locked,
+                )
+            )
+            error = self._pending_fd_error(
+                label,
+                "descriptor status is unknown",
+                error,
+            )
+            _raise_cleanup_with_owner(error, self.close, label)
+        actual_identity = _identity(metadata)
+        if expected_identity is not None and actual_identity != expected_identity:
+            raise self._pending_fd_error(label, "descriptor was reused")
+        if expected_identity is None:
+            expected_identity = actual_identity
+        for pending in self._pending_fds:
+            if pending.fd == fd:
+                if pending.expected_identity != expected_identity:
+                    raise self._pending_fd_error(label, "descriptor was reused")
+                pending.unlock = pending.unlock or unlock
+                pending.locked = pending.locked or locked
+                return
+        if len(self._pending_fds) >= _MAX_PENDING_FDS:
+            raise _overflow_cleanup_error(
+                "coordination descriptor",
+                self.close,
+                _DetachedFD(fd, expected_identity, label).retry_cleanup,
+            )
+        self._pending_fds.append(
+            _PendingFD(
+                fd=fd,
+                expected_identity=expected_identity,
+                label=label,
+                unlock=unlock,
+                locked=locked,
+            )
+        )
+
+    def _retry_pending_fd(
+        self, pending: _PendingFD
+    ) -> tuple[bool, BaseException | None]:
+        try:
+            metadata = os.fstat(pending.fd)
+        except _CLEANUP_EXCEPTION as error:
+            if isinstance(error, OSError) and error.errno == errno.EBADF:
+                return True, None
+            return False, self._pending_fd_error(
+                pending.label,
+                "descriptor status is unknown",
+                error,
+            )
+        if pending.expected_identity is None:
+            return False, self._pending_fd_error(
+                pending.label,
+                "descriptor identity is unavailable",
+            )
+        if _identity(metadata) != pending.expected_identity:
+            return True, self._pending_fd_error(
+                pending.label,
+                "descriptor was reused",
+            )
+        first_error: BaseException | None = None
+        if pending.locked:
+            try:
+                fcntl.flock(pending.fd, fcntl.LOCK_UN)
+            except _CLEANUP_EXCEPTION as error:
+                first_error = error
+            else:
+                pending.locked = False
+        try:
+            _checked_fd_identity(pending.fd, pending.expected_identity, pending.label)
+        except _CLEANUP_EXCEPTION as error:
+            if first_error is not None:
+                error.__context__ = first_error
+            return _fd_identity_failure_is_terminal(error), error
+        try:
+            os.close(pending.fd)
+        except _CLEANUP_EXCEPTION as error:
+            if first_error is None:
+                first_error = error
+            return False, self._pending_fd_error(
+                pending.label,
+                "cannot be closed",
+                first_error,
+            )
+        if first_error is not None:
+            return True, self._pending_fd_error(
+                pending.label,
+                "unlock status is unknown",
+                first_error,
+            )
+        return True, None
+
+    def _drain_pending_fds(self) -> None:
+        remaining: list[_PendingFD] = []
+        first_error: BaseException | None = None
+        for pending in self._pending_fds:
+            done, error = self._retry_pending_fd(pending)
+            if not done:
+                remaining.append(pending)
+            if error is None:
+                continue
+            if first_error is None:
+                first_error = error
+            else:
+                first_error = _adopt_cleanup_owner(
+                    first_error,
+                    error,
+                    "coordination descriptors",
+                )
+        self._pending_fds = remaining
+        if first_error is not None:
+            if isinstance(first_error, WalSidecarError):
+                raise first_error
+            raise WalSidecarRecoveryRequiredError(
+                "coordination descriptor cleanup is uncertain"
+            ) from first_error
+
+    def _retain_pending_resources(self, resources: _Resources) -> None:
+        if any(existing is resources for existing in self._pending_resources):
+            return
+        if len(self._pending_resources) >= _MAX_PENDING_RESOURCES:
+            raise _overflow_cleanup_error(
+                "quiescence resource",
+                self.close,
+                resources.close,
+            )
+        self._pending_resources.append(resources)
+
+    def _drain_pending_resources(self) -> None:
+        remaining: list[_Resources] = []
+        first_error: BaseException | None = None
+        for resources in self._pending_resources:
+            try:
+                resources.close()
+            except _CLEANUP_EXCEPTION as error:
+                remaining.append(resources)
+                if first_error is None:
+                    first_error = error
+                else:
+                    first_error = _adopt_cleanup_owner(
+                        first_error,
+                        error,
+                        "quiescence resources",
+                    )
+        self._pending_resources = remaining
+        if first_error is not None:
+            if isinstance(first_error, WalSidecarError):
+                raise first_error
+            raise WalSidecarRecoveryRequiredError(
+                "quiescence resources cannot be closed"
+            ) from first_error
+
+    def _drain_pending_cleanup(self) -> None:
+        first_error: BaseException | None = None
+        for action in (self._drain_pending_fds, self._drain_pending_resources):
+            try:
+                action()
+            except _CLEANUP_EXCEPTION as error:
+                if first_error is None:
+                    first_error = error
+                else:
+                    first_error = _adopt_cleanup_owner(
+                        first_error,
+                        error,
+                        "WAL sidecar controller",
+                    )
+        if first_error is not None:
+            _raise_cleanup_with_owner(
+                first_error,
+                self.close,
+                "WAL sidecar controller",
+            )
+
+    def close(self) -> None:
+        """Retry all controller-owned cleanup state until it is drained."""
+
+        self._assert_initialized()
+        self._drain_pending_cleanup()
+
     @contextmanager
     def _resources(self) -> Iterator[_Resources]:
-        resources = self._open_resources()
+        self._assert_initialized()
+        self._drain_pending_cleanup()
+        self._reject_pending_session_cleanup()
+        try:
+            resources = self._open_resources()
+        except _CLEANUP_EXCEPTION as error:
+            if self._pending_fds or self._pending_resources:
+                _raise_cleanup_with_owner(
+                    error,
+                    self.close,
+                    "WAL sidecar controller",
+                )
+            raise
+        body_error: BaseException | None = None
         try:
             yield resources
+        except _CLEANUP_EXCEPTION as error:
+            body_error = error
+            raise
         finally:
-            resources.close()
+            try:
+                resources.close()
+            except _CLEANUP_EXCEPTION as close_error:
+                cleanup_error: BaseException = close_error
+                try:
+                    self._retain_pending_resources(resources)
+                except _CLEANUP_EXCEPTION as retention_error:
+                    cleanup_error = retention_error
+                if body_error is None:
+                    _raise_cleanup_with_owner(
+                        cleanup_error,
+                        self.close,
+                        "WAL sidecar controller",
+                    )
+                _raise_body_with_cleanup_owner(
+                    body_error,
+                    cleanup_error,
+                    self.close,
+                    "WAL sidecar controller",
+                )
 
-    def hold_quiescence(self) -> QuiescenceSession:
+    def hold_quiescence(
+        self,
+        *,
+        allowed_root_names: tuple[str, ...] = (),
+    ) -> QuiescenceSession:
         """Acquire an opaque exclusive lifetime/marker session.
 
         The returned session owns the guards until ``close`` or context-manager
@@ -925,26 +1939,124 @@ class WalSidecarController:
         """
 
         self._assert_initialized()
-        resources = self._open_resources()
+        self._drain_pending_cleanup()
+        self._reject_pending_session_cleanup()
+        allowed_names = _canonical_allowed_root_names(allowed_root_names)
+        try:
+            resources = self._open_resources(allowed_root_names=allowed_names)
+        except _CLEANUP_EXCEPTION as error:
+            if self._pending_fds or self._pending_resources:
+                _raise_cleanup_with_owner(
+                    error,
+                    self.close,
+                    "WAL sidecar controller",
+                )
+            raise
         try:
             return QuiescenceSession._issue(
                 self,
                 resources,
             )
-        except _CLEANUP_EXCEPTION:
-            resources.close()
+        except _CLEANUP_EXCEPTION as error:
+            try:
+                resources.close()
+            except _CLEANUP_EXCEPTION as close_error:
+                cleanup_error: BaseException = close_error
+                try:
+                    self._retain_pending_resources(resources)
+                except _CLEANUP_EXCEPTION as retention_error:
+                    cleanup_error = retention_error
+                _raise_body_with_cleanup_owner(
+                    error,
+                    cleanup_error,
+                    self.close,
+                    "WAL sidecar controller",
+                )
             raise
 
-    def _open_resources(self) -> _Resources:
+    def _cleanup_open_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+        *,
+        unlock: bool,
+    ) -> None:
+        """Best-effort cleanup for a descriptor before resources are issued."""
+
+        try:
+            bound_identity = _checked_fd_identity(fd, expected_identity, label)
+        except _CLEANUP_EXCEPTION as identity_error:
+            try:
+                self._retain_pending_fd(
+                    fd,
+                    expected_identity,
+                    label,
+                    unlock=unlock,
+                    locked=unlock,
+                )
+            except _CLEANUP_EXCEPTION as retention_error:
+                attached = _adopt_cleanup_owner(
+                    identity_error,
+                    retention_error,
+                    label,
+                )
+                if attached is identity_error:
+                    raise identity_error from retention_error
+                raise attached from identity_error
+            raise
+        first_error: BaseException | None = None
+        unlock_succeeded = not unlock
+        if unlock:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except _CLEANUP_EXCEPTION as error:
+                first_error = error
+            else:
+                unlock_succeeded = True
+        try:
+            _close_temporary_fd(fd, bound_identity, label)
+        except _CLEANUP_EXCEPTION as error:
+            if first_error is None:
+                first_error = error
+            try:
+                self._retain_pending_fd(
+                    fd,
+                    bound_identity,
+                    label,
+                    unlock=unlock,
+                    locked=not unlock_succeeded,
+                )
+            except _CLEANUP_EXCEPTION as retention_error:
+                if first_error is None:
+                    first_error = retention_error
+                else:
+                    first_error = _adopt_cleanup_owner(
+                        first_error,
+                        retention_error,
+                        label,
+                    )
+        if first_error is not None:
+            raise first_error
+
+    def _open_resources(
+        self,
+        *,
+        allowed_root_names: frozenset[str] = frozenset(),
+    ) -> _Resources:
         root_fd: int | None = None
         parent_fd: int | None = None
         gate_fd: int | None = None
         marker_fd: int | None = None
         database_fd: int | None = None
+        parent_identity: tuple[int, int] | None = None
         root_identity: tuple[int, int] | None = None
         gate_identity: tuple[int, int] | None = None
         marker_identity: tuple[int, int] | None = None
         database_identity: tuple[int, int] | None = None
+        resources: _Resources | None = None
+        primary_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
         try:
             try:
                 root_fd = _store._open_state_root(self.state_root)
@@ -959,9 +2071,12 @@ class WalSidecarController:
             except WalSidecarError:
                 raise
             except _store.StoreError as exc:
-                raise WalSidecarUnsafeError("state root cannot be opened") from exc
+                error = WalSidecarUnsafeError("state root cannot be opened")
+                adopted = _adopt_cleanup_owner(error, exc, "state root")
+                raise adopted from exc
             parent_fd = os.open("..", _open_directory_flags(), dir_fd=root_fd)
             _store._validate_directory_fd(parent_fd, state_root=False)
+            parent_identity = _identity(os.fstat(parent_fd))
 
             gate_name = _store.LIFETIME_GATE_FILENAME
             try:
@@ -1044,6 +2159,10 @@ class WalSidecarController:
                     "writer marker records an incomplete cleanup"
                 )
 
+            _validate_root_entries(
+                root_fd,
+                _ROOT_INTERNAL_NAMES | allowed_root_names,
+            )
             database_before = os.stat(
                 _store.DATABASE_FILENAME,
                 dir_fd=root_fd,
@@ -1085,7 +2204,7 @@ class WalSidecarController:
                 gate_fd=gate_fd,
                 marker_fd=marker_fd,
                 database_fd=database_fd,
-                parent_identity=_identity(os.fstat(parent_fd)),
+                parent_identity=parent_identity,
                 root_identity=root_identity,
                 gate_identity=_identity(gate_metadata),
                 marker_identity=_identity(marker_metadata),
@@ -1100,18 +2219,22 @@ class WalSidecarController:
                 preexisting_wal_or_journal=bool(
                     {WAL_BASENAME, JOURNAL_BASENAME}.intersection(sidecar_signatures)
                 ),
+                allowed_root_names=allowed_root_names,
             )
             self._assert_resources(resources)
             root_fd = parent_fd = gate_fd = marker_fd = database_fd = None
-            return resources
-        except (WalSidecarError, _store.StoreError):
-            raise
+        except (WalSidecarError, _store.StoreError) as error:
+            primary_error = error
         except FileNotFoundError as exc:
-            raise WalSidecarUnsafeError(
+            primary_error = WalSidecarUnsafeError(
                 "required coordination file is missing"
-            ) from exc
+            )
+            primary_error.__cause__ = exc
         except OSError as exc:
-            raise WalSidecarUnsafeError("coordination files cannot be opened") from exc
+            primary_error = WalSidecarUnsafeError("coordination files cannot be opened")
+            primary_error.__cause__ = exc
+        except _CLEANUP_EXCEPTION as error:
+            primary_error = error
         finally:
             cleanup_actions: list[Callable[[], None]] = []
             for fd, identity, label, unlock in (
@@ -1119,7 +2242,7 @@ class WalSidecarController:
                 (gate_fd, gate_identity, "coordination lifetime gate", True),
                 (database_fd, database_identity, "coordination database", False),
                 (root_fd, root_identity, "state root", False),
-                (parent_fd, None, "state parent", False),
+                (parent_fd, parent_identity, "state parent", False),
             ):
                 if fd is None:
                     continue
@@ -1134,24 +2257,41 @@ class WalSidecarController:
                     label: str = label_value,
                     unlock: bool = unlock_value,
                 ) -> None:
-                    first_error: BaseException | None = None
-                    if unlock:
-                        try:
-                            fcntl.flock(fd, fcntl.LOCK_UN)
-                        except _CLEANUP_EXCEPTION as error:
-                            first_error = error
-                    try:
-                        _close_temporary_fd(fd, identity, label)
-                    except _CLEANUP_EXCEPTION as error:
-                        if first_error is None:
-                            first_error = error
-                    if first_error is not None:
-                        raise first_error
+                    self._cleanup_open_fd(
+                        fd,
+                        identity,
+                        label,
+                        unlock=unlock,
+                    )
 
                 cleanup_actions.append(close_open_fd)
-            _run_cleanup_actions(
-                tuple(cleanup_actions), "opening coordination resources"
+            try:
+                _run_cleanup_actions(
+                    tuple(cleanup_actions), "opening coordination resources"
+                )
+            except _CLEANUP_EXCEPTION as error:
+                cleanup_error = error
+
+        if primary_error is not None:
+            if cleanup_error is not None:
+                _raise_body_with_cleanup_owner(
+                    primary_error,
+                    cleanup_error,
+                    self.close,
+                    "opening coordination resources",
+                )
+            raise primary_error
+        if cleanup_error is not None:
+            _raise_cleanup_with_owner(
+                cleanup_error,
+                self.close,
+                "opening coordination resources",
             )
+        if resources is None:
+            raise WalSidecarRecoveryRequiredError(
+                "coordination resources were not acquired"
+            )
+        return resources
 
     def _sidecar_signatures(self, root_fd: int) -> dict[str, tuple[int, ...]]:
         signatures: dict[str, tuple[int, ...]] = {}
@@ -1235,11 +2375,27 @@ class WalSidecarController:
                 ) from exc
             finally:
                 if wal_fd is not None:
-                    _close_temporary_fd(
-                        wal_fd,
-                        (wal[4], wal[5]),
-                        WAL_BASENAME,
-                    )
+                    body_error = sys.exc_info()[1]
+                    try:
+                        _close_fd_into_resources(
+                            resources,
+                            wal_fd,
+                            (wal[4], wal[5]),
+                            WAL_BASENAME,
+                        )
+                    except _CLEANUP_EXCEPTION as cleanup_error:
+                        if body_error is None:
+                            _raise_cleanup_with_owner(
+                                cleanup_error,
+                                self._cleanup_callback_for_resources(resources),
+                                "SQLite WAL preflight",
+                            )
+                        _raise_body_with_cleanup_owner(
+                            body_error,
+                            cleanup_error,
+                            self._cleanup_callback_for_resources(resources),
+                            "SQLite WAL preflight",
+                        )
             if len(header) != _WAL_HEADER_BYTES:
                 raise WalSidecarUnsafeError("SQLite WAL header is incomplete")
             magic = int.from_bytes(header[0:4], "big")
@@ -1332,22 +2488,31 @@ class WalSidecarController:
             return target_fd, metadata
         except BaseException as original_error:
             try:
-                _close_temporary_fd(
+                _close_fd_into_resources(
+                    resources,
                     target_fd,
                     target_identity,
                     "database copy target",
                 )
             except _CLEANUP_EXCEPTION as close_error:
-                raise WalSidecarRecoveryRequiredError(
-                    "database copy target cannot be closed"
-                ) from close_error
-            del original_error
+                attached = _adopt_cleanup_owner(
+                    original_error,
+                    close_error,
+                    "database copy target",
+                )
+                if attached is original_error:
+                    raise original_error from close_error
+                raise attached from original_error
             raise
 
     def _refresh_root_observation(self, resources: _Resources) -> None:
         try:
             current_names = frozenset(os.listdir(resources.root_fd))
-            mutable_names = _ROOT_MUTABLE_NAMES | resources.allowed_root_names
+            mutable_names = (
+                _ROOT_MUTABLE_NAMES
+                | _ROOT_INTERNAL_NAMES
+                | resources.allowed_root_names
+            )
             previous_fixed = resources.root_names - mutable_names
             current_fixed = current_names - mutable_names
             if current_fixed != previous_fixed:
@@ -1387,6 +2552,10 @@ class WalSidecarController:
         resources.root_signature = current_signature
 
     def _assert_resources(self, resources: _Resources) -> None:
+        if resources._has_pending_cleanup:
+            raise WalSidecarRecoveryRequiredError(
+                "quiescence resources require cleanup retry"
+            )
         try:
             current_names = frozenset(os.listdir(resources.root_fd))
             root_metadata = os.fstat(resources.root_fd)
@@ -1431,17 +2600,32 @@ class WalSidecarController:
             raise WalSidecarRecoveryRequiredError(
                 "SQLite connection identity is unavailable"
             ) from exc
-        mutable_names = _ROOT_MUTABLE_NAMES | resources.allowed_root_names
+        _validate_root_entries(
+            resources.root_fd,
+            _ROOT_INTERNAL_NAMES | resources.allowed_root_names,
+        )
+        mutable_names = (
+            _ROOT_MUTABLE_NAMES | _ROOT_INTERNAL_NAMES | resources.allowed_root_names
+        )
         if current_names - mutable_names != resources.root_names - mutable_names:
             raise WalSidecarRecoveryRequiredError(
                 "root entries changed outside SQLite sidecars"
             )
+        root_fd_signature = _directory_security_signature(root_metadata)
+        root_path_signature = _directory_security_signature(root_path)
+        if root_fd_signature != root_path_signature:
+            raise WalSidecarRecoveryRequiredError("state root identity changed")
+        if root_fd_signature[0:3] + root_fd_signature[4:] != (
+            resources.root_signature[0:3] + resources.root_signature[4:]
+        ):
+            raise WalSidecarRecoveryRequiredError("state root security changed")
+        if root_fd_signature[3] != resources.root_signature[3] and not (
+            current_names ^ resources.root_names
+        ) <= (
+            _ROOT_MUTABLE_NAMES | _ROOT_INTERNAL_NAMES | resources.allowed_root_names
+        ):
+            raise WalSidecarRecoveryRequiredError("state root link count changed")
         checks = (
-            (
-                _directory_security_signature(root_metadata),
-                _directory_security_signature(root_path),
-                resources.root_signature,
-            ),
             (
                 _security_signature(gate_metadata),
                 _security_signature(gate_path),
@@ -1556,20 +2740,41 @@ class WalSidecarController:
             self._assert_resources(resources)
             return connection
         except _store.StoreSchemaError as exc:
-            raise WalSidecarUnsafeError(
-                "SQLite database schema is unsupported"
-            ) from exc
+            error = WalSidecarUnsafeError("SQLite database schema is unsupported")
+            adopted = _adopt_cleanup_owner(error, exc, "SQLite database")
+            raise adopted from exc
         except WalSidecarError:
             raise
         except _store.StoreError as exc:
-            raise WalSidecarUnsafeError("SQLite database state is unsupported") from exc
+            error = WalSidecarUnsafeError("SQLite database state is unsupported")
+            adopted = _adopt_cleanup_owner(error, exc, "SQLite database")
+            raise adopted from exc
         except (sqlite3.DatabaseError, OSError) as exc:
             raise WalSidecarUnsafeError(
                 "SQLite database cannot be opened safely"
             ) from exc
         finally:
             if connection is not None and resources.connection is not connection:
-                _close_temporary_connection(connection, "SQLite checkpoint connection")
+                body_error = sys.exc_info()[1]
+                try:
+                    _close_connection_into_resources(
+                        resources,
+                        connection,
+                        "SQLite checkpoint connection",
+                    )
+                except _CLEANUP_EXCEPTION as cleanup_error:
+                    if body_error is None:
+                        _raise_cleanup_with_owner(
+                            cleanup_error,
+                            self._cleanup_callback_for_resources(resources),
+                            "SQLite checkpoint connection",
+                        )
+                    _raise_body_with_cleanup_owner(
+                        body_error,
+                        cleanup_error,
+                        self._cleanup_callback_for_resources(resources),
+                        "SQLite checkpoint connection",
+                    )
 
     @staticmethod
     def _path_from_fd(fd: int) -> str:
@@ -1664,24 +2869,26 @@ class WalSidecarController:
                     "SQLite checkpoint source binding is not provable"
                 )
             return result
-        except BaseException:
-            if resources.connection is connection:
-                try:
+        except BaseException as body_error:
+            cleanup_error: BaseException | None = None
+            try:
+                if resources.connection is connection:
                     self._close_resource_connection(resources)
-                except WalSidecarError as close_error:
-                    raise WalSidecarRecoveryRequiredError(
-                        "SQLite checkpoint connection cannot be closed"
-                    ) from close_error
-            else:
-                try:
-                    _close_temporary_connection(
+                elif connection is not None:
+                    _close_connection_into_resources(
+                        resources,
                         connection,
                         "SQLite checkpoint connection",
                     )
-                except WalSidecarError as close_error:
-                    raise WalSidecarRecoveryRequiredError(
-                        "SQLite checkpoint connection cannot be closed"
-                    ) from close_error
+            except _CLEANUP_EXCEPTION as error:
+                cleanup_error = error
+            if cleanup_error is not None:
+                _raise_body_with_cleanup_owner(
+                    body_error,
+                    cleanup_error,
+                    self._cleanup_callback_for_resources(resources),
+                    "SQLite checkpoint",
+                )
             raise
 
     @staticmethod
@@ -1738,9 +2945,11 @@ class WalSidecarController:
         try:
             _store._write_writer_marker_state(resources.marker_fd, state)
         except _store.StoreError as exc:
-            raise WalSidecarRecoveryRequiredError(
+            error = WalSidecarRecoveryRequiredError(
                 "writer marker state cannot be written"
-            ) from exc
+            )
+            adopted = _adopt_cleanup_owner(error, exc, "writer marker")
+            raise adopted from exc
         if state == _store.WRITER_MARKER_PREPARED_STATE:
             self._fault("after_marker_prepare")
         try:
@@ -1783,15 +2992,17 @@ class WalSidecarController:
         connection = resources.connection
         if connection is not None:
             try:
-                _close_temporary_connection(
-                    connection,
+                self._close_resource_connection(resources)
+            except WalSidecarError as exc:
+                error = WalSidecarRecoveryRequiredError(
+                    "SQLite checkpoint connection cannot be closed"
+                )
+                adopted = _adopt_cleanup_owner(
+                    error,
+                    exc,
                     "SQLite checkpoint connection",
                 )
-            except WalSidecarError as exc:
-                raise WalSidecarRecoveryRequiredError(
-                    "SQLite checkpoint connection cannot be closed"
-                ) from exc
-            resources.connection = None
+                raise adopted from exc
         current_sidecars = self._sidecar_signatures(resources.root_fd)
         for name, previous in resources.sidecar_signatures.items():
             current = current_sidecars.get(name)
@@ -1814,20 +3025,24 @@ class WalSidecarController:
 
         self._close_resource_connection(resources)
         old_fd = resources.database_fd
+        old_identity = resources.database_identity
         self._fault("before_database_rebind")
+        new_fd = -1
+        primary_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
         try:
-            before = os.stat(
-                _store.DATABASE_FILENAME,
-                dir_fd=resources.root_fd,
-                follow_symlinks=False,
-            )
-            _validate_regular(before, "coordination database")
-            new_fd = os.open(
-                _store.DATABASE_FILENAME,
-                _open_file_flags(writable=True),
-                dir_fd=resources.root_fd,
-            )
             try:
+                before = os.stat(
+                    _store.DATABASE_FILENAME,
+                    dir_fd=resources.root_fd,
+                    follow_symlinks=False,
+                )
+                _validate_regular(before, "coordination database")
+                new_fd = os.open(
+                    _store.DATABASE_FILENAME,
+                    _open_file_flags(writable=True),
+                    dir_fd=resources.root_fd,
+                )
                 metadata = os.fstat(new_fd)
                 after = os.stat(
                     _store.DATABASE_FILENAME,
@@ -1844,32 +3059,79 @@ class WalSidecarController:
                 database_identity = _identity(metadata)
                 database_signature = _security_signature(metadata)
                 sidecar_signatures = self._sidecar_signatures(resources.root_fd)
-                _close_temporary_fd(
-                    old_fd,
-                    resources.database_identity,
-                    "old coordination database descriptor",
-                )
+
+                # Commit the new descriptor before retiring the old one.  A
+                # close result can be uncertain even after the kernel has
+                # released the fd; retaining the new descriptor keeps the
+                # session usable and leaves an old fd reachable through the
+                # orphan list.
                 resources.database_fd = new_fd
                 resources.database_identity = database_identity
                 resources.database_signature = database_signature
                 resources.sidecar_signatures = sidecar_signatures
                 new_fd = -1
-            finally:
-                if new_fd != -1:
+                try:
+                    _close_temporary_fd(
+                        old_fd,
+                        old_identity,
+                        "old coordination database descriptor",
+                    )
+                except _CLEANUP_EXCEPTION as close_error:
+                    _retain_failed_fd(
+                        resources,
+                        old_fd,
+                        old_identity,
+                        "old coordination database descriptor",
+                    )
+                    raise WalSidecarRecoveryRequiredError(
+                        "old coordination database descriptor cannot be closed"
+                    ) from close_error
+            except WalSidecarError as error:
+                primary_error = error
+            except OSError as exc:
+                primary_error = WalSidecarRecoveryRequiredError(
+                    "coordination database cannot be rebound"
+                )
+                primary_error.__cause__ = exc
+            except _CLEANUP_EXCEPTION as error:
+                primary_error = error
+        finally:
+            if new_fd != -1:
+                try:
                     _close_temporary_fd(
                         new_fd,
                         None,
                         "rebound coordination database",
                     )
-        except WalSidecarError:
-            raise
-        except OSError as exc:
-            raise WalSidecarRecoveryRequiredError(
-                "coordination database cannot be rebound"
-            ) from exc
+                except _CLEANUP_EXCEPTION as close_error:
+                    try:
+                        _retain_failed_fd(
+                            resources,
+                            new_fd,
+                            None,
+                            "rebound coordination database",
+                        )
+                    except _CLEANUP_EXCEPTION as retention_error:
+                        cleanup_error = retention_error
+                    else:
+                        cleanup_error = WalSidecarRecoveryRequiredError(
+                            "rebound coordination database cannot be closed"
+                        )
+                        cleanup_error.__cause__ = close_error
+
+        retry = self._cleanup_callback_for_resources(resources)
+        if primary_error is not None:
+            _raise_body_with_cleanup_owner(
+                primary_error,
+                cleanup_error,
+                retry,
+                "database rebind",
+            )
+        if cleanup_error is not None:
+            _raise_cleanup_with_owner(cleanup_error, retry, "database rebind")
         self._open_connection(resources)
         self._close_resource_connection(resources)
-        self._refresh_root_observation(resources)
+        self._refresh_sidecars_after_connection_close(resources)
         self._assert_resources(resources)
         self._fault("after_database_rebind")
         self._assert_resources(resources)
@@ -1945,6 +3207,359 @@ class WalSidecarController:
                 offset += written
         except OSError as exc:
             raise WalSidecarRecoveryRequiredError(f"{label} cannot be written") from exc
+
+    def _verify_candidate(
+        self,
+        resources: _Resources,
+        candidate: DatabaseCandidate,
+    ) -> DatabaseCandidate:
+        if candidate.name not in resources.allowed_root_names:
+            raise WalSidecarUnsafeError("database candidate was not declared")
+        target = DatabaseCopyTarget(name=candidate.name)
+        self._fault("before_candidate_verify")
+        if self._copy_target_sidecar_signatures(resources.root_fd, target):
+            raise WalSidecarUnsafeError("database candidate sidecars are present")
+        self._assert_resources(resources)
+        candidate_fd: int | None = None
+        candidate_identity: tuple[int, int] | None = None
+        primary_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        try:
+            try:
+                candidate_fd = os.open(
+                    candidate.name,
+                    _open_file_flags(writable=False),
+                    dir_fd=resources.root_fd,
+                )
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise WalSidecarUnsafeError(
+                        "database candidate must not be a symlink"
+                    ) from exc
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate cannot be opened"
+                ) from exc
+            metadata = os.fstat(candidate_fd)
+            candidate_identity = _identity(metadata)
+            image = self._read_stable_copy_target_bytes(
+                resources,
+                target,
+                candidate_fd,
+                candidate.identity,
+                candidate.size,
+            )
+            digest = "sha256:" + hashlib.sha256(image).hexdigest()
+            if digest != candidate.digest or candidate_identity != candidate.identity:
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate bytes or identity changed"
+                )
+            self._fault("after_candidate_verify")
+            self._assert_resources(resources)
+        except (WalSidecarError, _store.StoreError) as error:
+            primary_error = error
+        except _CLEANUP_EXCEPTION as error:
+            primary_error = error
+        finally:
+            if candidate_fd is not None:
+                try:
+                    _close_temporary_fd(
+                        candidate_fd,
+                        candidate_identity,
+                        "database candidate",
+                    )
+                except _CLEANUP_EXCEPTION as close_error:
+                    try:
+                        _retain_failed_fd(
+                            resources,
+                            candidate_fd,
+                            candidate_identity,
+                            "database candidate",
+                        )
+                    except _CLEANUP_EXCEPTION as retention_error:
+                        cleanup_error = retention_error
+                    else:
+                        cleanup_error = WalSidecarRecoveryRequiredError(
+                            "database candidate cannot be closed"
+                        )
+                        cleanup_error.__cause__ = close_error
+
+        retry = self._cleanup_callback_for_resources(resources)
+        if primary_error is not None:
+            _raise_body_with_cleanup_owner(
+                primary_error,
+                cleanup_error,
+                retry,
+                "database candidate verification",
+            )
+        if cleanup_error is not None:
+            _raise_cleanup_with_owner(
+                cleanup_error,
+                retry,
+                "database candidate verification",
+            )
+        return candidate
+
+    def _replace_database(
+        self,
+        resources: _Resources,
+        candidate: DatabaseCandidate,
+    ) -> DatabaseReplacementResult:
+        """Replace the primary using one held, revalidated candidate.
+
+        This method owns only the filesystem handoff.  Candidate schema and
+        recovery/ledger policy remain outside this module.
+        """
+
+        candidate = _canonical_database_candidate(candidate)
+        if candidate.name not in resources.allowed_root_names:
+            raise WalSidecarUnsafeError("database candidate was not declared")
+
+        previous_identity = resources.database_identity
+        previous_image = self._read_stable_database_bytes(resources)
+        previous_digest = "sha256:" + hashlib.sha256(previous_image).hexdigest()
+        candidate_fd: int | None = None
+        candidate_identity: tuple[int, int] | None = None
+        try:
+            # Revalidate the unprivileged observation before retaining any fd
+            # across the rename.  The second read below closes the gap between
+            # this check and the descriptor-relative replace.
+            self._verify_candidate(resources, candidate)
+            self._assert_resources(resources)
+            target = DatabaseCopyTarget(name=candidate.name)
+            if self._copy_target_sidecar_signatures(resources.root_fd, target):
+                raise WalSidecarUnsafeError("database candidate sidecars are present")
+            try:
+                candidate_fd = os.open(
+                    candidate.name,
+                    _open_file_flags(writable=False),
+                    dir_fd=resources.root_fd,
+                )
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise WalSidecarUnsafeError(
+                        "database candidate must not be a symlink"
+                    ) from exc
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate cannot be opened"
+                ) from exc
+            candidate_metadata = os.fstat(candidate_fd)
+            _validate_regular(candidate_metadata, "database candidate")
+            candidate_identity = _identity(candidate_metadata)
+            candidate_image = self._read_stable_copy_target_bytes(
+                resources,
+                target,
+                candidate_fd,
+                candidate.identity,
+                candidate.size,
+            )
+            candidate_digest = "sha256:" + hashlib.sha256(candidate_image).hexdigest()
+            if (
+                candidate_identity != candidate.identity
+                or candidate_digest != candidate.digest
+            ):
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate bytes or identity changed"
+                )
+
+            # No exact SQLite sidecar may be carried over either endpoint.
+            if self._sidecar_signatures(resources.root_fd):
+                raise WalSidecarUnsafeError(
+                    "coordination database sidecars are present before replace"
+                )
+
+            # Re-read the held old primary immediately before rename.  This
+            # binds the destination check to the fd held by this session and
+            # prevents replacing a pathname whose inode/content moved.
+            current_primary = self._read_stable_database_bytes(resources)
+            if len(current_primary) != len(previous_image) or hashlib.sha256(
+                current_primary
+            ).hexdigest() != previous_digest.removeprefix("sha256:"):
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database changed before replace"
+                )
+            if self._copy_target_sidecar_signatures(resources.root_fd, target):
+                raise WalSidecarUnsafeError("database candidate sidecars are present")
+            self._assert_resources(resources)
+            self._fault("before_replace")
+            # The fault seam deliberately runs immediately before the
+            # privileged rename.  Repeat both endpoint checks here so a
+            # candidate/primary pathname swap cannot be hidden by an inode
+            # held from an earlier observation.
+            candidate_image = self._read_stable_copy_target_bytes(
+                resources,
+                target,
+                candidate_fd,
+                candidate.identity,
+                candidate.size,
+            )
+            candidate_metadata = os.fstat(candidate_fd)
+            if (
+                _identity(candidate_metadata) != candidate.identity
+                or "sha256:" + hashlib.sha256(candidate_image).hexdigest()
+                != candidate.digest
+                or self._copy_target_sidecar_signatures(resources.root_fd, target)
+            ):
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate changed immediately before replace"
+                )
+            current_primary = self._read_stable_database_bytes(resources)
+            if len(current_primary) != len(previous_image) or hashlib.sha256(
+                current_primary
+            ).hexdigest() != previous_digest.removeprefix("sha256:"):
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database changed immediately before replace"
+                )
+            if self._sidecar_signatures(resources.root_fd):
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database sidecars appeared immediately before replace"
+                )
+            self._assert_resources(resources)
+            try:
+                os.replace(
+                    candidate.name,
+                    _store.DATABASE_FILENAME,
+                    src_dir_fd=resources.root_fd,
+                    dst_dir_fd=resources.root_fd,
+                )
+            except OSError as exc:
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database replacement failed"
+                ) from exc
+            self._fault("after_replace")
+
+            try:
+                os.stat(
+                    candidate.name,
+                    dir_fd=resources.root_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate remained after replace"
+                )
+            new_path = os.stat(
+                _store.DATABASE_FILENAME,
+                dir_fd=resources.root_fd,
+                follow_symlinks=False,
+            )
+            _validate_regular(new_path, "coordination database")
+            if _identity(new_path) != candidate_identity:
+                raise WalSidecarRecoveryRequiredError(
+                    "new coordination database identity is not the candidate"
+                )
+            if self._sidecar_signatures(resources.root_fd):
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database sidecars appeared after replace"
+                )
+
+            self._fault("before_replace_fsync")
+            self._fault("before_directory_fsync")
+            try:
+                os.fsync(resources.root_fd)
+            except OSError as exc:
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database replacement durability is unknown"
+                ) from exc
+            self._fault("after_directory_fsync")
+            self._fault("after_replace_fsync")
+
+            self._fault("before_rebind")
+            self._rebind_database(resources)
+            self._fault("after_rebind")
+            final_image = self._read_stable_database_bytes(resources)
+            final_metadata = os.fstat(resources.database_fd)
+            if (
+                _identity(final_metadata) != candidate_identity
+                or len(final_image) != candidate.size
+                or hashlib.sha256(final_image).hexdigest()
+                != candidate.digest.removeprefix("sha256:")
+            ):
+                raise WalSidecarRecoveryRequiredError(
+                    "new coordination database does not match candidate"
+                )
+            if self._sidecar_signatures(resources.root_fd):
+                raise WalSidecarRecoveryRequiredError(
+                    "coordination database sidecars appeared before result"
+                )
+            self._refresh_root_observation(resources)
+            self._fault("before_replace_result")
+            self._assert_resources(resources)
+            try:
+                os.stat(
+                    candidate.name,
+                    dir_fd=resources.root_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                raise WalSidecarRecoveryRequiredError(
+                    "database candidate reappeared before result"
+                )
+            final_image = self._read_stable_database_bytes(resources)
+            final_metadata = os.fstat(resources.database_fd)
+            if (
+                _identity(final_metadata) != candidate_identity
+                or len(final_image) != candidate.size
+                or hashlib.sha256(final_image).hexdigest()
+                != candidate.digest.removeprefix("sha256:")
+                or self._sidecar_signatures(resources.root_fd)
+            ):
+                raise WalSidecarRecoveryRequiredError(
+                    "new coordination database changed before result"
+                )
+            result = DatabaseReplacementResult(
+                previous_primary_identity=previous_identity,
+                primary_identity=_identity(final_metadata),
+                candidate=candidate,
+            )
+            self._fault("after_replace_result")
+            self._assert_resources(resources)
+            return result
+        except (WalSidecarError, _store.StoreError):
+            raise
+        except (OSError, sqlite3.DatabaseError, StopIteration) as exc:
+            raise WalSidecarRecoveryRequiredError(
+                "coordination database replacement is incomplete"
+            ) from exc
+        finally:
+            body_error = sys.exc_info()[1]
+            if candidate_fd is not None:
+                try:
+                    _close_temporary_fd(
+                        candidate_fd,
+                        candidate_identity,
+                        "database candidate",
+                    )
+                except _CLEANUP_EXCEPTION as close_error:
+                    try:
+                        _retain_failed_fd(
+                            resources,
+                            candidate_fd,
+                            candidate_identity,
+                            "database candidate",
+                        )
+                    except _CLEANUP_EXCEPTION as retention_error:
+                        cleanup_error = retention_error
+                    else:
+                        cleanup_error = WalSidecarRecoveryRequiredError(
+                            "database candidate cannot be closed"
+                        )
+                        cleanup_error.__cause__ = close_error
+                    if body_error is None:
+                        _raise_cleanup_with_owner(
+                            cleanup_error,
+                            self._cleanup_callback_for_resources(resources),
+                            "database candidate replacement",
+                        )
+                    _raise_body_with_cleanup_owner(
+                        body_error,
+                        cleanup_error,
+                        self._cleanup_callback_for_resources(resources),
+                        "database candidate replacement",
+                    )
 
     def _read_stable_copy_target_bytes(
         self,
@@ -2048,14 +3663,13 @@ class WalSidecarController:
         if connection is None:
             return
         try:
-            connection.close()
+            _close_temporary_connection(
+                connection,
+                "SQLite connection",
+            )
         except _CLEANUP_EXCEPTION:
-            try:
-                connection.close()
-            except _CLEANUP_EXCEPTION as retry_error:
-                raise WalSidecarRecoveryRequiredError(
-                    "SQLite connection cannot be closed"
-                ) from retry_error
+            resources._retain_connection(connection)
+            raise
         resources.connection = None
 
     def _copy_database_to(
@@ -2220,31 +3834,30 @@ class WalSidecarController:
                 "database source copy is incomplete"
             ) from exc
         finally:
+            body_error = sys.exc_info()[1]
             cleanup_actions: list[Callable[[], None]] = []
             if target_connection is not None:
                 backup_connection = target_connection
 
                 def close_backup_connection() -> None:
-                    try:
-                        _close_temporary_connection(
-                            backup_connection,
-                            "SQLite backup connection",
-                        )
-                    except _CLEANUP_EXCEPTION:
-                        if backup_connection not in resources._orphan_connections:
-                            resources._orphan_connections.append(backup_connection)
-                        raise
+                    _close_connection_into_resources(
+                        resources,
+                        backup_connection,
+                        "SQLite backup connection",
+                    )
 
                 cleanup_actions.append(close_backup_connection)
             if source_connection is not None:
 
                 def close_source_connection() -> None:
-                    _close_temporary_connection(
-                        source_connection,
-                        "SQLite source connection",
-                    )
                     if resources.connection is source_connection:
-                        resources.connection = None
+                        self._close_resource_connection(resources)
+                    else:
+                        _close_connection_into_resources(
+                            resources,
+                            source_connection,
+                            "SQLite source connection",
+                        )
 
                 cleanup_actions.append(close_source_connection)
             if target_fd is not None:
@@ -2252,26 +3865,35 @@ class WalSidecarController:
                 copy_identity = _identity(target_metadata)
 
                 def close_copy_fd() -> None:
-                    try:
-                        _close_temporary_fd(
-                            copy_fd,
-                            copy_identity,
-                            "database copy target",
-                        )
-                    except _CLEANUP_EXCEPTION:
-                        _retain_failed_fd(
-                            resources,
-                            copy_fd,
-                            copy_identity,
-                            "database copy target",
-                        )
-                        raise
+                    _close_fd_into_resources(
+                        resources,
+                        copy_fd,
+                        copy_identity,
+                        "database copy target",
+                    )
 
                 cleanup_actions.append(close_copy_fd)
-            _run_cleanup_actions(
-                tuple(cleanup_actions),
-                "database source copy resource",
-            )
+            cleanup_error: BaseException | None = None
+            try:
+                _run_cleanup_actions(
+                    tuple(cleanup_actions),
+                    "database source copy resource",
+                )
+            except _CLEANUP_EXCEPTION as error:
+                cleanup_error = error
+            if cleanup_error is not None:
+                if body_error is None:
+                    _raise_cleanup_with_owner(
+                        cleanup_error,
+                        self._cleanup_callback_for_resources(resources),
+                        "database source copy resource",
+                    )
+                _raise_body_with_cleanup_owner(
+                    body_error,
+                    cleanup_error,
+                    self._cleanup_callback_for_resources(resources),
+                    "database source copy resource",
+                )
 
     def checkpoint(self, request: CheckpointRequest) -> CheckpointResult:
         """Run one exact checkpoint request under exclusive guards."""
@@ -2604,8 +4226,11 @@ __all__ = [
     "CheckpointResult",
     "CleanupOutcome",
     "CleanupReason",
+    "DatabaseCandidate",
     "DatabaseCopyResult",
     "DatabaseCopyTarget",
+    "DatabaseReplacementResult",
+    "QuiescenceOwner",
     "QuiescenceSession",
     "SidecarCleanupResult",
     "WalSidecarBusyError",

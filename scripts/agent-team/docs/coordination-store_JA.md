@@ -52,8 +52,9 @@ SQLite spikeではPython SQLite 3.53.1、`WAL`、`synchronous=FULL`、`BEGIN IMM
 - 外部側のidempotency keyまたはstatus照会を使う。SQLiteをexactly-once effect機構として扱わない
 - effect-without-receiptは`UNKNOWN_EFFECT`とする。`doctor`は報告だけを行い、変更やretryをしない
 - 通常の`CoordinationStore`再openでは`FENCE_RESERVATION_STARTED`や`EFFECT_PREPARED`を自動で
-  変更しない。これらはrecovery-required markerとして保持し、`UNKNOWN_EFFECT`への遷移は
-  trustedな`RecoveryStoreTx.mark_prepared_unknown`による明示操作だけに限定する
+  変更しない。これらはrecovery-required markerとして保持する。`UNKNOWN_EFFECT`への遷移は、
+  `CoordinationStore._recovery_transaction()`が返すprivateなtrusted transactionの
+  `_RecoveryStoreTx.mark_prepared_unknown`だけに限定する
 - recovery floorのadvanceはglobalにstale authorityをfenceするが、`CLEANED`のtombstone rowと
   eventは書き換えない。typed rebaseの対象は`INTENT`、`RECEIPTED`、`COMPLETED`に限る
 - typed recovery seamでは、SQLite snapshot queryの失敗と保存済み観測値のmalformed値を
@@ -86,8 +87,8 @@ prototypeは使い捨ての証拠である。production codeはこのcontractか
 
 `agent_team.doctor` は、復旧処理から共有する read-only の
 `ReadOnlyDoctor`、`StateFilesystem`、`RecoveryLedgerReader` seam を提供する。
-stable writer marker と recovery ledger の basename は、後続の marker/ledger
-実装が所有するため、呼び出し側が明示的に渡す。doctor がファイル名を暗黙に
+stable writer marker と recovery ledger の basename は、marker/ledger実装が所有するため、
+呼び出し側が明示的に渡す。doctor がファイル名を暗黙に
 補完したり、`CoordinationStore` を構築したり、recovery を実行したりすることは
 ない。
 
@@ -111,8 +112,10 @@ recovery ledger は strict な append-only JSONL とする。各行は完全な 
 object を canonical newline で終え、array、前後に余分な空白がある行、空行、
 途中で切れた最終 record、terminal phase から始まる世代を受け付けない。各世代は
 `RESTORE_PREPARED`、`RESTORE_REPLACED`、`RESTORE_COMMITTED` または契約で
-許可した `RESTORE_ABORTED` edge の順に進み、terminal の後は次の世代の
-`RESTORE_PREPARED` だけを許可する。primary DB、SQLite の exact sidecar、marker、
+許可した `RESTORE_ABORTED` edge の順に進む。generationは1から始まり、必ず1ずつ
+増える。terminal generationの次に置けるのは`RESTORE_PREPARED`だけであり、
+`RESTORE_ABORTED`の直前は`RESTORE_PREPARED`に限る。この規則は、単独で作る最初のgenerationにも、
+terminal prefixの後に追加するgenerationにも同じように適用する。primary DB、SQLite の exact sidecar、marker、
 ledger の basename は regular file に限定する。無関係な owner-only directory は
 inventory に残すが、開かない。
 
@@ -170,7 +173,24 @@ FIFO や symlink への swap は block せず拒否する。`O_APPEND|O_NOFOLLOW
 で追記し、ledger と containing directory を fsync する。欠損、duplicate、
 partial、version 不一致、sequence/generation/epoch/floor の逆行、空 ledger は
 拒否し、write 後の bytes 全体も検証する。backup、restore、checkpoint、sidecar
-cleanup、writer marker lifecycle は実装せず、#55/#56 の contract に残す。
+cleanup、writer marker lifecycleは実装しない。これらは`agent_team.backup`、
+`agent_team.restore`、`agent_team.wal`がそれぞれ所有する。
+
+ownerを渡さないmutation APIも、通常のStore openと同じstartup/quiescence protocolに
+参加する。初期化済みrootではWAL controllerのexclusiveなlifetime gate・marker spanを
+使う。bootstrapまたは明示的にgateが欠けたrootでは、Storeと共通のroot startup lockを、
+再検査、append、fsync、readbackが終わるまで保持する。owner-awareなrestore appendは、
+保持中のquiescence ownerを再利用し、lockを取り直さない。read-only accessはsharedのままにする。
+writer、Store、Doctor filesystem、WAL controller、backup、restoreは、closeが不確かな
+descriptor、resource、sessionを観測済みidentityとともに保持し、次のI/Oより先にcleanupを
+再試行する。再利用されたfdやidentity不明のfdを、番号だけでcloseしない。
+
+commit response loss、rollback failure、temporary SQLite connectionのcleanup failure、
+descriptor registryの上限到達は、いずれも成功ではなくcleanupの不確実性として扱う。
+body errorをprimaryのまま保持し、すべてのcleanup ownerをopaqueなbest-effort composite
+retry capabilityに束ねる。このretryは全memberを試し、成功したmemberを外し、失敗した
+memberだけを残してidempotentに再試行する。registryが満杯でも現在のresourceを捨てない。
+cleanup retryがSQL、phase append、primary replacement、provider operationを再実行することはない。
 
 provider adapter は trusted composition root の依存である。full-shape の
 悪意ある同一 process adapter はこの Python value boundary の外側だが、task data
@@ -208,12 +228,12 @@ device、inode を再確認する。
 backup/restore consumer は `hold_quiescence()` で opaque な
 `QuiescenceSession` を取得できる。typed な `checkpoint`、`cleanup`、
 `assert_identity`、`copy_database_to` は同じ exclusive guard を複数 phase にわたって
-保持するため、後続の restore 実装が marker/lifetime lock を複製しない。
+保持するため、`BackupRestore`はmarker/lifetime lockを複製しない。
 `copy_database_to` は exact な checkpoint request を必須とし、controller 管理の
 SQLite backup call を memory に一度だけ実行する。その serialized image を、
 `O_CREAT|O_EXCL|O_NOFOLLOW` と mode `0600` で新規作成して held descriptor に書き込む。
 source/target identity、target の exact sidecar、最後の target bytes を検証し、identity と
-target の `sha256:` digest を返す。#56 consumer は basename を no-follow で open し、消費直前に
+target の `sha256:` digest を返す。`SQLiteBackup`はbasenameをno-followでopenし、消費直前に
 identity、size、digest を再検証する。result 自体は publish/restore authority ではない。既存の
 known/unknown file は上書きしない。authorized な primary replacement 後は package-private
 の database rebind で held descriptor を更新する。backup、restore、replacement policy
@@ -243,3 +263,249 @@ rollback journal の状態を再確認する。close 後に新しく作られた
 扱い、完了した cleanup が消費しない。最後の確認後に arbitrary filesystem writer が直接介入
 する場合は SQLite lock protocol の保証範囲外であり、観測できた場合は保守的に扱うが、不可能
 とは主張しない。provider、terminal、prompt、その他 unknown file は glob で探索・削除しない。
+
+## version 1のbackup artifact
+
+`agent_team.backup.SQLiteBackup`は、所有者だけが扱う既存のstate rootにbackupを作成し、
+内容を検査する。version 1が使う最終ファイルは、callerが指定するdatabase basenameと、
+そこから決まる`<name>.manifest`の2つだけである。入れ子のpath、外部archive directory、
+retention、rotation、generation pointerは対象外とする。
+
+`create()`は1つのquiescence sessionを保持し、
+`copy_database_to(CheckpointRequest("TRUNCATE"), ...)`でprimaryをcheckpointしてcopyする。
+sessionを閉じた後、Storeが所有するimage readerでcopyを検証する。manifestは、
+canonicalなUTF-8 JSONと末尾のLF 1つで構成する。fieldは次の10個に固定する。
+
+- version
+- database basename
+- Store schema version
+- event schema version
+- SQLite `user_version`
+- integrity結果
+- database size
+- databaseのSHA-256 digest
+- 取得時のrecovery epoch
+- 取得時のfencing-token floor
+
+duplicate、欠落、未知、非canonical、型不一致のfieldは拒否する。manifestの値を使って
+recovery floorを更新することはない。
+
+destination nameは1つのexactなbasenameに限る。path component、reserved name、restore candidate
+namespaceである`.coordination.sqlite3.restore-`、wildcard文字（`*`、`?`、`[`、`]`）は、保持済み
+resourceのretryやopenより前にfail-fastする。このprefixで始まるnameはrestoreが所有するため、
+backup destinationには使えない。
+`create()`は、この呼び出しで自分が公開した`BackupArtifact`だけを返す。返却前にfinal pair
+inspectionを行い、公開したdatabaseとmanifestのidentity、canonicalなmanifest content、
+databaseのsize/digest、captured floorが計画値と一致することを再確認する。見えているpathname
+や以前のinspectionだけでは不十分であり、final manifest contentまたはidentityの不一致はerrorになる。
+
+databaseとmanifestは別ファイルであり、POSIXには2つを同時公開する操作がない。database、
+manifestの順に置換し、最後にcontaining directoryをfsyncする。置換間のcrashでは、
+片側欠損や、DBとmanifestの一方だけが新しいpairが残り得る。`inspect()`が受理するのは、
+basename、両ファイルのidentity、size、digest、schema、integrity、取得時のfloorが一致する
+完全なpairだけである。古い片側へのfallback、新しい片側のrollback、orphan tempの
+promotionは行わない。
+unsafe type、link、owner/mode不一致、artifact sidecar、close uncertaintyはfail closedにする。
+`create()`は、publicationまたはdirectory fsyncが不確実な場合も成功を返さない。後から行う
+read-onlyの`inspect()`は現在のbytesとidentityを検証するが、過去のdirectory fsyncが
+どのように完了したかまでは証明しない。
+同様に、非協調なsame-UID processは、最後のprecondition確認後から`os.replace`までの間に
+pathnameを差し替えられる。この最後のsyscall windowはversion 1の保証対象外である。
+不一致を観測した場合はstateを保持し、成功したartifactとして報告しない。
+
+## candidate-first restoreとdurable fencing
+
+`agent_team.restore.BackupRestore`の高水準操作は`restore()`と`resume()`だけである。
+callerは、直前に検査した`BackupArtifact`、opaqueなactor identifier、audit referenceを渡す。
+resultはterminal phase、restore generation、source digestとcandidate digest、Store-issuedの
+final `RecoveryFloor`を含む。また、destinationにだけ存在し、tombstoneとして残した
+operation/effect identityも返す。path、descriptor、SQLite row、provider payload、
+operationごとのtokenは含めない。
+
+restoreは、lifetime gateとwriter markerをexclusiveで保持する`QuiescenceSession`を
+1つ取得する。sessionから発行されたownerは、final readbackまで保持する。candidateを
+作る前に、sourceと過去のcommitted tombstoneを照合する。これにより、古いbackupから
+廃止済みのoperation IDやeffect keyが復活することを防ぐ。Store authorityはsourceとcurrent primaryを
+読み、source、destination、ledger、全attemptのhigh-waterよりstrictに大きいepoch/token
+floorを発行する。status更新は1つのin-memory `BEGIN IMMEDIATE` transactionで行う。
+完全にシリアライズし、fsyncして検証したcandidateだけをdescriptor相対のprimary置換へ渡す。
+restore timestampは、sourceとdestination双方のdurable clock high-water以上でなければならない。
+古い値はclampせず、`ClockRollbackError`で拒否する。
+
+10種類のoperation statusは外部の事実を変えない。
+
+`INTENT`、`FENCE_PENDING`、`FENCE_RESERVATION_STARTED`、`CLAIMED`、
+`EFFECT_PREPARED`、`UNKNOWN_EFFECT`、`UNKNOWN`、`RECEIPTED`、`COMPLETED`、
+`CLEANED`がoperation stateのpolicyである。`RESTORE_INCOMPLETE`は別のrecovery
+observationであり、sourceとして受け付けない。
+
+- `INTENT`はattempt 0のまま、新しいepochへ進める。
+- `FENCE_PENDING`、`FENCE_RESERVATION_STARTED`、`CLAIMED`、`EFFECT_PREPARED`、
+  `UNKNOWN_EFFECT`、`UNKNOWN`はstatusと証拠を保持し、古いlease authorityだけをstaleにする。
+  restore中にproviderの照会、実行、retry、reclaimは行わない。
+- `RECEIPTED`はeffect、proof、owner、attemptを保持し、Store-issuedのexactなexpected
+  epoch/tokenをattemptとreceiptへ同じtransactionで反映する。candidateとresumeの検証は、
+  計画したtoken以外を拒否する。
+- `COMPLETED`はterminal receiptを保持し、restore epoch/eventだけを追加する。
+- `CLEANED`ではglobalの`RecoveryFloor`とstore全体のdurable clockはadvanceできるが、row、
+  attempt、receipt、event、`updated_ns`はimmutableのままにする。
+- `RESTORE_INCOMPLETE`を含むsourceは受理せず、operator reviewへ送る。
+
+restoreはproviderの実行・status照会、自動retry、backend fallback、terminal resourceのcloseを
+行わない。DDL、`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`は検証するが、
+変更しない。
+
+既存の9-field `recovery.ledger` version 1は変更しない。別のstrict append-onlyな
+`recovery.tombstones` version 1には、generationごとのsource/old-primary/candidate digest、
+destination-onlyのoperation/effect key、旧primaryのepoch、fencing-token、clock high-waterを
+保存する。
+
+通常のStore openは、lifetime gate、marker、database、SQLite connectionを作成またはopenする前に、
+`recovery.ledger`と`recovery.tombstones`の履歴を検証する。shared lifetime gateを取得した後にも、
+同じ履歴を再検証する。pending、partial、malformed、世代間不一致、
+phase/digest/high-water不一致では通常openを拒否する。committed tombstoneと衝突する
+`create_intent`も拒否する。
+
+`ReadOnlyDoctor`も同じledger/tombstone pairを事前検査する。pendingまたはmalformedな
+restore pairは両logを変更せず、observed stateを`RESTORE_INCOMPLETE`、safe actionを
+`OPERATOR_REVIEW`として報告する。
+tombstone履歴がなく、bareな`recovery.ledger`だけがmalformedな場合は、従来どおり
+`UNREADABLE`とする。この場合もoperator reviewが必要である。
+
+markerがcleanな場合、6つの不確実なoperation status、すなわち
+`FENCE_PENDING`、`FENCE_RESERVATION_STARTED`、`CLAIMED`、`EFFECT_PREPARED`、
+`UNKNOWN_EFFECT`、`UNKNOWN`は、`observed_state=UNKNOWN_EFFECT`、
+`safe_action=OPERATOR_REVIEW`、低いconfidenceで報告する。このactionはoperatorへの
+advisoryであり、coordinatorを呼び出す許可ではない。public observationだけでは
+provider proof、expiry、現在のrecovery epochを確定できず、coordinatorもより狭い
+exact preconditionしか受け付けない。そのためDoctorはこの6 statusについてproviderを
+呼ばない。marker、pair、identityの異常がある場合は、さらに保守的なreview状態になる。
+
+restore後のoperationでは、recovery epochと保持したlease epochが意図的に異なる場合がある。
+Doctorがこの差を許可する根拠は、完全に検証したcanonicalなledger/tombstone履歴だけである。
+committed recovery epochは現在のStore imageと一致し、現在のtoken high-waterはcommitted floor
+以上でなければならない。さらに、Storeが所有するimage全体のhigh-water検査を通す。
+callerが指定した診断用ledgerは、この例外を認可できない。abortだけの履歴、rowやtokenの
+破損は`UNREADABLE`のままにする。
+
+### stable restore-history binding
+
+committed generationごとに、Storeはstableな`restore-history-binding` digestを計算する。
+canonicalな入力は、latest committed logのstable field、すなわちgeneration、actor、
+audit referenceのdigest、sourceとprevious primaryのdigest、previous recovery epoch・
+token・clock high-water、final epoch/token floorである。これにcurrent generationの
+tombstone batchと、すべてのcommitted tombstoneからなるactive identityの累積unionを加える。
+candidateのrestore eventにはこのbindingを記録し、normal-open verifierは一致するprimary
+restore eventをhistory anchorとして検証する。
+
+`candidate_digest`は別のexact evidenceである。current generationのcandidate apply、primary
+replacement、final result、resumeでは、expected candidate bytesを、replacement後はfull primary
+imageをこのdigestで束縛する。関係する検証の間はbytesが変わらないことを前提とするため、
+これらの経路ではdigestとidentityのexact比較を維持する。一方、stableなnormal-open binding
+は意図的に`candidate_digest`を含めない。含めると、primaryに保存するevent refとのself-reference
+になり、後続の正当なwriteでprimaryが変わるたびにhistory anchorが無効になるためである。
+version 1のno-wire contractでは、すでにcommittedなhistoryの`candidate_digest`だけを一貫して
+書き換えても、normal openや新しいrestoreで認証されず、必ず検出できるとは限らない。この改変は
+ 累積tombstone identity fenceを変えない。このケースまで保証するにはsignature、attestation、
+ またはversioned durable anchorが必要である。
+
+constructorはnormal stateをopenする前にrecovery pairをpreflightし、openしたimageに対する
+binding検証を後続のPRAGMAやschema初期化より前に行う。`create_intent()`はshared lifetime gateの
+中でpairとbindingを再検証する。新しいrestore generationも、candidate作成やrecovery record
+追記の前に、現在のcommitted bindingを検証する。これによりopen後のhistory tamperを拒否し、
+older backupが改ざんされたhistoryを新しいanchorとして取り込むことを防ぐ。mutableな
+operation/status/token planはstable bindingに含めず、candidateとresumeでoperation、evidence、
+receipt、expected tokenを別途exactに検証する。
+
+latest generationが`RESTORE_ABORTED`/`ABORTED`の場合、normal-open stateは直前のcommitted
+generationがあれば、そのhandleと累積unionを使う。直前のcommitted generationがなければstateは
+emptyである。abortしたgenerationのidentityはactiveに含めない。
+current batchと累積unionがどちらも空ならcollision anchorは不要である。ただしzero-event
+restoreのprovenanceは、下記の保証境界に残る。currentまたは累積tombstone unionが空でない
+zero-event restoreは、candidate transactionのcommit、ledger preparation、
+`RESTORE_COMMITTED`より前にfail-fastする。
+
+ledger recordとtombstone recordは別のappend-only fileであり、一つの原子的操作では公開されない。
+同じgenerationで許可する組み合わせは次の6つだけである。途中の2組はresponse-loss状態を表す。
+
+| Recovery ledger | Tombstone log | 意味 |
+|---|---|---|
+| `RESTORE_PREPARED` | `PREPARED` | 通常のprepared state |
+| `RESTORE_PREPARED` | `ABORTED` | abort response-loss |
+| `RESTORE_REPLACED` | `PREPARED` | 通常のreplaced state |
+| `RESTORE_REPLACED` | `COMMITTED` | commit response-loss |
+| `RESTORE_COMMITTED` | `COMMITTED` | terminal committed state |
+| `RESTORE_ABORTED` | `ABORTED` | terminal aborted state |
+
+これ以外の組み合わせ、片側欠損、不正なhistory prefix、high-water不一致は
+recovery-requiredとする。
+
+### pair単位のresume durability barrier
+
+`RestoreLedger.read_for_resume()`はrecovery stateを最初に読むconsumerである。すでに保持して
+いるquiescence ownerを使い、既存のlogだけをopenして、non-blocking lockを`tombstone`、次に
+`ledger`の順で取得する。fsyncやmutationの前に、2つのbyte streamをstrictにparseし、pairを
+classifyする。missing、partial、malformed、unsafe、mixed、generation skewのいずれかなら
+fail-closedでreviewに止まり、log、primary、candidateを変更しない。
+
+validなpairだけについて、各logをfsyncし、その後state root directoryをfsyncする。続いて同じ
+locked descriptorからexactなbytesを読み直し、fileとrootのidentityおよびpair classificationを
+再検証する。見えているbytes、JSON parseの成功、前のprocessが返した結果だけではdurabilityの
+証明にならない。file/root fsync、readback、identity、unlock、closeのどれかが不確かな場合は、
+durability proofもphaseや成功resultも返さない。barrierは欠けたlogを作らず、partial recordを
+切り詰めず、どちらのfileも暗黙に修復しない。barrierが成功した後だけ、`resume()`は許可された
+tombstone-first stateの不足recordを1行だけ追記し、そのproofのためにcandidate transactionや
+primary replacementを再適用しない。
+
+durable phaseの意味は次のとおりである。
+
+- `RESTORE_PREPARED`: candidate transaction、image検証、tombstone evidenceがdurableである。
+  primaryは、置換のdurabilityを明示的に証明できない限りoldとして扱う。
+- `RESTORE_REPLACED`: descriptor-relative replace、directory fsync、descriptor rebind、
+  primary image検証が完了している。
+- `RESTORE_COMMITTED`: tombstoneとledgerのcommit recordがdurableである。高水準操作が成功を
+  返すには、その後のartifact、primary、fileset、sidecar、ownerのfinal readbackも必要になる。
+  final readbackが失敗してもterminal recordが残る場合がある。`resume()`はrecordだけで成功と
+  判断せず、検証をやり直す。
+- `RESTORE_ABORTED`: replaceが起きていないことをoperatorが明示的に証明した。
+  高水準restore pathは自動abortしない。
+
+`resume()`は、消えたcandidateを作り直したり、transactionを再適用したりしない。prepareは
+tombstoneをledgerより先に公開するため、tombstone-firstのresponse-lossとして受理するのは、
+ledgerがない初回generationと、完全なterminal prefix直後の次generationだけである。source、
+old primary、candidate、旧epoch/token/clock high-water、committed identity set、candidate floorを
+検証してから、不足したprepared ledger record 1行だけを追記する。それ以外の片側欠損や
+generation skewはoperator reviewのままにする。`RESTORE_PREPARED`と`ABORTED` tombstoneの
+組み合わせでは、old primaryを確認してから不足したabort ledger recordだけを追記し、candidateを
+applyまたはreplaceしない。old primaryとexact candidateが残るprepared stateだけは、再検証後に
+replaceできる。new primaryだけが残る
+prepared stateでは、renameが完了したか、directory fsyncが永続化したかを後から判別できない。
+この場合はoperator reviewに止める。replaced generationはfinal verificationとcommitだけを行い、committed
+generationは検証済みno-opになる。mixed、missing、ambiguous、mismatch stateをrollback、
+promote、silent repairしない。
+
+## backupとrestoreの保証境界
+
+検証済みの保証範囲は、Python標準`sqlite3`、default local POSIX VFS、所有者だけが扱う
+local state root、協調する`CoordinationStore` client、deterministic fault barrier、
+観測可能なpathname/inode raceである。POSIXにはportableなcompare-and-unlinkがないため、
+最後の明示的なidentity確認後に、
+非協調なsame-UID processがpathnameを差し替える動作は保証対象外とする。unknownまたは
+不一致を観測したidentityは保持し、不確実性は保守的に報告する。同じUIDのprocessがprimary、
+`transition_events`、両方のrecovery logを一貫した内容へ同時に書き換える場合、その改変は
+検出できない。active tombstone unionが空のzero-event restoreにはdurableなprovenance anchorが
+ない。bindingはSHA-256によるintegrity referenceであり、暗号学的なsignatureやattestationではない。
+最終identity確認後の非協調なsyscall raceは、観測できる場合でも保証範囲に含めない。
+
+custom/`nolock` VFS、network/distributed filesystem、実行したfsync contractを超える
+power lossは対象外である。providerの実行・status照会、自動retry、backend fallback、
+schema migrationもversion 1には含めない。
+
+上記のcurrent-generationにおける`candidate_digest`のexact検証は、apply、replacement、
+final result、resumeで引き続き必須である。ただしstableなnormal-openの保証は拡張しない。
+committed historyの`candidate_digest`だけを書き換えるケースはversion 1の認証対象外であり、
+累積tombstone fenceも変えない。
+
+この変更でDDL、`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`は変えない。
+9-fieldの`recovery.ledger` version 1と、13-fieldの`recovery.tombstones` version 1もwire
+互換性を保つ。stable bindingは既存のrestore eventの`evidence_ref` fieldに保存する。

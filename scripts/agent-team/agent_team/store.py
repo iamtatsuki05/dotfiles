@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import hashlib
 import os
 import re
 import sqlite3
@@ -16,7 +17,7 @@ import stat
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,9 +39,17 @@ from .lease import (
     RecoveryFloorReservation,
     RecoveryRebaseMode,
     RecoverySnapshot,
+    RestoreApplyResult,
+    RestoreCandidateEvidence,
+    RestoreIdentity,
+    RestoreReplacedEvidence,
+    StoreImageObservation,
     VerifiedProviderReceipt,
     _issue_floor_reservation,
     _issue_provider_effect,
+    _issue_restore_apply_result,
+    _restore_binding_digest,
+    _restore_expected_fencing_tokens,
     _verified_receipt_from_status,
     require_provider_capabilities,
 )
@@ -61,7 +70,10 @@ DEFAULT_BUSY_TIMEOUT_MS: Final[int] = 5_000
 MAX_BUSY_TIMEOUT_MS: Final[int] = 30_000
 SQLITE_INTEGER_MAX: Final[int] = 2**63 - 1
 MAX_IDENTIFIER_LENGTH: Final[int] = 128
+MAX_IMAGE_BYTES: Final[int] = 256 * 1024 * 1024
 _CLEANUP_EXCEPTION: Final[type[BaseException]] = BaseException
+_OrphanFD = tuple[int, tuple[int, int] | None, str]
+_MAX_ORPHAN_FDS: Final[int] = 8
 _WRITER_MARKER_CONTENTS: Final[dict[str, bytes]] = {
     WRITER_MARKER_CLEAN_STATE: WRITER_MARKER_CLEAN_CONTENT,
     WRITER_MARKER_PREPARED_STATE: WRITER_MARKER_PREPARED_CONTENT,
@@ -595,8 +607,218 @@ _EXPECTED_FOREIGN_KEYS: Final[dict[str, tuple[tuple[str, str, str, str, str], ..
 }
 
 
+class _CleanupCapability:
+    """Opaque, bounded owner for deferred cleanup retries."""
+
+    __slots__ = ("_members",)
+
+    def __init__(self, retry: Callable[[], None]) -> None:
+        self._members: list[Callable[[], None]] = [retry]
+
+    @classmethod
+    def _from_members(cls, members: Iterable[Callable[[], None]]) -> _CleanupCapability:
+        capability = cls.__new__(cls)
+        capability._members = list(members)
+        return capability
+
+    @staticmethod
+    def _same_member(
+        first: Callable[[], None],
+        second: Callable[[], None],
+    ) -> bool:
+        if first is second:
+            return True
+        try:
+            return bool(first == second)
+        except _CLEANUP_EXCEPTION:
+            return False
+
+    @classmethod
+    def compose(cls, *capabilities: _CleanupCapability) -> _CleanupCapability:
+        members: list[Callable[[], None]] = []
+        for capability in capabilities:
+            for member in capability._members:
+                if not any(cls._same_member(member, existing) for existing in members):
+                    members.append(member)
+        return cls._from_members(members)
+
+    def retry_cleanup(self) -> None:
+        remaining: list[Callable[[], None]] = []
+        first_error: BaseException | None = None
+        for member in self._members:
+            try:
+                member()
+            except _CLEANUP_EXCEPTION as exc:
+                remaining.append(member)
+                if first_error is None:
+                    first_error = exc
+        self._members = remaining
+        if first_error is not None:
+            raise first_error
+
+
+class _FDRecoveryOwner:
+    """Keep one uncertain descriptor for identity-safe retry."""
+
+    __slots__ = ("_expected_identity", "_fd", "_label", "_resolve_identity")
+
+    def __init__(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+        resolve_identity: Callable[[int, tuple[int, int]], tuple[int, int] | None]
+        | None = None,
+    ) -> None:
+        self._fd: int | None = fd
+        self._expected_identity = expected_identity
+        self._label = label
+        self._resolve_identity = resolve_identity
+
+    def _drop(self) -> None:
+        self._fd = None
+        self._expected_identity = None
+
+    def retry_cleanup(self) -> None:
+        fd = self._fd
+        if fd is None:
+            return
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                self._drop()
+                return
+            raise StoreUnavailableError(
+                f"{self._label} descriptor status is unknown"
+            ) from exc
+        expected_identity = self._expected_identity
+        if expected_identity is None and self._resolve_identity is not None:
+            expected_identity = self._resolve_identity(fd, _identity(metadata))
+            if expected_identity is not None:
+                self._expected_identity = expected_identity
+        if expected_identity is None:
+            raise StoreUnavailableError(
+                f"{self._label} descriptor identity is unavailable"
+            )
+        if _identity(metadata) != expected_identity:
+            self._drop()
+            raise StoreUnavailableError(f"{self._label} descriptor was reused")
+        try:
+            os.close(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            try:
+                retry_metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    self._drop()
+                    return
+                raise StoreUnavailableError(
+                    f"{self._label} descriptor close status is unknown"
+                ) from exc
+            if _identity(retry_metadata) != expected_identity:
+                self._drop()
+                raise StoreUnavailableError(
+                    f"{self._label} descriptor was reused"
+                ) from exc
+            raise StoreUnavailableError(
+                f"{self._label} descriptor cannot be closed"
+            ) from exc
+        self._drop()
+
+
+class _FDRecoveryGroup:
+    """Drain a bounded set of descriptor owners while preserving first error."""
+
+    __slots__ = ("_owners",)
+
+    def __init__(self, owners: Iterable[_FDRecoveryOwner]) -> None:
+        self._owners = tuple(owners)
+
+    def retry_cleanup(self) -> None:
+        first_error: BaseException | None = None
+        for owner in self._owners:
+            try:
+                owner.retry_cleanup()
+            except _CLEANUP_EXCEPTION as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+
+class _ConnectionCleanupOwner:
+    """Keep one temporary SQLite connection reachable until close is certain."""
+
+    __slots__ = ("_connection", "_label")
+
+    def __init__(self, connection: sqlite3.Connection, label: str) -> None:
+        self._connection: sqlite3.Connection | None = connection
+        self._label = label
+
+    def retry_cleanup(self) -> None:
+        connection = self._connection
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except sqlite3.ProgrammingError:
+            self._connection = None
+            return
+        except _CLEANUP_EXCEPTION as exc:
+            raise StoreUnavailableError(
+                f"{self._label} connection cannot be closed"
+            ) from exc
+        self._connection = None
+
+
+def _attempt_fd_cleanup(
+    fd: int,
+    expected_identity: tuple[int, int] | None,
+    label: str,
+) -> tuple[BaseException | None, _FDRecoveryOwner | None]:
+    owner = _FDRecoveryOwner(fd, expected_identity, label)
+    try:
+        owner.retry_cleanup()
+    except _CLEANUP_EXCEPTION as exc:
+        if owner._fd is None:
+            return exc, None
+        return exc, owner
+    return None, None
+
+
 class StoreError(RuntimeError):
     """Base class for explicit coordination-store failures."""
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        self._cleanup_capability: _CleanupCapability | None = None
+
+    def _attach_cleanup_capability(self, capability: _CleanupCapability) -> None:
+        existing = self._cleanup_capability
+        self._cleanup_capability = (
+            capability
+            if existing is None
+            else _CleanupCapability.compose(capability, existing)
+        )
+
+    def retry_cleanup(self) -> None:
+        """Retry an opaque, deferred resource cleanup, if one is pending."""
+
+        capability = self._cleanup_capability
+        if capability is None:
+            return
+        try:
+            capability.retry_cleanup()
+        except BaseException as exc:
+            replacement = _attach_cleanup_capability(exc, capability)
+            if replacement is not exc:
+                raise replacement from exc
+            raise
+        self._cleanup_capability = None
 
 
 class StoreClosedError(StoreError):
@@ -627,8 +849,130 @@ class DuplicateOperationError(StoreError):
     """An operation or effect identity already exists."""
 
 
+def _attach_cleanup_capability(
+    error: BaseException,
+    capability: _CleanupCapability,
+) -> BaseException:
+    if isinstance(error, StoreError):
+        error._attach_cleanup_capability(capability)
+        return error
+    # Most Python exceptions permit private attributes.  Keeping the original
+    # body exception primary is preferable to replacing it with cleanup state.
+    try:
+        cleanup_attribute = "_cleanup_capability"
+        retry_attribute = "retry_cleanup"
+        attributes = vars(error)
+        existing = attributes.get(cleanup_attribute)
+        if isinstance(existing, _CleanupCapability):
+            capability = _CleanupCapability.compose(capability, existing)
+        else:
+            retry = attributes.get(retry_attribute)
+            if retry is None:
+                retry = getattr(error, retry_attribute, None)
+            if callable(retry):
+                capability = _CleanupCapability.compose(
+                    capability,
+                    _CleanupCapability(cast(Callable[[], None], retry)),
+                )
+        setattr(error, cleanup_attribute, capability)
+        setattr(error, retry_attribute, capability.retry_cleanup)
+    except _CLEANUP_EXCEPTION:
+        wrapped = StoreUnavailableError("coordination store cleanup failed")
+        wrapped.__cause__ = error
+        wrapped._attach_cleanup_capability(capability)
+        return wrapped
+    return error
+
+
+def _extract_cleanup_capability(
+    error: BaseException,
+) -> _CleanupCapability | None:
+    try:
+        if isinstance(error, StoreError):
+            return error._cleanup_capability
+        attributes = vars(error)
+        capability = attributes.get("_cleanup_capability")
+        if isinstance(capability, _CleanupCapability):
+            return capability
+        retry = attributes.get("retry_cleanup")
+        if retry is None:
+            retry = getattr(error, "retry_cleanup", None)
+        if callable(retry):
+            return _CleanupCapability(cast(Callable[[], None], retry))
+    except _CLEANUP_EXCEPTION:
+        return None
+    return None
+
+
+def _adopt_cleanup_capability(
+    wrapper: BaseException,
+    source: BaseException,
+) -> BaseException:
+    capability = _extract_cleanup_capability(source)
+    if capability is None:
+        return wrapper
+    return _attach_cleanup_capability(wrapper, capability)
+
+
+def _raise_with_cleanup_capability(
+    error: BaseException,
+    capability: _CleanupCapability,
+) -> NoReturn:
+    attached = _attach_cleanup_capability(error, capability)
+    if attached is not error:
+        raise attached from error
+    raise error
+
+
+def _store_error_from_exception(
+    error: BaseException,
+    message: str,
+) -> StoreError:
+    if isinstance(error, StoreError):
+        return error
+    wrapped = StoreUnavailableError(message)
+    wrapped.__cause__ = error
+    return wrapped
+
+
+@contextmanager
+def _temporary_sqlite_connection(label: str) -> Iterator[sqlite3.Connection]:
+    connection = sqlite3.connect(
+        ":memory:",
+        uri=False,
+        timeout=0,
+        isolation_level=None,
+    )
+    owner = _ConnectionCleanupOwner(connection, label)
+    body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    try:
+        yield connection
+    except _CLEANUP_EXCEPTION as exc:
+        body_error = exc
+    finally:
+        try:
+            owner.retry_cleanup()
+        except _CLEANUP_EXCEPTION as exc:
+            cleanup_error = exc
+    capability = _CleanupCapability(owner.retry_cleanup)
+    if body_error is not None:
+        if cleanup_error is not None:
+            _raise_with_cleanup_capability(body_error, capability)
+        attached = _attach_cleanup_capability(body_error, capability)
+        if attached is not body_error:
+            raise attached from body_error
+        raise body_error
+    if cleanup_error is not None:
+        _raise_with_cleanup_capability(cleanup_error, capability)
+
+
 def _normalize_sql(sql: str) -> str:
     return sql.strip()
+
+
+def _noop_restore_fault(point: str) -> None:
+    del point
 
 
 def _require_sqlite_integer(value: object, name: str, *, minimum: int = 0) -> int:
@@ -716,25 +1060,28 @@ def _require_optional_status(value: object, name: str) -> str | None:
 
 def _raise_sqlite_write_error(error: sqlite3.DatabaseError) -> NoReturn:
     message = str(error).lower()
+    mapped: StoreError
     if isinstance(error, sqlite3.OperationalError):
         if "locked" in message or "busy" in message:
-            raise StoreBusyError("SQLite busy timeout expired while writing") from error
-        if any(
+            mapped = StoreBusyError("SQLite busy timeout expired while writing")
+        elif any(
             marker in message
             for marker in ("malformed", "not a database", "corrupt", "integrity")
         ):
-            raise StoreIntegrityError(
-                "SQLite write found an integrity failure"
-            ) from error
-        raise StoreUnavailableError("SQLite write failed") from error
-    if any(
+            mapped = StoreIntegrityError("SQLite write found an integrity failure")
+        else:
+            mapped = StoreUnavailableError("SQLite write failed")
+    elif any(
         marker in message
         for marker in ("not authorized", "readonly", "read-only", "disk i/o")
     ):
-        raise StoreUnavailableError("SQLite write failed") from error
-    if isinstance(error, sqlite3.IntegrityError):
-        raise StoreIntegrityError("SQLite write violated a store constraint") from error
-    raise StoreIntegrityError("SQLite write failed") from error
+        mapped = StoreUnavailableError("SQLite write failed")
+    elif isinstance(error, sqlite3.IntegrityError):
+        mapped = StoreIntegrityError("SQLite write violated a store constraint")
+    else:
+        mapped = StoreIntegrityError("SQLite write failed")
+    _adopt_cleanup_capability(mapped, error)
+    raise mapped from error
 
 
 def _raise_recovery_read_error(
@@ -833,23 +1180,6 @@ def _current_uid() -> int:
         raise StoreUnavailableError("private state ownership is unsupported") from exc
 
 
-def _close_unowned_fd(fd: int) -> None:
-    """Close a just-opened descriptor, retrying a transient close failure."""
-
-    try:
-        os.close(fd)
-    except _CLEANUP_EXCEPTION as first_error:
-        try:
-            os.close(fd)
-        except _CLEANUP_EXCEPTION as retry_error:
-            raise StoreUnavailableError(
-                "private descriptor cannot be closed"
-            ) from retry_error
-        raise StoreUnavailableError(
-            "private descriptor close status is uncertain"
-        ) from first_error
-
-
 def _open_flags(*, directory: bool, writable: bool) -> int:
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     if nofollow == 0:
@@ -888,45 +1218,350 @@ def _validate_directory_fd(fd: int, *, state_root: bool) -> None:
 def _open_state_root(state_root: Path) -> int:
     directory_flags = _open_flags(directory=True, writable=False)
     root_fd: int | None = None
+    root_identity: tuple[int, int] | None = None
     current_fd: int | None = None
+    current_identity: tuple[int, int] | None = None
+    result_fd: int | None = None
+    result_identity: tuple[int, int] | None = None
+    body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    owners: list[_FDRecoveryOwner] = []
+
+    def remember_cleanup(
+        error: BaseException | None,
+        owner: _FDRecoveryOwner | None,
+    ) -> None:
+        nonlocal cleanup_error
+        if error is not None:
+            if cleanup_error is None:
+                cleanup_error = error
+            if owner is not None:
+                owners.append(owner)
+
+    def close_current(label: str) -> None:
+        nonlocal current_fd, current_identity, root_fd, root_identity
+        fd = current_fd
+        identity = current_identity
+        if fd == root_fd:
+            identity = root_identity
+        current_fd = None
+        current_identity = None
+        if fd is None:
+            return
+        if fd == root_fd:
+            root_fd = None
+            root_identity = None
+        error, owner = _attempt_fd_cleanup(fd, identity, label)
+        remember_cleanup(error, owner)
+
+    def close_root(label: str) -> None:
+        nonlocal root_fd, root_identity
+        fd = root_fd
+        identity = root_identity
+        root_fd = None
+        root_identity = None
+        if fd is None:
+            return
+        error, owner = _attempt_fd_cleanup(fd, identity, label)
+        remember_cleanup(error, owner)
+
+    def store_error(error: BaseException, message: str) -> BaseException:
+        if isinstance(error, StoreError):
+            return error
+        wrapped = StoreUnavailableError(message)
+        wrapped.__cause__ = error
+        return wrapped
+
     try:
+        try:
+            root_identity = _identity(os.stat(os.sep, follow_symlinks=False))
+        except OSError as exc:
+            body_error = store_error(
+                exc,
+                "private state root path cannot be inspected",
+            )
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = store_error(
+                exc,
+                "private state root path status is unknown",
+            )
         root_fd = os.open(os.sep, directory_flags)
         current_fd = root_fd
+        if body_error is None:
+            try:
+                actual_root_identity = _identity(os.fstat(root_fd))
+            except OSError as exc:
+                body_error = store_error(
+                    exc,
+                    "private state root descriptor cannot be inspected",
+                )
+            except _CLEANUP_EXCEPTION as exc:
+                body_error = store_error(
+                    exc,
+                    "private state root descriptor status is unknown",
+                )
+            else:
+                if actual_root_identity != root_identity:
+                    body_error = StoreUnavailableError(
+                        "private state root changed while opening"
+                    )
+                root_identity = actual_root_identity
         components = state_root.parts[1:]
-        for index, component in enumerate(components):
-            next_fd = os.open(component, directory_flags, dir_fd=current_fd)
-            if current_fd != root_fd:
-                os.close(current_fd)
-            current_fd = next_fd
-            _validate_directory_fd(
-                current_fd,
-                state_root=index == len(components) - 1,
-            )
-        if current_fd == root_fd:
-            raise StoreUnavailableError("private state root is invalid")
-        result_fd = current_fd
-        if root_fd != result_fd:
-            os.close(root_fd)
-            root_fd = None
-        return result_fd
-    except StoreError:
-        if current_fd is not None and current_fd != root_fd:
-            os.close(current_fd)
-        if root_fd is not None:
-            os.close(root_fd)
-        raise
+        if body_error is None:
+            for index, component in enumerate(components):
+                next_fd: int | None = None
+                next_identity: tuple[int, int] | None = None
+                try:
+                    try:
+                        next_identity = _identity(
+                            os.stat(
+                                component,
+                                dir_fd=current_fd,
+                                follow_symlinks=False,
+                            )
+                        )
+                    except FileNotFoundError as exc:
+                        raise store_error(
+                            exc,
+                            "private state path cannot be inspected",
+                        )
+                    except OSError as exc:
+                        raise store_error(
+                            exc,
+                            "private state path cannot be inspected",
+                        )
+                    next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+                    try:
+                        actual_next_identity = _identity(os.fstat(next_fd))
+                    except OSError as exc:
+                        raise store_error(
+                            exc,
+                            "private state traversal descriptor cannot be inspected",
+                        )
+                    except _CLEANUP_EXCEPTION as exc:
+                        raise store_error(
+                            exc,
+                            "private state traversal descriptor status is unknown",
+                        )
+                    if actual_next_identity != next_identity:
+                        raise StoreUnavailableError(
+                            "private state path changed while opening"
+                        )
+                    next_identity = actual_next_identity
+                    _validate_directory_fd(
+                        next_fd,
+                        state_root=index == len(components) - 1,
+                    )
+                except _CLEANUP_EXCEPTION as exc:
+                    body_error = store_error(
+                        exc,
+                        "private state traversal failed",
+                    )
+                    if next_fd is not None:
+                        error, owner = _attempt_fd_cleanup(
+                            next_fd,
+                            next_identity,
+                            "state root traversal next descriptor",
+                        )
+                        remember_cleanup(error, owner)
+                    break
+                if current_fd is not None and current_fd != root_fd:
+                    close_current("state root traversal current descriptor")
+                current_fd = next_fd
+                current_identity = next_identity
+            if body_error is None and current_fd == root_fd:
+                body_error = StoreUnavailableError("private state root is invalid")
+            elif body_error is None:
+                result_fd = current_fd
+                result_identity = current_identity
+                current_fd = None
+                current_identity = None
+                close_root("state root traversal root descriptor")
+                if cleanup_error is not None and result_fd is not None:
+                    error, owner = _attempt_fd_cleanup(
+                        result_fd,
+                        result_identity,
+                        "state root traversal result descriptor",
+                    )
+                    remember_cleanup(error, owner)
+                    result_fd = None
+    except StoreError as exc:
+        body_error = exc
     except OSError as exc:
-        if current_fd is not None and current_fd != root_fd:
-            os.close(current_fd)
-        if root_fd is not None:
-            os.close(root_fd)
-        raise StoreUnavailableError(
+        body_error = StoreUnavailableError(
             "private state root cannot be securely opened"
-        ) from exc
+        )
+        body_error.__cause__ = exc
+    except _CLEANUP_EXCEPTION as exc:
+        body_error = store_error(
+            exc,
+            "private state root status is unknown",
+        )
+    finally:
+        if result_fd is None:
+            close_current("state root traversal current descriptor")
+            close_root("state root traversal root descriptor")
+
+    if body_error is not None:
+        if cleanup_error is not None or owners:
+            capability = _CleanupCapability(_FDRecoveryGroup(owners).retry_cleanup)
+            attached = _attach_cleanup_capability(body_error, capability)
+            if attached is not body_error:
+                raise attached from body_error
+        raise body_error
+    if cleanup_error is not None or owners:
+        capability = _CleanupCapability(_FDRecoveryGroup(owners).retry_cleanup)
+        assert cleanup_error is not None
+        attached = _attach_cleanup_capability(cleanup_error, capability)
+        if attached is not cleanup_error:
+            raise attached from cleanup_error
+        raise cleanup_error
+    if result_fd is None:
+        raise StoreUnavailableError("private state root cannot be securely opened")
+    return result_fd
 
 
 def _identity(metadata: os.stat_result) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
+
+
+class _LifetimeGateCleanupOwner:
+    """Keep one gate descriptor available until its cleanup is certain."""
+
+    __slots__ = ("_expected_identity", "_fd", "_label", "_locked")
+
+    def __init__(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int],
+        *,
+        locked: bool,
+        label: str = "coordination lifetime gate",
+    ) -> None:
+        self._fd: int | None = fd
+        self._expected_identity: tuple[int, int] | None = expected_identity
+        self._locked = locked
+        self._label = label
+
+    def mark_locked(self) -> None:
+        self._locked = True
+
+    def bind_identity(self, identity: tuple[int, int]) -> None:
+        self._expected_identity = identity
+
+    def _drop(self) -> None:
+        self._fd = None
+        self._expected_identity = None
+        self._locked = False
+
+    def _check_identity(self, fd: int) -> bool:
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                self._drop()
+                return False
+            raise StoreUnavailableError(
+                f"{self._label} descriptor status is unknown"
+            ) from exc
+        expected_identity = self._expected_identity
+        if expected_identity is None:
+            raise StoreUnavailableError(
+                f"{self._label} descriptor identity is unavailable"
+            )
+        if _identity(metadata) != expected_identity:
+            self._drop()
+            raise StoreUnavailableError(f"{self._label} descriptor was reused")
+        return True
+
+    def retry_cleanup(self) -> None:
+        """Release and close the gate once, retaining uncertain state on error."""
+
+        fd = self._fd
+        if fd is None or not self._check_identity(fd):
+            return
+
+        first_error: BaseException | None = None
+        if self._locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except _CLEANUP_EXCEPTION as exc:
+                first_error = exc
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    self._drop()
+                    if first_error is None:
+                        return
+                elif first_error is None:
+                    first_error = StoreUnavailableError(
+                        f"{self._label} descriptor status is unknown"
+                    )
+                raise StoreUnavailableError(
+                    f"{self._label} cleanup failed"
+                ) from first_error
+            expected_identity = self._expected_identity
+            if expected_identity is None:
+                self._drop()
+                error = StoreUnavailableError(
+                    f"{self._label} descriptor identity is unavailable"
+                )
+                if first_error is None:
+                    first_error = error
+                raise StoreUnavailableError(
+                    f"{self._label} cleanup failed"
+                ) from first_error
+            if _identity(metadata) != expected_identity:
+                self._drop()
+                error = StoreUnavailableError(f"{self._label} descriptor was reused")
+                if first_error is None:
+                    first_error = error
+                raise StoreUnavailableError(
+                    f"{self._label} cleanup failed"
+                ) from first_error
+            if first_error is None:
+                self._locked = False
+
+        try:
+            os.close(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            if first_error is None:
+                first_error = exc
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    self._drop()
+                elif first_error is None:
+                    first_error = StoreUnavailableError(
+                        f"{self._label} descriptor status is unknown"
+                    )
+            else:
+                expected_identity = self._expected_identity
+                if expected_identity is None:
+                    first_error = StoreUnavailableError(
+                        f"{self._label} descriptor identity is unavailable"
+                    )
+                elif _identity(metadata) != expected_identity:
+                    self._drop()
+                    if first_error is None:
+                        first_error = StoreUnavailableError(
+                            f"{self._label} descriptor was reused"
+                        )
+        else:
+            self._drop()
+
+        if first_error is not None:
+            raise StoreUnavailableError(
+                f"{self._label} cleanup failed"
+            ) from first_error
 
 
 def _validate_private_file(
@@ -944,6 +1579,330 @@ def _validate_private_file(
     ):
         label = "sidecar" if sidecar else "database"
         raise StoreUnavailableError(f"private SQLite {label} file is unsafe")
+
+
+def _fresh_cleanup_error(label: str, message: str, cause: BaseException) -> StoreError:
+    error = StoreUnavailableError(f"fresh {label} cleanup {message}")
+    error.__cause__ = cause
+    return error
+
+
+def _unlink_identity_tracked(
+    path: str | Path,
+    expected_identity: tuple[int, int] | None,
+    *,
+    dir_fd: int | None,
+    sidecar: bool,
+    label: str,
+) -> tuple[bool, bool, BaseException | None]:
+    """Unlink one fresh path only while its observed identity still matches."""
+
+    if expected_identity is None:
+        return True, False, None
+    try:
+        metadata = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True, False, None
+    except _CLEANUP_EXCEPTION as exc:
+        return False, False, _fresh_cleanup_error(label, "status is unknown", exc)
+    if _identity(metadata) != expected_identity:
+        return True, False, None
+    try:
+        _validate_private_file(metadata, sidecar=sidecar)
+    except _CLEANUP_EXCEPTION as exc:
+        return False, False, _fresh_cleanup_error(label, "path is unsafe", exc)
+    try:
+        os.unlink(path, dir_fd=dir_fd)
+    except _CLEANUP_EXCEPTION as exc:
+        try:
+            after = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return True, True, _fresh_cleanup_error(label, "status is unknown", exc)
+        except _CLEANUP_EXCEPTION as status_error:
+            return (
+                False,
+                False,
+                _fresh_cleanup_error(
+                    label,
+                    "status is unknown",
+                    status_error,
+                ),
+            )
+        if _identity(after) != expected_identity:
+            return True, True, _fresh_cleanup_error(label, "status is unknown", exc)
+        return False, False, _fresh_cleanup_error(label, "failed", exc)
+    return True, True, None
+
+
+def _image_stat_signature(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _read_image_fd(
+    fd: int,
+    *,
+    label: str,
+    allow_empty: bool = False,
+) -> tuple[os.stat_result, bytes]:
+    if type(fd) is not int or fd < 0:
+        raise StoreUnavailableError(f"{label} descriptor is invalid")
+    try:
+        before = os.fstat(fd)
+    except OSError as exc:
+        raise StoreUnavailableError(f"{label} descriptor cannot be inspected") from exc
+    _validate_private_file(before, sidecar=False)
+    if not allow_empty and before.st_size == 0:
+        raise StoreIntegrityError(f"{label} image is empty")
+    if before.st_size > MAX_IMAGE_BYTES:
+        raise StoreIntegrityError(f"{label} image is too large")
+    try:
+        image = os.pread(fd, before.st_size, 0)
+        after = os.fstat(fd)
+    except OSError as exc:
+        raise StoreUnavailableError(f"{label} image cannot be read") from exc
+    _validate_private_file(after, sidecar=False)
+    if len(image) != before.st_size or _image_stat_signature(
+        before
+    ) != _image_stat_signature(after):
+        raise StoreUnavailableError(f"{label} image changed while reading")
+    if not allow_empty:
+        _validate_sqlite_image_header(image, label=label)
+    return before, image
+
+
+def _validate_sqlite_image_header(image: bytes, *, label: str) -> None:
+    if len(image) < 100 or image[:16] != b"SQLite format 3\x00":
+        raise StoreIntegrityError(f"{label} has an invalid SQLite header")
+    page_size = int.from_bytes(image[16:18], "big")
+    if page_size == 1:
+        page_size = 65_536
+    elif page_size < 512 or page_size > 32_768 or page_size & (page_size - 1):
+        raise StoreIntegrityError(f"{label} has an invalid SQLite page size")
+    if image[18:20] not in (b"\x01\x01", b"\x02\x02"):
+        raise StoreIntegrityError(f"{label} has an invalid SQLite format pair")
+    if image[20] != 0 or image[21:24] != b"\x40\x20\x20":
+        raise StoreIntegrityError(f"{label} has noncanonical SQLite payload bytes")
+    if int.from_bytes(image[44:48], "big") != 4:
+        raise StoreIntegrityError(f"{label} has an unsupported SQLite schema format")
+    if int.from_bytes(image[56:60], "big") != 1:
+        raise StoreIntegrityError(f"{label} has a noncanonical SQLite encoding")
+    if image[72:92] != b"\x00" * 20:
+        raise StoreIntegrityError(f"{label} has noncanonical SQLite reserved bytes")
+    page_count = int.from_bytes(image[28:32], "big")
+    if page_count < 1 or page_size * page_count != len(image):
+        raise StoreIntegrityError(f"{label} has an invalid SQLite page count")
+
+
+def _memory_image(image: bytes) -> bytes:
+    """Make a WAL image loadable by SQLite's in-memory deserializer."""
+
+    _validate_sqlite_image_header(image, label="SQLite image")
+    if image[18:20] != b"\x02\x02":
+        return image
+    normalized = bytearray(image)
+    normalized[18] = 1
+    normalized[19] = 1
+    return bytes(normalized)
+
+
+def _wal_image(image: bytes) -> bytes:
+    """Emit the serialized candidate with SQLite's WAL header marker."""
+
+    if len(image) < 20:
+        return image
+    wal_image = bytearray(image)
+    wal_image[18] = 2
+    wal_image[19] = 2
+    return bytes(wal_image)
+
+
+def _write_image_fd(fd: int, image: bytes, *, label: str) -> os.stat_result:
+    if type(fd) is not int or fd < 0:
+        raise StoreUnavailableError(f"{label} descriptor is invalid")
+    write_started = False
+    try:
+        before = os.fstat(fd)
+    except OSError as exc:
+        raise StoreUnavailableError(f"{label} descriptor cannot be inspected") from exc
+    _validate_private_file(before, sidecar=False)
+    if before.st_size != 0:
+        raise LeaseConflictError(f"{label} target is not empty")
+    try:
+        write_started = True
+        os.ftruncate(fd, 0)
+        offset = 0
+        while offset < len(image):
+            written = os.pwrite(fd, image[offset:], offset)
+            if written <= 0:
+                raise OSError("short SQLite image write")
+            offset += written
+        os.fsync(fd)
+        after = os.fstat(fd)
+    except OSError as exc:
+        if write_started:
+            raise StoreCommitUnknownError(
+                f"{label} durability or identity is unknown"
+            ) from exc
+        raise StoreUnavailableError(f"{label} image cannot be written") from exc
+    try:
+        _validate_private_file(after, sidecar=False)
+    except StoreError as exc:
+        raise StoreCommitUnknownError(
+            f"{label} durability or identity is unknown"
+        ) from exc
+    if (
+        _identity(before) != _identity(after)
+        or after.st_size != len(image)
+        or _image_stat_signature(before)[:5] != _image_stat_signature(after)[:5]
+    ):
+        raise StoreCommitUnknownError(f"{label} target changed while writing")
+    return after
+
+
+def _restore_identity_from_snapshot(snapshot: RecoverySnapshot) -> RestoreIdentity:
+    return RestoreIdentity(
+        operation_id=snapshot.operation_id,
+        effect_key=snapshot.effect_key,
+    )
+
+
+def _canonical_restore_identities(
+    identities: object,
+    *,
+    label: str,
+) -> tuple[RestoreIdentity, ...]:
+    if type(identities) is not tuple or any(
+        type(identity) is not RestoreIdentity for identity in identities
+    ):
+        raise StoreIntegrityError(f"{label} are invalid")
+    keys = tuple(
+        (identity.operation_id, identity.effect_key) for identity in identities
+    )
+    if keys != tuple(sorted(set(keys))):
+        raise StoreIntegrityError(f"{label} are not canonical")
+    return identities
+
+
+def _normal_open_state_values(
+    value: object,
+) -> tuple[tuple[RestoreIdentity, ...], object | None]:
+    """Validate Recovery's issuer-only normal-open value without coercion."""
+
+    try:
+        from . import recovery as _recovery
+
+        state_type = getattr(_recovery, "NormalOpenRecoveryState", None)
+        validator = getattr(_recovery, "_validate_normal_open_recovery_state", None)
+        if state_type is None or validator is None or type(value) is not state_type:
+            raise StoreUnavailableError(
+                "recovery preflight returned an unsupported state"
+            )
+        validator(value)
+        identities = object.__getattribute__(value, "active_committed_tombstones")
+        latest = object.__getattribute__(value, "latest_committed_handle")
+    except StoreError:
+        raise
+    except BaseException as exc:
+        raise StoreUnavailableError("recovery preflight state is invalid") from exc
+    active = _canonical_restore_identities(
+        identities,
+        label="recovery active committed tombstones",
+    )
+    if active and latest is None:
+        raise StoreUnavailableError(
+            "recovery active tombstones have no committed handle"
+        )
+    return active, latest
+
+
+def _normal_open_state_keys(value: object) -> tuple[tuple[str, str], ...]:
+    identities, _ = _normal_open_state_values(value)
+    return tuple(
+        (identity.operation_id, identity.effect_key) for identity in identities
+    )
+
+
+def _restore_active_identities(value: object) -> tuple[RestoreIdentity, ...]:
+    """Accept only the typed Recovery state or one canonical identity tuple."""
+
+    try:
+        identities, _ = _normal_open_state_values(value)
+    except StoreUnavailableError:
+        if type(value) is not tuple:
+            raise StoreIntegrityError("restore active tombstones are invalid")
+        identities = _canonical_restore_identities(
+            value,
+            label="restore active tombstones",
+        )
+    return identities
+
+
+def _restore_history_binding_ref(value: object) -> str | None:
+    """Derive the stable binding for Recovery's latest committed state."""
+
+    active_tombstones, latest = _normal_open_state_values(value)
+    if latest is None:
+        return None
+    try:
+        current_tombstones = object.__getattribute__(latest, "identities")
+        restore_generation = object.__getattribute__(latest, "restore_generation")
+        actor = object.__getattribute__(latest, "actor")
+        audit_ref = object.__getattribute__(latest, "audit_ref")
+        source_digest = object.__getattribute__(latest, "backup_digest")
+        previous_primary_digest = object.__getattribute__(
+            latest,
+            "previous_primary_digest",
+        )
+        previous_recovery_epoch = object.__getattribute__(
+            latest,
+            "previous_recovery_epoch",
+        )
+        previous_fencing_token_hwm = object.__getattribute__(
+            latest,
+            "previous_fencing_token_hwm",
+        )
+        previous_last_clock_ns = object.__getattribute__(
+            latest,
+            "previous_last_clock_ns",
+        )
+        final_floor = RecoveryFloor(
+            object.__getattribute__(latest, "recovery_epoch"),
+            object.__getattribute__(latest, "fencing_token_floor"),
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise StoreIntegrityError("recovery history handle is invalid") from exc
+    current_tombstones = _canonical_restore_identities(
+        current_tombstones,
+        label="recovery current tombstones",
+    )
+    audit_evidence_ref = (
+        "sha256:" + hashlib.sha256(audit_ref.encode("utf-8")).hexdigest()
+    )
+    try:
+        return _restore_binding_digest(
+            restore_generation=restore_generation,
+            actor=actor,
+            audit_evidence_ref=audit_evidence_ref,
+            source_digest=source_digest,
+            previous_primary_digest=previous_primary_digest,
+            previous_recovery_epoch=previous_recovery_epoch,
+            previous_fencing_token_hwm=previous_fencing_token_hwm,
+            previous_last_clock_ns=previous_last_clock_ns,
+            final_floor=final_floor,
+            current_tombstones=current_tombstones,
+            active_tombstones=active_tombstones,
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoreIntegrityError("recovery history binding is invalid") from exc
 
 
 def _schema_objects_for_connection(
@@ -1424,6 +2383,115 @@ def _read_existing_recovery_snapshot(
         raise StoreIntegrityError("SQLite recovery snapshot data is invalid") from exc
 
 
+def _validate_image_high_water(
+    connection: sqlite3.Connection,
+    *,
+    floor: RecoveryFloor,
+    last_clock_ns: int,
+) -> int:
+    """Validate timestamp and fencing floors across every durable row."""
+
+    maximum_clock = last_clock_ns
+    timestamp_columns = (
+        ("operations", "created_ns", "created_ns"),
+        ("operations", "updated_ns", "updated_ns"),
+        ("operation_attempts", "lease_heartbeat_ns", "lease_heartbeat_ns"),
+        ("operation_attempts", "effect_started_ns", "effect_started_ns"),
+        ("operation_attempts", "fence_started_ns", "fence_started_ns"),
+        ("effect_receipts", "received_ns", "received_ns"),
+        ("transition_events", "clock_ns", "clock_ns"),
+    )
+    for table, column, name in timestamp_columns:
+        for row in connection.execute(
+            f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
+        ).fetchall():
+            value = _require_sqlite_integer(row[0], name)
+            maximum_clock = max(maximum_clock, value)
+    for row in connection.execute(
+        "SELECT created_ns, updated_ns FROM operations"
+    ).fetchall():
+        created_ns = _require_sqlite_integer(row[0], "created_ns")
+        updated_ns = _require_sqlite_integer(row[1], "updated_ns")
+        if created_ns > updated_ns:
+            raise StoreIntegrityError("SQLite operation clock order is invalid")
+
+    recovery_epoch = floor.recovery_epoch
+    maximum_epoch = 0
+    for table, column, name in (
+        ("operations", "recovery_epoch", "recovery_epoch"),
+        ("operation_attempts", "lease_epoch", "lease_epoch"),
+        ("effect_receipts", "lease_epoch", "receipt lease_epoch"),
+    ):
+        for row in connection.execute(f"SELECT {column} FROM {table}").fetchall():
+            maximum_epoch = max(maximum_epoch, _require_sqlite_integer(row[0], name))
+    if maximum_epoch > recovery_epoch:
+        raise StoreIntegrityError("SQLite recovery epoch exceeds global floor")
+
+    maximum_token = 0
+    for table, column, name in (
+        ("operation_attempts", "fencing_token", "fencing_token"),
+        ("effect_receipts", "fencing_token", "receipt fencing_token"),
+    ):
+        for row in connection.execute(f"SELECT {column} FROM {table}").fetchall():
+            maximum_token = max(
+                maximum_token,
+                _require_sqlite_integer(row[0], name),
+            )
+    if maximum_token > floor.fencing_token_floor:
+        raise StoreIntegrityError("SQLite fencing token exceeds global floor")
+    if maximum_clock > last_clock_ns:
+        raise StoreIntegrityError("SQLite durable clock is below row high-water")
+    return maximum_token
+
+
+def _validate_existing_image_high_water(
+    connection: sqlite3.Connection,
+) -> RecoveryFloor:
+    """Validate all durable row high-water values and return the typed floor."""
+
+    try:
+        metadata = {
+            str(row["key"]): row["value"]
+            for row in connection.execute(
+                """
+                SELECT key, value FROM store_meta
+                WHERE key IN ('recovery_epoch', 'fencing_token_floor', 'last_clock_ns')
+                """
+            ).fetchall()
+        }
+        if frozenset(metadata) != {
+            "recovery_epoch",
+            "fencing_token_floor",
+            "last_clock_ns",
+        }:
+            raise StoreIntegrityError("SQLite store high-water metadata is incomplete")
+        floor = RecoveryFloor(
+            _require_sqlite_integer(metadata["recovery_epoch"], "recovery_epoch"),
+            _require_sqlite_integer(
+                metadata["fencing_token_floor"],
+                "fencing_token_floor",
+            ),
+        )
+        last_clock_ns = _require_sqlite_integer(
+            metadata["last_clock_ns"],
+            "last_clock_ns",
+        )
+        _validate_image_high_water(
+            connection,
+            floor=floor,
+            last_clock_ns=last_clock_ns,
+        )
+        return floor
+    except StoreError:
+        raise
+    except sqlite3.DatabaseError as exc:
+        raise StoreIntegrityError("SQLite store high-water query failed") from exc
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StoreIntegrityError(
+            "SQLite store high-water metadata is invalid"
+        ) from exc
+
+
 class CoordinationStore:
     """Private SQLite store for durable intent and journal state.
 
@@ -1455,13 +2523,19 @@ class CoordinationStore:
         self._clock_injected = clock is not None
         self._clock = clock or time.time_ns
         self._connection: sqlite3.Connection | None = None
+        self._connection_cleanup_pending = False
+        self._orphan_fds: list[_OrphanFD] = []
+        self._detached_fd_owners: list[_FDRecoveryOwner] = []
         self._state_root_fd: int | None = None
         self._state_root_identity: tuple[int, int] | None = None
         self._lifetime_gate_fd: int | None = None
         self._lifetime_gate_identity: tuple[int, int] | None = None
+        self._fresh_gate_created_identity: tuple[int, int] | None = None
+        self._fresh_gate_fd_identity: tuple[int, int] | None = None
         self._lifetime_gate_required = False
         self._lifetime_gate_shared = False
         self._lifetime_gate_persistent = False
+        self._lifetime_gate_cleanup_pending = False
         self._lifetime_gate_condition = threading.Condition()
         self._lifetime_gate_shared_users = 0
         self._lifetime_gate_exclusive_owner: int | None = None
@@ -1469,21 +2543,36 @@ class CoordinationStore:
         self._lifetime_gate_local = threading.local()
         self._database_fd: int | None = None
         self._database_identity: tuple[int, int] | None = None
+        self._fresh_database_created_identity: tuple[int, int] | None = None
+        self._fresh_database_fd_identity: tuple[int, int] | None = None
         self._marker_fd: int | None = None
         self._marker_identity: tuple[int, int] | None = None
+        self._fresh_marker_created_identity: tuple[int, int] | None = None
+        self._fresh_marker_fd_identity: tuple[int, int] | None = None
         self._initial_marker_identity: tuple[int, int] | None = None
         self._marker_shared = False
         self._marker_probe_failed = False
         self._startup_lock_held = False
         self._sidecars_before_open: frozenset[str] = frozenset()
+        self._fresh_sidecar_created_identities: dict[str, tuple[int, int]] = {}
+        self._fresh_cleanup_pending = False
+        self._fresh_cleanup_sync_pending: set[str] = set()
+        self._fresh_cleanup_gate_parent_fd: int | None = None
+        self._fresh_cleanup_gate_parent_identity: tuple[int, int] | None = None
         self._schema_empty = False
         self._marker_creation_allowed = False
         self._fresh_bootstrap = False
+        self._normal_open_state: object | None = None
+        self._committed_tombstones: tuple[tuple[str, str], ...] = ()
         self._last_clock_ns = 0
+        fresh_bootstrap_started = False
         try:
             self._state_root_fd = _open_state_root(self.state_root)
             self._state_root_identity = _identity(os.fstat(self._state_root_fd))
             self._acquire_startup_lock()
+            first_state = self._run_normal_open_preflight()
+            self._normal_open_state = first_state
+            self._committed_tombstones = _normal_open_state_keys(first_state)
             initial_database = self._initial_entry(DATABASE_FILENAME)
             initial_marker = self._initial_entry(WRITER_MARKER_FILENAME)
             if initial_marker is not None:
@@ -1510,10 +2599,15 @@ class CoordinationStore:
                     )
                 self._reject_nonempty_rollback_journal()
             self._fresh_bootstrap = initial_database is None and initial_marker is None
+            fresh_bootstrap_started = self._fresh_bootstrap
             self._lifetime_gate_fd = self._open_lifetime_gate(create=True)
             self._lifetime_gate_required = True
             self._acquire_lifetime_gate(exclusive=False)
             self._lifetime_gate_persistent = True
+            second_state = self._run_normal_open_preflight()
+            if second_state != self._normal_open_state:
+                raise StoreUnavailableError("recovery preflight changed while opening")
+            self._normal_open_state = second_state
             if not self._fresh_bootstrap:
                 self._open_writer_marker()
             elif self._initial_root_inventory():
@@ -1540,6 +2634,8 @@ class CoordinationStore:
                 raise StoreUnavailableError(
                     "an established coordination database is empty"
                 )
+            if not self._fresh_bootstrap:
+                self._verify_normal_open_history(self._normal_open_state)
             if not self._fresh_bootstrap and initial_marker is None:
                 raise StoreUnavailableError(
                     "writer marker is missing from an initialized store"
@@ -1549,45 +2645,796 @@ class CoordinationStore:
             self._assert_database_identity()
             self._assert_connection_identity()
             self._configure_pragmas()
+            self._track_fresh_sidecars()
             self._enforce_sidecar_modes()
             if self._schema_empty:
                 self._initialize_schema()
+            self._track_fresh_sidecars()
             self._validate_schema()
             self._load_store_high_water()
             self._validate_prepared_markers()
             if self._fresh_bootstrap:
                 self._open_writer_marker()
             self._assert_database_identity()
+            fresh_bootstrap_started = False
             self._release_startup_lock()
             self._release_lifetime_gate()
             self._lifetime_gate_persistent = False
-        except StoreError:
-            self.close()
+        except StoreError as exc:
+            cleanup = self._cleanup_failed_initialization(
+                fresh_bootstrap_started=fresh_bootstrap_started,
+            )
+            if cleanup is not None:
+                _attach_cleanup_capability(exc, cleanup)
             raise
         except sqlite3.OperationalError as exc:
-            self.close()
+            cleanup = self._cleanup_failed_initialization(
+                fresh_bootstrap_started=fresh_bootstrap_started,
+            )
+            error: StoreError
             if "locked" in str(exc).lower():
-                raise StoreBusyError(
-                    "SQLite busy timeout expired while opening"
-                ) from exc
-            raise StoreUnavailableError("SQLite database could not be opened") from exc
+                error = StoreBusyError("SQLite busy timeout expired while opening")
+            else:
+                error = StoreUnavailableError("SQLite database could not be opened")
+            if cleanup is not None:
+                _attach_cleanup_capability(error, cleanup)
+            raise error from exc
         except sqlite3.DatabaseError as exc:
-            self.close()
-            raise StoreSchemaError("SQLite database is not a valid store") from exc
+            cleanup = self._cleanup_failed_initialization(
+                fresh_bootstrap_started=fresh_bootstrap_started,
+            )
+            error = StoreSchemaError("SQLite database is not a valid store")
+            if cleanup is not None:
+                _attach_cleanup_capability(error, cleanup)
+            raise error from exc
         except OSError as exc:
-            self.close()
-            raise StoreUnavailableError(
-                "private SQLite state cannot be opened"
-            ) from exc
-        except BaseException:
-            self.close()
+            cleanup = self._cleanup_failed_initialization(
+                fresh_bootstrap_started=fresh_bootstrap_started,
+            )
+            error = StoreUnavailableError("private SQLite state cannot be opened")
+            if cleanup is not None:
+                _attach_cleanup_capability(error, cleanup)
+            raise error from exc
+        except BaseException as exc:
+            cleanup = self._cleanup_failed_initialization(
+                fresh_bootstrap_started=fresh_bootstrap_started,
+            )
+            if cleanup is not None:
+                attached = _attach_cleanup_capability(exc, cleanup)
+                if attached is not exc:
+                    raise attached from exc
             raise
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        del exc_type, traceback
+        try:
+            self.close()
+        except _CLEANUP_EXCEPTION:
+            if isinstance(exc_value, BaseException):
+                attached = _attach_cleanup_capability(
+                    exc_value,
+                    _CleanupCapability(self.close),
+                )
+                if attached is not exc_value:
+                    raise attached from exc_value
+                return
+            raise
+
+    def _cleanup_failed_initialization(
+        self,
+        *,
+        fresh_bootstrap_started: bool,
+    ) -> _CleanupCapability | None:
+        """Finish constructor cleanup without replacing its primary failure."""
+
+        cleanup_error: BaseException | None = None
+        if fresh_bootstrap_started:
+            self._fresh_cleanup_pending = True
+            try:
+                self._cleanup_fresh_bootstrap()
+            except _CLEANUP_EXCEPTION as exc:
+                cleanup_error = exc
+                return _CleanupCapability(self._retry_failed_initialization_cleanup)
+            if self._fresh_cleanup_pending:
+                return _CleanupCapability(self._retry_failed_initialization_cleanup)
+        try:
+            self.close()
+        except _CLEANUP_EXCEPTION as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if cleanup_error is not None:
+            if fresh_bootstrap_started:
+                return _CleanupCapability(self._retry_failed_initialization_cleanup)
+            return _CleanupCapability(self.close)
+        return None
+
+    def _retry_failed_initialization_cleanup(self) -> None:
+        cleanup_error: BaseException | None = None
+        if self._fresh_cleanup_pending:
+            try:
+                self._retry_detached_fds()
+                self._retry_orphan_fds()
+                self._cleanup_fresh_bootstrap()
+            except _CLEANUP_EXCEPTION as exc:
+                cleanup_error = exc
+        if cleanup_error is not None:
+            raise cleanup_error
         self.close()
+
+    def _raise_gate_cleanup_failure(
+        self,
+        body_error: BaseException | None,
+        cleanup_error: BaseException,
+    ) -> NoReturn:
+        capability = _CleanupCapability(self.close)
+        if body_error is not None:
+            _raise_with_cleanup_capability(body_error, capability)
+        if isinstance(cleanup_error, StoreError):
+            _raise_with_cleanup_capability(cleanup_error, capability)
+        error = StoreUnavailableError("coordination lifetime gate cleanup failed")
+        _attach_cleanup_capability(error, capability)
+        raise error from cleanup_error
+
+    def _run_normal_open_preflight(self) -> object:
+        """Call Recovery's existing-only guard and preserve its typed state."""
+
+        self._retry_orphan_fds()
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        try:
+            from . import recovery as _recovery
+
+            preflight = getattr(_recovery, "_normal_open_preflight", None)
+            if preflight is None:
+                raise StoreUnavailableError("recovery preflight is unavailable")
+            result = preflight(root_fd, retain_fd=self._retain_failed_fd)
+            _normal_open_state_values(result)
+            return result
+        except StoreError:
+            raise
+        except Exception as exc:
+            raise StoreUnavailableError(
+                "recovery preflight cannot authorize normal open"
+            ) from exc
+
+    def _verify_normal_open_history(self, state: object | None) -> None:
+        if state is None:
+            raise StoreUnavailableError("recovery preflight state is missing")
+        database_fd = self._database_fd
+        if database_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        RestoreStoreAuthority().verify_history_binding(database_fd, state)
+
+    def _retain_failed_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> None:
+        """Retain one close-uncertain preflight descriptor for safe retry."""
+
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                return
+            if any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+                raise StoreUnavailableError(
+                    f"{label} descriptor status is unknown"
+                ) from exc
+            if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+                raise self._dedicated_constructor_fd_error(
+                    fd,
+                    expected_identity,
+                    label,
+                    exc,
+                )
+            self._orphan_fds.append((fd, expected_identity, label))
+            raise StoreUnavailableError(
+                f"{label} descriptor status is unknown"
+            ) from exc
+        actual_identity = _identity(metadata)
+        if expected_identity is not None and actual_identity != expected_identity:
+            if any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+                raise StoreUnavailableError(f"{label} descriptor was reused")
+            if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+                raise self._dedicated_constructor_fd_error(
+                    fd,
+                    expected_identity,
+                    label,
+                    StoreUnavailableError(f"{label} descriptor was reused"),
+                )
+            self._orphan_fds.append((fd, expected_identity, label))
+            raise StoreUnavailableError(f"{label} descriptor was reused")
+        if any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+            return
+        if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+            raise self._dedicated_constructor_fd_error(
+                fd,
+                expected_identity,
+                label,
+                StoreUnavailableError("preflight descriptor retry registry is full"),
+            )
+        retained_identity = expected_identity
+        self._orphan_fds.append((fd, retained_identity, label))
+
+    def _resolve_fresh_fd_identity(
+        self,
+        fd: int,
+        observed_identity: tuple[int, int],
+        label: str,
+    ) -> tuple[int, int] | None:
+        del fd
+        if not self._fresh_bootstrap:
+            return None
+        path: str | Path | None = None
+        path_dir_fd: int | None = None
+        if label == "lifetime gate open":
+            path = self.state_root.parent / LIFETIME_GATE_FILENAME
+        elif label == "writer marker open":
+            path = WRITER_MARKER_FILENAME
+            path_dir_fd = self._state_root_fd
+        elif label == "database open":
+            path = DATABASE_FILENAME
+            path_dir_fd = self._state_root_fd
+        elif label == "SQLite sidecar open":
+            for suffix in ("-wal", "-shm", "-journal"):
+                candidate = f"{DATABASE_FILENAME}{suffix}"
+                candidate_path: str | Path = candidate
+                candidate_dir_fd = self._state_root_fd
+                if candidate_dir_fd is None:
+                    candidate_path = self.state_root / candidate
+                try:
+                    metadata = os.stat(
+                        candidate_path,
+                        dir_fd=candidate_dir_fd,
+                        follow_symlinks=False,
+                    )
+                except _CLEANUP_EXCEPTION:
+                    continue
+                if _identity(metadata) == observed_identity:
+                    self._fresh_sidecar_created_identities.setdefault(
+                        candidate,
+                        observed_identity,
+                    )
+                    return observed_identity
+            return None
+        if path is None:
+            return None
+        if path_dir_fd is None and path in {
+            WRITER_MARKER_FILENAME,
+            DATABASE_FILENAME,
+        }:
+            path = self.state_root / path
+        try:
+            metadata = os.stat(
+                path,
+                dir_fd=path_dir_fd,
+                follow_symlinks=False,
+            )
+        except _CLEANUP_EXCEPTION:
+            return None
+        if _identity(metadata) != observed_identity:
+            return None
+        if label == "lifetime gate open":
+            self._fresh_gate_fd_identity = observed_identity
+        elif label == "writer marker open":
+            self._fresh_marker_fd_identity = observed_identity
+        elif label == "database open":
+            self._fresh_database_fd_identity = observed_identity
+        return observed_identity
+
+    def _dedicated_constructor_fd_error(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+        cause: BaseException,
+    ) -> StoreError:
+        error = StoreUnavailableError(f"{label} descriptor retry registry is full")
+        error.__cause__ = cause
+        owner = next(
+            (existing for existing in self._detached_fd_owners if existing._fd == fd),
+            None,
+        )
+        if owner is None:
+            resolve_identity = None
+            if expected_identity is None:
+                resolve_identity = lambda current_fd, observed: (
+                    self._resolve_fresh_fd_identity(current_fd, observed, label)
+                )
+            owner = _FDRecoveryOwner(
+                fd,
+                expected_identity,
+                label,
+                resolve_identity=resolve_identity,
+            )
+            if self._fresh_bootstrap:
+                self._detached_fd_owners.append(owner)
+        error._attach_cleanup_capability(_CleanupCapability(owner.retry_cleanup))
+        return error
+
+    def _handoff_constructor_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+        *,
+        unlock: bool = False,
+    ) -> BaseException | None:
+        """Close a temporary constructor fd or retain it for identity-safe retry."""
+
+        error: StoreError
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as status_error:
+            if isinstance(status_error, OSError) and status_error.errno == errno.EBADF:
+                return None
+            if not any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+                if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+                    return self._dedicated_constructor_fd_error(
+                        fd,
+                        expected_identity,
+                        label,
+                        status_error,
+                    )
+                self._orphan_fds.append((fd, expected_identity, label))
+            error = StoreUnavailableError(f"{label} descriptor status is unknown")
+            error.__cause__ = status_error
+            _attach_cleanup_capability(error, _CleanupCapability(self.close))
+            return error
+        if expected_identity is not None and _identity(metadata) != expected_identity:
+            if not any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+                if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+                    return self._dedicated_constructor_fd_error(
+                        fd,
+                        expected_identity,
+                        label,
+                        StoreUnavailableError(
+                            f"{label} descriptor retry registry is full"
+                        ),
+                    )
+                self._orphan_fds.append((fd, expected_identity, label))
+            error = StoreUnavailableError(f"{label} descriptor was reused")
+            _attach_cleanup_capability(error, _CleanupCapability(self.close))
+            return error
+        if expected_identity is None:
+            expected_identity = _identity(metadata)
+        if self._fresh_bootstrap:
+            if label == "lifetime gate open":
+                self._fresh_gate_fd_identity = expected_identity
+            elif label == "writer marker open":
+                self._fresh_marker_fd_identity = expected_identity
+            elif label == "database open":
+                self._fresh_database_fd_identity = expected_identity
+        first_error: StoreError | None = None
+        if unlock:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except _CLEANUP_EXCEPTION as unlock_error:
+                first_error = StoreUnavailableError(f"{label} descriptor unlock failed")
+                first_error.__cause__ = unlock_error
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    if first_error is None:
+                        return None
+                    _attach_cleanup_capability(
+                        first_error,
+                        _CleanupCapability(self.close),
+                    )
+                    return first_error
+                try:
+                    self._retain_failed_fd(fd, expected_identity, label)
+                except _CLEANUP_EXCEPTION as handoff_error:
+                    error = (
+                        handoff_error
+                        if isinstance(handoff_error, StoreError)
+                        else StoreUnavailableError(
+                            f"{label} descriptor status is unknown"
+                        )
+                    )
+                else:
+                    error = StoreUnavailableError(
+                        f"{label} descriptor status is unknown"
+                    )
+                error.__cause__ = status_error
+                if first_error is None:
+                    first_error = error
+                _attach_cleanup_capability(
+                    first_error,
+                    _CleanupCapability(self.close),
+                )
+                return first_error
+            if _identity(metadata) != expected_identity:
+                error = StoreUnavailableError(f"{label} descriptor was reused")
+                if first_error is None:
+                    first_error = error
+                _attach_cleanup_capability(
+                    first_error,
+                    _CleanupCapability(self.close),
+                )
+                return first_error
+        try:
+            os.close(fd)
+        except _CLEANUP_EXCEPTION as close_error:
+            retained_before = len(self._orphan_fds)
+            try:
+                self._retain_failed_fd(fd, expected_identity, label)
+            except _CLEANUP_EXCEPTION as handoff_error:
+                if len(self._orphan_fds) == retained_before:
+                    if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+                        if not (
+                            isinstance(handoff_error, StoreError)
+                            and _extract_cleanup_capability(handoff_error) is not None
+                        ):
+                            return self._dedicated_constructor_fd_error(
+                                fd,
+                                expected_identity,
+                                label,
+                                close_error,
+                            )
+                    else:
+                        self._orphan_fds.append((fd, expected_identity, label))
+                error = (
+                    handoff_error
+                    if isinstance(handoff_error, StoreError)
+                    else StoreUnavailableError(
+                        f"{label} descriptor cleanup is unavailable"
+                    )
+                )
+            else:
+                error = StoreUnavailableError(
+                    f"{label} descriptor close status is unknown"
+                )
+            if first_error is None:
+                first_error = error
+            else:
+                first_error.__cause__ = close_error
+            _attach_cleanup_capability(error, _CleanupCapability(self.close))
+            if first_error is error:
+                return error
+            _attach_cleanup_capability(first_error, _CleanupCapability(self.close))
+            return first_error
+        if first_error is not None:
+            _attach_cleanup_capability(first_error, _CleanupCapability(self.close))
+            return first_error
+        return None
+
+    def _retry_orphan_fds(self) -> None:
+        """Drain retained preflight descriptors after an identity check."""
+
+        remaining: list[_OrphanFD] = []
+        first_error: BaseException | None = None
+        for fd, expected_identity, label in self._orphan_fds:
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as exc:
+                if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                    continue
+                remaining.append((fd, expected_identity, label))
+                if first_error is None:
+                    first_error = StoreUnavailableError(
+                        f"{label} descriptor status is unknown"
+                    )
+                continue
+            if expected_identity is None:
+                expected_identity = self._resolve_fresh_fd_identity(
+                    fd,
+                    _identity(metadata),
+                    label,
+                )
+                if expected_identity is None:
+                    remaining.append((fd, expected_identity, label))
+                    if first_error is None:
+                        first_error = StoreUnavailableError(
+                            f"{label} descriptor identity is unavailable"
+                        )
+                    continue
+            if _identity(metadata) != expected_identity:
+                if first_error is None:
+                    first_error = StoreUnavailableError(
+                        f"{label} descriptor was reused"
+                    )
+                continue
+            try:
+                os.close(fd)
+            except _CLEANUP_EXCEPTION as close_error:
+                try:
+                    retry_metadata = os.fstat(fd)
+                except _CLEANUP_EXCEPTION as status_error:
+                    if (
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
+                    ):
+                        continue
+                    remaining.append((fd, expected_identity, label))
+                    if first_error is None:
+                        first_error = StoreUnavailableError(
+                            f"{label} descriptor status is unknown"
+                        )
+                    continue
+                if _identity(retry_metadata) != expected_identity:
+                    if first_error is None:
+                        first_error = StoreUnavailableError(
+                            f"{label} descriptor was reused"
+                        )
+                    continue
+                remaining.append((fd, expected_identity, label))
+                if first_error is None:
+                    first_error = StoreUnavailableError(f"{label} cannot be closed")
+                del close_error
+        self._orphan_fds = remaining
+        if first_error is not None:
+            raise first_error
+
+    def _retry_detached_fds(self) -> None:
+        remaining: list[_FDRecoveryOwner] = []
+        first_error: BaseException | None = None
+        for owner in self._detached_fd_owners:
+            try:
+                owner.retry_cleanup()
+            except _CLEANUP_EXCEPTION as exc:
+                if owner._fd is not None:
+                    remaining.append(owner)
+                if first_error is None:
+                    first_error = exc
+            if owner._fd is not None and owner not in remaining:
+                remaining.append(owner)
+        self._detached_fd_owners = remaining
+        if first_error is not None:
+            raise first_error
+
+    def _ensure_fresh_gate_parent_fd(self, gate_path: Path) -> None:
+        if self._fresh_cleanup_gate_parent_fd is not None:
+            return
+        parent = gate_path.parent
+        try:
+            path_metadata = os.stat(parent, follow_symlinks=False)
+            fd = os.open(parent, _open_flags(directory=True, writable=False))
+            self._fresh_cleanup_gate_parent_fd = fd
+            self._fresh_cleanup_gate_parent_identity = _identity(path_metadata)
+            metadata = os.fstat(fd)
+            self._fresh_cleanup_gate_parent_identity = _identity(metadata)
+            _validate_directory_fd(fd, state_root=False)
+            if _identity(path_metadata) != _identity(metadata):
+                raise StoreUnavailableError(
+                    "fresh gate parent changed while opening cleanup owner"
+                )
+        except StoreError:
+            raise
+        except _CLEANUP_EXCEPTION as exc:
+            raise StoreUnavailableError(
+                "fresh gate parent cannot be opened for cleanup"
+            ) from exc
+
+    def _sync_fresh_state_root(
+        self, root_fd: int, expected_root: tuple[int, int]
+    ) -> None:
+        try:
+            metadata = os.fstat(root_fd)
+        except _CLEANUP_EXCEPTION as exc:
+            raise StoreUnavailableError(
+                "fresh state root cleanup status is unknown"
+            ) from exc
+        if _identity(metadata) != expected_root:
+            raise StoreUnavailableError("fresh state root changed during cleanup")
+        try:
+            os.fsync(root_fd)
+        except _CLEANUP_EXCEPTION as exc:
+            raise StoreUnavailableError(
+                "fresh state root cleanup durability is unknown"
+            ) from exc
+
+    def _sync_fresh_gate_parent(self, gate_path: Path) -> None:
+        self._ensure_fresh_gate_parent_fd(gate_path)
+        fd = self._fresh_cleanup_gate_parent_fd
+        expected = self._fresh_cleanup_gate_parent_identity
+        if fd is None or expected is None:
+            raise StoreUnavailableError(
+                "fresh gate parent cleanup owner is unavailable"
+            )
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                self._fresh_cleanup_gate_parent_fd = None
+                self._fresh_cleanup_gate_parent_identity = None
+            raise StoreUnavailableError(
+                "fresh gate parent cleanup status is unknown"
+            ) from exc
+        if _identity(metadata) != expected:
+            self._fresh_cleanup_gate_parent_fd = None
+            self._fresh_cleanup_gate_parent_identity = None
+            raise StoreUnavailableError("fresh gate parent descriptor was reused")
+        _validate_directory_fd(fd, state_root=False)
+        try:
+            os.fsync(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            raise StoreUnavailableError(
+                "fresh gate parent cleanup durability is unknown"
+            ) from exc
+        try:
+            os.close(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            try:
+                retry_metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    self._fresh_cleanup_gate_parent_fd = None
+                    self._fresh_cleanup_gate_parent_identity = None
+                raise StoreUnavailableError(
+                    "fresh gate parent cleanup close status is unknown"
+                ) from exc
+            if _identity(retry_metadata) != expected:
+                self._fresh_cleanup_gate_parent_fd = None
+                self._fresh_cleanup_gate_parent_identity = None
+                raise StoreUnavailableError(
+                    "fresh gate parent descriptor was reused"
+                ) from exc
+            raise StoreUnavailableError("fresh gate parent cannot be closed") from exc
+        self._fresh_cleanup_gate_parent_fd = None
+        self._fresh_cleanup_gate_parent_identity = None
+
+    def _cleanup_fresh_bootstrap(self) -> None:
+        """Remove identity-tracked fresh files and retain uncertain cleanup state."""
+
+        connection = self._connection
+        if connection is not None:
+            try:
+                connection.close()
+            except _CLEANUP_EXCEPTION as exc:
+                raise StoreUnavailableError(
+                    "fresh coordination connection cannot be closed"
+                ) from exc
+            self._connection = None
+        root_fd = self._state_root_fd
+        expected_root = self._state_root_identity
+        if root_fd is None or expected_root is None:
+            raise StoreUnavailableError("fresh state root cleanup owner is unavailable")
+        try:
+            root_metadata = os.fstat(root_fd)
+        except OSError as exc:
+            raise StoreUnavailableError(
+                "fresh state root cleanup status is unknown"
+            ) from exc
+        if _identity(root_metadata) != expected_root:
+            raise StoreUnavailableError("fresh state root changed during cleanup")
+
+        first_error: BaseException | None = None
+
+        def remember(error: BaseException | None) -> None:
+            nonlocal first_error
+            if error is not None and first_error is None:
+                first_error = error
+
+        def unlink_root_file(
+            filename: str,
+            expected: tuple[int, int] | None,
+            *,
+            sidecar: bool,
+            set_missing: Callable[[], None],
+        ) -> None:
+            resolved, sync_needed, error = _unlink_identity_tracked(
+                filename,
+                expected,
+                dir_fd=root_fd,
+                sidecar=sidecar,
+                label=filename,
+            )
+            if resolved:
+                set_missing()
+            if sync_needed:
+                self._fresh_cleanup_sync_pending.add("state_root")
+            remember(error)
+
+        database_expected = (
+            self._fresh_database_created_identity
+            if self._fresh_database_created_identity is not None
+            else self._fresh_database_fd_identity
+        )
+
+        def clear_database_tracker() -> None:
+            self._fresh_database_created_identity = None
+            self._fresh_database_fd_identity = None
+
+        unlink_root_file(
+            DATABASE_FILENAME,
+            database_expected,
+            sidecar=False,
+            set_missing=clear_database_tracker,
+        )
+        marker_expected = (
+            self._fresh_marker_created_identity
+            if self._fresh_marker_created_identity is not None
+            else self._fresh_marker_fd_identity
+        )
+
+        def clear_marker_tracker() -> None:
+            self._fresh_marker_created_identity = None
+            self._fresh_marker_fd_identity = None
+
+        unlink_root_file(
+            WRITER_MARKER_FILENAME,
+            marker_expected,
+            sidecar=True,
+            set_missing=clear_marker_tracker,
+        )
+        for filename, expected in tuple(self._fresh_sidecar_created_identities.items()):
+            resolved, sync_needed, error = _unlink_identity_tracked(
+                filename,
+                expected,
+                dir_fd=root_fd,
+                sidecar=True,
+                label=filename,
+            )
+            if resolved:
+                del self._fresh_sidecar_created_identities[filename]
+            if sync_needed:
+                self._fresh_cleanup_sync_pending.add("state_root")
+            remember(error)
+
+        gate_path = self.state_root.parent / LIFETIME_GATE_FILENAME
+        gate_expected = (
+            self._fresh_gate_created_identity
+            if self._fresh_gate_created_identity is not None
+            else self._fresh_gate_fd_identity
+        )
+        resolved, sync_needed, error = _unlink_identity_tracked(
+            gate_path,
+            gate_expected,
+            dir_fd=None,
+            sidecar=True,
+            label=LIFETIME_GATE_FILENAME,
+        )
+        if resolved:
+            self._fresh_gate_created_identity = None
+            self._fresh_gate_fd_identity = None
+        if sync_needed:
+            self._fresh_cleanup_sync_pending.add("gate_parent")
+        remember(error)
+
+        if "state_root" in self._fresh_cleanup_sync_pending:
+            try:
+                self._sync_fresh_state_root(root_fd, expected_root)
+            except _CLEANUP_EXCEPTION as exc:
+                remember(exc)
+            else:
+                self._fresh_cleanup_sync_pending.discard("state_root")
+        if "gate_parent" in self._fresh_cleanup_sync_pending:
+            try:
+                self._sync_fresh_gate_parent(gate_path)
+            except _CLEANUP_EXCEPTION as exc:
+                remember(exc)
+            else:
+                self._fresh_cleanup_sync_pending.discard("gate_parent")
+
+        if first_error is not None:
+            raise first_error
+        self._fresh_cleanup_pending = bool(
+            self._fresh_cleanup_sync_pending
+            or self._fresh_cleanup_gate_parent_fd is not None
+            or self._orphan_fds
+            or self._detached_fd_owners
+            or self._fresh_database_created_identity is not None
+            or self._fresh_database_fd_identity is not None
+            or self._fresh_marker_created_identity is not None
+            or self._fresh_marker_fd_identity is not None
+            or self._fresh_gate_created_identity is not None
+            or self._fresh_gate_fd_identity is not None
+            or self._fresh_sidecar_created_identities
+        )
 
     def _initial_entry(self, filename: str) -> os.stat_result | None:
         root_fd = self._state_root_fd
@@ -1626,6 +3473,9 @@ class CoordinationStore:
             raise StoreClosedError("coordination store is closed")
         _validate_private_file(before, sidecar=True)
         marker_fd: int | None = None
+        marker_identity = _identity(before)
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
         try:
             marker_fd = os.open(
                 WRITER_MARKER_FILENAME,
@@ -1639,25 +3489,57 @@ class CoordinationStore:
                 dir_fd=root_fd,
                 follow_symlinks=False,
             )
-            if _identity(metadata) != _identity(before) or _identity(
-                after
-            ) != _identity(metadata):
+            marker_identity = _identity(metadata)
+            if (
+                marker_identity != _identity(before)
+                or _identity(after) != marker_identity
+            ):
                 raise StoreUnavailableError("writer marker changed during bootstrap")
             state = _read_writer_marker_state(marker_fd)
             if state != WRITER_MARKER_CLEAN_STATE:
                 raise StoreUnavailableError("writer marker is not clean")
-        except StoreError:
-            raise
+        except StoreError as exc:
+            body_error = exc
         except OSError as exc:
-            raise StoreUnavailableError("writer marker cannot be inspected") from exc
+            body_error = StoreUnavailableError("writer marker cannot be inspected")
+            body_error.__cause__ = exc
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = _store_error_from_exception(
+                exc,
+                "writer marker cannot be inspected",
+            )
         finally:
             if marker_fd is not None:
-                _close_unowned_fd(marker_fd)
+                cleanup_error = self._handoff_constructor_fd(
+                    marker_fd,
+                    marker_identity,
+                    "initial writer marker",
+                )
+        if body_error is not None:
+            if cleanup_error is not None:
+                capability = _CleanupCapability(self.close)
+                cleanup_capability = _extract_cleanup_capability(cleanup_error)
+                if cleanup_capability is not None:
+                    capability = _CleanupCapability.compose(
+                        cleanup_capability,
+                        capability,
+                    )
+                _raise_with_cleanup_capability(
+                    body_error,
+                    capability,
+                )
+            raise body_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def _open_lifetime_gate(self, *, create: bool) -> int:
         """Open the stable, never-unlinked gate beside the state root."""
 
         gate_path = self.state_root.parent / LIFETIME_GATE_FILENAME
+        gate_fd: int | None = None
+        gate_identity: tuple[int, int] | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
         try:
             try:
                 before = os.stat(gate_path, follow_symlinks=False)
@@ -1666,38 +3548,98 @@ class CoordinationStore:
             if before is None and not create:
                 raise StoreUnavailableError("coordination lifetime gate is missing")
             if before is not None:
+                gate_identity = _identity(before)
                 _validate_private_file(before, sidecar=True)
             flags = _open_flags(directory=False, writable=True)
-            if create:
+            created = before is None and create
+            if created:
                 flags |= os.O_CREAT
-            gate_fd = os.open(
-                gate_path,
-                flags,
-                0o600,
-            )
+                flags |= os.O_EXCL
+            try:
+                gate_fd = os.open(
+                    gate_path,
+                    flags,
+                    0o600,
+                )
+            except FileExistsError:
+                if not created:
+                    raise
+                created = False
+                gate_fd = os.open(
+                    gate_path,
+                    flags & ~os.O_EXCL,
+                    0o600,
+                )
             try:
                 metadata = os.fstat(gate_fd)
+                gate_identity = _identity(metadata)
+                if created:
+                    self._fresh_gate_fd_identity = gate_identity
                 _validate_private_file(metadata, sidecar=True)
                 after = os.stat(gate_path, follow_symlinks=False)
-                if before is not None and _identity(before) != _identity(metadata):
+                if before is not None and _identity(before) != gate_identity:
                     raise StoreUnavailableError(
                         "coordination lifetime gate changed while opening"
                     )
-                if _identity(after) != _identity(metadata):
+                if _identity(after) != gate_identity:
                     raise StoreUnavailableError(
                         "coordination lifetime gate changed while opening"
                     )
-                self._lifetime_gate_identity = _identity(metadata)
-                return gate_fd
-            except BaseException:
-                _close_unowned_fd(gate_fd)
-                raise
-        except StoreError:
-            raise
+                self._lifetime_gate_identity = gate_identity
+                if created:
+                    self._fresh_gate_created_identity = gate_identity
+                    self._fresh_gate_fd_identity = None
+                result_fd = gate_fd
+                gate_fd = None
+                return result_fd
+            except StoreError as exc:
+                body_error = exc
+            except OSError as exc:
+                body_error = StoreUnavailableError(
+                    "coordination lifetime gate cannot be opened"
+                )
+                body_error.__cause__ = exc
+            except _CLEANUP_EXCEPTION as exc:
+                body_error = _store_error_from_exception(
+                    exc,
+                    "coordination lifetime gate cannot be opened",
+                )
+        except StoreError as exc:
+            body_error = exc
         except OSError as exc:
-            raise StoreUnavailableError(
+            body_error = StoreUnavailableError(
                 "coordination lifetime gate cannot be opened"
-            ) from exc
+            )
+            body_error.__cause__ = exc
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = _store_error_from_exception(
+                exc,
+                "coordination lifetime gate cannot be opened",
+            )
+        finally:
+            if gate_fd is not None:
+                cleanup_error = self._handoff_constructor_fd(
+                    gate_fd,
+                    gate_identity,
+                    "lifetime gate open",
+                )
+        if body_error is not None:
+            if cleanup_error is not None:
+                capability = _CleanupCapability(self.close)
+                cleanup_capability = _extract_cleanup_capability(cleanup_error)
+                if cleanup_capability is not None:
+                    capability = _CleanupCapability.compose(
+                        cleanup_capability,
+                        capability,
+                    )
+                _raise_with_cleanup_capability(
+                    body_error,
+                    capability,
+                )
+            raise body_error
+        if cleanup_error is not None:
+            raise cleanup_error
+        raise StoreUnavailableError("coordination lifetime gate cannot be opened")
 
     def _open_writer_marker(self) -> None:
         """Create once, then hold the canonical writer marker shared."""
@@ -1707,11 +3649,15 @@ class CoordinationStore:
             raise StoreClosedError("coordination store is closed")
         filename = WRITER_MARKER_FILENAME
         marker_fd: int | None = None
+        marker_identity: tuple[int, int] | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
         try:
             try:
                 before = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
             except FileNotFoundError:
                 before = None
+            created = before is None
             if before is not None:
                 _validate_private_file(before, sidecar=True)
                 if self._fresh_bootstrap:
@@ -1738,6 +3684,10 @@ class CoordinationStore:
                     raise StoreUnavailableError(
                         "writer marker appeared while creating"
                     ) from exc
+                created_metadata = os.fstat(marker_fd)
+                marker_identity = _identity(created_metadata)
+                self._fresh_marker_fd_identity = marker_identity
+                _validate_private_file(created_metadata, sidecar=True)
                 os.fchmod(marker_fd, 0o600)
                 _write_writer_marker_state(marker_fd, WRITER_MARKER_CLEAN_STATE)
                 self._fault("after_marker_create")
@@ -1758,17 +3708,23 @@ class CoordinationStore:
                     dir_fd=root_fd,
                 )
             metadata = os.fstat(marker_fd)
+            marker_identity = _identity(metadata)
+            if created:
+                self._fresh_marker_created_identity = marker_identity
             _validate_private_file(metadata, sidecar=True)
             after = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
-            if before is not None and _identity(before) != _identity(metadata):
+            if before is not None and _identity(before) != marker_identity:
                 raise StoreUnavailableError("writer marker changed while opening")
             if (
                 self._initial_marker_identity is not None
-                and _identity(metadata) != self._initial_marker_identity
+                and marker_identity != self._initial_marker_identity
             ):
                 raise StoreUnavailableError("writer marker changed while opening")
-            if _identity(after) != _identity(metadata):
+            if _identity(after) != marker_identity:
                 raise StoreUnavailableError("writer marker changed while opening")
+            if created:
+                self._fresh_marker_created_identity = marker_identity
+                self._fresh_marker_fd_identity = None
             self._fault("before_marker_lock")
             self._lock_lifetime_gate_fd(
                 marker_fd,
@@ -1778,22 +3734,48 @@ class CoordinationStore:
             if _read_writer_marker_state(marker_fd) != WRITER_MARKER_CLEAN_STATE:
                 raise StoreUnavailableError("writer marker is not clean")
             self._marker_fd = marker_fd
-            self._marker_identity = _identity(metadata)
+            self._marker_identity = marker_identity
             self._marker_shared = True
             self._marker_creation_allowed = False
             self._fresh_bootstrap = False
             marker_fd = None
             self._fault("after_marker_lock")
-        except StoreError:
-            raise
+        except StoreError as exc:
+            body_error = exc
         except OSError as exc:
-            raise StoreUnavailableError("writer marker cannot be opened") from exc
+            body_error = StoreUnavailableError("writer marker cannot be opened")
+            body_error.__cause__ = exc
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = _store_error_from_exception(
+                exc,
+                "writer marker cannot be opened",
+            )
         finally:
             if marker_fd is not None:
-                try:
-                    fcntl.flock(marker_fd, fcntl.LOCK_UN)
-                finally:
-                    _close_unowned_fd(marker_fd)
+                close_error = self._handoff_constructor_fd(
+                    marker_fd,
+                    marker_identity,
+                    "writer marker open",
+                    unlock=True,
+                )
+                if cleanup_error is None:
+                    cleanup_error = close_error
+        if body_error is not None:
+            if cleanup_error is not None:
+                capability = _CleanupCapability(self.close)
+                cleanup_capability = _extract_cleanup_capability(cleanup_error)
+                if cleanup_capability is not None:
+                    capability = _CleanupCapability.compose(
+                        cleanup_capability,
+                        capability,
+                    )
+                _raise_with_cleanup_capability(
+                    body_error,
+                    capability,
+                )
+            raise body_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def _assert_marker_identity(self) -> None:
         if self._marker_probe_failed:
@@ -1934,6 +3916,8 @@ class CoordinationStore:
     def _shared_lifetime_gate(self) -> Iterator[None]:
         """Guard one operation while cooperating replacement is excluded."""
 
+        if self._lifetime_gate_cleanup_pending:
+            raise StoreUnavailableError("coordination lifetime gate cleanup is pending")
         depth = getattr(self._lifetime_gate_local, "shared_depth", 0)
         if type(depth) is not int or depth < 0:
             raise StoreIntegrityError("coordination lifetime gate depth is invalid")
@@ -1972,11 +3956,16 @@ class CoordinationStore:
                 raise StoreIntegrityError("coordination lifetime gate is not held")
             self._lifetime_gate_shared_users += 1
             self._lifetime_gate_local.shared_depth = 1
+        body_error: BaseException | None = None
         try:
             self._assert_lifetime_gate()
             yield
             self._assert_lifetime_gate()
-        finally:
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = exc
+
+        cleanup_error: BaseException | None = None
+        try:
             with self._lifetime_gate_condition:
                 self._lifetime_gate_local.shared_depth = 0
                 self._lifetime_gate_shared_users -= 1
@@ -1990,13 +3979,29 @@ class CoordinationStore:
                     and self._lifetime_gate_exclusive_owner is None
                     and not self._lifetime_gate_persistent
                 ):
-                    self._release_lifetime_gate()
+                    try:
+                        self._release_lifetime_gate()
+                    except _CLEANUP_EXCEPTION as exc:
+                        cleanup_error = exc
+                        self._lifetime_gate_cleanup_pending = True
+        except _CLEANUP_EXCEPTION as exc:
+            cleanup_error = exc
+            self._lifetime_gate_cleanup_pending = True
+        finally:
+            with self._lifetime_gate_condition:
                 self._lifetime_gate_condition.notify_all()
+
+        if cleanup_error is not None:
+            self._raise_gate_cleanup_failure(body_error, cleanup_error)
+        if body_error is not None:
+            raise body_error
 
     @contextmanager
     def _exclusive_lifetime_gate(self) -> Iterator[None]:
         """Reserve the gate for cooperating restore/replacement operations."""
 
+        if self._lifetime_gate_cleanup_pending:
+            raise StoreUnavailableError("coordination lifetime gate cleanup is pending")
         if self._marker_probe_failed:
             raise StoreUnavailableError("writer marker lock cannot be recovered")
         if getattr(self._lifetime_gate_local, "shared_depth", 0):
@@ -2024,20 +4029,40 @@ class CoordinationStore:
                 self._lifetime_gate_exclusive_owner = None
                 self._lifetime_gate_condition.notify_all()
                 raise
+        body_error: BaseException | None = None
         try:
             self._assert_lifetime_gate()
             yield
             self._assert_lifetime_gate()
-        finally:
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = exc
+
+        cleanup_error: BaseException | None = None
+        try:
             try:
                 if had_shared:
                     self._downgrade_lifetime_gate()
                 else:
                     self._release_lifetime_gate()
-            finally:
+            except _CLEANUP_EXCEPTION as exc:
+                cleanup_error = exc
+                self._lifetime_gate_cleanup_pending = True
+            if cleanup_error is None:
                 with self._lifetime_gate_condition:
                     self._lifetime_gate_exclusive_owner = None
-                    self._lifetime_gate_condition.notify_all()
+        except _CLEANUP_EXCEPTION as exc:
+            cleanup_error = exc
+            self._lifetime_gate_cleanup_pending = True
+        finally:
+            with self._lifetime_gate_condition:
+                if cleanup_error is not None:
+                    self._lifetime_gate_cleanup_pending = True
+                self._lifetime_gate_condition.notify_all()
+
+        if cleanup_error is not None:
+            self._raise_gate_cleanup_failure(body_error, cleanup_error)
+        if body_error is not None:
+            raise body_error
 
     @contextmanager
     def _marker_exclusive_probe(self) -> Iterator[None]:
@@ -2131,17 +4156,27 @@ class CoordinationStore:
         root = _coerce_state_root(state_root)
         gate_path = root.parent / LIFETIME_GATE_FILENAME
         gate_fd: int | None = None
+        owner: _LifetimeGateCleanupOwner | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
         try:
+            path_metadata = os.stat(gate_path, follow_symlinks=False)
+            _validate_private_file(path_metadata, sidecar=True)
+            expected_identity = _identity(path_metadata)
             gate_fd = os.open(
                 gate_path,
                 _open_flags(directory=False, writable=True),
             )
+            owner = _LifetimeGateCleanupOwner(
+                gate_fd,
+                expected_identity,
+                locked=False,
+            )
             metadata = os.fstat(gate_fd)
             _validate_private_file(metadata, sidecar=True)
-            path_metadata = os.stat(gate_path, follow_symlinks=False)
-            _validate_private_file(path_metadata, sidecar=True)
             identity = _identity(metadata)
-            if _identity(path_metadata) != identity:
+            owner.bind_identity(identity)
+            if identity != expected_identity:
                 raise StoreUnavailableError(
                     "coordination lifetime gate changed while opening"
                 )
@@ -2150,33 +4185,58 @@ class CoordinationStore:
                 exclusive=True,
                 busy_timeout_ms=busy_timeout_ms,
             )
+            owner.mark_locked()
             path_metadata = os.stat(gate_path, follow_symlinks=False)
             _validate_private_file(path_metadata, sidecar=True)
             if _identity(path_metadata) != identity:
                 raise StoreUnavailableError(
                     "coordination lifetime gate changed while locking"
                 )
-            yield
-            path_metadata = os.stat(gate_path, follow_symlinks=False)
-            _validate_private_file(path_metadata, sidecar=True)
-            if _identity(path_metadata) != identity:
-                raise StoreUnavailableError(
-                    "coordination lifetime gate changed while held"
-                )
-        except StoreError:
-            raise
+            try:
+                yield
+                path_metadata = os.stat(gate_path, follow_symlinks=False)
+                _validate_private_file(path_metadata, sidecar=True)
+                if _identity(path_metadata) != identity:
+                    raise StoreUnavailableError(
+                        "coordination lifetime gate changed while held"
+                    )
+            except _CLEANUP_EXCEPTION as exc:
+                body_error = exc
+        except StoreError as exc:
+            body_error = exc
         except OSError as exc:
-            raise StoreUnavailableError(
+            body_error = StoreUnavailableError(
                 "coordination lifetime gate cannot be locked"
-            ) from exc
+            )
+            body_error.__cause__ = exc
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = exc
         finally:
-            if gate_fd is not None:
+            if owner is not None:
                 try:
-                    fcntl.flock(gate_fd, fcntl.LOCK_UN)
-                finally:
-                    os.close(gate_fd)
+                    owner.retry_cleanup()
+                except _CLEANUP_EXCEPTION as exc:
+                    cleanup_error = exc
+
+        if body_error is not None:
+            if owner is not None:
+                attached = _attach_cleanup_capability(
+                    body_error,
+                    _CleanupCapability(owner.retry_cleanup),
+                )
+                if attached is not body_error:
+                    raise attached from body_error
+            raise body_error
+        if cleanup_error is not None and owner is not None:
+            _attach_cleanup_capability(
+                cleanup_error,
+                _CleanupCapability(owner.retry_cleanup),
+            )
+            raise cleanup_error
 
     def close(self) -> None:
+        if self._fresh_cleanup_pending and self._state_root_fd is not None:
+            raise StoreUnavailableError("fresh coordination cleanup is pending")
         first_error: BaseException | None = None
 
         def attempt(action: Callable[[], None]) -> None:
@@ -2186,6 +4246,9 @@ class CoordinationStore:
             except _CLEANUP_EXCEPTION as exc:
                 if first_error is None:
                     first_error = exc
+
+        attempt(self._retry_detached_fds)
+        attempt(self._retry_orphan_fds)
 
         connection = self._connection
         if connection is not None:
@@ -2199,8 +4262,10 @@ class CoordinationStore:
                         first_error = retry_error
                 else:
                     self._connection = None
+                    self._connection_cleanup_pending = False
             else:
                 self._connection = None
+                self._connection_cleanup_pending = False
 
         def close_fd(
             attr_name: str,
@@ -2212,6 +4277,86 @@ class CoordinationStore:
         ) -> None:
             nonlocal first_error
             if fd is None:
+                return
+
+            def clear() -> None:
+                setattr(self, attr_name, None)
+                setattr(self, identity_attr_name, None)
+                if lock_state_attr_name is not None:
+                    setattr(self, lock_state_attr_name, False)
+                if attr_name == "_lifetime_gate_fd":
+                    self._lifetime_gate_required = False
+                    self._lifetime_gate_cleanup_pending = False
+                    with self._lifetime_gate_condition:
+                        self._lifetime_gate_exclusive_owner = None
+                        self._lifetime_gate_condition.notify_all()
+
+            def mark_pending() -> None:
+                if attr_name == "_lifetime_gate_fd":
+                    self._lifetime_gate_cleanup_pending = True
+
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as exc:
+                if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                    clear()
+                else:
+                    if first_error is None:
+                        first_error = exc
+                    mark_pending()
+                return
+            expected_identity = getattr(self, identity_attr_name)
+            if expected_identity is None:
+                path: str | Path | None = None
+                path_dir_fd: int | None = None
+                if attr_name == "_state_root_fd":
+                    path = self.state_root
+                elif attr_name == "_lifetime_gate_fd":
+                    path = self.state_root.parent / LIFETIME_GATE_FILENAME
+                elif attr_name == "_database_fd":
+                    path = DATABASE_FILENAME
+                    path_dir_fd = self._state_root_fd
+                elif attr_name == "_marker_fd":
+                    path = WRITER_MARKER_FILENAME
+                    path_dir_fd = self._state_root_fd
+                if path is not None:
+                    try:
+                        path_metadata = os.stat(
+                            path,
+                            dir_fd=path_dir_fd,
+                            follow_symlinks=False,
+                        )
+                    except _CLEANUP_EXCEPTION as exc:
+                        if first_error is None:
+                            first_error = StoreUnavailableError(
+                                f"{attr_name} descriptor identity is unavailable"
+                            )
+                            first_error.__cause__ = exc
+                        mark_pending()
+                        return
+                    if _identity(path_metadata) == _identity(metadata):
+                        expected_identity = _identity(metadata)
+                        setattr(self, identity_attr_name, expected_identity)
+                    else:
+                        if first_error is None:
+                            first_error = StoreUnavailableError(
+                                f"{attr_name} descriptor identity is unavailable"
+                            )
+                        mark_pending()
+                        return
+                if expected_identity is None:
+                    if first_error is None:
+                        first_error = StoreUnavailableError(
+                            f"{attr_name} descriptor identity is unavailable"
+                        )
+                    mark_pending()
+                    return
+            if _identity(metadata) != expected_identity:
+                clear()
+                if first_error is None:
+                    first_error = StoreUnavailableError(
+                        f"{attr_name} descriptor was reused"
+                    )
                 return
             unlock_error: BaseException | None = None
             if unlock:
@@ -2225,24 +4370,65 @@ class CoordinationStore:
                         fcntl.flock(fd, fcntl.LOCK_UN)
                     except _CLEANUP_EXCEPTION as exc:
                         unlock_error = exc
-                    else:
+                    try:
+                        unlocked_metadata = os.fstat(fd)
+                    except _CLEANUP_EXCEPTION as status_error:
+                        clear_if_gone = (
+                            isinstance(status_error, OSError)
+                            and status_error.errno == errno.EBADF
+                        )
+                        if clear_if_gone:
+                            clear()
+                            if unlock_error is None:
+                                return
+                            if first_error is None:
+                                first_error = unlock_error
+                            return
+                        if first_error is None:
+                            first_error = status_error
+                        mark_pending()
+                        return
+                    if _identity(unlocked_metadata) != expected_identity:
+                        clear()
+                        if first_error is None:
+                            first_error = StoreUnavailableError(
+                                f"{attr_name} descriptor was reused"
+                            )
+                        return
+                    if unlock_error is None:
                         setattr(self, cast(str, lock_state_attr_name), False)
             close_error: BaseException | None = None
             try:
                 os.close(fd)
             except _CLEANUP_EXCEPTION as exc:
                 close_error = exc
+                try:
+                    retry_metadata = os.fstat(fd)
+                except _CLEANUP_EXCEPTION as status_error:
+                    if (
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
+                    ):
+                        clear()
+                    else:
+                        if first_error is None:
+                            first_error = status_error
+                        mark_pending()
+                else:
+                    if _identity(retry_metadata) != expected_identity:
+                        clear()
+                        if first_error is None:
+                            first_error = StoreUnavailableError(
+                                f"{attr_name} descriptor was reused"
+                            )
             else:
-                setattr(self, attr_name, None)
-                setattr(self, identity_attr_name, None)
-                if lock_state_attr_name is not None:
-                    setattr(self, lock_state_attr_name, False)
-                if attr_name == "_lifetime_gate_fd":
-                    self._lifetime_gate_required = False
+                clear()
             if unlock_error is not None and first_error is None:
                 first_error = unlock_error
+                mark_pending()
             if close_error is not None and first_error is None:
                 first_error = close_error
+                mark_pending()
 
         close_fd(
             "_marker_fd",
@@ -2271,12 +4457,17 @@ class CoordinationStore:
             unlock=True,
             lock_state_attr_name="_startup_lock_held",
         )
-        if self._lifetime_gate_fd is None:
+        if self._lifetime_gate_fd is None and not self._lifetime_gate_cleanup_pending:
             self._lifetime_gate_required = False
+            self._lifetime_gate_cleanup_pending = False
+        if self._lifetime_gate_cleanup_pending and first_error is None:
+            first_error = StoreUnavailableError(
+                "coordination lifetime gate cleanup is pending"
+            )
         if first_error is not None:
-            raise StoreUnavailableError(
-                "coordination store close failed"
-            ) from first_error
+            error = StoreUnavailableError("coordination store close failed")
+            _attach_cleanup_capability(error, _CleanupCapability(self.close))
+            raise error from first_error
 
     def _acquire_startup_lock(self) -> None:
         root_fd = self._state_root_fd
@@ -2314,6 +4505,52 @@ class CoordinationStore:
         self._startup_lock_held = False
 
     def create_intent(
+        self,
+        operation_id: str,
+        *,
+        effect_key: str,
+        provider_id: str | None = None,
+        actor: str,
+        reason_code: str = "intent_created",
+        evidence_ref: str | None = None,
+        clock_ns: int | None = None,
+    ) -> OperationSnapshot:
+        """Recheck recovery history while the shared lifetime gate is held."""
+
+        operation_id = _require_opaque_identifier(operation_id, "operation_id")
+        effect_key = _require_opaque_identifier(effect_key, "effect_key")
+        if provider_id is not None:
+            provider_id = _require_opaque_identifier(provider_id, "provider_id")
+        actor = _require_opaque_identifier(actor, "actor")
+        reason_code = _require_reason_code(reason_code)
+        if reason_code != "intent_created":
+            raise ValueError("reason_code is unsupported for intent")
+        if evidence_ref is not None:
+            evidence_ref = _require_evidence_ref(evidence_ref)
+        with self._shared_lifetime_gate():
+            state = self._run_normal_open_preflight()
+            self._normal_open_state = state
+            self._committed_tombstones = _normal_open_state_keys(state)
+            self._verify_normal_open_history(state)
+            if any(
+                operation_id == tombstone_operation_id
+                or effect_key == tombstone_effect_key
+                for tombstone_operation_id, tombstone_effect_key in self._committed_tombstones
+            ):
+                raise DuplicateOperationError(
+                    "operation or effect identity is tombstoned"
+                )
+            return self._create_intent_locked(
+                operation_id,
+                effect_key=effect_key,
+                provider_id=provider_id,
+                actor=actor,
+                reason_code=reason_code,
+                evidence_ref=evidence_ref,
+                clock_ns=clock_ns,
+            )
+
+    def _create_intent_locked(
         self,
         operation_id: str,
         *,
@@ -2408,14 +4645,18 @@ class CoordinationStore:
             raise
         except sqlite3.IntegrityError as exc:
             if "UNIQUE constraint failed" in str(exc):
-                raise DuplicateOperationError(
+                error = DuplicateOperationError(
                     "operation or effect identity already exists"
-                ) from exc
+                )
+                _adopt_cleanup_capability(error, exc)
+                raise error from exc
             _raise_sqlite_write_error(exc)
         except sqlite3.DatabaseError as exc:
             _raise_sqlite_write_error(exc)
         except (OverflowError, TypeError) as exc:
-            raise StoreError("SQLite intent transaction failed") from exc
+            mapped_error = StoreError("SQLite intent transaction failed")
+            _adopt_cleanup_capability(mapped_error, exc)
+            raise mapped_error from exc
         return snapshot
 
     def claim(
@@ -2548,6 +4789,7 @@ class CoordinationStore:
             row = self._fetch_attempt(connection, claim.operation_id)
             if row is None:
                 raise LeaseConflictError("lease claim is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             self._check_claim_identity(
                 row,
@@ -2648,6 +4890,7 @@ class CoordinationStore:
             row = self._fetch_attempt(connection, operation_id)
             if row is None:
                 raise LeaseConflictError("lease claim is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             if old_claim is not None:
                 if old_status is None:
@@ -2784,6 +5027,7 @@ class CoordinationStore:
             row = self._fetch_attempt(connection, claim.operation_id)
             if row is None:
                 raise LeaseConflictError("lease claim is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             self._check_claim_identity(
                 row,
@@ -2897,6 +5141,7 @@ class CoordinationStore:
             row = self._fetch_attempt(connection, claim.operation_id)
             if row is None:
                 raise LeaseConflictError("lease claim is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             self._check_claim_identity(
                 row,
@@ -2993,6 +5238,7 @@ class CoordinationStore:
             row = self._fetch_attempt(connection, operation_id, attempt)
             if row is None:
                 raise LeaseConflictError("lease identity is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             if row["status"] not in expected_statuses:
                 raise LeaseConflictError("effect outcome cannot be changed")
@@ -3056,6 +5302,7 @@ class CoordinationStore:
             row = self._fetch_attempt(connection, claim.operation_id)
             if row is None:
                 raise LeaseConflictError("lease claim is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             self._check_claim_identity(
                 row,
@@ -3228,6 +5475,7 @@ class CoordinationStore:
             )
             if row is None:
                 raise LeaseConflictError("provider effect is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             self._check_effect_identity(
                 row,
@@ -3345,6 +5593,7 @@ class CoordinationStore:
             )
             if row is None:
                 raise LeaseConflictError("provider receipt is unavailable")
+            self._require_uninvalidated_lease(row)
             self._require_current_epoch(connection, row["recovery_epoch"])
             self._check_effect_identity(
                 row,
@@ -3582,6 +5831,21 @@ class CoordinationStore:
         return current
 
     @staticmethod
+    def _require_uninvalidated_lease(row: sqlite3.Row) -> None:
+        """Reject old lease authority after restore epoch invalidation."""
+
+        attempt = _require_sqlite_integer(row["attempt"], "attempt")
+        if attempt == 0:
+            return
+        recovery_epoch = _require_sqlite_integer(
+            row["recovery_epoch"],
+            "recovery_epoch",
+        )
+        lease_epoch = _require_sqlite_integer(row["lease_epoch"], "lease_epoch")
+        if recovery_epoch != lease_epoch:
+            raise LeaseConflictError("operation lease was invalidated by restore")
+
+    @staticmethod
     def _fetch_attempt(
         connection: sqlite3.Connection,
         operation_id: str,
@@ -3765,8 +6029,9 @@ class CoordinationStore:
         if row["fence_started_ns"] is None:
             raise StoreIntegrityError("SQLite effect has no fence reservation marker")
 
-    def _next_value(self, connection: sqlite3.Connection) -> int:
-        floor = self._metadata_integer(
+    @staticmethod
+    def _next_value(connection: sqlite3.Connection) -> int:
+        floor = CoordinationStore._metadata_integer(
             connection,
             "fencing_token_floor",
             "fencing_token_floor",
@@ -3821,6 +6086,1538 @@ class CoordinationStore:
             raise
         except (sqlite3.DatabaseError, TypeError, ValueError, OverflowError) as exc:
             _raise_recovery_read_error(exc, kind="recovery floor")
+
+    @staticmethod
+    def _inspect_image_bytes(
+        metadata: os.stat_result,
+        image: bytes,
+        *,
+        label: str,
+    ) -> StoreImageObservation:
+        """Validate one immutable SQLite image and return only typed evidence."""
+
+        if not isinstance(image, bytes):
+            raise StoreIntegrityError(f"{label} image is invalid")
+        digest = "sha256:" + hashlib.sha256(image).hexdigest()
+        try:
+            with _temporary_sqlite_connection(f"SQLite {label} image") as connection:
+                connection.row_factory = sqlite3.Row
+                connection.deserialize(_memory_image(image))
+                _validate_existing_schema(connection)
+
+                def metadata_integer(key: str, name: str) -> int:
+                    row = connection.execute(
+                        "SELECT value FROM store_meta WHERE key = ?",
+                        (key,),
+                    ).fetchone()
+                    if row is None:
+                        raise StoreIntegrityError(
+                            "SQLite restore metadata is incomplete"
+                        )
+                    return _require_sqlite_integer(row["value"], name)
+
+                floor = RecoveryFloor(
+                    metadata_integer("recovery_epoch", "recovery_epoch"),
+                    metadata_integer("fencing_token_floor", "fencing_token_floor"),
+                )
+                last_clock_ns = metadata_integer("last_clock_ns", "last_clock_ns")
+                maximum = _validate_image_high_water(
+                    connection,
+                    floor=floor,
+                    last_clock_ns=last_clock_ns,
+                )
+                operations: list[RecoverySnapshot] = []
+                for row in connection.execute(
+                    "SELECT operation_id FROM operations ORDER BY operation_id"
+                ).fetchall():
+                    snapshot = _read_existing_recovery_snapshot(
+                        connection,
+                        row["operation_id"],
+                    )
+                    if snapshot is None:
+                        raise StoreIntegrityError(
+                            "SQLite restore operation snapshot is unavailable"
+                        )
+                    operations.append(snapshot)
+                operation_values = tuple(operations)
+                identities = tuple(
+                    _restore_identity_from_snapshot(snapshot)
+                    for snapshot in operation_values
+                )
+                return StoreImageObservation(
+                    database_identity=_identity(metadata),
+                    size=metadata.st_size,
+                    digest=digest,
+                    floor=floor,
+                    max_fencing_token=maximum,
+                    last_clock_ns=last_clock_ns,
+                    operations=operation_values,
+                    identities=identities,
+                )
+        except StoreError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            error = StoreIntegrityError(f"SQLite {label} image is invalid")
+            _adopt_cleanup_capability(error, exc)
+            raise error from exc
+        except (TypeError, ValueError, OverflowError) as exc:
+            error = StoreIntegrityError(f"SQLite {label} image data is invalid")
+            _adopt_cleanup_capability(error, exc)
+            raise error from exc
+
+    @staticmethod
+    def _inspect_image_fd(fd: int) -> StoreImageObservation:
+        """Inspect a validated database fd without returning fd/connection state."""
+
+        metadata, image = _read_image_fd(fd, label="SQLite restore image")
+        return CoordinationStore._inspect_image_bytes(
+            metadata,
+            image,
+            label="restore",
+        )
+
+    @staticmethod
+    def _verify_history_binding(
+        primary_fd: int,
+        state: object,
+    ) -> None:
+        """Verify the stable committed-restore anchor without provider access."""
+
+        active_tombstones, latest = _normal_open_state_values(state)
+        binding_ref = _restore_history_binding_ref(state)
+        if not active_tombstones:
+            return
+        if latest is None or binding_ref is None:
+            raise StoreIntegrityError("restore history binding is unavailable")
+        metadata, image = _read_image_fd(
+            primary_fd,
+            label="SQLite restore primary",
+        )
+        observation = CoordinationStore._inspect_image_bytes(
+            metadata,
+            image,
+            label="restore primary",
+        )
+        try:
+            final_epoch = object.__getattribute__(latest, "recovery_epoch")
+            final_token_floor = object.__getattribute__(
+                latest,
+                "fencing_token_floor",
+            )
+            expected_actor = object.__getattribute__(latest, "actor")
+        except AttributeError as exc:
+            raise StoreIntegrityError("recovery history handle is invalid") from exc
+        if observation.floor.recovery_epoch < final_epoch:
+            raise StoreIntegrityError("primary recovery epoch regressed")
+        if observation.floor.fencing_token_floor < final_token_floor:
+            raise StoreIntegrityError("primary fencing-token floor regressed")
+        events = CoordinationStore._read_image_events(
+            image,
+            label="restore primary",
+        )
+        if not any(
+            event.kind == "restore"
+            and event.actor == expected_actor
+            and event.reason_code == "restore"
+            and event.evidence_ref == binding_ref
+            for event in events
+        ):
+            raise StoreIntegrityError("restore history binding anchor is missing")
+
+    def _read_restore_floor(self, fd: int) -> RecoveryFloor:
+        """Return only the validated floor observation for one image fd."""
+
+        return self._inspect_image_fd(fd).floor
+
+    def _read_floor(self, fd: int) -> RecoveryFloor:
+        """Package-private alias for the candidate floor observation seam."""
+
+        return self._read_restore_floor(fd)
+
+    def _read_restore_identities(self, fd: int) -> tuple[RestoreIdentity, ...]:
+        """Return all validated operation identities for one image fd."""
+
+        return self._inspect_image_fd(fd).identities
+
+    def _read_identities(self, fd: int) -> tuple[RestoreIdentity, ...]:
+        """Package-private alias for the candidate identity observation seam."""
+
+        return self._read_restore_identities(fd)
+
+    @staticmethod
+    def _assert_restore_observation(
+        expected: StoreImageObservation,
+        actual: StoreImageObservation,
+        *,
+        label: str,
+    ) -> None:
+        if type(expected) is not StoreImageObservation or expected != actual:
+            raise LeaseConflictError(f"restore {label} image observation is stale")
+
+    @staticmethod
+    def _restore_floor_bounds(
+        source: StoreImageObservation,
+        destination: StoreImageObservation,
+        ledger_floor_lower_bound: RecoveryFloor,
+    ) -> tuple[int, int]:
+        if type(source) is not StoreImageObservation:
+            raise StoreIntegrityError("restore source observation is invalid")
+        if type(destination) is not StoreImageObservation:
+            raise StoreIntegrityError("restore destination observation is invalid")
+        if type(ledger_floor_lower_bound) is not RecoveryFloor:
+            raise StoreIntegrityError("restore ledger floor is invalid")
+        epoch = max(
+            source.floor.recovery_epoch,
+            destination.floor.recovery_epoch,
+            ledger_floor_lower_bound.recovery_epoch,
+        )
+        fencing_token = max(
+            source.floor.fencing_token_floor,
+            source.max_fencing_token,
+            destination.floor.fencing_token_floor,
+            destination.max_fencing_token,
+            ledger_floor_lower_bound.fencing_token_floor,
+        )
+        if epoch >= SQLITE_INTEGER_MAX or fencing_token >= SQLITE_INTEGER_MAX:
+            raise StoreIntegrityError("restore floor exceeds supported integer")
+        return epoch + 1, fencing_token + 1
+
+    @staticmethod
+    def _restore_binding_ref(
+        *,
+        restore_generation: int,
+        actor: str,
+        audit_evidence_ref: str,
+        source_digest: str,
+        previous_primary_digest: str,
+        previous_recovery_epoch: int,
+        previous_fencing_token_hwm: int,
+        previous_last_clock_ns: int,
+        final_floor: RecoveryFloor,
+        current_tombstones: tuple[RestoreIdentity, ...],
+        active_tombstones: tuple[RestoreIdentity, ...],
+    ) -> str:
+        try:
+            return _restore_binding_digest(
+                restore_generation=restore_generation,
+                actor=actor,
+                audit_evidence_ref=audit_evidence_ref,
+                source_digest=source_digest,
+                previous_primary_digest=previous_primary_digest,
+                previous_recovery_epoch=previous_recovery_epoch,
+                previous_fencing_token_hwm=previous_fencing_token_hwm,
+                previous_last_clock_ns=previous_last_clock_ns,
+                final_floor=final_floor,
+                current_tombstones=current_tombstones,
+                active_tombstones=active_tombstones,
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise StoreIntegrityError("restore binding evidence is invalid") from exc
+
+    @staticmethod
+    def _reserve_restore_floor(
+        source: StoreImageObservation,
+        destination: StoreImageObservation,
+        ledger_floor_lower_bound: RecoveryFloor,
+    ) -> RecoveryFloorReservation:
+        """Issue a Store-owned floor above source, destination, and ledger HWM."""
+
+        epoch, fencing_token = CoordinationStore._restore_floor_bounds(
+            source,
+            destination,
+            ledger_floor_lower_bound,
+        )
+        return _issue_floor_reservation(epoch, fencing_token)
+
+    @staticmethod
+    def _record_restore_clock(
+        connection: sqlite3.Connection,
+        timestamp: int,
+    ) -> int:
+        timestamp = _require_sqlite_integer(timestamp, "clock_ns")
+        row = connection.execute(
+            "SELECT value FROM store_meta WHERE key = 'last_clock_ns'"
+        ).fetchone()
+        if row is None:
+            raise StoreIntegrityError("SQLite restore clock metadata is incomplete")
+        durable = _require_sqlite_integer(row["value"], "last_clock_ns")
+        if timestamp < durable:
+            raise ClockRollbackError("restore timestamp moved behind durable clock")
+        connection.execute(
+            "UPDATE store_meta SET value = ? WHERE key = 'last_clock_ns'",
+            (timestamp,),
+        )
+        return timestamp
+
+    @staticmethod
+    def _restore_operation_tx(
+        connection: sqlite3.Connection,
+        snapshot: RecoverySnapshot,
+        *,
+        recovery_epoch: int,
+        timestamp: int,
+        actor: str,
+        evidence_ref: str | None,
+    ) -> int:
+        """Apply one status-preserving restore transform inside candidate SQL."""
+
+        if snapshot.status == "RESTORE_INCOMPLETE":
+            raise StoreIntegrityError("restore source contains incomplete state")
+        if snapshot.status == "CLEANED":
+            return 0
+        if snapshot.status == "RECEIPTED":
+            receipt = snapshot.verified_receipt_identity
+            if receipt is None:
+                raise StoreIntegrityError("SQLite restore receipt is unavailable")
+            new_token = CoordinationStore._next_value(connection)
+            connection.execute(
+                """
+                UPDATE operation_attempts
+                SET lease_epoch = ?, fencing_token = ?
+                WHERE operation_id = ? AND attempt = ?
+                  AND owner = ? AND provider_id = ?
+                  AND lease_epoch = ? AND fencing_token = ?
+                """,
+                (
+                    recovery_epoch,
+                    new_token,
+                    snapshot.operation_id,
+                    snapshot.current_attempt,
+                    snapshot.owner,
+                    snapshot.provider_id,
+                    snapshot.lease_epoch,
+                    snapshot.fencing_token,
+                ),
+            )
+            if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                raise LeaseConflictError("restore receipt lease rebind was lost")
+            connection.execute(
+                """
+                UPDATE effect_receipts
+                SET lease_epoch = ?, fencing_token = ?
+                WHERE operation_id = ? AND attempt = ?
+                  AND effect_key = ? AND provider_effect_id = ?
+                  AND provider_id = ? AND owner = ?
+                  AND lease_epoch = ? AND fencing_token = ?
+                  AND proof_version = ? AND proof_ref = ?
+                """,
+                (
+                    recovery_epoch,
+                    new_token,
+                    receipt.operation_id,
+                    receipt.attempt,
+                    receipt.effect_key,
+                    receipt.provider_effect_id,
+                    receipt.provider_id,
+                    receipt.owner,
+                    receipt.lease_epoch,
+                    receipt.fencing_token,
+                    receipt.proof_version,
+                    receipt.proof_ref,
+                ),
+            )
+            if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                raise LeaseConflictError("restore receipt rebind was lost")
+        connection.execute(
+            """
+            UPDATE operations
+            SET recovery_epoch = ?, updated_ns = ?
+            WHERE operation_id = ? AND current_attempt = ?
+              AND status = ? AND recovery_epoch = ? AND updated_ns = ?
+            """,
+            (
+                recovery_epoch,
+                timestamp,
+                snapshot.operation_id,
+                snapshot.current_attempt,
+                snapshot.status,
+                snapshot.recovery_epoch,
+                snapshot.updated_ns,
+            ),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise LeaseConflictError("restore operation update was lost")
+        CoordinationStore._append_event(
+            connection,
+            operation_id=snapshot.operation_id,
+            attempt=snapshot.current_attempt,
+            from_status=snapshot.status,
+            to_status=snapshot.status,
+            kind="restore",
+            actor=actor,
+            timestamp=timestamp,
+            reason_code="restore",
+            evidence_ref=evidence_ref,
+        )
+        return 1
+
+    @staticmethod
+    def _apply_restore_candidate(
+        source_fd: int,
+        destination_fd: int,
+        target_fd: int,
+        *,
+        source_observation: StoreImageObservation | None = None,
+        destination_observation: StoreImageObservation | None = None,
+        ledger_floor_lower_bound: RecoveryFloor,
+        reservation: RecoveryFloorReservation | None = None,
+        previous_active_tombstones: object,
+        restore_generation: int,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+        fault: Callable[[str], None] | None = None,
+    ) -> RestoreApplyResult:
+        """Apply a validated source image to an empty caller-owned candidate fd."""
+
+        fault_callback = _noop_restore_fault if fault is None else fault
+        if not callable(fault_callback):
+            raise StoreIntegrityError("restore fault hook is invalid")
+        actor = _require_opaque_identifier(actor, "actor")
+        if evidence_ref is not None:
+            evidence_ref = _require_evidence_ref(evidence_ref)
+        timestamp = _require_sqlite_integer(timestamp, "clock_ns")
+        if type(ledger_floor_lower_bound) is not RecoveryFloor:
+            raise StoreIntegrityError("restore ledger floor is invalid")
+        if type(restore_generation) is not int or restore_generation < 1:
+            raise StoreIntegrityError("restore generation is invalid")
+        previous_active = _restore_active_identities(previous_active_tombstones)
+        previous_active_keys = {
+            (identity.operation_id, identity.effect_key) for identity in previous_active
+        }
+        source_metadata, source_image = _read_image_fd(
+            source_fd,
+            label="SQLite restore source",
+        )
+        destination_metadata, destination_image = _read_image_fd(
+            destination_fd,
+            label="SQLite restore destination",
+        )
+        if _identity(source_metadata) == _identity(destination_metadata):
+            raise LeaseConflictError("restore source and destination images alias")
+        actual_source = CoordinationStore._inspect_image_bytes(
+            source_metadata,
+            source_image,
+            label="restore source",
+        )
+        actual_destination = CoordinationStore._inspect_image_bytes(
+            destination_metadata,
+            destination_image,
+            label="restore destination",
+        )
+        if source_observation is not None:
+            CoordinationStore._assert_restore_observation(
+                source_observation,
+                actual_source,
+                label="source",
+            )
+        else:
+            source_observation = actual_source
+        if destination_observation is not None:
+            CoordinationStore._assert_restore_observation(
+                destination_observation,
+                actual_destination,
+                label="destination",
+            )
+        else:
+            destination_observation = actual_destination
+        if timestamp < max(
+            source_observation.last_clock_ns,
+            destination_observation.last_clock_ns,
+        ):
+            raise ClockRollbackError("restore timestamp moved behind durable clock")
+        target_metadata, target_image = _read_image_fd(
+            target_fd,
+            label="SQLite restore candidate",
+            allow_empty=True,
+        )
+        if target_metadata.st_size != 0 or target_image:
+            raise LeaseConflictError("restore candidate target is not empty")
+        if reservation is None:
+            reservation = CoordinationStore._reserve_restore_floor(
+                source_observation,
+                destination_observation,
+                ledger_floor_lower_bound,
+            )
+        elif (
+            type(reservation) is not RecoveryFloorReservation
+            or not reservation.is_issued
+        ):
+            raise LeaseConflictError("restore floor reservation is invalid")
+        expected_epoch, expected_token_floor = CoordinationStore._restore_floor_bounds(
+            source_observation,
+            destination_observation,
+            ledger_floor_lower_bound,
+        )
+        if (
+            reservation.recovery_epoch != expected_epoch
+            or reservation.fencing_token_floor != expected_token_floor
+        ):
+            raise LeaseConflictError("restore floor reservation is stale")
+        source_tombstone_keys = {
+            (identity.operation_id, identity.effect_key)
+            for identity in source_observation.identities
+        }
+        if source_tombstone_keys & previous_active_keys:
+            raise StoreIntegrityError(
+                "restore source contains a previously tombstoned identity"
+            )
+        tombstones = tuple(
+            identity
+            for identity in destination_observation.identities
+            if (identity.operation_id, identity.effect_key) not in source_tombstone_keys
+        )
+        active_tombstones = tuple(
+            sorted(
+                {
+                    *previous_active,
+                    *tombstones,
+                },
+                key=lambda identity: (identity.operation_id, identity.effect_key),
+            )
+        )
+        receipted_count = sum(
+            operation.status == "RECEIPTED"
+            for operation in source_observation.operations
+        )
+        if (
+            not any(
+                operation.status != "CLEANED"
+                for operation in source_observation.operations
+            )
+            and active_tombstones
+        ):
+            raise StoreIntegrityError(
+                "restore tombstones have no operation event anchor"
+            )
+        if reservation.fencing_token_floor > (SQLITE_INTEGER_MAX - receipted_count):
+            raise StoreIntegrityError("restore final fencing floor exceeds range")
+        expected_final_floor = RecoveryFloor(
+            reservation.recovery_epoch,
+            reservation.fencing_token_floor + receipted_count,
+        )
+        binding_ref = CoordinationStore._restore_binding_ref(
+            restore_generation=restore_generation,
+            actor=actor,
+            audit_evidence_ref=evidence_ref
+            if evidence_ref is not None
+            else "sha256:" + "0" * 64,
+            source_digest=source_observation.digest,
+            previous_primary_digest=destination_observation.digest,
+            previous_recovery_epoch=destination_observation.floor.recovery_epoch,
+            previous_fencing_token_hwm=max(
+                destination_observation.floor.fencing_token_floor,
+                destination_observation.max_fencing_token,
+            ),
+            previous_last_clock_ns=destination_observation.last_clock_ns,
+            final_floor=expected_final_floor,
+            current_tombstones=tombstones,
+            active_tombstones=active_tombstones,
+        )
+
+        candidate: sqlite3.Connection | None = None
+        candidate_owner: _ConnectionCleanupOwner | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        try:
+            candidate = sqlite3.connect(
+                ":memory:",
+                uri=False,
+                timeout=0,
+                isolation_level=None,
+            )
+            candidate_owner = _ConnectionCleanupOwner(
+                candidate,
+                "SQLite restore candidate",
+            )
+            assert candidate_owner is not None
+            candidate.row_factory = sqlite3.Row
+            candidate.deserialize(_memory_image(source_image))
+            _validate_existing_schema(candidate)
+            fault_callback("before_restore_begin")
+            candidate.execute("BEGIN IMMEDIATE")
+            commit_started = False
+            try:
+                fault_callback("after_restore_begin")
+                CoordinationStore._record_restore_clock(candidate, timestamp)
+                current_epoch = CoordinationStore._metadata_integer(
+                    candidate,
+                    "recovery_epoch",
+                    "recovery_epoch",
+                )
+                current_floor = CoordinationStore._metadata_integer(
+                    candidate,
+                    "fencing_token_floor",
+                    "fencing_token_floor",
+                )
+                maximum_row = candidate.execute(
+                    "SELECT MAX(fencing_token) AS maximum FROM operation_attempts"
+                ).fetchone()
+                maximum = (
+                    0
+                    if maximum_row is None or maximum_row["maximum"] is None
+                    else _require_sqlite_integer(
+                        maximum_row["maximum"],
+                        "fencing_token",
+                    )
+                )
+                if (
+                    reservation.recovery_epoch <= current_epoch
+                    or reservation.fencing_token_floor <= max(current_floor, maximum)
+                ):
+                    raise LeaseConflictError("restore floor reservation is stale")
+                candidate.execute(
+                    "UPDATE store_meta SET value = ? "
+                    "WHERE key = 'recovery_epoch' AND value = ?",
+                    (reservation.recovery_epoch, current_epoch),
+                )
+                if candidate.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise LeaseConflictError("restore recovery epoch advance was lost")
+                candidate.execute(
+                    "UPDATE store_meta SET value = ? "
+                    "WHERE key = 'fencing_token_floor' AND value = ?",
+                    (reservation.fencing_token_floor, current_floor),
+                )
+                if candidate.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise LeaseConflictError("restore fencing floor advance was lost")
+                operation_ids = tuple(
+                    row["operation_id"]
+                    for row in candidate.execute(
+                        "SELECT operation_id FROM operations ORDER BY operation_id"
+                    ).fetchall()
+                )
+                event_count = 0
+                for operation_id in operation_ids:
+                    fault_callback("before_restore_operation")
+                    snapshot = _read_existing_recovery_snapshot(
+                        candidate,
+                        operation_id,
+                    )
+                    if snapshot is None:
+                        raise StoreIntegrityError(
+                            "SQLite restore operation snapshot is unavailable"
+                        )
+                    event_count += CoordinationStore._restore_operation_tx(
+                        candidate,
+                        snapshot,
+                        recovery_epoch=reservation.recovery_epoch,
+                        timestamp=timestamp,
+                        actor=actor,
+                        evidence_ref=binding_ref,
+                    )
+                fault_callback("before_restore_commit")
+                commit_started = True
+                candidate.commit()
+                event_count = int(
+                    candidate.execute(
+                        "SELECT COUNT(*) FROM transition_events WHERE kind = 'restore'"
+                    ).fetchone()[0]
+                )
+                fault_callback("after_restore_commit")
+            except _CLEANUP_EXCEPTION as phase_error:
+                if commit_started:
+                    error = StoreCommitUnknownError(
+                        "SQLite restore candidate commit status is unknown"
+                    )
+                    _attach_cleanup_capability(
+                        error,
+                        _CleanupCapability(candidate_owner.retry_cleanup),
+                    )
+                    raise error from phase_error
+                rollback_error: BaseException | None = None
+                try:
+                    if candidate.in_transaction:
+                        candidate.rollback()
+                except _CLEANUP_EXCEPTION as exc:
+                    rollback_error = exc
+                if rollback_error is not None:
+                    _raise_with_cleanup_capability(
+                        phase_error,
+                        _CleanupCapability(candidate_owner.retry_cleanup),
+                    )
+                raise
+            try:
+                final_image = _wal_image(candidate.serialize())
+            except _CLEANUP_EXCEPTION as serialization_error:
+                error = StoreCommitUnknownError(
+                    "SQLite restore candidate image status is unknown"
+                )
+                _attach_cleanup_capability(
+                    error,
+                    _CleanupCapability(candidate_owner.retry_cleanup),
+                )
+                raise error from serialization_error
+            if not isinstance(final_image, bytes):
+                error = StoreCommitUnknownError(
+                    "SQLite restore candidate serialization is unknown"
+                )
+                _attach_cleanup_capability(
+                    error,
+                    _CleanupCapability(candidate_owner.retry_cleanup),
+                )
+                raise error
+        except StoreError as exc:
+            body_error = exc
+        except sqlite3.DatabaseError as exc:
+            mapped_error = StoreIntegrityError(
+                "SQLite restore candidate transaction failed"
+            )
+            _adopt_cleanup_capability(mapped_error, exc)
+            body_error = mapped_error
+        except (TypeError, ValueError, OverflowError) as exc:
+            mapped_error = StoreIntegrityError("SQLite restore candidate is invalid")
+            _adopt_cleanup_capability(mapped_error, exc)
+            body_error = mapped_error
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = exc
+        finally:
+            if candidate_owner is not None:
+                try:
+                    candidate_owner.retry_cleanup()
+                except _CLEANUP_EXCEPTION as exc:
+                    cleanup_error = exc
+
+        if body_error is not None:
+            if cleanup_error is not None:
+                assert candidate_owner is not None
+                _raise_with_cleanup_capability(
+                    body_error,
+                    _CleanupCapability(candidate_owner.retry_cleanup),
+                )
+            if candidate_owner is None:
+                raise body_error
+            attached = _attach_cleanup_capability(
+                body_error,
+                _CleanupCapability(candidate_owner.retry_cleanup),
+            )
+            if attached is not body_error:
+                raise attached from body_error
+            raise body_error
+        if cleanup_error is not None:
+            assert candidate_owner is not None
+            _raise_with_cleanup_capability(
+                cleanup_error,
+                _CleanupCapability(candidate_owner.retry_cleanup),
+            )
+
+        current_source_metadata, current_source_image = _read_image_fd(
+            source_fd,
+            label="SQLite restore source",
+        )
+        current_destination_metadata, current_destination_image = _read_image_fd(
+            destination_fd,
+            label="SQLite restore destination",
+        )
+        CoordinationStore._assert_restore_observation(
+            source_observation,
+            CoordinationStore._inspect_image_bytes(
+                current_source_metadata,
+                current_source_image,
+                label="restore source",
+            ),
+            label="source",
+        )
+        CoordinationStore._assert_restore_observation(
+            destination_observation,
+            CoordinationStore._inspect_image_bytes(
+                current_destination_metadata,
+                current_destination_image,
+                label="restore destination",
+            ),
+            label="destination",
+        )
+        fault_callback("before_restore_candidate_write")
+        _write_image_fd(target_fd, final_image, label="SQLite restore candidate")
+        fault_callback("after_restore_candidate_write")
+        try:
+            final_metadata, final_readback = _read_image_fd(
+                target_fd,
+                label="SQLite restore candidate",
+            )
+        except StoreCommitUnknownError:
+            raise
+        except StoreError as exc:
+            raise StoreCommitUnknownError(
+                "SQLite restore candidate readback is unknown"
+            ) from exc
+        if final_readback != final_image:
+            raise StoreCommitUnknownError(
+                "SQLite restore candidate readback does not match committed image"
+            )
+        final_observation = CoordinationStore._inspect_image_bytes(
+            final_metadata,
+            final_readback,
+            label="restore candidate",
+        )
+        CoordinationStore._verify_restore_projection(
+            source_observation,
+            final_observation,
+            CoordinationStore._read_image_events(
+                current_source_image,
+                label="restore source",
+            ),
+            CoordinationStore._read_image_events(
+                final_readback,
+                label="restore candidate",
+            ),
+            final_floor=expected_final_floor,
+            actor=actor,
+            evidence_ref=binding_ref,
+            expected_event_count=event_count,
+            active_tombstones=active_tombstones,
+            pre_rebind_fencing_token_floor=reservation.fencing_token_floor,
+        )
+        source_keys = {
+            (identity.operation_id, identity.effect_key)
+            for identity in source_observation.identities
+        }
+        tombstones = tuple(
+            identity
+            for identity in destination_observation.identities
+            if (identity.operation_id, identity.effect_key) not in source_keys
+        )
+        return _issue_restore_apply_result(
+            observation=final_observation,
+            tombstones=tombstones,
+            active_tombstones=active_tombstones,
+            restore_event_count=event_count,
+        )
+
+    @staticmethod
+    def _verify_candidate_applied(
+        candidate_fd: int,
+        expected: RestoreApplyResult,
+    ) -> RestoreApplyResult:
+        """Verify candidate bytes only; this operation never reapplies SQL."""
+
+        if (
+            type(expected) is not RestoreApplyResult
+            or not expected.is_issued
+            or not expected.applied
+        ):
+            raise LeaseConflictError("restore candidate expectation is invalid")
+        actual_observation = CoordinationStore._inspect_image_fd(candidate_fd)
+        expected_observation = expected.observation
+        if actual_observation != expected_observation:
+            raise StoreIntegrityError(
+                "restore candidate does not match expected result"
+            )
+        connection: sqlite3.Connection | None = None
+        connection_owner: _ConnectionCleanupOwner | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        try:
+            _, image = _read_image_fd(candidate_fd, label="SQLite restore candidate")
+            connection = sqlite3.connect(
+                ":memory:",
+                uri=False,
+                timeout=0,
+                isolation_level=None,
+            )
+            connection_owner = _ConnectionCleanupOwner(
+                connection,
+                "SQLite restore candidate verification",
+            )
+            connection.row_factory = sqlite3.Row
+            connection.deserialize(_memory_image(image))
+            restore_event_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM transition_events WHERE kind = 'restore'"
+                ).fetchone()[0]
+            )
+        except StoreError as exc:
+            body_error = exc
+        except sqlite3.DatabaseError as exc:
+            error = StoreIntegrityError("SQLite restore candidate verification failed")
+            _adopt_cleanup_capability(error, exc)
+            body_error = error
+        except (TypeError, ValueError, OverflowError) as exc:
+            error = StoreIntegrityError(
+                "SQLite restore candidate verification is invalid"
+            )
+            _adopt_cleanup_capability(error, exc)
+            body_error = error
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = exc
+        finally:
+            if connection_owner is not None:
+                try:
+                    connection_owner.retry_cleanup()
+                except _CLEANUP_EXCEPTION as exc:
+                    cleanup_error = exc
+        if body_error is not None:
+            if cleanup_error is not None:
+                assert connection_owner is not None
+                _raise_with_cleanup_capability(
+                    body_error,
+                    _CleanupCapability(connection_owner.retry_cleanup),
+                )
+            if connection_owner is None:
+                raise body_error
+            attached = _attach_cleanup_capability(
+                body_error,
+                _CleanupCapability(connection_owner.retry_cleanup),
+            )
+            if attached is not body_error:
+                raise attached from body_error
+            raise body_error
+        if cleanup_error is not None:
+            assert connection_owner is not None
+            _raise_with_cleanup_capability(
+                cleanup_error,
+                _CleanupCapability(connection_owner.retry_cleanup),
+            )
+        if restore_event_count != expected.restore_event_count:
+            raise StoreIntegrityError("restore candidate event evidence mismatches")
+        return _issue_restore_apply_result(
+            observation=actual_observation,
+            tombstones=expected.tombstones,
+            active_tombstones=expected.active_tombstones,
+            restore_event_count=restore_event_count,
+        )
+
+    @staticmethod
+    def _read_image_events(
+        image: bytes,
+        *,
+        label: str,
+    ) -> tuple[TransitionEvent, ...]:
+        """Read only typed journal observations from an immutable image."""
+
+        connection: sqlite3.Connection | None = None
+        connection_owner: _ConnectionCleanupOwner | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        events: tuple[TransitionEvent, ...] | None = None
+        try:
+            connection = sqlite3.connect(
+                ":memory:",
+                uri=False,
+                timeout=0,
+                isolation_level=None,
+            )
+            connection_owner = _ConnectionCleanupOwner(
+                connection,
+                f"SQLite {label} events",
+            )
+            connection.row_factory = sqlite3.Row
+            connection.deserialize(_memory_image(image))
+            _validate_existing_schema(connection)
+            rows = connection.execute(
+                """
+                SELECT event_id, event_schema_version, operation_id, attempt,
+                       from_status, to_status, kind, actor, clock_ns,
+                       reason_code, evidence_ref
+                FROM transition_events
+                ORDER BY event_id
+                """
+            ).fetchall()
+            events = tuple(CoordinationStore._event_from_row(row) for row in rows)
+        except StoreError as exc:
+            body_error = exc
+        except sqlite3.DatabaseError as exc:
+            error = StoreIntegrityError(f"SQLite {label} events are invalid")
+            _adopt_cleanup_capability(error, exc)
+            body_error = error
+        except (TypeError, ValueError, OverflowError) as exc:
+            error = StoreIntegrityError(f"SQLite {label} event data is invalid")
+            _adopt_cleanup_capability(error, exc)
+            body_error = error
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = exc
+        finally:
+            if connection_owner is not None:
+                try:
+                    connection_owner.retry_cleanup()
+                except _CLEANUP_EXCEPTION as exc:
+                    cleanup_error = exc
+        if body_error is not None:
+            if cleanup_error is not None:
+                assert connection_owner is not None
+                _raise_with_cleanup_capability(
+                    body_error,
+                    _CleanupCapability(connection_owner.retry_cleanup),
+                )
+            if connection_owner is None:
+                raise body_error
+            attached = _attach_cleanup_capability(
+                body_error,
+                _CleanupCapability(connection_owner.retry_cleanup),
+            )
+            if attached is not body_error:
+                raise attached from body_error
+            raise body_error
+        if cleanup_error is not None:
+            assert connection_owner is not None
+            _raise_with_cleanup_capability(
+                cleanup_error,
+                _CleanupCapability(connection_owner.retry_cleanup),
+            )
+        assert events is not None
+        return events
+
+    @staticmethod
+    def _verify_restore_projection(
+        source_observation: StoreImageObservation,
+        candidate_observation: StoreImageObservation,
+        source_events: tuple[TransitionEvent, ...],
+        candidate_events: tuple[TransitionEvent, ...],
+        *,
+        final_floor: RecoveryFloor,
+        actor: str,
+        evidence_ref: str | None,
+        expected_event_count: int | None,
+        active_tombstones: tuple[RestoreIdentity, ...] | None = None,
+        pre_rebind_fencing_token_floor: int | None = None,
+    ) -> int:
+        """Verify status, lease, receipt, and journal transforms independently."""
+
+        if any(
+            snapshot.status == "RESTORE_INCOMPLETE"
+            for snapshot in source_observation.operations
+        ):
+            raise StoreIntegrityError("restore source contains incomplete state")
+        if final_floor.recovery_epoch <= source_observation.floor.recovery_epoch:
+            raise StoreIntegrityError("restore candidate epoch is not above source")
+        if candidate_observation.max_fencing_token > final_floor.fencing_token_floor:
+            raise StoreIntegrityError("restore candidate token exceeds evidence floor")
+        expected_tokens: dict[tuple[str, str], int | None] = {}
+        if pre_rebind_fencing_token_floor is not None:
+            expected_plan = _restore_expected_fencing_tokens(
+                source_observation.operations,
+                pre_rebind_fencing_token_floor=pre_rebind_fencing_token_floor,
+            )
+            expected_tokens = {
+                (operation_id, effect_key): expected_token
+                for operation_id, effect_key, expected_token in expected_plan
+            }
+            receipted_count = sum(
+                operation.status == "RECEIPTED"
+                for operation in source_observation.operations
+            )
+            if final_floor.fencing_token_floor != (
+                pre_rebind_fencing_token_floor + receipted_count
+            ):
+                raise StoreIntegrityError("restore final fencing floor is not exact")
+        source_keys = tuple(
+            (identity.operation_id, identity.effect_key)
+            for identity in source_observation.identities
+        )
+        candidate_keys = tuple(
+            (identity.operation_id, identity.effect_key)
+            for identity in candidate_observation.identities
+        )
+        if candidate_keys != source_keys:
+            raise StoreIntegrityError("restore candidate operation identities changed")
+        candidate_by_key = {
+            (identity.operation_id, identity.effect_key): snapshot
+            for identity, snapshot in zip(
+                candidate_observation.identities,
+                candidate_observation.operations,
+                strict=True,
+            )
+        }
+        for source in source_observation.operations:
+            candidate = candidate_by_key[(source.operation_id, source.effect_key)]
+            if source.status != candidate.status:
+                raise StoreIntegrityError("restore candidate status changed")
+            if source.status == "CLEANED":
+                if candidate != source:
+                    raise StoreIntegrityError("restore CLEANED tombstone was modified")
+                continue
+            if candidate.recovery_epoch != final_floor.recovery_epoch:
+                raise StoreIntegrityError("restore candidate epoch is not rebased")
+            for field_name in (
+                "operation_id",
+                "effect_key",
+                "provider_id",
+                "status",
+                "current_attempt",
+                "owner",
+                "lease_heartbeat_ns",
+                "lease_expires_ns",
+                "fence_proof_version",
+                "fence_proof_ref",
+                "effect_started_ns",
+                "fence_started_ns",
+            ):
+                if getattr(candidate, field_name) != getattr(source, field_name):
+                    raise StoreIntegrityError(
+                        "restore candidate operation identity changed"
+                    )
+            if source.status == "RECEIPTED":
+                source_receipt = source.verified_receipt_identity
+                candidate_receipt = candidate.verified_receipt_identity
+                if source_receipt is None or candidate_receipt is None:
+                    raise StoreIntegrityError("restore receipt rebind is incomplete")
+                if candidate.lease_epoch != final_floor.recovery_epoch:
+                    raise StoreIntegrityError("restore receipt epoch is not rebased")
+                expected_token = expected_tokens.get(
+                    (source.operation_id, source.effect_key)
+                )
+                if (
+                    expected_token is not None
+                    and candidate.fencing_token != expected_token
+                ):
+                    raise StoreIntegrityError("restore receipt token is not exact")
+                if candidate.fencing_token <= source.fencing_token:
+                    raise StoreIntegrityError("restore receipt token was not rebound")
+                for field_name in (
+                    "operation_id",
+                    "effect_key",
+                    "provider_id",
+                    "owner",
+                    "attempt",
+                    "provider_effect_id",
+                    "provider_status",
+                    "proof_version",
+                    "proof_ref",
+                ):
+                    if getattr(candidate_receipt, field_name) != getattr(
+                        source_receipt,
+                        field_name,
+                    ):
+                        raise StoreIntegrityError("restore receipt identity changed")
+                if (
+                    candidate_receipt.lease_epoch != candidate.lease_epoch
+                    or candidate_receipt.fencing_token != candidate.fencing_token
+                ):
+                    raise StoreIntegrityError("restore receipt lease is inconsistent")
+            elif (
+                candidate.lease_epoch != source.lease_epoch
+                or candidate.fencing_token != source.fencing_token
+                or candidate.verified_receipt_identity
+                != source.verified_receipt_identity
+            ):
+                raise StoreIntegrityError("restore candidate lease identity changed")
+
+        if candidate_events[: len(source_events)] != source_events:
+            raise StoreIntegrityError("restore candidate journal prefix changed")
+        rebased_operations = tuple(
+            snapshot
+            for snapshot in source_observation.operations
+            if snapshot.status != "CLEANED"
+        )
+        restore_events = candidate_events[len(source_events) :]
+        if len(restore_events) != len(rebased_operations):
+            raise StoreIntegrityError("restore candidate event count is incomplete")
+        if not restore_events and active_tombstones:
+            raise StoreIntegrityError(
+                "restore tombstones have no operation event anchor"
+            )
+        source_event_sequence = source_events[-1].sequence if source_events else 0
+        for offset, (snapshot, event) in enumerate(
+            zip(rebased_operations, restore_events, strict=True),
+            start=1,
+        ):
+            if (
+                event.sequence != source_event_sequence + offset
+                or event.operation_id != snapshot.operation_id
+                or event.attempt != snapshot.current_attempt
+                or event.from_status != snapshot.status
+                or event.to_status != snapshot.status
+                or event.kind != "restore"
+                or event.actor != actor
+                or event.reason_code != "restore"
+                or event.evidence_ref != evidence_ref
+            ):
+                raise StoreIntegrityError("restore candidate event evidence is invalid")
+            candidate_snapshot = candidate_by_key[
+                (
+                    snapshot.operation_id,
+                    snapshot.effect_key,
+                )
+            ]
+            if event.clock_ns != candidate_snapshot.updated_ns:
+                raise StoreIntegrityError("restore candidate event clock is invalid")
+        restore_event_count = sum(event.kind == "restore" for event in candidate_events)
+        if (
+            expected_event_count is not None
+            and restore_event_count != expected_event_count
+        ):
+            raise StoreIntegrityError(
+                "restore candidate event count mismatches evidence"
+            )
+        if candidate_observation.last_clock_ns < source_observation.last_clock_ns:
+            raise ClockRollbackError("restore candidate clock moved backwards")
+        if restore_events and candidate_observation.last_clock_ns < max(
+            event.clock_ns for event in restore_events
+        ):
+            raise ClockRollbackError("restore candidate clock does not cover events")
+        return restore_event_count
+
+    @staticmethod
+    def _verify_candidate_from_evidence(
+        source_fd: int,
+        destination_fd: int,
+        candidate_fd: int,
+        evidence: RestoreCandidateEvidence,
+    ) -> RestoreApplyResult:
+        """Verify a candidate from durable evidence without a prior result."""
+
+        if type(evidence) is not RestoreCandidateEvidence:
+            raise StoreIntegrityError(
+                "restore candidate evidence has an unsupported type"
+            )
+        try:
+            evidence = RestoreCandidateEvidence(
+                restore_generation=evidence.restore_generation,
+                source_digest=evidence.source_digest,
+                previous_primary_digest=evidence.previous_primary_digest,
+                candidate_digest=evidence.candidate_digest,
+                final_floor=evidence.final_floor,
+                tombstones=evidence.tombstones,
+                active_tombstones=evidence.active_tombstones,
+                actor=evidence.actor,
+                evidence_ref=evidence.evidence_ref,
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise StoreIntegrityError("restore candidate evidence is invalid") from exc
+        source_metadata, source_image = _read_image_fd(
+            source_fd,
+            label="SQLite restore source",
+        )
+        destination_metadata, destination_image = _read_image_fd(
+            destination_fd,
+            label="SQLite restore destination",
+        )
+        candidate_metadata, candidate_image = _read_image_fd(
+            candidate_fd,
+            label="SQLite restore candidate",
+        )
+        image_ids = {
+            _identity(source_metadata),
+            _identity(destination_metadata),
+            _identity(candidate_metadata),
+        }
+        if len(image_ids) != 3:
+            raise LeaseConflictError("restore verification images alias")
+        source_observation = CoordinationStore._inspect_image_bytes(
+            source_metadata,
+            source_image,
+            label="restore source",
+        )
+        destination_observation = CoordinationStore._inspect_image_bytes(
+            destination_metadata,
+            destination_image,
+            label="restore destination",
+        )
+        if source_observation.digest != evidence.source_digest:
+            raise StoreIntegrityError("restore source evidence mismatches image")
+        if destination_observation.digest != evidence.previous_primary_digest:
+            raise StoreIntegrityError("restore destination evidence mismatches image")
+        candidate_observation = CoordinationStore._inspect_image_bytes(
+            candidate_metadata,
+            candidate_image,
+            label="restore candidate",
+        )
+        if candidate_observation.digest != evidence.candidate_digest:
+            raise StoreIntegrityError("restore candidate digest mismatches evidence")
+        if candidate_observation.floor != evidence.final_floor:
+            raise StoreIntegrityError("restore candidate floor mismatches evidence")
+        if evidence.final_floor.recovery_epoch <= max(
+            source_observation.floor.recovery_epoch,
+            destination_observation.floor.recovery_epoch,
+        ):
+            raise StoreIntegrityError("restore candidate epoch is not above inputs")
+        if evidence.final_floor.fencing_token_floor <= max(
+            source_observation.floor.fencing_token_floor,
+            source_observation.max_fencing_token,
+            destination_observation.floor.fencing_token_floor,
+            destination_observation.max_fencing_token,
+        ):
+            raise StoreIntegrityError(
+                "restore candidate token floor is not above inputs"
+            )
+        if candidate_observation.last_clock_ns < max(
+            source_observation.last_clock_ns,
+            destination_observation.last_clock_ns,
+        ):
+            raise ClockRollbackError("restore candidate clock is behind destination")
+        if (
+            candidate_observation.max_fencing_token
+            > evidence.final_floor.fencing_token_floor
+        ):
+            raise StoreIntegrityError("restore candidate token exceeds evidence floor")
+        source_keys = tuple(
+            (identity.operation_id, identity.effect_key)
+            for identity in source_observation.identities
+        )
+        candidate_keys = tuple(
+            (identity.operation_id, identity.effect_key)
+            for identity in candidate_observation.identities
+        )
+        if candidate_keys != source_keys:
+            raise StoreIntegrityError("restore candidate operation identities changed")
+        if any(
+            (identity.operation_id, identity.effect_key)
+            in {
+                (active.operation_id, active.effect_key)
+                for active in evidence.active_tombstones
+            }
+            for identity in source_observation.identities
+        ):
+            raise StoreIntegrityError(
+                "restore source contains a previously tombstoned identity"
+            )
+        destination_tombstones = tuple(
+            identity
+            for identity in destination_observation.identities
+            if (identity.operation_id, identity.effect_key) not in set(source_keys)
+        )
+        if destination_tombstones != evidence.tombstones:
+            raise StoreIntegrityError(
+                "restore tombstone evidence mismatches destination"
+            )
+        receipted_count = sum(
+            operation.status == "RECEIPTED"
+            for operation in source_observation.operations
+        )
+        if evidence.final_floor.fencing_token_floor < receipted_count:
+            raise StoreIntegrityError("restore candidate token floor is invalid")
+        pre_rebind_fencing_token_floor = (
+            evidence.final_floor.fencing_token_floor - receipted_count
+        )
+        input_hwm = max(
+            source_observation.floor.fencing_token_floor,
+            source_observation.max_fencing_token,
+            destination_observation.floor.fencing_token_floor,
+            destination_observation.max_fencing_token,
+        )
+        if pre_rebind_fencing_token_floor <= input_hwm:
+            raise StoreIntegrityError(
+                "restore candidate token reservation is not exact"
+            )
+        binding_ref = CoordinationStore._restore_binding_ref(
+            restore_generation=evidence.restore_generation,
+            actor=evidence.actor,
+            audit_evidence_ref=evidence.evidence_ref,
+            source_digest=evidence.source_digest,
+            previous_primary_digest=evidence.previous_primary_digest,
+            previous_recovery_epoch=destination_observation.floor.recovery_epoch,
+            previous_fencing_token_hwm=max(
+                destination_observation.floor.fencing_token_floor,
+                destination_observation.max_fencing_token,
+            ),
+            previous_last_clock_ns=destination_observation.last_clock_ns,
+            final_floor=evidence.final_floor,
+            current_tombstones=evidence.tombstones,
+            active_tombstones=evidence.active_tombstones,
+        )
+        source_events = CoordinationStore._read_image_events(
+            source_image,
+            label="restore source",
+        )
+        candidate_events = CoordinationStore._read_image_events(
+            candidate_image,
+            label="restore candidate",
+        )
+        restore_event_count = CoordinationStore._verify_restore_projection(
+            source_observation,
+            candidate_observation,
+            source_events,
+            candidate_events,
+            final_floor=evidence.final_floor,
+            actor=evidence.actor,
+            evidence_ref=binding_ref,
+            expected_event_count=None,
+            active_tombstones=evidence.active_tombstones,
+            pre_rebind_fencing_token_floor=pre_rebind_fencing_token_floor,
+        )
+        return _issue_restore_apply_result(
+            observation=candidate_observation,
+            tombstones=evidence.tombstones,
+            active_tombstones=evidence.active_tombstones,
+            restore_event_count=restore_event_count,
+        )
+
+    @staticmethod
+    def _verify_replaced_evidence(
+        source_fd: int,
+        primary_fd: int,
+        evidence: RestoreReplacedEvidence,
+    ) -> RestoreApplyResult:
+        """Verify the replaced primary without an old-destination descriptor."""
+
+        if type(evidence) is not RestoreReplacedEvidence:
+            raise StoreIntegrityError(
+                "restore replaced evidence has an unsupported type"
+            )
+        try:
+            evidence = RestoreReplacedEvidence(
+                restore_generation=evidence.restore_generation,
+                source_digest=evidence.source_digest,
+                candidate_digest=evidence.candidate_digest,
+                previous_primary_digest=evidence.previous_primary_digest,
+                previous_recovery_epoch=evidence.previous_recovery_epoch,
+                previous_fencing_token_hwm=evidence.previous_fencing_token_hwm,
+                previous_last_clock_ns=evidence.previous_last_clock_ns,
+                final_floor=evidence.final_floor,
+                tombstones=evidence.tombstones,
+                active_tombstones=evidence.active_tombstones,
+                actor=evidence.actor,
+                evidence_ref=evidence.evidence_ref,
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise StoreIntegrityError("restore replaced evidence is invalid") from exc
+        source_metadata, source_image = _read_image_fd(
+            source_fd,
+            label="SQLite restore source",
+        )
+        primary_metadata, primary_image = _read_image_fd(
+            primary_fd,
+            label="SQLite restore primary",
+        )
+        if _identity(source_metadata) == _identity(primary_metadata):
+            raise LeaseConflictError("restore source and primary images alias")
+        source_observation = CoordinationStore._inspect_image_bytes(
+            source_metadata,
+            source_image,
+            label="restore source",
+        )
+        primary_observation = CoordinationStore._inspect_image_bytes(
+            primary_metadata,
+            primary_image,
+            label="restore primary",
+        )
+        if source_observation.digest != evidence.source_digest:
+            raise StoreIntegrityError("restore source evidence mismatches image")
+        if primary_observation.digest != evidence.candidate_digest:
+            raise StoreIntegrityError("restore primary digest mismatches evidence")
+        if primary_observation.floor != evidence.final_floor:
+            raise StoreIntegrityError("restore primary floor mismatches evidence")
+        if evidence.final_floor.recovery_epoch <= max(
+            source_observation.floor.recovery_epoch,
+            evidence.previous_recovery_epoch,
+        ):
+            raise StoreIntegrityError(
+                "restore primary epoch is not above prior destination"
+            )
+        if evidence.final_floor.fencing_token_floor <= max(
+            source_observation.floor.fencing_token_floor,
+            source_observation.max_fencing_token,
+            evidence.previous_fencing_token_hwm,
+        ):
+            raise StoreIntegrityError(
+                "restore primary token floor is not above prior destination"
+            )
+        receipted_count = sum(
+            operation.status == "RECEIPTED"
+            for operation in source_observation.operations
+        )
+        if evidence.final_floor.fencing_token_floor < receipted_count:
+            raise StoreIntegrityError("restore primary token floor is invalid")
+        pre_rebind_fencing_token_floor = (
+            evidence.final_floor.fencing_token_floor - receipted_count
+        )
+        if pre_rebind_fencing_token_floor <= max(
+            source_observation.floor.fencing_token_floor,
+            source_observation.max_fencing_token,
+            evidence.previous_fencing_token_hwm,
+        ):
+            raise StoreIntegrityError("restore primary token reservation is not exact")
+        if primary_observation.last_clock_ns < max(
+            source_observation.last_clock_ns,
+            evidence.previous_last_clock_ns,
+        ):
+            raise ClockRollbackError(
+                "restore primary clock is behind prior destination"
+            )
+        source_keys = {
+            (identity.operation_id, identity.effect_key)
+            for identity in source_observation.identities
+        }
+        if any(
+            (identity.operation_id, identity.effect_key) in source_keys
+            for identity in evidence.tombstones
+        ):
+            raise StoreIntegrityError("restore tombstone identity is not displaced")
+        if any(
+            (identity.operation_id, identity.effect_key) in source_keys
+            for identity in evidence.active_tombstones
+        ):
+            raise StoreIntegrityError(
+                "restore active tombstone identity is not displaced"
+            )
+        binding_ref = CoordinationStore._restore_binding_ref(
+            restore_generation=evidence.restore_generation,
+            actor=evidence.actor,
+            audit_evidence_ref=evidence.evidence_ref,
+            source_digest=evidence.source_digest,
+            previous_primary_digest=evidence.previous_primary_digest,
+            previous_recovery_epoch=evidence.previous_recovery_epoch,
+            previous_fencing_token_hwm=evidence.previous_fencing_token_hwm,
+            previous_last_clock_ns=evidence.previous_last_clock_ns,
+            final_floor=evidence.final_floor,
+            current_tombstones=evidence.tombstones,
+            active_tombstones=evidence.active_tombstones,
+        )
+        restore_event_count = CoordinationStore._verify_restore_projection(
+            source_observation,
+            primary_observation,
+            CoordinationStore._read_image_events(
+                source_image,
+                label="restore source",
+            ),
+            CoordinationStore._read_image_events(
+                primary_image,
+                label="restore primary",
+            ),
+            final_floor=evidence.final_floor,
+            actor=evidence.actor,
+            evidence_ref=binding_ref,
+            expected_event_count=None,
+            active_tombstones=evidence.active_tombstones,
+            pre_rebind_fencing_token_floor=pre_rebind_fencing_token_floor,
+        )
+        return _issue_restore_apply_result(
+            observation=primary_observation,
+            tombstones=evidence.tombstones,
+            active_tombstones=evidence.active_tombstones,
+            restore_event_count=restore_event_count,
+        )
+
+    @staticmethod
+    def _verify_candidate(
+        candidate_fd: int,
+        expected: RestoreApplyResult,
+    ) -> RestoreApplyResult:
+        """Package-private canonical name for the verify-only candidate seam."""
+
+        return CoordinationStore._verify_candidate_applied(candidate_fd, expected)
+
+    @staticmethod
+    def _apply_candidate(
+        source_fd: int,
+        destination_fd: int,
+        target_fd: int,
+        *,
+        source_observation: StoreImageObservation | None = None,
+        destination_observation: StoreImageObservation | None = None,
+        ledger_floor_lower_bound: RecoveryFloor,
+        reservation: RecoveryFloorReservation | None = None,
+        previous_active_tombstones: object,
+        restore_generation: int,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RestoreApplyResult:
+        """Package-private canonical name for the candidate apply seam."""
+
+        return CoordinationStore._apply_restore_candidate(
+            source_fd,
+            destination_fd,
+            target_fd,
+            source_observation=source_observation,
+            destination_observation=destination_observation,
+            ledger_floor_lower_bound=ledger_floor_lower_bound,
+            reservation=reservation,
+            previous_active_tombstones=previous_active_tombstones,
+            restore_generation=restore_generation,
+            actor=actor,
+            timestamp=timestamp,
+            evidence_ref=evidence_ref,
+        )
 
     def _advance_floor(
         self,
@@ -4879,6 +8676,11 @@ class CoordinationStore:
             raise StoreIntegrityError("SQLite prepared state is invalid") from exc
 
     def _require_connection(self) -> sqlite3.Connection:
+        self._retry_orphan_fds()
+        if self._lifetime_gate_cleanup_pending:
+            raise StoreUnavailableError("coordination lifetime gate cleanup is pending")
+        if self._connection_cleanup_pending:
+            raise StoreUnavailableError("SQLite connection cleanup is pending")
         connection = self._connection
         if connection is None:
             raise StoreClosedError("coordination store is closed")
@@ -4967,6 +8769,7 @@ class CoordinationStore:
                 _validate_private_file(before, sidecar=False)
             if not create and before is None:
                 raise StoreUnavailableError("coordination database disappeared")
+            created = create and before is None
             flags = _open_flags(directory=False, writable=True)
             if create:
                 flags |= os.O_CREAT | os.O_EXCL
@@ -4976,15 +8779,19 @@ class CoordinationStore:
                 0o600,
                 dir_fd=root_fd,
             )
+            observed_identity = _identity(before) if before is not None else None
             try:
                 metadata = os.fstat(database_fd)
+                observed_identity = _identity(metadata)
+                if created:
+                    self._fresh_database_fd_identity = observed_identity
                 _validate_private_file(metadata, sidecar=False)
                 after = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
-                if before is not None and _identity(before) != _identity(metadata):
+                if before is not None and _identity(before) != observed_identity:
                     raise StoreUnavailableError(
                         "private SQLite database changed while opening"
                     )
-                if _identity(after) != _identity(metadata):
+                if _identity(after) != observed_identity:
                     raise StoreUnavailableError(
                         "private SQLite database changed while opening"
                     )
@@ -5003,21 +8810,57 @@ class CoordinationStore:
                         raise StoreUnavailableError(
                             "existing coordination database is truncated"
                         )
-                self._database_identity = _identity(metadata)
+                self._database_identity = observed_identity
+                if created:
+                    self._fresh_database_created_identity = observed_identity
+                    self._fresh_database_fd_identity = None
                 return database_fd
             except FileExistsError as exc:
                 raise StoreUnavailableError(
                     "coordination database appeared during bootstrap"
                 ) from exc
-            except BaseException:
-                os.close(database_fd)
-                raise
+            except _CLEANUP_EXCEPTION as exc:
+                handoff_error: BaseException | None = None
+                try:
+                    self._retain_failed_fd(
+                        database_fd,
+                        observed_identity,
+                        "database open",
+                    )
+                except _CLEANUP_EXCEPTION as retain_error:
+                    handoff_error = retain_error
+                capability = _CleanupCapability(self.close)
+                if handoff_error is not None:
+                    lower = _extract_cleanup_capability(handoff_error)
+                    if lower is not None:
+                        capability = _CleanupCapability.compose(lower, capability)
+                _raise_with_cleanup_capability(exc, capability)
         except StoreError:
             raise
         except OSError as exc:
             raise StoreUnavailableError(
                 "private SQLite database cannot be opened"
             ) from exc
+
+    def _track_fresh_sidecars(self) -> None:
+        if not self._fresh_bootstrap:
+            return
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        for suffix in ("-wal", "-shm", "-journal"):
+            filename = f"{DATABASE_FILENAME}{suffix}"
+            if (
+                filename in self._sidecars_before_open
+                or filename in self._fresh_sidecar_created_identities
+            ):
+                continue
+            try:
+                metadata = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            _validate_private_file(metadata, sidecar=True)
+            self._fresh_sidecar_created_identities[filename] = _identity(metadata)
 
     def _existing_sidecar_names(self) -> frozenset[str]:
         root_fd = self._state_root_fd
@@ -5078,6 +8921,14 @@ class CoordinationStore:
             if not is_new:
                 continue
             sidecar_fd = None
+            sidecar_identity = _identity(before)
+            if is_new:
+                self._fresh_sidecar_created_identities.setdefault(
+                    filename,
+                    sidecar_identity,
+                )
+            body_error: BaseException | None = None
+            cleanup_error: BaseException | None = None
             try:
                 sidecar_fd = os.open(
                     filename,
@@ -5085,29 +8936,58 @@ class CoordinationStore:
                     dir_fd=root_fd,
                 )
                 metadata = os.fstat(sidecar_fd)
+                sidecar_identity = _identity(metadata)
                 _validate_private_file(metadata, sidecar=True, require_mode=False)
                 if is_new:
                     os.fchmod(sidecar_fd, 0o600)
                     metadata = os.fstat(sidecar_fd)
+                    sidecar_identity = _identity(metadata)
                     _validate_private_file(metadata, sidecar=True)
                 after = os.stat(filename, dir_fd=root_fd, follow_symlinks=False)
-                if _identity(before) != _identity(metadata) or _identity(
-                    after
-                ) != _identity(metadata):
+                if (
+                    _identity(before) != sidecar_identity
+                    or _identity(after) != sidecar_identity
+                ):
                     raise StoreUnavailableError("SQLite sidecar changed while opening")
                 if is_new:
                     self._sidecars_before_open = frozenset(
                         {*self._sidecars_before_open, filename}
                     )
-            except StoreError:
-                raise
+            except StoreError as exc:
+                body_error = exc
             except OSError as exc:
-                raise StoreUnavailableError(
+                body_error = StoreUnavailableError(
                     "private SQLite sidecar cannot be secured"
-                ) from exc
+                )
+                body_error.__cause__ = exc
+            except _CLEANUP_EXCEPTION as exc:
+                body_error = _store_error_from_exception(
+                    exc,
+                    "private SQLite sidecar cannot be secured",
+                )
             finally:
                 if sidecar_fd is not None:
-                    os.close(sidecar_fd)
+                    cleanup_error = self._handoff_constructor_fd(
+                        sidecar_fd,
+                        sidecar_identity,
+                        "SQLite sidecar open",
+                    )
+            if body_error is not None:
+                if cleanup_error is not None:
+                    capability = _CleanupCapability(self.close)
+                    cleanup_capability = _extract_cleanup_capability(cleanup_error)
+                    if cleanup_capability is not None:
+                        capability = _CleanupCapability.compose(
+                            cleanup_capability,
+                            capability,
+                        )
+                    _raise_with_cleanup_capability(
+                        body_error,
+                        capability,
+                    )
+                raise body_error
+            if cleanup_error is not None:
+                raise cleanup_error
 
     def _assert_database_identity(self) -> None:
         root_fd = self._state_root_fd
@@ -5247,27 +9127,51 @@ class CoordinationStore:
         with self._shared_lifetime_gate():
             self._fault("before_begin")
             connection.execute("BEGIN IMMEDIATE")
+
+            def rollback_body(body_error: BaseException) -> None:
+                rollback_error: BaseException | None = None
+                if self._connection is connection:
+                    try:
+                        connection.rollback()
+                    except _CLEANUP_EXCEPTION as exc:
+                        rollback_error = exc
+                        self._connection_cleanup_pending = True
+                if rollback_error is not None:
+                    capability = _CleanupCapability(self.close)
+                    _raise_with_cleanup_capability(body_error, capability)
+                raise body_error
+
+            def commit_unknown(cause: BaseException) -> NoReturn:
+                self._connection_cleanup_pending = True
+                error = StoreCommitUnknownError(
+                    "SQLite transaction commit status is unknown"
+                )
+                _attach_cleanup_capability(error, _CleanupCapability(self.close))
+                raise error from cause
+
             try:
                 self._fault("after_begin")
                 self._assert_transaction_identity()
                 yield connection
+            except _CLEANUP_EXCEPTION as body_error:
+                rollback_body(body_error)
+
+            try:
                 self._fault("before_commit")
                 self._assert_transaction_identity()
+            except _CLEANUP_EXCEPTION as body_error:
+                rollback_body(body_error)
+
+            try:
                 connection.commit()
+            except _CLEANUP_EXCEPTION as commit_error:
+                commit_unknown(commit_error)
+
+            try:
                 self._fault("after_commit")
-                try:
-                    self._assert_transaction_identity()
-                except StoreError as exc:
-                    raise StoreCommitUnknownError(
-                        "SQLite commit completed without a stable identity"
-                    ) from exc
-            except BaseException:
-                if self._connection is connection:
-                    try:
-                        connection.rollback()
-                    except sqlite3.ProgrammingError:
-                        pass
-                raise
+                self._assert_transaction_identity()
+            except _CLEANUP_EXCEPTION as postcommit_error:
+                commit_unknown(postcommit_error)
 
     @contextmanager
     def _lease_write_transaction(self) -> Iterator[sqlite3.Connection]:
@@ -5403,6 +9307,160 @@ class CoordinationStore:
         if "locked" in str(error).lower():
             raise StoreBusyError("SQLite busy timeout expired while reading") from error
         raise StoreUnavailableError("SQLite read failed") from error
+
+
+class RestoreStoreAuthority:
+    """Filesystem-free authority for candidate restore operations.
+
+    Restore owns the quiescent lifetime gate while it works with source,
+    destination, and candidate descriptors.  It therefore cannot keep a
+    normal ``CoordinationStore`` open for this work.  This authority carries
+    only the trusted fault hook; all image validation and SQLite mutation are
+    pure class seams on ``CoordinationStore`` and return typed observations.
+    """
+
+    __slots__ = ("__fault",)
+
+    def __init__(
+        self,
+        fault: Callable[[str], None] | None = None,
+    ) -> None:
+        if fault is not None and not callable(fault):
+            raise TypeError("restore fault hook must be callable")
+        self.__fault = _noop_restore_fault if fault is None else fault
+
+    def _require_initialized(self) -> Callable[[str], None]:
+        try:
+            fault = self.__fault
+        except AttributeError as exc:
+            raise StoreClosedError("restore authority is uninitialized") from exc
+        if not callable(fault):
+            raise StoreClosedError("restore authority is invalid")
+        return fault
+
+    def inspect_image(self, fd: int) -> StoreImageObservation:
+        self._require_initialized()
+        return CoordinationStore._inspect_image_fd(fd)
+
+    def read_floor(self, fd: int) -> RecoveryFloor:
+        return self.inspect_image(fd).floor
+
+    def read_identities(self, fd: int) -> tuple[RestoreIdentity, ...]:
+        return self.inspect_image(fd).identities
+
+    def reserve_restore_floor(
+        self,
+        source: StoreImageObservation,
+        destination: StoreImageObservation,
+        ledger_floor_lower_bound: RecoveryFloor,
+    ) -> RecoveryFloorReservation:
+        self._require_initialized()
+        return CoordinationStore._reserve_restore_floor(
+            source,
+            destination,
+            ledger_floor_lower_bound,
+        )
+
+    def verify_history_binding(self, primary_fd: int, state: object) -> None:
+        """Verify the committed restore anchor without opening a Store or provider."""
+
+        self._require_initialized()
+        CoordinationStore._verify_history_binding(primary_fd, state)
+
+    def apply_candidate(
+        self,
+        source_fd: int,
+        destination_fd: int,
+        target_fd: int,
+        *,
+        source_observation: StoreImageObservation | None = None,
+        destination_observation: StoreImageObservation | None = None,
+        ledger_floor_lower_bound: RecoveryFloor,
+        reservation: RecoveryFloorReservation | None = None,
+        previous_active_tombstones: object,
+        restore_generation: int,
+        actor: str,
+        timestamp: int,
+        evidence_ref: str | None = None,
+    ) -> RestoreApplyResult:
+        fault = self._require_initialized()
+        return CoordinationStore._apply_restore_candidate(
+            source_fd,
+            destination_fd,
+            target_fd,
+            source_observation=source_observation,
+            destination_observation=destination_observation,
+            ledger_floor_lower_bound=ledger_floor_lower_bound,
+            reservation=reservation,
+            previous_active_tombstones=previous_active_tombstones,
+            restore_generation=restore_generation,
+            actor=actor,
+            timestamp=timestamp,
+            evidence_ref=evidence_ref,
+            fault=fault,
+        )
+
+    def verify_candidate(
+        self,
+        candidate_fd: int,
+        expected: RestoreApplyResult,
+    ) -> RestoreApplyResult:
+        self._require_initialized()
+        return CoordinationStore._verify_candidate_applied(candidate_fd, expected)
+
+    def verify_candidate_evidence(
+        self,
+        source_fd: int,
+        destination_fd: int,
+        candidate_fd: int,
+        evidence: RestoreCandidateEvidence,
+    ) -> RestoreApplyResult:
+        """Verify a resumed candidate using durable evidence only."""
+
+        self._require_initialized()
+        return CoordinationStore._verify_candidate_from_evidence(
+            source_fd,
+            destination_fd,
+            candidate_fd,
+            evidence,
+        )
+
+    def verify_replaced_evidence(
+        self,
+        source_fd: int,
+        primary_fd: int,
+        evidence: RestoreReplacedEvidence,
+    ) -> RestoreApplyResult:
+        """Verify a replaced primary using durable evidence only.
+
+        The old destination and candidate pathname may be gone at resume time;
+        restore event count is reconstructed from source and primary images.
+        """
+
+        self._require_initialized()
+        return CoordinationStore._verify_replaced_evidence(
+            source_fd,
+            primary_fd,
+            evidence,
+        )
+
+    # Package-private names are retained as explicit aliases for the restore
+    # coordinator; they still bind to this authority, never to a Store.
+    inspect_restore = inspect_image
+    _inspect_image_fd = inspect_image
+    _read_restore_floor = read_floor
+    _read_floor = read_floor
+    _read_restore_identities = read_identities
+    _read_identities = read_identities
+    _reserve_restore_floor = reserve_restore_floor
+    _verify_history_binding = verify_history_binding
+    _apply_restore_candidate = apply_candidate
+    _apply_candidate = apply_candidate
+    _verify_candidate_applied = verify_candidate
+    _verify_candidate = verify_candidate
+    _verify_candidate_from_evidence = verify_candidate_evidence
+    verify_from_durable_evidence = verify_candidate_evidence
+    _verify_replaced_evidence = verify_replaced_evidence
 
 
 class _RecoveryStoreTx:

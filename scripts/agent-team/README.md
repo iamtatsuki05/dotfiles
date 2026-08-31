@@ -23,8 +23,9 @@ linked reference documents when changing the implementation or configuration.
   ACP is not a sandbox.
 - [Direct background adapters](docs/background-adapters.md) documents the
   Copilot/OpenCode read-only adapter implementation, snapshot boundary, and recovery.
-- [Coordination store and recovery](docs/coordination-store.md) documents the
-  SQLite schema boundary, stable writer marker, and WAL sidecar controller.
+- [Coordination store, recovery, backup, and restore](docs/coordination-store.md)
+  documents the SQLite schema boundary, stable writer marker, WAL sidecar
+  controller, backup artifact, and candidate-first restore protocol.
 
 The current configuration uses this team:
 
@@ -171,6 +172,13 @@ agent-team status \
 - Claude ACP reuses the ambient `claude.ai` login and receives no API-key
   environment variables. The subscription billing ledger itself has not been
   verified.
+- Backup destinations are exact single basenames. A backup is successful only
+  after its database/manifest pair passes final identity and content readback;
+  partial or mixed pairs are rejected. The restore-candidate namespace
+  `.coordination.sqlite3.restore-` is reserved and rejected as a destination.
+- Restore is candidate-first and provider-free. Resume begins with a
+  tombstone-then-ledger durability barrier and never silently repairs logs or
+  retries an external effect.
 
 See [Architecture](docs/architecture.md) for the complete boundary and failure
 flow.

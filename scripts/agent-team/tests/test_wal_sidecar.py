@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import errno
+import fcntl
 import gc
 import hashlib
 import os
@@ -12,15 +14,18 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 from unittest import mock
 
+from agent_team import recovery, wal
 from agent_team.doctor import ReadOnlyDoctor, StateFilesystem, StateFilesystemError
-from agent_team.recovery import RecoveryCoordinator
+from agent_team.lease import RecoveryFloor
+from agent_team.recovery import RecoveryCoordinator, RestoreIdentity, RestoreLedger
 from agent_team.store import (
     CoordinationStore,
     StoreBusyError,
     StoreUnavailableError,
+    _CleanupCapability,
 )
 from agent_team.wal import (
     CHECKPOINT_MODES,
@@ -32,7 +37,10 @@ from agent_team.wal import (
     WRITER_MARKER_BASENAME,
     CheckpointRequest,
     CheckpointResult,
+    DatabaseCandidate,
     DatabaseCopyTarget,
+    DatabaseReplacementResult,
+    QuiescenceOwner,
     QuiescenceSession,
     WalSidecarBusyError,
     WalSidecarClosedError,
@@ -174,6 +182,697 @@ class WalSidecarControllerTest(unittest.TestCase):
             finally:
                 session.close()
             controller.checkpoint(CheckpointRequest("TRUNCATE"))
+
+    def test_hold_quiescence_allows_only_declared_restore_names(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence(
+                allowed_root_names=("candidate.db", "manifest.json")
+            )
+            try:
+                (root / "candidate.db").write_bytes(b"candidate")
+                (root / "candidate.db").chmod(0o600)
+                session.assert_identity()
+                (root / "unexpected").write_bytes(b"unknown")
+                (root / "unexpected").chmod(0o600)
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    session.assert_identity()
+            finally:
+                session.close()
+
+            for value in (
+                ["candidate.db"],
+                ("candidate.db", "candidate.db"),
+                ("*",),
+                ("coordination.sqlite3",),
+                ("recovery.tombstones",),
+                ("candidate/db",),
+            ):
+                with (
+                    self.subTest(value=value),
+                    self.assertRaises((TypeError, ValueError)),
+                ):
+                    WalSidecarController(root).hold_quiescence(
+                        allowed_root_names=value  # type: ignore[arg-type]
+                    )
+
+    def test_restore_ledger_prepare_creates_internal_logs_under_owner(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence()
+            owner = session.issue_owner()
+            restore = RestoreLedger(root)
+            try:
+                handle = restore.prepare(
+                    backup_digest="sha256:" + "a" * 64,
+                    previous_primary_digest="sha256:" + "b" * 64,
+                    candidate_digest="sha256:" + "c" * 64,
+                    identities=(
+                        RestoreIdentity(
+                            operation_id="operation-a",
+                            effect_key="effect-a",
+                        ),
+                    ),
+                    actor="operator",
+                    audit_ref="audit/restore/1",
+                    previous_recovery_epoch=0,
+                    previous_fencing_token_hwm=0,
+                    previous_last_clock_ns=0,
+                    floor_lower_bound=RecoveryFloor(
+                        recovery_epoch=1,
+                        fencing_token_floor=1,
+                    ),
+                    owner=owner,
+                )
+                self.assertEqual("RESTORE_PREPARED", handle.phase)
+                for name in ("recovery.ledger", "recovery.tombstones"):
+                    metadata = (root / name).stat()
+                    self.assertTrue(stat.S_ISREG(metadata.st_mode))
+                    self.assertEqual(0o600, stat.S_IMODE(metadata.st_mode))
+                    self.assertEqual(1, metadata.st_nlink)
+                checkpoint = session.checkpoint(CheckpointRequest("PASSIVE"))
+                self.assertEqual((0, 0, 0), checkpoint.values)
+            finally:
+                session.close()
+
+    def test_acquisition_validates_existing_internal_and_declared_entries(self) -> None:
+        cases = ("recovery.ledger", "candidate.db")
+        for name in cases:
+            for kind in ("symlink", "fifo", "directory", "hardlink", "mode"):
+                with (
+                    self.subTest(name=name, kind=kind),
+                    tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary,
+                ):
+                    root = _make_root(temporary)
+                    with CoordinationStore(root):
+                        pass
+                    target = root.parent / f"{name.replace('.', '-')}-target"
+                    target.write_bytes(b"target")
+                    target.chmod(0o600)
+                    entry = root / name
+                    if kind == "symlink":
+                        entry.symlink_to(target)
+                    elif kind == "fifo":
+                        os.mkfifo(entry, 0o600)
+                    elif kind == "directory":
+                        entry.mkdir(mode=0o700)
+                    elif kind == "hardlink":
+                        os.link(root / "coordination.sqlite3", entry)
+                    else:
+                        entry.write_bytes(b"unsafe-mode")
+                        entry.chmod(0o644)
+                    allowed = (name,) if name == "candidate.db" else ()
+                    with self.assertRaises(WalSidecarUnsafeError):
+                        WalSidecarController(root).hold_quiescence(
+                            allowed_root_names=allowed
+                        )
+
+    def test_quiescence_owner_borrow_is_opaque_and_session_bound(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence()
+            owner = session.issue_owner()
+            try:
+                with owner._borrow_root(root) as root_fd:
+                    self.assertEqual(root_fd, session._resources.root_fd)
+                    session.assert_identity()
+                with self.assertRaises(TypeError):
+                    copy.copy(owner)
+                with self.assertRaises(TypeError):
+                    copy.deepcopy(owner)
+                with self.assertRaises(TypeError):
+                    pickle.dumps(owner)
+                forged = object.__new__(QuiescenceOwner)
+                object.__setattr__(forged, "_session", session)
+                object.__setattr__(forged, "_token", owner._token)
+                with (
+                    self.assertRaises(WalSidecarClosedError),
+                    forged._borrow_root(root),
+                ):
+                    pass
+                with (
+                    self.assertRaises(WalSidecarUnsafeError),
+                    owner._borrow_root(root.parent),
+                ):
+                    pass
+            finally:
+                session.close()
+            self.assertEqual({}, session._controller._active_owners)
+            with self.assertRaises(WalSidecarClosedError), owner._borrow_root(root):
+                pass
+
+    def test_owner_cleanup_retry_drains_recovery_fd_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-owner-retry-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = WalSidecarController(root)
+            session = controller.hold_quiescence()
+            owner = session.issue_owner()
+            fd = os.open(root / "recovery-pending", os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                identity = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+                owner._retain_failed_fd(
+                    fd,
+                    identity,
+                    "recovery file recovery.ledger durability",
+                )
+                owner._retry_cleanup()
+                owner._retry_cleanup()
+                owner._retry_cleanup()
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+                self.assertFalse(controller._active_sessions)
+                self.assertFalse(controller._active_owners)
+                session.close()
+            finally:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                session.close()
+                controller.close()
+
+    def test_owner_cleanup_retry_rejects_forged_or_already_closed_owner(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-owner-invalid-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = WalSidecarController(root)
+            session = controller.hold_quiescence()
+            owner = session.issue_owner()
+            forged = object.__new__(QuiescenceOwner)
+            object.__setattr__(forged, "_session", session)
+            object.__setattr__(forged, "_token", owner._token)
+            try:
+                with self.assertRaises(WalSidecarClosedError):
+                    forged._retry_cleanup()
+            finally:
+                session.close()
+
+            closed_session = controller.hold_quiescence()
+            closed_owner = closed_session.issue_owner()
+            closed_session.close()
+            with self.assertRaises(WalSidecarClosedError):
+                closed_owner._retry_cleanup()
+            controller.close()
+
+    def test_uninitialized_quiescence_owner_is_typed_closed(self) -> None:
+        owner = object.__new__(QuiescenceOwner)
+        with self.assertRaises(WalSidecarClosedError):
+            repr(owner)
+        with self.assertRaises(WalSidecarClosedError):
+            owner.assert_identity()
+        with self.assertRaises(WalSidecarClosedError), owner._borrow_root(Path("/tmp")):
+            pass
+
+    def test_copy_observation_can_be_reverified_without_exposing_resources(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence()
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="snapshot"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+                verified = session.verify_candidate(candidate)
+                self.assertEqual(candidate, verified)
+                self.assertFalse(hasattr(verified, "root_fd"))
+                self.assertFalse(hasattr(verified, "connection"))
+            finally:
+                session.close()
+
+    def test_verify_candidate_rejects_tamper_and_sidecar_without_deleting(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            source = root / "candidate.db"
+            source.write_bytes(b"candidate-bytes")
+            source.chmod(0o600)
+            candidate = DatabaseCandidate(
+                name=source.name,
+                identity=(source.stat().st_dev, source.stat().st_ino),
+                size=source.stat().st_size,
+                digest="sha256:" + hashlib.sha256(source.read_bytes()).hexdigest(),
+            )
+            session = WalSidecarController(root).hold_quiescence(
+                allowed_root_names=(source.name,)
+            )
+            try:
+                self.assertEqual(candidate, session.verify_candidate(candidate))
+                source.write_bytes(b"tampered-bytes")
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    session.verify_candidate(candidate)
+                sidecar = root / f"{source.name}-wal"
+                sidecar.write_bytes(b"keep-sidecar")
+                sidecar.chmod(0o600)
+                with self.assertRaises(WalSidecarUnsafeError):
+                    session.verify_candidate(candidate)
+                self.assertEqual(b"keep-sidecar", sidecar.read_bytes())
+            finally:
+                session.close()
+
+    def test_verify_candidate_rejects_symlink_without_following_it(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            target = root.parent / "candidate-target"
+            target.write_bytes(b"outside")
+            target.chmod(0o600)
+            candidate_path = root / "candidate.db"
+            candidate = DatabaseCandidate(
+                name=candidate_path.name,
+                identity=(target.stat().st_dev, target.stat().st_ino),
+                size=target.stat().st_size,
+                digest="sha256:" + hashlib.sha256(target.read_bytes()).hexdigest(),
+            )
+            session = WalSidecarController(root).hold_quiescence(
+                allowed_root_names=(candidate_path.name,)
+            )
+            try:
+                candidate_path.symlink_to(target)
+                with self.assertRaises(WalSidecarUnsafeError):
+                    session.verify_candidate(candidate)
+            finally:
+                session.close()
+            self.assertTrue(candidate_path.is_symlink())
+            self.assertEqual(b"outside", target.read_bytes())
+
+    def test_replace_uses_root_relative_rename_and_rebinds_same_session(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root) as store:
+                store.create_intent(
+                    "op-replace",
+                    effect_key="effect/replace",
+                    actor="main",
+                    clock_ns=1,
+                )
+            session = WalSidecarController(root).hold_quiescence()
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="candidate.db"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+                with mock.patch(
+                    "agent_team.wal.os.replace", wraps=os.replace
+                ) as replace:
+                    replaced = session.replace_database(candidate)
+                self.assertIs(type(replaced), DatabaseReplacementResult)
+                self.assertEqual(candidate, replaced.candidate)
+                self.assertFalse((root / candidate.name).exists())
+                self.assertEqual(
+                    candidate.identity,
+                    (
+                        (root / "coordination.sqlite3").stat().st_dev,
+                        (root / "coordination.sqlite3").stat().st_ino,
+                    ),
+                )
+                self.assertEqual(candidate.identity[1], replaced.primary_identity[1])
+                self.assertEqual(1, replace.call_count)
+                _, kwargs = replace.call_args
+                self.assertEqual(session._resources.root_fd, kwargs["src_dir_fd"])
+                self.assertEqual(session._resources.root_fd, kwargs["dst_dir_fd"])
+                session.assert_identity()
+                checkpoint = session.checkpoint(CheckpointRequest("PASSIVE"))
+                self.assertEqual((0, 0, 0), checkpoint.values)
+                with self.assertRaises(StoreBusyError):
+                    WalSidecarController(root, busy_timeout_ms=20).checkpoint(
+                        CheckpointRequest("PASSIVE")
+                    )
+            finally:
+                session.close()
+            with CoordinationStore(root):
+                pass
+
+    def test_replace_rejects_candidate_or_primary_swap_before_rename(self) -> None:
+        for swap_kind in ("candidate", "primary"):
+            with (
+                self.subTest(swap_kind=swap_kind),
+                tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary,
+            ):
+                root = _make_root(temporary)
+                with CoordinationStore(root):
+                    pass
+                alternate = root / "alternate.db"
+                alternate.write_bytes(b"alternate")
+                alternate.chmod(0o600)
+
+                selected_swap_kind = swap_kind
+
+                class SwapController(WalSidecarController):
+                    swapped = False
+
+                    def _fault(
+                        self,
+                        point: str,
+                        *,
+                        _swap_kind: str = selected_swap_kind,
+                        _alternate: Path = alternate,
+                    ) -> None:
+                        if point == "before_replace" and not self.swapped:
+                            self.swapped = True
+                            scratch = self.state_root / "swap.scratch"
+                            if _swap_kind == "candidate":
+                                source = self.state_root / "candidate.db"
+                            else:
+                                source = self.state_root / "coordination.sqlite3"
+                            source.rename(scratch)
+                            _alternate.rename(source)
+                            scratch.rename(_alternate)
+
+                session = SwapController(root).hold_quiescence()
+                try:
+                    copied = session.copy_database_to(
+                        CheckpointRequest("TRUNCATE"),
+                        DatabaseCopyTarget(name="candidate.db"),
+                    )
+                    candidate = DatabaseCandidate(
+                        name=copied.target.name,
+                        identity=copied.target_identity,
+                        size=copied.size,
+                        digest=copied.digest,
+                    )
+                    with (
+                        mock.patch(
+                            "agent_team.wal.os.replace", wraps=os.replace
+                        ) as replace,
+                        self.assertRaises(WalSidecarRecoveryRequiredError),
+                    ):
+                        session.replace_database(candidate)
+                    self.assertEqual(0, replace.call_count)
+                    self.assertTrue((root / "alternate.db").exists())
+                    self.assertTrue((root / "candidate.db").exists())
+                finally:
+                    session.close()
+
+    def test_replace_orders_rename_fsync_rebind_and_final_assert(self) -> None:
+        events: list[str] = []
+
+        class TraceController(WalSidecarController):
+            def _fault(self, point: str) -> None:
+                if point in {
+                    "before_replace",
+                    "after_replace",
+                    "before_replace_fsync",
+                    "after_replace_fsync",
+                    "before_database_rebind",
+                    "after_database_rebind",
+                    "before_replace_result",
+                    "after_replace_result",
+                }:
+                    events.append(point)
+
+            def _rebind_database(self, resources: object) -> None:
+                events.append("rebind")
+                super()._rebind_database(resources)  # type: ignore[arg-type]
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = TraceController(root).hold_quiescence()
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="candidate.db"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+                with mock.patch("agent_team.wal.os.fsync", wraps=os.fsync):
+                    session.replace_database(candidate)
+            finally:
+                session.close()
+        self.assertLess(events.index("before_replace"), events.index("after_replace"))
+        self.assertLess(
+            events.index("after_replace"), events.index("before_replace_fsync")
+        )
+        self.assertLess(
+            events.index("after_replace_fsync"), events.index("before_database_rebind")
+        )
+        self.assertLess(events.index("after_replace_fsync"), events.index("rebind"))
+        self.assertLess(events.index("rebind"), events.index("before_database_rebind"))
+        self.assertLess(
+            events.index("before_database_rebind"),
+            events.index("after_database_rebind"),
+        )
+        self.assertLess(
+            events.index("after_database_rebind"), events.index("before_replace_result")
+        )
+
+    def test_rebind_old_fd_close_failure_keeps_new_descriptor_retryable(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            database = root / "coordination.sqlite3"
+            replacement = root / "replacement.sqlite3"
+            replacement.write_bytes(database.read_bytes())
+            replacement.chmod(0o600)
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence(
+                allowed_root_names=(replacement.name,)
+            )
+            old_fd = session._resources.database_fd
+            old_identity = session._resources.database_identity
+            original_close = os.close
+            failed = True
+
+            def close(fd: int) -> None:
+                nonlocal failed
+                if fd == old_fd and failed:
+                    failed = False
+                    raise OSError("injected old descriptor close failure")
+                original_close(fd)
+
+            try:
+                os.replace(replacement, database)
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=close),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    session._rebind_database()
+                self.assertNotEqual(old_identity, session._resources.database_identity)
+                session.assert_identity()
+            finally:
+                session.close()
+            with self.assertRaises(OSError):
+                os.fstat(old_fd)
+
+    def test_rebind_persistent_old_fd_failure_retains_orphan_until_retry(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            database = root / "coordination.sqlite3"
+            replacement = root / "replacement.sqlite3"
+            replacement.write_bytes(database.read_bytes())
+            replacement.chmod(0o600)
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence(
+                allowed_root_names=(replacement.name,)
+            )
+            old_fd = session._resources.database_fd
+            try:
+                os.replace(replacement, database)
+
+                original_close = os.close
+
+                def close(fd: int) -> None:
+                    if fd == old_fd:
+                        raise OSError("persistent old descriptor close failure")
+                    original_close(fd)
+
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=close),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    session._rebind_database()
+                self.assertTrue(
+                    any(fd == old_fd for fd, _, _ in session._resources._orphan_fds)
+                )
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    session.assert_identity()
+                session.close()
+            finally:
+                session.close()
+            with self.assertRaises(OSError):
+                os.fstat(old_fd)
+
+    def test_replace_candidate_fd_close_uncertainty_is_not_success(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence()
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="candidate.db"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+                original_close = wal._close_temporary_fd
+                candidate_closes = 0
+
+                def close(
+                    fd: int,
+                    expected_identity: tuple[int, int] | None,
+                    label: str,
+                ) -> None:
+                    nonlocal candidate_closes
+                    if label == "database candidate":
+                        candidate_closes += 1
+                        if candidate_closes == 2:
+                            raise OSError("injected candidate close failure")
+                    original_close(fd, expected_identity, label)
+
+                with (
+                    mock.patch("agent_team.wal._close_temporary_fd", side_effect=close),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    session.replace_database(candidate)
+                self.assertEqual(
+                    candidate.identity,
+                    (
+                        (root / "coordination.sqlite3").stat().st_dev,
+                        (root / "coordination.sqlite3").stat().st_ino,
+                    ),
+                )
+                self.assertTrue(session._resources._orphan_fds)
+            finally:
+                session.close()
+
+    def test_replace_rechecks_primary_digest_before_result(self) -> None:
+        class TamperController(WalSidecarController):
+            tampered = False
+
+            def _fault(self, point: str) -> None:
+                if point == "before_replace_result" and not self.tampered:
+                    self.tampered = True
+                    database = self.state_root / "coordination.sqlite3"
+                    with database.open("ab") as stream:
+                        stream.write(b"tampered")
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = TamperController(root).hold_quiescence()
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="candidate.db"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    session.replace_database(candidate)
+            finally:
+                session.close()
+
+    def test_replace_rejects_sidecar_that_appears_before_rename(self) -> None:
+        class SidecarController(WalSidecarController):
+            def _fault(self, point: str) -> None:
+                if point == "before_replace":
+                    sidecar = self.state_root / WAL_BASENAME
+                    sidecar.write_bytes(b"late-sidecar")
+                    sidecar.chmod(0o600)
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = SidecarController(root).hold_quiescence()
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="candidate.db"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+                with (
+                    mock.patch("agent_team.wal.os.replace") as replace,
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    session.replace_database(candidate)
+                replace.assert_not_called()
+                self.assertEqual(b"late-sidecar", (root / WAL_BASENAME).read_bytes())
+            finally:
+                session.close()
+
+    def test_replace_rejects_existing_primary_sidecars_without_deleting(self) -> None:
+        for name in (WAL_BASENAME, SHM_BASENAME, JOURNAL_BASENAME):
+            with (
+                self.subTest(name=name),
+                tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary,
+            ):
+                root = _make_root(temporary)
+                with CoordinationStore(root):
+                    pass
+                session = WalSidecarController(root).hold_quiescence()
+                try:
+                    copied = session.copy_database_to(
+                        CheckpointRequest("TRUNCATE"),
+                        DatabaseCopyTarget(name="candidate.db"),
+                    )
+                    candidate = DatabaseCandidate(
+                        name=copied.target.name,
+                        identity=copied.target_identity,
+                        size=copied.size,
+                        digest=copied.digest,
+                    )
+                    sidecar = root / name
+                    sidecar.write_bytes(b"keep-sidecar")
+                    sidecar.chmod(0o600)
+                    with self.assertRaises(WalSidecarUnsafeError):
+                        session.replace_database(candidate)
+                    self.assertEqual(b"keep-sidecar", sidecar.read_bytes())
+                    self.assertTrue((root / "candidate.db").exists())
+                finally:
+                    session.close()
 
     def test_quiescence_session_cannot_be_copied_or_pickled(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
@@ -1183,6 +1882,33 @@ class WalSidecarControllerTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 os.fstat(marker_fd)
 
+    def test_session_retry_after_close_failure_releases_owner_registry(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence()
+            owner = session.issue_owner()
+            marker_fd = session._resources.marker_fd
+            original_close = os.close
+            failed = True
+
+            def close(fd: int) -> None:
+                nonlocal failed
+                if fd == marker_fd and failed:
+                    failed = False
+                    raise OSError("injected marker close failure")
+                original_close(fd)
+
+            with (
+                mock.patch("agent_team.wal.os.close", side_effect=close),
+                self.assertRaises(WalSidecarRecoveryRequiredError),
+            ):
+                session.close()
+            self.assertIn(owner._token, session._controller._active_owners)
+            session.close()
+            self.assertEqual({}, session._controller._active_owners)
+
     def test_store_close_retries_one_shot_marker_fd_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
             root = _make_root(temporary)
@@ -1974,6 +2700,84 @@ class WalSidecarControllerTest(unittest.TestCase):
             finally:
                 session.close()
 
+    def test_checkpoint_body_error_keeps_connection_cleanup_retryable(self) -> None:
+        class BodyError(Exception):
+            pass
+
+        class FailingController(WalSidecarController):
+            __slots__ = ("failed",)
+
+            def __init__(self, state_root: Path) -> None:
+                super().__init__(state_root, busy_timeout_ms=20)
+                self.failed = False
+
+            def _fault(self, point: str) -> None:
+                if point == "after_checkpoint" and not self.failed:
+                    self.failed = True
+                    raise BodyError("checkpoint body failed")
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-checkpoint-owner-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = FailingController(root).hold_quiescence()
+            original_close = wal._close_temporary_connection
+
+            def fail_connection_close(
+                connection: sqlite3.Connection, label: str
+            ) -> None:
+                if label == "SQLite connection":
+                    raise OSError("persistent checkpoint connection close failure")
+                original_close(connection, label)
+
+            try:
+                with (
+                    mock.patch(
+                        "agent_team.wal._close_temporary_connection",
+                        side_effect=fail_connection_close,
+                    ),
+                    self.assertRaises(BodyError) as raised,
+                ):
+                    session.checkpoint(CheckpointRequest("PASSIVE"))
+                self.assertTrue(session._resources._orphan_connections)
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("checkpoint body error has no cleanup retry")
+            finally:
+                retry = locals().get("retry")
+                if callable(retry):
+                    retry()
+                    retry()
+                    self.assertFalse(session._resources._orphan_connections)
+                session.close()
+
+    def test_root_open_wrapper_adopts_lower_store_cleanup_owner(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-root-owner-"
+        ) as temporary:
+            root = _make_root(temporary)
+            calls: list[str] = []
+            lower = StoreUnavailableError("lower root traversal failure")
+            lower._attach_cleanup_capability(
+                _CleanupCapability(lambda: calls.append("lower"))
+            )
+            with (
+                mock.patch(
+                    "agent_team.wal._store._open_state_root",
+                    side_effect=lower,
+                ),
+                self.assertRaises(WalSidecarUnsafeError) as raised,
+            ):
+                WalSidecarController(root).hold_quiescence()
+            retry = getattr(raised.exception, "retry_cleanup", None)
+            if not callable(retry):
+                self.fail("root wrapper has no cleanup retry")
+            retry()
+            retry()
+            self.assertEqual(["lower"], calls)
+
     def test_checkpoint_then_cleanup_can_share_one_quiescence_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-wal-") as temporary:
             root = _make_root(temporary)
@@ -2206,6 +3010,1273 @@ class WalSidecarControllerTest(unittest.TestCase):
                 else:
                     with CoordinationStore(root):
                         pass
+
+    def test_failed_acquisition_retains_locked_fds_until_controller_retry(self) -> None:
+        class FailingController(WalSidecarController):
+            marker_fd: int | None = None
+            gate_fd: int | None = None
+
+            def _assert_resources(self, resources: object) -> None:
+                self.marker_fd = resources.marker_fd  # type: ignore[attr-defined]
+                self.gate_fd = resources.gate_fd  # type: ignore[attr-defined]
+                raise WalSidecarRecoveryRequiredError("injected acquisition failure")
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-acquire-retry-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = FailingController(root, busy_timeout_ms=20)
+            original_close = os.close
+            original_flock = fcntl.flock
+
+            def fail_close(fd: int) -> None:
+                if fd in {controller.marker_fd, controller.gate_fd}:
+                    raise OSError("persistent close failure")
+                original_close(fd)
+
+            def fail_unlock(fd: int, operation: int) -> None:
+                if (
+                    fd in {controller.marker_fd, controller.gate_fd}
+                    and operation == fcntl.LOCK_UN
+                ):
+                    raise OSError("persistent unlock failure")
+                original_flock(fd, operation)
+
+            with (
+                mock.patch("agent_team.wal.os.close", side_effect=fail_close),
+                mock.patch("agent_team.wal.fcntl.flock", side_effect=fail_unlock),
+                self.assertRaises(WalSidecarRecoveryRequiredError) as raised,
+            ):
+                controller.hold_quiescence()
+            pending_fds = getattr(controller, "_pending_fds", ())
+            self.assertTrue(pending_fds)
+            self.assertEqual(
+                {controller.marker_fd, controller.gate_fd},
+                {entry.fd for entry in pending_fds},
+            )
+            retry = getattr(raised.exception, "retry_cleanup", None)
+            if not callable(retry):
+                self.fail("acquisition error has no cleanup retry")
+            retry()
+            retry()
+            self.assertFalse(controller._pending_fds)
+
+            with WalSidecarController(root)._resources() as resources:
+                self.assertIsNotNone(resources.marker_fd)
+
+    def test_retain_failed_fd_binds_identity_before_storage_and_never_closes_reused_fd(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-fd-identity-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence(
+                allowed_root_names=("owner-append",)
+            )
+            fd: int | None = None
+            replacement_fd: int | None = None
+            try:
+                fd = os.open(root / "retained", os.O_CREAT | os.O_RDWR, 0o600)
+                os.write(fd, b"retained")
+                original_identity = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+                wal._retain_failed_fd(session._resources, fd, None, "retained fd")
+                self.assertEqual(
+                    original_identity, session._resources._orphan_fds[0][1]
+                )
+
+                os.close(fd)
+                fd = None
+                replacement_fd = os.open(
+                    root / "replacement", os.O_CREAT | os.O_RDWR, 0o600
+                )
+                self.assertEqual(session._resources._orphan_fds[0][0], replacement_fd)
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    session.close()
+                os.write(replacement_fd, b"still-open")
+            finally:
+                if replacement_fd is not None:
+                    os.close(replacement_fd)
+                if fd is not None:
+                    os.close(fd)
+                session.close()
+
+    def test_session_context_preserves_body_error_when_cleanup_is_uncertain(
+        self,
+    ) -> None:
+        class BodyError(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-body-cleanup-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            marker_fd = session._resources.marker_fd
+            original_close = os.close
+            original_flock = fcntl.flock
+
+            def fail_close(fd: int) -> None:
+                if fd == marker_fd:
+                    raise OSError("persistent marker close failure")
+                original_close(fd)
+
+            def fail_unlock(fd: int, operation: int) -> None:
+                if fd == marker_fd and operation == fcntl.LOCK_UN:
+                    raise OSError("persistent marker unlock failure")
+                original_flock(fd, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=fail_close),
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=fail_unlock),
+                    self.assertRaises(
+                        (BodyError, WalSidecarRecoveryRequiredError)
+                    ) as raised,
+                    session,
+                ):
+                    raise BodyError("body failed")
+                self.assertIsInstance(raised.exception, BodyError)
+                self.assertIsInstance(
+                    raised.exception.__cause__, WalSidecarRecoveryRequiredError
+                )
+                session.close()
+            finally:
+                session.close()
+
+    def test_public_checkpoint_retains_resources_and_drains_before_new_io(self) -> None:
+        class BodyError(Exception):
+            pass
+
+        class FaultController(WalSidecarController):
+            __slots__ = ("fail_body", "last_marker_fd")
+
+            def __init__(self, state_root: Path, *, busy_timeout_ms: int) -> None:
+                super().__init__(state_root, busy_timeout_ms=busy_timeout_ms)
+                self.fail_body = True
+                self.last_marker_fd: int | None = None
+
+            def _open_resources(
+                self,
+                *,
+                allowed_root_names: frozenset[str] = frozenset(),
+            ) -> wal._Resources:
+                resources = super()._open_resources(
+                    allowed_root_names=allowed_root_names,
+                )
+                self.last_marker_fd = resources.marker_fd
+                return resources
+
+            def _fault(self, point: str) -> None:
+                if point == "after_result" and self.fail_body:
+                    self.fail_body = False
+                    raise BodyError("checkpoint body failed")
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-public-retry-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = FaultController(root, busy_timeout_ms=20)
+            original_close = os.close
+            original_flock = fcntl.flock
+
+            def fail_close(fd: int) -> None:
+                if (
+                    controller.last_marker_fd is not None
+                    and fd == controller.last_marker_fd
+                ):
+                    raise OSError("persistent marker close failure")
+                original_close(fd)
+
+            def fail_unlock(fd: int, operation: int) -> None:
+                if (
+                    controller.last_marker_fd is not None
+                    and fd == controller.last_marker_fd
+                    and operation == fcntl.LOCK_UN
+                ):
+                    raise OSError("persistent marker unlock failure")
+                original_flock(fd, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=fail_close),
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=fail_unlock),
+                ):
+                    with self.assertRaises(
+                        (BodyError, WalSidecarRecoveryRequiredError)
+                    ) as raised:
+                        controller.checkpoint(CheckpointRequest("PASSIVE"))
+                    self.assertIsInstance(raised.exception, BodyError)
+                    self.assertEqual(
+                        1,
+                        len(getattr(controller, "_pending_resources", ())),
+                    )
+                    with self.assertRaises(WalSidecarRecoveryRequiredError):
+                        controller.checkpoint(CheckpointRequest("PASSIVE"))
+                    self.assertEqual(
+                        1,
+                        len(getattr(controller, "_pending_resources", ())),
+                    )
+            finally:
+                close_controller = getattr(controller, "close", None)
+                if callable(close_controller):
+                    close_controller()
+
+    def test_owner_io_fails_closed_after_one_retained_fd_instead_of_growing_registry(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-owner-ready-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence(
+                allowed_root_names=("owner-append",)
+            )
+            owner = session.issue_owner()
+            fd = os.open(root / "owner-append", os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                wal._retain_failed_fd(session._resources, fd, None, "owner append")
+                self.assertEqual(1, len(session._resources._orphan_fds))
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    owner.assert_identity()
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    owner._retain_failed_fd(fd, None, "owner append retry")
+                self.assertEqual(1, len(session._resources._orphan_fds))
+            finally:
+                session.close()
+
+    def test_controller_does_not_issue_session_while_old_cleanup_is_pending(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-session-ready-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = WalSidecarController(root, busy_timeout_ms=20)
+            session = controller.hold_quiescence()
+            marker_fd = session._resources.marker_fd
+            original_close = os.close
+
+            def fail_close(fd: int) -> None:
+                if fd == marker_fd:
+                    raise OSError("persistent marker close failure")
+                original_close(fd)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=fail_close),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    session.close()
+                self.assertEqual(1, len(controller._active_sessions))
+                with self.assertRaises(WalSidecarRecoveryRequiredError) as raised:
+                    controller.hold_quiescence()
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("pending-session error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(controller._active_sessions)
+            finally:
+                session.close()
+                controller.close()
+
+    def test_temporary_fd_reuse_is_rejected_before_close(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-helper-reuse-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            fd = os.open(root / "original", os.O_CREAT | os.O_RDWR, 0o600)
+            original_identity = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+            replacement_fd: int | None = None
+            try:
+                os.close(fd)
+                replacement_fd = os.open(
+                    root / "replacement", os.O_CREAT | os.O_RDWR, 0o600
+                )
+                self.assertEqual(fd, replacement_fd)
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    wal._close_temporary_fd(
+                        replacement_fd,
+                        original_identity,
+                        "reused temporary fd",
+                    )
+                os.write(replacement_fd, b"still-open")
+            finally:
+                if replacement_fd is not None:
+                    try:
+                        os.close(replacement_fd)
+                    except OSError:
+                        pass
+
+    def test_temporary_fd_binds_none_identity_before_first_close(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-helper-bind-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            fd = os.open(root / "temporary", os.O_CREAT | os.O_RDWR, 0o600)
+            original_fstat = os.fstat
+            original_close = os.close
+            events: list[str] = []
+
+            def fstat(value: int) -> os.stat_result:
+                if value == fd:
+                    events.append("fstat")
+                return original_fstat(value)
+
+            def close(value: int) -> None:
+                if value == fd:
+                    events.append("close")
+                original_close(value)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.fstat", side_effect=fstat),
+                    mock.patch("agent_team.wal.os.close", side_effect=close),
+                ):
+                    wal._close_temporary_fd(fd, None, "bound temporary fd")
+                self.assertEqual(["fstat", "close"], events)
+            finally:
+                try:
+                    original_close(fd)
+                except OSError:
+                    pass
+
+    def test_actual_close_then_error_does_not_retry_into_reused_fd(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-close-then-error-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            fd = os.open(root / "original", os.O_CREAT | os.O_RDWR, 0o600)
+            expected_identity = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+            original_close = os.close
+            failed = False
+
+            def close(value: int) -> None:
+                nonlocal failed
+                if value == fd and not failed:
+                    failed = True
+                    original_close(value)
+                    raise OSError("close result was lost")
+                original_close(value)
+
+            replacement_fd: int | None = None
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=close),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    wal._close_temporary_fd(
+                        fd, expected_identity, "close-then-error fd"
+                    )
+                replacement_fd = os.open(
+                    root / "replacement", os.O_CREAT | os.O_RDWR, 0o600
+                )
+                self.assertEqual(fd, replacement_fd)
+                os.write(replacement_fd, b"replacement remains open")
+            finally:
+                if replacement_fd is not None:
+                    try:
+                        os.close(replacement_fd)
+                    except OSError:
+                        pass
+
+    def test_held_fd_reuse_is_rejected_without_unlock_or_close(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-held-reuse-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            marker_fd = session._resources.marker_fd
+            marker_identity = session._resources.marker_identity
+            replacement_fd: int | None = None
+            try:
+                os.close(marker_fd)
+                replacement_fd = os.open(
+                    root / "replacement-marker", os.O_CREAT | os.O_RDWR, 0o600
+                )
+                self.assertEqual(marker_fd, replacement_fd)
+                with self.assertRaises(WalSidecarRecoveryRequiredError):
+                    session.close()
+                self.assertEqual(marker_identity, session._resources.marker_identity)
+                os.write(replacement_fd, b"still-open")
+            finally:
+                if replacement_fd is not None:
+                    try:
+                        os.close(replacement_fd)
+                    except OSError:
+                        pass
+                session.close()
+
+    def test_unlock_hook_reuse_does_not_close_foreign_held_fd(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-unlock-reuse-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            marker_fd = session._resources.marker_fd
+            marker_identity = session._resources.marker_identity
+            original_close = os.close
+            original_flock = fcntl.flock
+            replacement_fd: int | None = None
+            swapped = False
+
+            def flock(fd: int, operation: int) -> None:
+                nonlocal replacement_fd, swapped
+                if fd == marker_fd and operation == fcntl.LOCK_UN and not swapped:
+                    swapped = True
+                    replacement_fd = os.open(
+                        root / "foreign-marker",
+                        os.O_CREAT | os.O_RDWR,
+                        0o600,
+                    )
+                    os.dup2(replacement_fd, fd)
+                    original_close(replacement_fd)
+                    replacement_fd = fd
+                    return
+                original_flock(fd, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=flock),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    session.close()
+                self.assertTrue(swapped)
+                self.assertEqual(marker_identity, session._resources.marker_identity)
+                self.assertIsNotNone(replacement_fd)
+                os.fstat(marker_fd)
+            finally:
+                session.close()
+                if replacement_fd is not None:
+                    try:
+                        original_close(replacement_fd)
+                    except OSError:
+                        pass
+
+    def test_pending_unlock_reuse_does_not_close_foreign_fd(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-pending-unlock-reuse-"
+        ) as temporary:
+            root = _make_root(temporary)
+            controller = WalSidecarController(root)
+            fd = os.open(root / "original", os.O_CREAT | os.O_RDWR, 0o600)
+            expected_identity = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+            controller._pending_fds.append(
+                wal._PendingFD(
+                    fd,
+                    expected_identity,
+                    "pending marker",
+                    True,
+                    True,
+                )
+            )
+            original_close = os.close
+            original_flock = fcntl.flock
+            swapped = False
+
+            def flock(value: int, operation: int) -> None:
+                nonlocal swapped
+                if value == fd and operation == fcntl.LOCK_UN and not swapped:
+                    swapped = True
+                    replacement = os.open(
+                        root / "foreign",
+                        os.O_CREAT | os.O_RDWR,
+                        0o600,
+                    )
+                    os.dup2(replacement, fd)
+                    original_close(replacement)
+                    return
+                original_flock(value, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=flock),
+                    self.assertRaises(WalSidecarRecoveryRequiredError) as raised,
+                ):
+                    controller.close()
+                self.assertTrue(swapped)
+                raised.exception.retry_cleanup()
+                raised.exception.retry_cleanup()
+                os.fstat(fd)
+                self.assertFalse(controller._pending_fds)
+            finally:
+                try:
+                    original_close(fd)
+                except OSError:
+                    pass
+
+    def test_recovery_pair_cleanup_handoff_retains_both_fds(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-recovery-pair-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            for name in (
+                recovery.RECOVERY_LEDGER_BASENAME,
+                recovery.RECOVERY_TOMBSTONES_BASENAME,
+            ):
+                path = root / name
+                path.write_bytes(b"pair")
+                path.chmod(0o600)
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            owner = session.issue_owner()
+            pair_fds: set[int] = set()
+            original_close = os.close
+            original_flock = fcntl.flock
+
+            def flock(fd: int, operation: int) -> None:
+                if operation == fcntl.LOCK_EX | fcntl.LOCK_NB:
+                    pair_fds.add(fd)
+                original_flock(fd, operation)
+
+            def close(fd: int) -> None:
+                if fd in pair_fds:
+                    raise OSError("persistent recovery pair close failure")
+                original_close(fd)
+
+            try:
+                with (
+                    mock.patch("agent_team.recovery.fcntl.flock", side_effect=flock),
+                    mock.patch("agent_team.recovery.os.close", side_effect=close),
+                    self.assertRaises(recovery.RecoveryLedgerError),
+                    recovery._locked_restore_files(
+                        session._resources.root_fd,
+                        owner._retain_failed_fd,
+                        None,
+                    ),
+                ):
+                    pass
+                self.assertEqual(2, len(session._resources._orphan_fds))
+                retained_fds = tuple(fd for fd, _, _ in session._resources._orphan_fds)
+                session.close()
+                for fd in retained_fds:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
+            finally:
+                session.close()
+
+    def test_status_unknown_after_temporary_close_failure_is_retained(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-status-unknown-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence(
+                allowed_root_names=("temporary",)
+            )
+            resources = session._resources
+            fd = os.open(root / "temporary", os.O_CREAT | os.O_RDWR, 0o600)
+            expected_identity = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+            original_fstat = os.fstat
+            original_close = os.close
+            fstat_calls = 0
+
+            def fstat(value: int) -> os.stat_result:
+                nonlocal fstat_calls
+                if value == fd:
+                    fstat_calls += 1
+                    if fstat_calls > 1:
+                        raise OSError("descriptor status unavailable")
+                return original_fstat(value)
+
+            def close(value: int) -> None:
+                if value == fd:
+                    raise OSError("close status unavailable")
+                original_close(value)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.fstat", side_effect=fstat),
+                    mock.patch("agent_team.wal.os.close", side_effect=close),
+                    self.assertRaises(WalSidecarRecoveryRequiredError),
+                ):
+                    wal._close_fd_into_resources(
+                        resources,
+                        fd,
+                        expected_identity,
+                        "status-unknown temporary fd",
+                    )
+                self.assertEqual(
+                    [(fd, expected_identity, "status-unknown temporary fd")],
+                    resources._orphan_fds,
+                )
+            finally:
+                session.close()
+
+    def test_close_only_retry_does_not_repeat_successful_unlock(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-unlock-count-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            marker_fd = session._resources.marker_fd
+            original_close = os.close
+            original_flock = fcntl.flock
+            failed = True
+            unlock_calls = 0
+
+            def close(fd: int) -> None:
+                nonlocal failed
+                if fd == marker_fd and failed:
+                    failed = False
+                    raise OSError("one-shot marker close failure")
+                original_close(fd)
+
+            def flock(fd: int, operation: int) -> None:
+                nonlocal unlock_calls
+                if fd == marker_fd and operation == fcntl.LOCK_UN:
+                    unlock_calls += 1
+                original_flock(fd, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=close),
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=flock),
+                ):
+                    with self.assertRaises(WalSidecarRecoveryRequiredError):
+                        session.close()
+                    session.close()
+                self.assertEqual(1, unlock_calls)
+            finally:
+                session.close()
+
+    def test_rebind_identity_error_remains_primary_when_new_fd_close_is_uncertain(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-rebind-primary-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            database = root / "coordination.sqlite3"
+            alternate = root / "alternate.sqlite3"
+            alternate.write_bytes(database.read_bytes())
+            alternate.chmod(0o600)
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            root_fd = session._resources.root_fd
+            original_open = os.open
+            original_stat = os.stat
+            original_replace = os.replace
+            original_close = os.close
+            new_fds: list[int] = []
+            database_stat_calls = 0
+
+            def open_file(*args: object, **kwargs: object) -> int:
+                fd = original_open(*args, **kwargs)  # type: ignore[arg-type]
+                if (
+                    args
+                    and args[0] == "coordination.sqlite3"
+                    and kwargs.get("dir_fd") == root_fd
+                ):
+                    new_fds.append(fd)
+                return fd
+
+            def stat_file(
+                path: object, *args: object, **kwargs: object
+            ) -> os.stat_result:
+                nonlocal database_stat_calls
+                result = original_stat(path, *args, **kwargs)  # type: ignore[arg-type]
+                if path == "coordination.sqlite3" and kwargs.get("dir_fd") == root_fd:
+                    database_stat_calls += 1
+                    if database_stat_calls == 2:
+                        original_replace(database, root / "original.sqlite3")
+                        original_replace(alternate, database)
+                        result = original_stat(path, *args, **kwargs)  # type: ignore[arg-type]
+                return result
+
+            def close_file(fd: int) -> None:
+                if new_fds and fd == new_fds[0]:
+                    raise OSError("persistent new descriptor close failure")
+                original_close(fd)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.open", side_effect=open_file),
+                    mock.patch("agent_team.wal.os.stat", side_effect=stat_file),
+                    mock.patch("agent_team.wal.os.close", side_effect=close_file),
+                    self.assertRaises(WalSidecarRecoveryRequiredError) as raised,
+                ):
+                    session._rebind_database()
+                self.assertIn("changed while rebinding", str(raised.exception))
+                self.assertIsInstance(
+                    raised.exception.__cause__, WalSidecarRecoveryRequiredError
+                )
+                self.assertTrue(new_fds)
+                self.assertTrue(
+                    any(fd == new_fds[0] for fd, _, _ in session._resources._orphan_fds)
+                )
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("rebind error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(session._resources._orphan_fds)
+            finally:
+                session.close()
+
+    def test_lock_timeout_computes_remaining_once_and_never_sleeps_negative(
+        self,
+    ) -> None:
+        busy = OSError(errno.EAGAIN, "lock busy")
+        sleep_calls: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if seconds < 0:
+                raise ValueError("sleep length must be non-negative")
+
+        with (
+            mock.patch("agent_team.wal.fcntl.flock", side_effect=busy),
+            mock.patch(
+                "agent_team.wal.time.monotonic_ns",
+                side_effect=(0, 0, 2_000_000),
+            ),
+            mock.patch("agent_team.wal.time.sleep", side_effect=sleep),
+            self.assertRaises((ValueError, WalSidecarBusyError)) as raised,
+        ):
+            wal._lock_nonblocking(
+                99,
+                exclusive=True,
+                timeout_ms=1,
+                label="timeout boundary",
+            )
+        self.assertIsInstance(raised.exception, WalSidecarBusyError)
+        self.assertEqual([0.001], sleep_calls)
+
+    def test_verify_candidate_body_error_remains_primary_when_fd_close_fails(
+        self,
+    ) -> None:
+        class BodyError(Exception):
+            pass
+
+        class FaultController(WalSidecarController):
+            __slots__ = ("failed",)
+
+            def __init__(self, state_root: Path) -> None:
+                super().__init__(state_root, busy_timeout_ms=20)
+                self.failed = False
+
+            def _fault(self, point: str) -> None:
+                if point == "after_candidate_verify" and not self.failed:
+                    self.failed = True
+                    raise BodyError("candidate verification body failed")
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-verify-primary-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            candidate_path = root / "candidate.db"
+            candidate_path.write_bytes(b"candidate")
+            candidate_path.chmod(0o600)
+            candidate = DatabaseCandidate(
+                name=candidate_path.name,
+                identity=(candidate_path.stat().st_dev, candidate_path.stat().st_ino),
+                size=candidate_path.stat().st_size,
+                digest="sha256:"
+                + hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+            )
+            session = FaultController(root).hold_quiescence(
+                allowed_root_names=(candidate_path.name,)
+            )
+            original_close = wal._close_temporary_fd
+
+            def fail_candidate_close(
+                fd: int,
+                expected_identity: tuple[int, int] | None,
+                label: str,
+            ) -> None:
+                if label == "database candidate":
+                    raise OSError("persistent candidate close failure")
+                original_close(fd, expected_identity, label)
+
+            try:
+                with (
+                    mock.patch(
+                        "agent_team.wal._close_temporary_fd",
+                        side_effect=fail_candidate_close,
+                    ),
+                    self.assertRaises(
+                        (BodyError, WalSidecarRecoveryRequiredError)
+                    ) as raised,
+                ):
+                    session.verify_candidate(candidate)
+                self.assertIsInstance(raised.exception, BodyError)
+                self.assertIsInstance(
+                    raised.exception.__cause__, WalSidecarRecoveryRequiredError
+                )
+                self.assertTrue(session._resources._orphan_fds)
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("verify error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(session._resources._orphan_fds)
+            finally:
+                session.close()
+
+    def test_replace_result_body_error_remains_primary_when_fd_close_fails(
+        self,
+    ) -> None:
+        class BodyError(Exception):
+            pass
+
+        class FaultController(WalSidecarController):
+            __slots__ = ("failed",)
+
+            def __init__(self, state_root: Path) -> None:
+                super().__init__(state_root, busy_timeout_ms=20)
+                self.failed = False
+
+            def _fault(self, point: str) -> None:
+                if point == "after_replace_result" and not self.failed:
+                    self.failed = True
+                    raise BodyError("replace result body failed")
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-replace-primary-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = FaultController(root)
+            session = controller.hold_quiescence(allowed_root_names=("candidate.db",))
+            original_close = wal._close_temporary_fd
+            candidate_close_calls = 0
+            try:
+                copied = session.copy_database_to(
+                    CheckpointRequest("TRUNCATE"),
+                    DatabaseCopyTarget(name="candidate.db"),
+                )
+                candidate = DatabaseCandidate(
+                    name=copied.target.name,
+                    identity=copied.target_identity,
+                    size=copied.size,
+                    digest=copied.digest,
+                )
+
+                def fail_candidate_close(
+                    fd: int,
+                    expected_identity: tuple[int, int] | None,
+                    label: str,
+                ) -> None:
+                    nonlocal candidate_close_calls
+                    if label == "database candidate":
+                        candidate_close_calls += 1
+                    if label == "database candidate" and candidate_close_calls == 2:
+                        raise OSError("persistent candidate close failure")
+                    original_close(fd, expected_identity, label)
+
+                with (
+                    mock.patch(
+                        "agent_team.wal._close_temporary_fd",
+                        side_effect=fail_candidate_close,
+                    ),
+                    self.assertRaises(
+                        (BodyError, WalSidecarRecoveryRequiredError)
+                    ) as raised,
+                ):
+                    session.replace_database(candidate)
+                self.assertIsInstance(raised.exception, BodyError)
+                self.assertIsInstance(
+                    raised.exception.__cause__, WalSidecarRecoveryRequiredError
+                )
+                self.assertTrue(session._resources._orphan_fds)
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("replace error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(session._resources._orphan_fds)
+            finally:
+                session.close()
+
+    def test_session_cleanup_error_attaches_retry_owner_for_attrless_body(self) -> None:
+        class AttrlessBodyError(Exception):
+            __slots__ = ()
+
+            def __getattribute__(self, name: str) -> object:
+                if name == "__dict__":
+                    raise AttributeError(name)
+                return super().__getattribute__(name)
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-session-owner-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root, busy_timeout_ms=20).hold_quiescence()
+            marker_fd = session._resources.marker_fd
+            original_close = os.close
+            original_flock = fcntl.flock
+
+            def fail_close(fd: int) -> None:
+                if fd == marker_fd:
+                    raise OSError("persistent marker close failure")
+                original_close(fd)
+
+            def fail_unlock(fd: int, operation: int) -> None:
+                if fd == marker_fd and operation == fcntl.LOCK_UN:
+                    raise OSError("persistent marker unlock failure")
+                original_flock(fd, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=fail_close),
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=fail_unlock),
+                    self.assertRaises(
+                        (AttrlessBodyError, WalSidecarRecoveryRequiredError)
+                    ) as raised,
+                    session,
+                ):
+                    raise AttrlessBodyError("attrless body failed")
+                self.assertIsInstance(raised.exception, WalSidecarRecoveryRequiredError)
+                self.assertIsInstance(raised.exception.__cause__, AttrlessBodyError)
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                self.assertTrue(callable(retry))
+            finally:
+                retry = locals().get("retry")
+                if callable(retry):
+                    retry()
+                    retry()
+                    self.assertFalse(session._controller._active_sessions)
+                session.close()
+
+    def test_resources_body_error_attaches_exact_controller_retry_owner(self) -> None:
+        class BodyError(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-resource-owner-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = WalSidecarController(root, busy_timeout_ms=20)
+            marker_fd: int | None = None
+            original_close = os.close
+            original_flock = fcntl.flock
+
+            def fail_close(fd: int) -> None:
+                if marker_fd is not None and fd == marker_fd:
+                    raise OSError("persistent marker close failure")
+                original_close(fd)
+
+            def fail_unlock(fd: int, operation: int) -> None:
+                if (
+                    marker_fd is not None
+                    and fd == marker_fd
+                    and operation == fcntl.LOCK_UN
+                ):
+                    raise OSError("persistent marker unlock failure")
+                original_flock(fd, operation)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.close", side_effect=fail_close),
+                    mock.patch("agent_team.wal.fcntl.flock", side_effect=fail_unlock),
+                    self.assertRaises(BodyError) as raised,
+                    controller._resources() as resources,
+                ):
+                    marker_fd = resources.marker_fd
+                    raise BodyError("resource body failed")
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                self.assertTrue(callable(retry))
+            finally:
+                retry = locals().get("retry")
+                if callable(retry):
+                    retry()
+                    retry()
+                    self.assertFalse(controller._pending_resources)
+                controller.close()
+
+    def test_pending_fd_overflow_keeps_current_fd_on_composite_retry_owner(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-fd-overflow-"
+        ) as temporary:
+            root = _make_root(temporary)
+            controller = WalSidecarController(root)
+            fds: list[int] = []
+            current_fd: int | None = None
+            for index in range(wal._MAX_PENDING_FDS):
+                fd = os.open(root / f"pending-{index}", os.O_CREAT | os.O_RDWR, 0o600)
+                fds.append(fd)
+                metadata = os.fstat(fd)
+                controller._pending_fds.append(
+                    wal._PendingFD(
+                        fd,
+                        (metadata.st_dev, metadata.st_ino),
+                        f"pending-{index}",
+                        False,
+                        False,
+                    )
+                )
+            current_fd = os.open(root / "current", os.O_CREAT | os.O_RDWR, 0o600)
+            fds.append(current_fd)
+            current_metadata = os.fstat(current_fd)
+            try:
+                with self.assertRaises(WalSidecarRecoveryRequiredError) as raised:
+                    controller._retain_pending_fd(
+                        current_fd,
+                        (current_metadata.st_dev, current_metadata.st_ino),
+                        "current fd",
+                        unlock=False,
+                        locked=False,
+                    )
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("overflow error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(controller._pending_fds)
+                with self.assertRaises(OSError):
+                    os.fstat(current_fd)
+            finally:
+                for fd in fds:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+    def test_connection_overflow_keeps_current_connection_on_composite_retry_owner(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-connection-overflow-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            session = WalSidecarController(root).hold_quiescence()
+            resources = session._resources
+            connections = [
+                sqlite3.connect(":memory:") for _ in range(wal._MAX_RESOURCE_ORPHANS)
+            ]
+            resources._orphan_connections.extend(connections)
+            current = sqlite3.connect(":memory:")
+            try:
+                with self.assertRaises(WalSidecarRecoveryRequiredError) as raised:
+                    resources._retain_connection(current)
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("connection overflow error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(resources._orphan_connections)
+            finally:
+                current.close()
+                session.close()
+
+    def test_arbitrary_status_probe_retains_known_pending_fd_for_retry(self) -> None:
+        class AttrlessProbe(BaseException):
+            __slots__ = ()
+
+            def __getattribute__(self, name: str) -> object:
+                if name == "__dict__":
+                    raise AttributeError(name)
+                return super().__getattribute__(name)
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-status-probe-"
+        ) as temporary:
+            root = _make_root(temporary)
+            controller = WalSidecarController(root)
+            fd = os.open(root / "pending", os.O_CREAT | os.O_RDWR, 0o600)
+            metadata = os.fstat(fd)
+            original_fstat = os.fstat
+
+            def fstat(value: int) -> os.stat_result:
+                if value == fd:
+                    raise AttrlessProbe("status probe failed")
+                return original_fstat(value)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.fstat", side_effect=fstat),
+                    self.assertRaises(WalSidecarRecoveryRequiredError) as raised,
+                ):
+                    controller._retain_pending_fd(
+                        fd,
+                        (metadata.st_dev, metadata.st_ino),
+                        "arbitrary status fd",
+                        unlock=False,
+                        locked=False,
+                    )
+                self.assertEqual(1, len(controller._pending_fds))
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("status probe error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(controller._pending_fds)
+                with self.assertRaises(OSError):
+                    os.fstat(fd)
+            finally:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def test_open_fd_status_overflow_keeps_current_fd_on_error_owner(self) -> None:
+        class AttrlessProbe(BaseException):
+            __slots__ = ()
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-open-fd-overflow-"
+        ) as temporary:
+            root = _make_root(temporary)
+            controller = WalSidecarController(root)
+            fds: list[int] = []
+            for index in range(wal._MAX_PENDING_FDS):
+                fd = os.open(root / f"pending-{index}", os.O_CREAT | os.O_RDWR, 0o600)
+                fds.append(fd)
+                metadata = os.fstat(fd)
+                controller._pending_fds.append(
+                    wal._PendingFD(
+                        fd,
+                        (metadata.st_dev, metadata.st_ino),
+                        f"pending-{index}",
+                        False,
+                        False,
+                    )
+                )
+            current_fd = os.open(root / "current", os.O_CREAT | os.O_RDWR, 0o600)
+            fds.append(current_fd)
+            current_metadata = os.fstat(current_fd)
+            original_fstat = os.fstat
+            probe_calls = 0
+
+            def fstat(value: int) -> os.stat_result:
+                nonlocal probe_calls
+                if value == current_fd and probe_calls < 2:
+                    probe_calls += 1
+                    raise AttrlessProbe()
+                return original_fstat(value)
+
+            try:
+                with (
+                    mock.patch("agent_team.wal.os.fstat", side_effect=fstat),
+                    self.assertRaises(WalSidecarRecoveryRequiredError) as raised,
+                ):
+                    controller._cleanup_open_fd(
+                        current_fd,
+                        (current_metadata.st_dev, current_metadata.st_ino),
+                        "current open fd",
+                        unlock=False,
+                    )
+                retry = getattr(raised.exception, "retry_cleanup", None)
+                if not callable(retry):
+                    self.fail("status-overflow error has no cleanup retry")
+                retry()
+                retry()
+                self.assertFalse(controller._pending_fds)
+                with self.assertRaises(OSError):
+                    os.fstat(current_fd)
+            finally:
+                for fd in fds:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+    def test_pending_resource_overflow_keeps_current_resources_on_error_owner(
+        self,
+    ) -> None:
+        class Placeholder:
+            def close(self) -> None:
+                return
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-resource-overflow-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            controller = WalSidecarController(root)
+            try:
+                with controller._resources() as resources:
+                    controller._pending_resources.extend(
+                        cast(wal._Resources, Placeholder())
+                        for _ in range(wal._MAX_PENDING_RESOURCES)
+                    )
+                    with self.assertRaises(WalSidecarRecoveryRequiredError) as raised:
+                        controller._retain_pending_resources(resources)
+                    retry = getattr(raised.exception, "retry_cleanup", None)
+                    if not callable(retry):
+                        self.fail("resource-overflow error has no cleanup retry")
+                    retry()
+                    retry()
+                    self.assertFalse(controller._pending_resources)
+                    with self.assertRaises(OSError):
+                        os.fstat(resources.marker_fd)
+            finally:
+                controller.close()
+
+    def test_existing_cleanup_owner_is_composed_and_all_members_are_attempted(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        previous_failures = 1
+
+        def previous() -> None:
+            nonlocal previous_failures
+            calls.append("previous")
+            if previous_failures:
+                previous_failures -= 1
+                raise OSError("previous cleanup failed")
+
+        def current() -> None:
+            calls.append("current")
+
+        error = WalSidecarRecoveryRequiredError("existing cleanup")
+        error._attach_cleanup_capability(_CleanupCapability(previous))
+        attached = wal._attach_cleanup_owner(error, current, "composite cleanup")
+        with self.assertRaises(OSError) as raised:
+            attached.retry_cleanup()  # type: ignore[attr-defined]
+        self.assertEqual(1, calls.count("previous"))
+        self.assertEqual(1, calls.count("current"))
+        self.assertEqual("previous cleanup failed", str(raised.exception))
+        self.assertTrue(callable(getattr(raised.exception, "retry_cleanup", None)))
+        self.assertIsNotNone(getattr(raised.exception, "_cleanup_capability", None))
+
+        raised.exception.retry_cleanup()  # type: ignore[attr-defined]
+        self.assertEqual(2, calls.count("previous"))
+        self.assertEqual(1, calls.count("current"))
+        raised.exception.retry_cleanup()  # type: ignore[attr-defined]
+        self.assertEqual(2, calls.count("previous"))
+        self.assertEqual(1, calls.count("current"))
 
 
 if __name__ == "__main__":

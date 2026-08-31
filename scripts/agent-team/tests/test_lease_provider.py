@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import multiprocessing
 import os
 import signal
@@ -7,10 +8,15 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+from typing import cast
+from unittest import mock
 
+from agent_team import recovery
 from agent_team.lease import (
+    Claim,
     ClockRollbackError,
     LeaseConflictError,
     LeaseError,
@@ -21,15 +27,24 @@ from agent_team.lease import (
     ProviderProofError,
     ProviderReceiptError,
     ProviderStatus,
+    RecoveryFloor,
     RecoverySnapshot,
+    RestoreApplyResult,
+    RestoreCandidateEvidence,
+    RestoreIdentity,
+    RestoreReplacedEvidence,
+    StoreImageObservation,
     VerifiedProviderReceipt,
     _issue_provider_effect,
 )
 from agent_team.store import (
     CoordinationStore,
+    RestoreStoreAuthority,
     StoreClosedError,
+    StoreCommitUnknownError,
     StoreError,
     StoreIntegrityError,
+    StoreUnavailableError,
 )
 
 
@@ -42,6 +57,68 @@ class FakeClock:
 
     def set(self, now_ns: int) -> None:
         self.now_ns = now_ns
+
+
+def _audit_evidence(audit_ref: str) -> str:
+    return "sha256:" + hashlib.sha256(audit_ref.encode("utf-8")).hexdigest()
+
+
+def _rewrite_image_metadata(image_path: Path, key: str, value: int) -> bytes:
+    image = image_path.read_bytes()
+    normalized = bytearray(image)
+    normalized[18:20] = bytes((1, 1))
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        connection.deserialize(bytes(normalized))
+        connection.execute(
+            "UPDATE store_meta SET value = ? WHERE key = ?", (value, key)
+        )
+        connection.commit()
+        rewritten = bytearray(connection.serialize())
+    finally:
+        connection.close()
+    rewritten[18:20] = b"\x02\x02"
+    fd = os.open(str(image_path), os.O_RDWR)
+    try:
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, bytes(rewritten), 0)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return bytes(rewritten)
+
+
+def _rewrite_image_token(image_path: Path, operation_id: str, token: int) -> bytes:
+    image = image_path.read_bytes()
+    normalized = bytearray(image)
+    normalized[18:20] = bytes((1, 1))
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        connection.deserialize(bytes(normalized))
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE operation_attempts SET fencing_token = ? "
+            "WHERE operation_id = ? AND attempt = 1",
+            (token, operation_id),
+        )
+        connection.execute(
+            "UPDATE effect_receipts SET fencing_token = ? "
+            "WHERE operation_id = ? AND attempt = 1",
+            (token, operation_id),
+        )
+        connection.commit()
+        rewritten = bytearray(connection.serialize())
+    finally:
+        connection.close()
+    rewritten[18:20] = bytes((2, 2))
+    fd = os.open(str(image_path), os.O_RDWR)
+    try:
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, bytes(rewritten), 0)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return bytes(rewritten)
 
 
 class FakeProvider:
@@ -399,6 +476,1339 @@ class LeaseProviderContractTest(unittest.TestCase):
                     fencing_token_floor=floor.fencing_token_floor,
                 )
         finally:
+            store.close()
+            temporary.cleanup()
+
+    def test_store_owned_candidate_apply_returns_typed_result_without_provider_calls(
+        self,
+    ) -> None:
+        clock = FakeClock()
+        temporary, store = self._store(clock)
+        destination_temporary, destination_store = self._store(clock)
+        source_fd = destination_fd = target_fd = None
+        try:
+            clock.set(101)
+            destination_store.create_intent(
+                "destination-only",
+                effect_key="effect/destination-only",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=101,
+            )
+            source_connection = store._connection
+            destination_connection = destination_store._connection
+            assert source_connection is not None
+            assert destination_connection is not None
+            source_path = Path(temporary.name) / "source-image"
+            destination_path = Path(destination_temporary.name) / "destination-image"
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(destination_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(temporary.name) / "candidate-image"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            authority = RestoreStoreAuthority()
+            source_observation = authority.inspect_restore(source_fd)
+            destination_observation = authority.inspect_restore(destination_fd)
+            self.assertIsInstance(source_observation, StoreImageObservation)
+            self.assertIsInstance(destination_observation, StoreImageObservation)
+            self.assertFalse(hasattr(source_observation, "connection"))
+            self.assertFalse(hasattr(source_observation, "fd"))
+            ledger_floor = RecoveryFloor(2, 20)
+            reservation = authority.reserve_restore_floor(
+                source=source_observation,
+                destination=destination_observation,
+                ledger_floor_lower_bound=ledger_floor,
+            )
+            result = authority.apply_candidate(
+                source_fd,
+                destination_fd,
+                target_fd,
+                source_observation=source_observation,
+                destination_observation=destination_observation,
+                ledger_floor_lower_bound=ledger_floor,
+                previous_active_tombstones=(
+                    RestoreIdentity("prior-op", "effect/prior"),
+                ),
+                reservation=reservation,
+                restore_generation=1,
+                actor="operator",
+                timestamp=200,
+            )
+            self.assertIsInstance(result, RestoreApplyResult)
+            with self.assertRaises(TypeError):
+                RestoreApplyResult(
+                    observation=result.observation,
+                    tombstones=result.tombstones,
+                    restore_event_count=result.restore_event_count,
+                )
+            self.assertGreater(result.floor.recovery_epoch, ledger_floor.recovery_epoch)
+            self.assertGreater(
+                result.floor.fencing_token_floor,
+                ledger_floor.fencing_token_floor,
+            )
+            self.assertIsInstance(result.tombstones, tuple)
+            self.assertEqual(1, len(result.tombstones))
+            self.assertIsInstance(result.tombstones[0], RestoreIdentity)
+            self.assertEqual("destination-only", result.tombstones[0].operation_id)
+            self.assertEqual(
+                (
+                    RestoreIdentity("destination-only", "effect/destination-only"),
+                    RestoreIdentity("prior-op", "effect/prior"),
+                ),
+                result.active_tombstones,
+            )
+            verified = authority.verify_candidate(target_fd, result)
+            self.assertEqual(result, verified)
+            self.assertFalse(hasattr(result, "connection"))
+            self.assertFalse(hasattr(result, "fd"))
+        finally:
+            for fd in (source_fd, destination_fd, target_fd):
+                if fd is not None:
+                    os.close(fd)
+            store.close()
+            destination_store.close()
+            temporary.cleanup()
+            destination_temporary.cleanup()
+
+    def test_restore_store_authority_constructs_without_opening_primary_state(
+        self,
+    ) -> None:
+        with (
+            mock.patch(
+                "agent_team.store._open_state_root",
+                side_effect=AssertionError("authority must not open state root"),
+            ) as open_root,
+            mock.patch(
+                "agent_team.store.sqlite3.connect",
+                side_effect=AssertionError("authority must not open SQLite"),
+            ) as connect,
+            mock.patch(
+                "agent_team.store.os.open",
+                side_effect=AssertionError("authority must not open files"),
+            ) as open_file,
+        ):
+            authority = RestoreStoreAuthority()
+            with self.assertRaises(StoreUnavailableError):
+                authority.inspect_image(-1)
+        self.assertIsNotNone(authority)
+        open_root.assert_not_called()
+        connect.assert_not_called()
+        open_file.assert_not_called()
+        forged = object.__new__(RestoreStoreAuthority)
+        with self.assertRaises(StoreClosedError):
+            forged.inspect_image(-1)
+        with self.assertRaises(TypeError):
+            cast(Callable[..., object], forged.apply_candidate)(
+                -1,
+                -1,
+                -1,
+                ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                restore_generation=1,
+                actor="operator",
+                timestamp=0,
+            )
+        forged_result = object.__new__(RestoreApplyResult)
+        with self.assertRaises(StoreClosedError):
+            forged.verify_candidate(-1, forged_result)
+        with self.assertRaises(LeaseConflictError):
+            CoordinationStore._verify_candidate_applied(-1, forged_result)
+
+    def test_restore_expectations_use_only_handle_evidence_fields(self) -> None:
+        digest = "sha256:" + "a" * 64
+        ledger = recovery.RecoveryLedgerRecord(
+            version=recovery.RECOVERY_LEDGER_VERSION,
+            sequence=1,
+            phase="RESTORE_COMMITTED",
+            restore_generation=1,
+            recovery_epoch=21,
+            fencing_token_floor=2_002,
+            backup_digest=digest,
+            actor="operator",
+            audit_ref="audit/restore",
+        )
+        tombstone = recovery.RecoveryTombstoneRecord(
+            version=recovery.TOMBSTONE_LOG_VERSION,
+            sequence=1,
+            phase="COMMITTED",
+            restore_generation=1,
+            backup_digest=digest,
+            previous_primary_digest=digest,
+            candidate_digest=digest,
+            previous_recovery_epoch=1,
+            previous_fencing_token_hwm=2,
+            previous_last_clock_ns=100,
+            identities=(),
+            actor="operator",
+            audit_ref="audit/restore",
+        )
+        handle = recovery._issue_restore_handle(ledger, tombstone)
+        final_floor = RecoveryFloor(
+            handle.recovery_epoch,
+            handle.fencing_token_floor,
+        )
+        evidence_ref = _audit_evidence(handle.audit_ref)
+        candidate = RestoreCandidateEvidence(
+            restore_generation=handle.restore_generation,
+            source_digest=handle.backup_digest,
+            previous_primary_digest=handle.previous_primary_digest,
+            candidate_digest=handle.candidate_digest,
+            final_floor=final_floor,
+            tombstones=tuple(
+                RestoreIdentity(
+                    operation_id=identity.operation_id,
+                    effect_key=identity.effect_key,
+                )
+                for identity in handle.identities
+            ),
+            active_tombstones=tuple(
+                RestoreIdentity(
+                    operation_id=identity.operation_id,
+                    effect_key=identity.effect_key,
+                )
+                for identity in handle.identities
+            ),
+            actor=handle.actor,
+            evidence_ref=evidence_ref,
+        )
+        replaced = RestoreReplacedEvidence(
+            restore_generation=handle.restore_generation,
+            source_digest=handle.backup_digest,
+            candidate_digest=handle.candidate_digest,
+            previous_primary_digest=handle.previous_primary_digest,
+            previous_recovery_epoch=handle.previous_recovery_epoch,
+            previous_fencing_token_hwm=handle.previous_fencing_token_hwm,
+            previous_last_clock_ns=handle.previous_last_clock_ns,
+            final_floor=final_floor,
+            tombstones=candidate.tombstones,
+            active_tombstones=candidate.active_tombstones,
+            actor=handle.actor,
+            evidence_ref=evidence_ref,
+        )
+        self.assertEqual(handle.candidate_digest, candidate.candidate_digest)
+        self.assertEqual(handle.candidate_digest, replaced.candidate_digest)
+        self.assertEqual(evidence_ref, candidate.evidence_ref)
+        self.assertEqual(evidence_ref, replaced.evidence_ref)
+        self.assertFalse(hasattr(candidate, "source_size"))
+        self.assertFalse(hasattr(candidate, "source_identity"))
+        self.assertFalse(hasattr(candidate, "restore_event_count"))
+        self.assertFalse(hasattr(replaced, "destination_digest"))
+        self.assertFalse(hasattr(replaced, "restore_event_count"))
+
+    def test_restore_evidence_requires_positive_generation(self) -> None:
+        digest = "sha256:" + "a" * 64
+        with self.assertRaises(TypeError):
+            cast(Callable[..., object], RestoreCandidateEvidence)(
+                source_digest=digest,
+                previous_primary_digest=digest,
+                candidate_digest=digest,
+                final_floor=RecoveryFloor(2, 2),
+                tombstones=(),
+                active_tombstones=(),
+                actor="operator",
+                evidence_ref=digest,
+            )
+        with self.assertRaises(TypeError):
+            cast(Callable[..., object], RestoreReplacedEvidence)(
+                source_digest=digest,
+                candidate_digest=digest,
+                previous_primary_digest=digest,
+                previous_recovery_epoch=1,
+                previous_fencing_token_hwm=1,
+                previous_last_clock_ns=1,
+                final_floor=RecoveryFloor(2, 2),
+                tombstones=(),
+                active_tombstones=(),
+                actor="operator",
+                evidence_ref=digest,
+            )
+        with self.assertRaises(ValueError):
+            RestoreCandidateEvidence(
+                restore_generation=0,
+                source_digest=digest,
+                previous_primary_digest=digest,
+                candidate_digest=digest,
+                final_floor=RecoveryFloor(2, 2),
+                tombstones=(),
+                active_tombstones=(),
+                actor="operator",
+                evidence_ref=digest,
+            )
+        with self.assertRaises(ValueError):
+            RestoreReplacedEvidence(
+                restore_generation=0,
+                source_digest=digest,
+                candidate_digest=digest,
+                previous_primary_digest=digest,
+                previous_recovery_epoch=1,
+                previous_fencing_token_hwm=1,
+                previous_last_clock_ns=1,
+                final_floor=RecoveryFloor(2, 2),
+                tombstones=(),
+                active_tombstones=(),
+                actor="operator",
+                evidence_ref=digest,
+            )
+
+    def test_restore_authority_apply_requires_generation(self) -> None:
+        with self.assertRaises(TypeError):
+            cast(
+                Callable[..., object],
+                RestoreStoreAuthority().apply_candidate,
+            )(
+                -1,
+                -1,
+                -1,
+                ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                actor="operator",
+                timestamp=0,
+            )
+
+    def test_candidate_fsync_uncertainty_is_commit_unknown_and_verifiable(self) -> None:
+        clock = FakeClock()
+        temporary, store = self._store(clock)
+        destination_temporary, destination_store = self._store(clock)
+        source_fd = destination_fd = target_fd = None
+        try:
+            source_connection = store._connection
+            destination_connection = destination_store._connection
+            assert source_connection is not None
+            assert destination_connection is not None
+            source_path = Path(temporary.name) / "source-fsync"
+            destination_path = Path(destination_temporary.name) / "destination-fsync"
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(destination_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(temporary.name) / "candidate-fsync"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            authority = RestoreStoreAuthority()
+            source_observation = authority.inspect_image(source_fd)
+            destination_observation = authority.inspect_image(destination_fd)
+            ledger_floor = RecoveryFloor(2, 20)
+            reservation = authority.reserve_restore_floor(
+                source=source_observation,
+                destination=destination_observation,
+                ledger_floor_lower_bound=ledger_floor,
+            )
+            with (
+                mock.patch(
+                    "agent_team.store.os.fsync",
+                    side_effect=OSError("injected candidate fsync failure"),
+                ),
+                self.assertRaises(StoreCommitUnknownError),
+            ):
+                authority.apply_candidate(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    source_observation=source_observation,
+                    destination_observation=destination_observation,
+                    ledger_floor_lower_bound=ledger_floor,
+                    previous_active_tombstones=(),
+                    reservation=reservation,
+                    restore_generation=1,
+                    actor="operator",
+                    timestamp=200,
+                    evidence_ref=_audit_evidence("audit/restore"),
+                )
+            candidate_image = os.pread(target_fd, os.fstat(target_fd).st_size, 0)
+            self.assertGreater(len(candidate_image), 0)
+            evidence = RestoreCandidateEvidence(
+                restore_generation=1,
+                source_digest=source_observation.digest,
+                previous_primary_digest=destination_observation.digest,
+                candidate_digest="sha256:"
+                + hashlib.sha256(candidate_image).hexdigest(),
+                final_floor=RecoveryFloor(
+                    reservation.recovery_epoch,
+                    reservation.fencing_token_floor,
+                ),
+                tombstones=(),
+                active_tombstones=(),
+                actor="operator",
+                evidence_ref=_audit_evidence("audit/restore"),
+            )
+            resumed = authority.verify_candidate_evidence(
+                source_fd,
+                destination_fd,
+                target_fd,
+                evidence,
+            )
+            self.assertEqual(evidence.candidate_digest, resumed.digest)
+        finally:
+            for fd in (source_fd, destination_fd, target_fd):
+                if fd is not None:
+                    os.close(fd)
+            store.close()
+            destination_store.close()
+            temporary.cleanup()
+            destination_temporary.cleanup()
+
+    def test_replaced_evidence_binds_prior_destination_high_water_marks(self) -> None:
+        clock = FakeClock(100)
+        source_temporary, source_store = self._store(clock)
+        destination_temporary, destination_store = self._store(clock)
+        source_fd = destination_fd = target_fd = primary_fd = None
+        try:
+            destination_store._advance_floor(
+                destination_store._reserve_floor(),
+                now_ns=150,
+            )
+            source_connection = source_store._connection
+            destination_connection = destination_store._connection
+            assert source_connection is not None
+            assert destination_connection is not None
+            source_path = Path(source_temporary.name) / "source-prior-hwm"
+            destination_path = (
+                Path(destination_temporary.name) / "destination-prior-hwm"
+            )
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(destination_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(source_temporary.name) / "candidate-prior-hwm"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            authority = RestoreStoreAuthority()
+            source_observation = authority.inspect_image(source_fd)
+            destination_observation = authority.inspect_image(destination_fd)
+            self.assertLess(
+                source_observation.floor.recovery_epoch,
+                destination_observation.floor.recovery_epoch,
+            )
+            reservation = authority.reserve_restore_floor(
+                source=source_observation,
+                destination=destination_observation,
+                ledger_floor_lower_bound=RecoveryFloor(0, 0),
+            )
+            applied = authority.apply_candidate(
+                source_fd,
+                destination_fd,
+                target_fd,
+                source_observation=source_observation,
+                destination_observation=destination_observation,
+                ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                previous_active_tombstones=(),
+                reservation=reservation,
+                restore_generation=1,
+                actor="operator",
+                timestamp=200,
+                evidence_ref=_audit_evidence("audit/prior-hwm"),
+            )
+            candidate_image = os.pread(target_fd, os.fstat(target_fd).st_size, 0)
+            candidate_evidence = RestoreCandidateEvidence(
+                restore_generation=1,
+                source_digest=source_observation.digest,
+                previous_primary_digest=destination_observation.digest,
+                candidate_digest="sha256:"
+                + hashlib.sha256(candidate_image).hexdigest(),
+                final_floor=applied.floor,
+                tombstones=applied.tombstones,
+                active_tombstones=applied.active_tombstones,
+                actor="operator",
+                evidence_ref=_audit_evidence("audit/prior-hwm"),
+            )
+            os.close(target_fd)
+            target_fd = None
+            os.close(destination_fd)
+            destination_fd = None
+            primary_path = Path(source_temporary.name) / "primary-prior-hwm"
+            os.rename(target_path, primary_path)
+            primary_fd = os.open(str(primary_path), os.O_RDONLY)
+            os.unlink(destination_path)
+            replaced_evidence = RestoreReplacedEvidence(
+                restore_generation=candidate_evidence.restore_generation,
+                source_digest=candidate_evidence.source_digest,
+                candidate_digest=candidate_evidence.candidate_digest,
+                previous_primary_digest=destination_observation.digest,
+                previous_recovery_epoch=destination_observation.floor.recovery_epoch,
+                previous_fencing_token_hwm=max(
+                    destination_observation.floor.fencing_token_floor,
+                    destination_observation.max_fencing_token,
+                ),
+                previous_last_clock_ns=destination_observation.last_clock_ns,
+                final_floor=candidate_evidence.final_floor,
+                tombstones=candidate_evidence.tombstones,
+                active_tombstones=candidate_evidence.active_tombstones,
+                actor=candidate_evidence.actor,
+                evidence_ref=candidate_evidence.evidence_ref,
+            )
+            verified = authority.verify_replaced_evidence(
+                source_fd,
+                primary_fd,
+                replaced_evidence,
+            )
+            self.assertEqual(applied.floor, verified.floor)
+            with self.assertRaises(StoreIntegrityError):
+                authority.verify_replaced_evidence(
+                    source_fd,
+                    primary_fd,
+                    replace(
+                        replaced_evidence,
+                        previous_recovery_epoch=applied.floor.recovery_epoch,
+                    ),
+                )
+            with self.assertRaises(StoreIntegrityError):
+                authority.verify_replaced_evidence(
+                    source_fd,
+                    primary_fd,
+                    replace(
+                        replaced_evidence,
+                        previous_fencing_token_hwm=applied.floor.fencing_token_floor,
+                    ),
+                )
+            with self.assertRaises(ClockRollbackError):
+                authority.verify_replaced_evidence(
+                    source_fd,
+                    primary_fd,
+                    replace(
+                        replaced_evidence,
+                        previous_last_clock_ns=applied.observation.last_clock_ns + 1,
+                    ),
+                )
+        finally:
+            for fd in (source_fd, destination_fd, target_fd, primary_fd):
+                if fd is not None:
+                    os.close(fd)
+            source_store.close()
+            destination_store.close()
+            source_temporary.cleanup()
+            destination_temporary.cleanup()
+
+    def test_restore_image_rejects_noncanonical_header_and_trailing_bytes(self) -> None:
+        clock = FakeClock()
+        temporary, store = self._store(clock)
+        image_path = Path(temporary.name) / "image"
+        try:
+            connection = store._connection
+            assert connection is not None
+            image = connection.serialize()
+            invalid_images: list[bytes] = []
+            for write_version, read_version in ((0, 0), (0, 2), (2, 1), (1, 2)):
+                invalid = bytearray(image)
+                invalid[18] = write_version
+                invalid[19] = read_version
+                invalid_images.append(bytes(invalid))
+            for offset, replacement in (
+                (20, b"\x01"),
+                (21, b"\x00\x20\x20"),
+                (44, b"\x00\x00\x00\x00"),
+                (44, b"\x00\x00\x00\x05"),
+                (56, b"\x00\x00\x00\x00"),
+                (56, b"\x00\x00\x00\x04"),
+                (72, b"\x01" + b"\x00" * 19),
+            ):
+                invalid = bytearray(image)
+                invalid[offset : offset + len(replacement)] = replacement
+                invalid_images.append(bytes(invalid))
+            invalid_images.append(image + b"junk")
+            authority = RestoreStoreAuthority()
+            for invalid_image in invalid_images:
+                image_path.write_bytes(invalid_image)
+                image_path.chmod(0o600)
+                fd = os.open(str(image_path), os.O_RDONLY)
+                try:
+                    with self.assertRaises(StoreIntegrityError):
+                        authority.inspect_image(fd)
+                finally:
+                    os.close(fd)
+        finally:
+            store.close()
+            temporary.cleanup()
+
+    def test_restore_image_rejects_clock_and_floor_high_water_regressions(self) -> None:
+        clock = FakeClock()
+        temporary, store = self._store(clock)
+        image_path = Path(temporary.name) / "image"
+        try:
+            connection = store._connection
+            assert connection is not None
+            image_path.write_bytes(connection.serialize())
+            image_path.chmod(0o600)
+            raw = sqlite3.connect(str(image_path), isolation_level=None)
+            try:
+                raw.execute(
+                    "UPDATE store_meta SET value = 0 WHERE key = 'last_clock_ns'"
+                )
+                raw.commit()
+            finally:
+                raw.close()
+            fd = os.open(str(image_path), os.O_RDONLY)
+            try:
+                with self.assertRaises(StoreIntegrityError):
+                    RestoreStoreAuthority().inspect_image(fd)
+            finally:
+                os.close(fd)
+
+            claim = store.claim(
+                "op-1",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=100,
+            )
+            image_path.write_bytes(connection.serialize())
+            image_path.chmod(0o600)
+            raw = sqlite3.connect(str(image_path), isolation_level=None)
+            try:
+                raw.execute(
+                    "UPDATE store_meta SET value = 0 WHERE key = 'fencing_token_floor'"
+                )
+                raw.commit()
+            finally:
+                raw.close()
+            fd = os.open(str(image_path), os.O_RDONLY)
+            try:
+                with self.assertRaises(StoreIntegrityError):
+                    RestoreStoreAuthority().inspect_image(fd)
+            finally:
+                os.close(fd)
+            self.assertGreater(claim.fencing_token, 0)
+        finally:
+            store.close()
+            temporary.cleanup()
+
+    def test_empty_source_with_tombstones_fails_before_candidate_commit(self) -> None:
+        clock = FakeClock(0)
+        source_temporary = tempfile.TemporaryDirectory(
+            prefix="agent-team-lease-source-"
+        )
+        destination_temporary = tempfile.TemporaryDirectory(
+            prefix="agent-team-lease-destination-"
+        )
+        source_fd = destination_fd = target_fd = None
+        source_store: CoordinationStore | None = None
+        destination_store: CoordinationStore | None = None
+        try:
+            source_root = Path(os.path.realpath(source_temporary.name)) / "state"
+            destination_root = (
+                Path(os.path.realpath(destination_temporary.name)) / "state"
+            )
+            source_root.mkdir(mode=0o700)
+            destination_root.mkdir(mode=0o700)
+            source_store = CoordinationStore(source_root, clock=clock)
+            destination_store = CoordinationStore(destination_root, clock=clock)
+            clock.set(100)
+            destination_store.create_intent(
+                "destination-only",
+                effect_key="effect/destination-only",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=100,
+            )
+            source_connection = source_store._connection
+            destination_connection = destination_store._connection
+            assert source_connection is not None
+            assert destination_connection is not None
+            source_path = Path(source_temporary.name) / "source-clock"
+            destination_path = Path(destination_temporary.name) / "destination-clock"
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(destination_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(source_temporary.name) / "candidate-clock"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            authority = RestoreStoreAuthority()
+            source_observation = authority.inspect_image(source_fd)
+            destination_observation = authority.inspect_image(destination_fd)
+            reservation = authority.reserve_restore_floor(
+                source=source_observation,
+                destination=destination_observation,
+                ledger_floor_lower_bound=RecoveryFloor(0, 0),
+            )
+            with self.assertRaises(StoreIntegrityError):
+                authority.apply_candidate(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    source_observation=source_observation,
+                    destination_observation=destination_observation,
+                    ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                    previous_active_tombstones=(),
+                    reservation=reservation,
+                    restore_generation=1,
+                    actor="operator",
+                    timestamp=100,
+                    evidence_ref=_audit_evidence("audit/destination-clock"),
+                )
+        finally:
+            for fd in (source_fd, destination_fd, target_fd):
+                if fd is not None:
+                    os.close(fd)
+            if source_store is not None:
+                source_store.close()
+            if destination_store is not None:
+                destination_store.close()
+            source_temporary.cleanup()
+            destination_temporary.cleanup()
+
+    def test_all_cleaned_source_with_tombstones_fails_before_candidate_commit(
+        self,
+    ) -> None:
+        clock = FakeClock(100)
+        source_temporary, source_store = self._store(clock)
+        destination_temporary, destination_store = self._store(clock)
+        source_fd = destination_fd = target_fd = None
+        try:
+            destination_store.create_intent(
+                "destination-only",
+                effect_key="effect/destination-only",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=100,
+            )
+            source_connection = source_store._connection
+            destination_connection = destination_store._connection
+            assert source_connection is not None
+            assert destination_connection is not None
+            cleaned_claim = source_store.claim(
+                "op-1",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=100,
+            )
+            source_store.reserve_fence(cleaned_claim, FakeProvider())
+            source_connection.execute(
+                "UPDATE operations SET status = 'CLEANED' WHERE operation_id = 'op-1'"
+            )
+            source_path = Path(source_temporary.name) / "cleaned-source"
+            destination_path = Path(destination_temporary.name) / "cleaned-destination"
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(destination_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(source_temporary.name) / "cleaned-candidate"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            authority = RestoreStoreAuthority()
+            source_observation = authority.inspect_image(source_fd)
+            destination_observation = authority.inspect_image(destination_fd)
+            reservation = authority.reserve_restore_floor(
+                source_observation,
+                destination_observation,
+                RecoveryFloor(0, 0),
+            )
+            with self.assertRaises(StoreIntegrityError):
+                authority.apply_candidate(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    source_observation=source_observation,
+                    destination_observation=destination_observation,
+                    ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                    previous_active_tombstones=(),
+                    reservation=reservation,
+                    restore_generation=1,
+                    actor="operator",
+                    timestamp=101,
+                    evidence_ref=_audit_evidence("audit/cleaned"),
+                )
+            self.assertEqual(0, os.fstat(target_fd).st_size)
+        finally:
+            for fd in (source_fd, destination_fd, target_fd):
+                if fd is not None:
+                    os.close(fd)
+            source_store.close()
+            destination_store.close()
+            source_temporary.cleanup()
+            destination_temporary.cleanup()
+
+    def test_all_cleaned_source_with_prior_active_union_fails_before_candidate_commit(
+        self,
+    ) -> None:
+        clock = FakeClock(100)
+        source_temporary, source_store = self._store(clock)
+        destination_temporary, destination_store = self._store(clock)
+        source_fd = destination_fd = target_fd = None
+        try:
+            source_connection = source_store._connection
+            destination_connection = destination_store._connection
+            assert source_connection is not None
+            assert destination_connection is not None
+            cleaned_claim = source_store.claim(
+                "op-1",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=100,
+            )
+            source_store.reserve_fence(cleaned_claim, FakeProvider())
+            source_connection.execute(
+                "UPDATE operations SET status = 'CLEANED' WHERE operation_id = 'op-1'"
+            )
+            source_path = Path(source_temporary.name) / "cleaned-prior-source"
+            destination_path = (
+                Path(destination_temporary.name) / "cleaned-prior-destination"
+            )
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(destination_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(source_temporary.name) / "cleaned-prior-candidate"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            authority = RestoreStoreAuthority()
+            source_observation = authority.inspect_image(source_fd)
+            destination_observation = authority.inspect_image(destination_fd)
+            reservation = authority.reserve_restore_floor(
+                source_observation,
+                destination_observation,
+                RecoveryFloor(0, 0),
+            )
+            with self.assertRaises(StoreIntegrityError):
+                authority.apply_candidate(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    source_observation=source_observation,
+                    destination_observation=destination_observation,
+                    ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                    previous_active_tombstones=(
+                        RestoreIdentity("prior-op", "effect/prior"),
+                    ),
+                    reservation=reservation,
+                    restore_generation=2,
+                    actor="operator",
+                    timestamp=101,
+                    evidence_ref=_audit_evidence("audit/cleaned-prior"),
+                )
+            with self.assertRaises(StoreIntegrityError):
+                authority.apply_candidate(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    source_observation=source_observation,
+                    destination_observation=destination_observation,
+                    ledger_floor_lower_bound=RecoveryFloor(0, 0),
+                    previous_active_tombstones=(
+                        RestoreIdentity("op-1", "effect/op-1"),
+                    ),
+                    reservation=reservation,
+                    restore_generation=2,
+                    actor="operator",
+                    timestamp=101,
+                    evidence_ref=_audit_evidence("audit/cleaned-source-collision"),
+                )
+            self.assertEqual(0, os.fstat(target_fd).st_size)
+        finally:
+            for fd in (source_fd, destination_fd, target_fd):
+                if fd is not None:
+                    os.close(fd)
+            source_store.close()
+            destination_store.close()
+            source_temporary.cleanup()
+            destination_temporary.cleanup()
+
+    def test_restore_invalidated_active_identity_rejects_old_mutations(self) -> None:
+        clock = FakeClock()
+        temporary, store = self._store(clock)
+        try:
+            clock.set(100)
+            store.create_intent(
+                "op-heartbeat",
+                effect_key="effect/op-heartbeat",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=100,
+            )
+            heartbeat_claim = store.claim(
+                "op-heartbeat",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=100,
+            )
+            heartbeat_claim = store.reserve_fence(heartbeat_claim, FakeProvider())
+
+            store.create_intent(
+                "op-effect",
+                effect_key="effect/op-effect",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=101,
+            )
+            effect_claim = store.claim(
+                "op-effect",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=101,
+            )
+            effect_provider = FakeProvider()
+            clock.set(101)
+            effect_claim = store.reserve_fence(effect_claim, effect_provider)
+
+            store.create_intent(
+                "op-reclaim",
+                effect_key="effect/op-reclaim",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=102,
+            )
+            store.claim(
+                "op-reclaim",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=102,
+            )
+
+            store.create_intent(
+                "op-complete",
+                effect_key="effect/op-complete",
+                provider_id="provider/test",
+                actor="main",
+                clock_ns=103,
+            )
+            complete_claim = store.claim(
+                "op-complete",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=103,
+            )
+            complete_provider = FakeProvider()
+            clock.set(103)
+            complete_claim = store.reserve_fence(complete_claim, complete_provider)
+            complete_receipt = store.execute_effect(
+                complete_claim,
+                complete_provider,
+                now_ns=104,
+            )
+
+            connection = store._connection
+            assert connection is not None
+            connection.execute(
+                "UPDATE store_meta SET value = 1 WHERE key = 'recovery_epoch'"
+            )
+            connection.execute(
+                "UPDATE operations SET recovery_epoch = 1 WHERE current_attempt > 0"
+            )
+
+            with self.assertRaises(LeaseConflictError):
+                store.heartbeat(heartbeat_claim, lease_ttl_ns=20, now_ns=105)
+            with self.assertRaises(LeaseConflictError):
+                store._begin_effect(effect_claim, now_ns=105)
+            with self.assertRaises(LeaseConflictError):
+                store.reclaim(
+                    "op-reclaim",
+                    owner="owner-b",
+                    provider_id="provider/test",
+                    effect_key="effect/op-reclaim",
+                    lease_ttl_ns=20,
+                    now_ns=122,
+                )
+            with self.assertRaises(LeaseConflictError):
+                store.complete(complete_receipt, now_ns=105)
+            self.assertEqual([], effect_provider.executions)
+            self.assertEqual(["effect/op-complete"], complete_provider.executions)
+        finally:
+            store.close()
+            temporary.cleanup()
+
+    def test_candidate_apply_preserves_every_status_and_cleans_only_global_floor(
+        self,
+    ) -> None:
+        clock = FakeClock(100)
+        temporary, store = self._store(clock)
+        source_fd = destination_fd = target_fd = primary_fd = None
+        try:
+            source_statuses: dict[str, RecoverySnapshot] = {}
+
+            def create_intent(operation_id: str, at: int) -> None:
+                clock.set(at)
+                store.create_intent(
+                    operation_id,
+                    effect_key=f"effect/{operation_id}",
+                    provider_id="provider/test",
+                    actor="main",
+                    clock_ns=at,
+                )
+
+            def claim(operation_id: str, at: int) -> Claim:
+                return store.claim(
+                    operation_id,
+                    owner="owner-a",
+                    provider_id="provider/test",
+                    lease_ttl_ns=20,
+                    now_ns=at,
+                )
+
+            source_statuses["INTENT"] = store._recovery_snapshot("op-1")
+
+            create_intent("op-pending", 101)
+            claim("op-pending", 101)
+            source_statuses["FENCE_PENDING"] = store._recovery_snapshot("op-pending")
+
+            create_intent("op-reservation", 102)
+            reservation_claim = claim("op-reservation", 102)
+            clock.set(102)
+            store._begin_fence_reservation(reservation_claim, now_ns=102)
+            source_statuses["FENCE_RESERVATION_STARTED"] = store._recovery_snapshot(
+                "op-reservation"
+            )
+
+            create_intent("op-claimed", 103)
+            claimed = claim("op-claimed", 103)
+            claimed_provider = FakeProvider()
+            clock.set(103)
+            store.reserve_fence(claimed, claimed_provider)
+            source_statuses["CLAIMED"] = store._recovery_snapshot("op-claimed")
+
+            create_intent("op-prepared", 104)
+            prepared = claim("op-prepared", 104)
+            prepared_provider = FakeProvider()
+            clock.set(104)
+            prepared = store.reserve_fence(prepared, prepared_provider)
+            store._begin_effect(prepared, now_ns=104)
+            source_statuses["EFFECT_PREPARED"] = store._recovery_snapshot("op-prepared")
+
+            create_intent("op-unknown-effect", 105)
+            unknown_effect_claim = claim("op-unknown-effect", 105)
+            unknown_provider = FakeProvider()
+            clock.set(105)
+            unknown_effect_claim = store.reserve_fence(
+                unknown_effect_claim,
+                unknown_provider,
+            )
+            store._mark_unknown_effect(unknown_effect_claim, now_ns=105)
+            source_statuses["UNKNOWN_EFFECT"] = store._recovery_snapshot(
+                "op-unknown-effect"
+            )
+
+            create_intent("op-unknown", 106)
+            unknown_claim = claim("op-unknown", 106)
+            unknown_status_provider = FakeProvider()
+            clock.set(106)
+            unknown_claim = store.reserve_fence(unknown_claim, unknown_status_provider)
+            unknown_effect = store._begin_effect(unknown_claim, now_ns=106)
+            store._mark_unknown_effect(unknown_effect, now_ns=106)
+            connection = store._connection
+            assert connection is not None
+            connection.execute(
+                "UPDATE operations SET status = 'UNKNOWN' "
+                "WHERE operation_id = 'op-unknown'"
+            )
+            source_statuses["UNKNOWN"] = store._recovery_snapshot("op-unknown")
+
+            create_intent("op-receipted", 107)
+            receipted_claim = claim("op-receipted", 107)
+            receipted_provider = FakeProvider()
+            clock.set(107)
+            receipted_claim = store.reserve_fence(
+                receipted_claim,
+                receipted_provider,
+            )
+            store.execute_effect(
+                receipted_claim,
+                receipted_provider,
+                now_ns=107,
+            )
+            source_statuses["RECEIPTED"] = store._recovery_snapshot("op-receipted")
+
+            create_intent("op-completed", 108)
+            completed_claim = claim("op-completed", 108)
+            completed_provider = FakeProvider()
+            clock.set(108)
+            completed_claim = store.reserve_fence(
+                completed_claim,
+                completed_provider,
+            )
+            completed = store.execute_effect(
+                completed_claim,
+                completed_provider,
+                now_ns=108,
+            )
+            store.complete(completed, now_ns=108)
+            source_statuses["COMPLETED"] = store._recovery_snapshot("op-completed")
+
+            create_intent("op-cleaned", 109)
+            cleaned = claim("op-cleaned", 109)
+            cleaned_provider = FakeProvider()
+            clock.set(109)
+            store.reserve_fence(cleaned, cleaned_provider)
+            connection.execute(
+                "UPDATE operations SET status = 'CLEANED' "
+                "WHERE operation_id = 'op-cleaned'"
+            )
+            source_statuses["CLEANED"] = store._recovery_snapshot("op-cleaned")
+
+            source_connection = store._connection
+            assert source_connection is not None
+            source_path = Path(temporary.name) / "matrix-source"
+            destination_path = Path(temporary.name) / "matrix-destination"
+            source_path.write_bytes(source_connection.serialize())
+            destination_path.write_bytes(source_connection.serialize())
+            source_path.chmod(0o600)
+            destination_path.chmod(0o600)
+            target_path = Path(temporary.name) / "matrix-candidate"
+            source_fd = os.open(str(source_path), os.O_RDONLY)
+            destination_fd = os.open(str(destination_path), os.O_RDONLY)
+            target_fd = os.open(
+                str(target_path),
+                os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            source_observation = store._inspect_image_fd(source_fd)
+            destination_observation = store._inspect_image_fd(destination_fd)
+            ledger_floor = RecoveryFloor(20, 2_000)
+            reservation = store._reserve_restore_floor(
+                source_observation,
+                destination_observation,
+                ledger_floor,
+            )
+            result = store._apply_restore_candidate(
+                source_fd,
+                destination_fd,
+                target_fd,
+                source_observation=source_observation,
+                destination_observation=destination_observation,
+                ledger_floor_lower_bound=ledger_floor,
+                previous_active_tombstones=(),
+                reservation=reservation,
+                restore_generation=1,
+                actor="operator",
+                timestamp=300,
+                evidence_ref=_audit_evidence("audit/restore"),
+            )
+            final_by_status = {
+                snapshot.status: snapshot for snapshot in result.observation.operations
+            }
+            self.assertEqual(set(source_statuses), set(final_by_status))
+            self.assertEqual(
+                source_statuses["CLEANED"],
+                final_by_status["CLEANED"],
+            )
+            for status in (
+                "INTENT",
+                "FENCE_PENDING",
+                "FENCE_RESERVATION_STARTED",
+                "CLAIMED",
+                "EFFECT_PREPARED",
+                "UNKNOWN_EFFECT",
+                "UNKNOWN",
+                "COMPLETED",
+            ):
+                self.assertEqual(
+                    result.floor.recovery_epoch,
+                    final_by_status[status].recovery_epoch,
+                )
+            self.assertEqual(
+                result.floor.recovery_epoch,
+                final_by_status["RECEIPTED"].recovery_epoch,
+            )
+            self.assertEqual(
+                result.floor.recovery_epoch,
+                final_by_status["RECEIPTED"].lease_epoch,
+            )
+            self.assertGreater(
+                final_by_status["RECEIPTED"].fencing_token,
+                reservation.fencing_token_floor,
+            )
+            self.assertEqual(9, result.restore_event_count)
+            self.assertEqual(0, len(result.tombstones))
+            self.assertEqual(result, store._verify_candidate_applied(target_fd, result))
+            candidate_image = os.pread(target_fd, os.fstat(target_fd).st_size, 0)
+            durable_evidence = RestoreCandidateEvidence(
+                restore_generation=1,
+                source_digest=source_observation.digest,
+                previous_primary_digest=destination_observation.digest,
+                candidate_digest="sha256:"
+                + hashlib.sha256(candidate_image).hexdigest(),
+                final_floor=RecoveryFloor(21, 2_002),
+                tombstones=(),
+                active_tombstones=(),
+                actor="operator",
+                evidence_ref=_audit_evidence("audit/restore"),
+            )
+            resumed = RestoreStoreAuthority().verify_candidate_evidence(
+                source_fd,
+                destination_fd,
+                target_fd,
+                durable_evidence,
+            )
+            self.assertEqual(result, resumed)
+            original_candidate_image = candidate_image
+            forged_candidate_image = _rewrite_image_token(
+                target_path,
+                "op-receipted",
+                reservation.fencing_token_floor,
+            )
+            with self.assertRaises(StoreIntegrityError):
+                RestoreStoreAuthority().verify_candidate_evidence(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    replace(
+                        durable_evidence,
+                        candidate_digest="sha256:"
+                        + hashlib.sha256(forged_candidate_image).hexdigest(),
+                    ),
+                )
+            restore_fd = os.open(str(target_path), os.O_RDWR)
+            try:
+                os.ftruncate(restore_fd, 0)
+                os.pwrite(restore_fd, original_candidate_image, 0)
+                os.fsync(restore_fd)
+            finally:
+                os.close(restore_fd)
+            with self.assertRaises(StoreIntegrityError):
+                RestoreStoreAuthority().verify_candidate_evidence(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    replace(
+                        durable_evidence,
+                        candidate_digest="sha256:" + "0" * 64,
+                    ),
+                )
+            with self.assertRaises(StoreIntegrityError):
+                RestoreStoreAuthority().verify_candidate_evidence(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    replace(
+                        durable_evidence,
+                        source_digest="sha256:" + "0" * 64,
+                    ),
+                )
+            source_bytes = os.pread(source_fd, os.fstat(source_fd).st_size, 0)
+            source_mutator = os.open(str(source_path), os.O_RDWR)
+            try:
+                os.pwrite(source_mutator, b"x", len(source_bytes) - 1)
+                os.fsync(source_mutator)
+            finally:
+                os.close(source_mutator)
+            with self.assertRaises(StoreIntegrityError):
+                RestoreStoreAuthority().verify_candidate_evidence(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    durable_evidence,
+                )
+            source_mutator = os.open(str(source_path), os.O_RDWR)
+            try:
+                os.pwrite(source_mutator, source_bytes[-1:], len(source_bytes) - 1)
+                os.fsync(source_mutator)
+            finally:
+                os.close(source_mutator)
+            destination_bytes = os.pread(
+                destination_fd,
+                os.fstat(destination_fd).st_size,
+                0,
+            )
+            destination_mutator = os.open(str(destination_path), os.O_RDWR)
+            try:
+                os.pwrite(destination_mutator, b"x", len(destination_bytes) - 1)
+                os.fsync(destination_mutator)
+            finally:
+                os.close(destination_mutator)
+            with self.assertRaises(StoreIntegrityError):
+                RestoreStoreAuthority().verify_candidate_evidence(
+                    source_fd,
+                    destination_fd,
+                    target_fd,
+                    durable_evidence,
+                )
+            destination_mutator = os.open(str(destination_path), os.O_RDWR)
+            try:
+                os.pwrite(
+                    destination_mutator,
+                    destination_bytes[-1:],
+                    len(destination_bytes) - 1,
+                )
+                os.fsync(destination_mutator)
+            finally:
+                os.close(destination_mutator)
+            primary_path = Path(temporary.name) / "replaced-primary"
+            os.close(destination_fd)
+            destination_fd = None
+            os.rename(target_path, primary_path)
+            target_fd = None
+            primary_fd = os.open(str(primary_path), os.O_RDONLY)
+            os.unlink(destination_path)
+            replaced_evidence = RestoreReplacedEvidence(
+                restore_generation=durable_evidence.restore_generation,
+                source_digest=durable_evidence.source_digest,
+                candidate_digest=durable_evidence.candidate_digest,
+                previous_primary_digest=destination_observation.digest,
+                previous_recovery_epoch=destination_observation.floor.recovery_epoch,
+                previous_fencing_token_hwm=max(
+                    destination_observation.floor.fencing_token_floor,
+                    destination_observation.max_fencing_token,
+                ),
+                previous_last_clock_ns=destination_observation.last_clock_ns,
+                final_floor=durable_evidence.final_floor,
+                tombstones=durable_evidence.tombstones,
+                active_tombstones=durable_evidence.active_tombstones,
+                actor=durable_evidence.actor,
+                evidence_ref=durable_evidence.evidence_ref,
+            )
+            replaced = RestoreStoreAuthority().verify_replaced_evidence(
+                source_fd,
+                primary_fd,
+                replaced_evidence,
+            )
+            self.assertEqual(9, replaced.restore_event_count)
+            with self.assertRaises(StoreIntegrityError):
+                RestoreStoreAuthority().verify_replaced_evidence(
+                    source_fd,
+                    primary_fd,
+                    replace(
+                        replaced_evidence,
+                        tombstones=(RestoreIdentity("forged-op", "effect/forged"),),
+                        active_tombstones=(
+                            RestoreIdentity("forged-op", "effect/forged"),
+                        ),
+                    ),
+                )
+            self.assertEqual(
+                replaced,
+                RestoreStoreAuthority().verify_replaced_evidence(
+                    source_fd,
+                    primary_fd,
+                    replaced_evidence,
+                ),
+            )
+        finally:
+            for fd in (source_fd, destination_fd, target_fd, primary_fd):
+                if fd is not None:
+                    os.close(fd)
             store.close()
             temporary.cleanup()
 

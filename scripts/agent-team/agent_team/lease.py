@@ -7,6 +7,8 @@ deliberately outside the contract.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Final, Literal, NoReturn, Protocol
@@ -26,6 +28,7 @@ _IDENTIFIER = re.compile(
 _PROOF_REF = re.compile(
     rf"[A-Za-z0-9][A-Za-z0-9._:/-]{{0,{MAX_PROOF_REF_LENGTH - 1}}}\Z"
 )
+_DIGEST_REF = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SECRET_LIKE = re.compile(
     r"(?:api[_-]?key|secret|token|password|passwd|authorization|bearer|"
     r"cookie|credential|private[_-]?key|raw[_-]?response)",
@@ -34,6 +37,7 @@ _SECRET_LIKE = re.compile(
 _RECEIPT_SENTINEL = object()
 _EFFECT_SENTINEL = object()
 _FLOOR_SENTINEL = object()
+_RESULT_SENTINEL = object()
 
 
 class LeaseError(RuntimeError):
@@ -436,6 +440,352 @@ class RecoverySnapshot:
                 _fail("verified receipt identity does not match snapshot")
 
 
+@dataclass(frozen=True, slots=True)
+class RestoreIdentity:
+    """Immutable operation identity used for restore evidence and tombstones."""
+
+    operation_id: str
+    effect_key: str
+
+    def __post_init__(self) -> None:
+        _identifier(self.operation_id, "operation_id")
+        _identifier(self.effect_key, "effect_key")
+
+
+@dataclass(frozen=True, slots=True)
+class StoreImageObservation:
+    """Validated, descriptor-free observation of one SQLite store image."""
+
+    database_identity: tuple[int, int]
+    size: int
+    digest: str
+    floor: RecoveryFloor
+    max_fencing_token: int
+    last_clock_ns: int
+    operations: tuple[RecoverySnapshot, ...]
+    identities: tuple[RestoreIdentity, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.database_identity) is not tuple
+            or len(self.database_identity) != 2
+            or any(
+                type(value) is not int or value < 0 for value in self.database_identity
+            )
+        ):
+            _fail("database_identity is invalid")
+        _integer(self.size, "size")
+        if (
+            type(self.digest) is not str
+            or len(self.digest) != 71
+            or not self.digest.startswith("sha256:")
+            or any(char not in "0123456789abcdef" for char in self.digest[7:])
+        ):
+            _fail("digest is invalid")
+        if type(self.floor) is not RecoveryFloor:
+            _fail("floor is invalid")
+        _integer(self.max_fencing_token, "max_fencing_token")
+        _integer(self.last_clock_ns, "last_clock_ns")
+        if type(self.operations) is not tuple or any(
+            type(operation) is not RecoverySnapshot for operation in self.operations
+        ):
+            _fail("operations are invalid")
+        operation_ids = tuple(operation.operation_id for operation in self.operations)
+        if operation_ids != tuple(sorted(operation_ids)) or len(
+            set(operation_ids)
+        ) != len(operation_ids):
+            _fail("operations are not deterministically ordered")
+        if type(self.identities) is not tuple or any(
+            type(identity) is not RestoreIdentity for identity in self.identities
+        ):
+            _fail("identities are invalid")
+        if (
+            tuple(identity.operation_id for identity in self.identities)
+            != operation_ids
+        ):
+            _fail("identities do not match operations")
+        for operation, identity in zip(self.operations, self.identities, strict=True):
+            if identity.effect_key != operation.effect_key:
+                _fail("identities do not match operations")
+
+
+def _restore_identity_keys(
+    identities: object,
+    field: str,
+) -> tuple[tuple[str, str], ...]:
+    if type(identities) is not tuple or any(
+        type(identity) is not RestoreIdentity for identity in identities
+    ):
+        _fail(f"{field} are invalid")
+    keys = tuple(
+        (identity.operation_id, identity.effect_key) for identity in identities
+    )
+    if keys != tuple(sorted(set(keys))):
+        _fail(f"{field} are not sorted and unique")
+    return keys
+
+
+def _restore_expected_fencing_tokens(
+    operations: tuple[RecoverySnapshot, ...],
+    *,
+    pre_rebind_fencing_token_floor: int,
+) -> tuple[tuple[str, str, int | None], ...]:
+    _integer(
+        pre_rebind_fencing_token_floor,
+        "pre_rebind_fencing_token_floor",
+    )
+    if type(operations) is not tuple or any(
+        type(operation) is not RecoverySnapshot for operation in operations
+    ):
+        _fail("restore operations are invalid")
+    operation_ids = tuple(operation.operation_id for operation in operations)
+    if operation_ids != tuple(sorted(operation_ids)) or len(set(operation_ids)) != len(
+        operation_ids
+    ):
+        _fail("restore operations are not deterministically ordered")
+    token = pre_rebind_fencing_token_floor
+    result: list[tuple[str, str, int | None]] = []
+    for operation in operations:
+        expected: int | None = None
+        if operation.status == "RECEIPTED":
+            if token >= SQLITE_INTEGER_MAX:
+                _fail("restore fencing token exceeds supported integer")
+            token += 1
+            expected = token
+        result.append((operation.operation_id, operation.effect_key, expected))
+    return tuple(result)
+
+
+def _restore_binding_digest(
+    *,
+    restore_generation: int,
+    actor: str,
+    audit_evidence_ref: str,
+    source_digest: str,
+    previous_primary_digest: str,
+    previous_recovery_epoch: int,
+    previous_fencing_token_hwm: int,
+    previous_last_clock_ns: int,
+    final_floor: RecoveryFloor,
+    current_tombstones: tuple[RestoreIdentity, ...],
+    active_tombstones: tuple[RestoreIdentity, ...],
+) -> str:
+    _integer(restore_generation, "restore_generation", minimum=1)
+    _identifier(actor, "actor")
+    for digest, field_name in (
+        (audit_evidence_ref, "audit_evidence_ref"),
+        (source_digest, "source_digest"),
+        (previous_primary_digest, "previous_primary_digest"),
+    ):
+        if type(digest) is not str or _DIGEST_REF.fullmatch(digest) is None:
+            _fail(f"{field_name} is invalid")
+    _integer(previous_recovery_epoch, "previous_recovery_epoch")
+    _integer(previous_fencing_token_hwm, "previous_fencing_token_hwm")
+    _integer(previous_last_clock_ns, "previous_last_clock_ns")
+    if type(final_floor) is not RecoveryFloor:
+        _fail("final_floor is invalid")
+    current_tombstone_keys = _restore_identity_keys(
+        current_tombstones,
+        "restore current tombstones",
+    )
+    active_tombstone_keys = _restore_identity_keys(
+        active_tombstones,
+        "restore active tombstones",
+    )
+    active_key_set = set(active_tombstone_keys)
+    if any(key not in active_key_set for key in current_tombstone_keys):
+        _fail("restore current tombstones are not active")
+    preimage = {
+        "domain": "restore-history-binding",
+        "version": 1,
+        "restore_generation": restore_generation,
+        "actor": actor,
+        "audit_evidence_ref": audit_evidence_ref,
+        "source_digest": source_digest,
+        "previous_primary_digest": previous_primary_digest,
+        "previous_recovery_epoch": previous_recovery_epoch,
+        "previous_fencing_token_hwm": previous_fencing_token_hwm,
+        "previous_last_clock_ns": previous_last_clock_ns,
+        "final_recovery_epoch": final_floor.recovery_epoch,
+        "final_fencing_token_floor": final_floor.fencing_token_floor,
+        "current_tombstones": current_tombstone_keys,
+        "active_tombstones": active_tombstone_keys,
+    }
+    encoded = json.dumps(
+        preimage,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_restore_identity_fields(
+    *,
+    source_digest: str,
+    candidate_digest: str,
+    final_floor: RecoveryFloor,
+    tombstones: tuple[RestoreIdentity, ...],
+    active_tombstones: tuple[RestoreIdentity, ...],
+    actor: str,
+    evidence_ref: str,
+) -> None:
+    for digest, field_name in (
+        (source_digest, "source_digest"),
+        (candidate_digest, "candidate_digest"),
+    ):
+        if type(digest) is not str or _DIGEST_REF.fullmatch(digest) is None:
+            _fail(f"{field_name} is invalid")
+    if type(final_floor) is not RecoveryFloor:
+        _fail("final_floor is invalid")
+    _restore_identity_keys(tombstones, "tombstones")
+    _restore_identity_keys(
+        active_tombstones,
+        "active_tombstones",
+    )
+    _identifier(actor, "actor")
+    if _DIGEST_REF.fullmatch(evidence_ref) is None:
+        _fail("evidence_ref is invalid")
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class RestoreApplyResult:
+    """Process-local candidate-apply result, never a durable resume input."""
+
+    observation: StoreImageObservation
+    tombstones: tuple[RestoreIdentity, ...]
+    active_tombstones: tuple[RestoreIdentity, ...]
+    restore_event_count: int
+    applied: bool = True
+    _provenance: object = field(default=None, repr=False, compare=False)
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("RestoreApplyResult instances are store-issued")
+
+    def __post_init__(self) -> None:
+        if type(self.observation) is not StoreImageObservation:
+            _fail("observation is invalid")
+        tombstone_keys = _restore_identity_keys(self.tombstones, "tombstones")
+        active_tombstone_keys = _restore_identity_keys(
+            self.active_tombstones,
+            "active_tombstones",
+        )
+        if any(key not in set(active_tombstone_keys) for key in tombstone_keys):
+            _fail("tombstones are not active")
+        _integer(self.restore_event_count, "restore_event_count")
+        if type(self.applied) is not bool:
+            _fail("applied is invalid")
+
+    @property
+    def floor(self) -> RecoveryFloor:
+        return self.observation.floor
+
+    @property
+    def digest(self) -> str:
+        return self.observation.digest
+
+    @property
+    def size(self) -> int:
+        return self.observation.size
+
+    @property
+    def is_issued(self) -> bool:
+        return getattr(self, "_provenance", None) is _RESULT_SENTINEL
+
+
+def _issue_restore_apply_result(
+    *,
+    observation: StoreImageObservation,
+    tombstones: tuple[RestoreIdentity, ...],
+    active_tombstones: tuple[RestoreIdentity, ...],
+    restore_event_count: int,
+    applied: bool = True,
+) -> RestoreApplyResult:
+    values = {
+        "observation": observation,
+        "tombstones": tombstones,
+        "active_tombstones": active_tombstones,
+        "restore_event_count": restore_event_count,
+        "applied": applied,
+    }
+    instance = object.__new__(RestoreApplyResult)
+    for field_name, value in values.items():
+        object.__setattr__(instance, field_name, value)
+    instance.__post_init__()
+    object.__setattr__(instance, "_provenance", _RESULT_SENTINEL)
+    return instance
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreCandidateEvidence:
+    """Durable expectation for a candidate before primary replacement."""
+
+    restore_generation: int
+    source_digest: str
+    previous_primary_digest: str
+    candidate_digest: str
+    final_floor: RecoveryFloor
+    tombstones: tuple[RestoreIdentity, ...]
+    active_tombstones: tuple[RestoreIdentity, ...]
+    actor: str
+    evidence_ref: str
+
+    def __post_init__(self) -> None:
+        _integer(self.restore_generation, "restore_generation", minimum=1)
+        _validate_restore_identity_fields(
+            source_digest=self.source_digest,
+            candidate_digest=self.candidate_digest,
+            final_floor=self.final_floor,
+            tombstones=self.tombstones,
+            active_tombstones=self.active_tombstones,
+            actor=self.actor,
+            evidence_ref=self.evidence_ref,
+        )
+        if (
+            type(self.previous_primary_digest) is not str
+            or _DIGEST_REF.fullmatch(self.previous_primary_digest) is None
+        ):
+            _fail("previous_primary_digest is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreReplacedEvidence:
+    """Durable expectation for a primary after candidate replacement."""
+
+    restore_generation: int
+    source_digest: str
+    previous_primary_digest: str
+    candidate_digest: str
+    previous_recovery_epoch: int
+    previous_fencing_token_hwm: int
+    previous_last_clock_ns: int
+    final_floor: RecoveryFloor
+    tombstones: tuple[RestoreIdentity, ...]
+    active_tombstones: tuple[RestoreIdentity, ...]
+    actor: str
+    evidence_ref: str
+
+    def __post_init__(self) -> None:
+        _integer(self.restore_generation, "restore_generation", minimum=1)
+        _validate_restore_identity_fields(
+            source_digest=self.source_digest,
+            candidate_digest=self.candidate_digest,
+            final_floor=self.final_floor,
+            tombstones=self.tombstones,
+            active_tombstones=self.active_tombstones,
+            actor=self.actor,
+            evidence_ref=self.evidence_ref,
+        )
+        _integer(self.previous_recovery_epoch, "previous_recovery_epoch")
+        _integer(self.previous_fencing_token_hwm, "previous_fencing_token_hwm")
+        _integer(self.previous_last_clock_ns, "previous_last_clock_ns")
+        if (
+            type(self.previous_primary_digest) is not str
+            or _DIGEST_REF.fullmatch(self.previous_primary_digest) is None
+        ):
+            _fail("previous_primary_digest is invalid")
+
+
 def _issue_provider_effect(
     *,
     operation_id: str,
@@ -670,6 +1020,11 @@ __all__ = [
     "RecoveryFloor",
     "RecoveryRebaseMode",
     "RecoverySnapshot",
+    "RestoreApplyResult",
+    "RestoreCandidateEvidence",
+    "RestoreIdentity",
+    "RestoreReplacedEvidence",
+    "StoreImageObservation",
     "VerifiedProviderReceipt",
     "require_provider_capabilities",
 ]

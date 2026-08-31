@@ -89,6 +89,7 @@ WRITER_MARKER_BASENAME: Final[str] = _store.WRITER_MARKER_FILENAME
 MAX_LEDGER_BYTES: Final[int] = 4 * 1024 * 1024
 MAX_DATABASE_BYTES: Final[int] = 256 * 1024 * 1024
 _CLEANUP_EXCEPTION: Final[type[BaseException]] = BaseException
+_MAX_ORPHAN_FDS: Final[int] = 8
 _MAX_INT = 2**63 - 1
 _HEX = frozenset("0123456789abcdef")
 _FILE_TYPES: Final[tuple[FileType, ...]] = (
@@ -159,16 +160,122 @@ _TERMINAL_LEDGER_PHASES: Final[frozenset[LedgerPhase]] = frozenset(
 )
 _LEDGER_TRANSITIONS: Final[dict[LedgerPhase, frozenset[LedgerPhase]]] = {
     "RESTORE_PREPARED": frozenset({"RESTORE_REPLACED", "RESTORE_ABORTED"}),
-    "RESTORE_REPLACED": frozenset({"RESTORE_COMMITTED", "RESTORE_ABORTED"}),
+    "RESTORE_REPLACED": frozenset({"RESTORE_COMMITTED"}),
 }
+
+
+class CleanupOwner:
+    """Opaque owner for retrying one bounded cleanup lifecycle."""
+
+    __slots__ = ("_members", "_retry")
+
+    def __init__(
+        self,
+        retry: Callable[[], None],
+        *,
+        _members: tuple[CleanupOwner, ...] | None = None,
+    ) -> None:
+        self._retry = retry
+        self._members = _members if _members is not None else (self,)
+
+    def retry_cleanup(self) -> None:
+        """Retry the cleanup held by this owner."""
+
+        self._retry()
+
+    def close(self) -> None:
+        """Idempotent alias for retrying the owned cleanup."""
+
+        self.retry_cleanup()
+
+
+def _combine_cleanup_owners(*owners: CleanupOwner) -> CleanupOwner:
+    members: list[CleanupOwner] = []
+    for owner in owners:
+        for member in owner._members:
+            if all(member is not existing for existing in members):
+                members.append(member)
+
+    pending = list(members)
+    combined: CleanupOwner | None = None
+
+    def retry_all() -> None:
+        first_error: BaseException | None = None
+        remaining: list[CleanupOwner] = []
+        for member in tuple(pending):
+            try:
+                member.retry_cleanup()
+            except _CLEANUP_EXCEPTION as error:
+                remaining.append(member)
+                if first_error is None:
+                    first_error = error
+        pending[:] = remaining
+        assert combined is not None
+        combined._members = tuple(pending)
+        if first_error is not None:
+            raise first_error
+
+    combined = CleanupOwner(retry_all, _members=tuple(pending))
+    return combined
 
 
 class DoctorError(RuntimeError):
     """Base class for read-only doctor failures."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self._cleanup_capability: CleanupOwner | None = None
+
+    @property
+    def cleanup_owner(self) -> CleanupOwner | None:
+        """Return the opaque owner for any incomplete cleanup."""
+
+        return self._cleanup_capability
+
+    def retry_cleanup(self) -> None:
+        """Retry cleanup owned by this error, if any."""
+
+        capability = self._cleanup_capability
+        if capability is None:
+            return
+        try:
+            capability.retry_cleanup()
+        except BaseException as error:
+            wrapped_error = _cleanup_owner_or_wrap(error, capability)
+            if wrapped_error is not error:
+                raise wrapped_error from error
+            raise
+        self._cleanup_capability = None
+
+    def _set_cleanup_owner(self, owner: CleanupOwner) -> None:
+        if self._cleanup_capability is None:
+            self._cleanup_capability = owner
+
+    def _replace_cleanup_owner(self, owner: CleanupOwner) -> None:
+        self._cleanup_capability = owner
+
+    def _attach_cleanup_capability(self, capability: CleanupOwner) -> None:
+        self._set_cleanup_owner(capability)
+
 
 class StateFilesystemError(DoctorError):
     """The state root or a required existing file cannot be observed safely."""
+
+
+class CleanupUncertaintyError(StateFilesystemError):
+    """A cleanup operation returned an error after its final status became uncertain."""
+
+    def __init__(self, message: str, *, cleanup_complete: bool = False) -> None:
+        super().__init__(message)
+        self.cleanup_complete = cleanup_complete
+
+
+class CleanupOwnerError(StateFilesystemError):
+    """A primary exception cannot carry the required cleanup owner."""
+
+    def __init__(self, primary_error: BaseException) -> None:
+        super().__init__("state filesystem cleanup owner is unavailable")
+        self.primary_error = primary_error
 
 
 class UnsafeFilesystemError(StateFilesystemError):
@@ -185,6 +292,124 @@ class WriterActiveError(StateFilesystemError):
 
 class LedgerReadError(DoctorError):
     """An existing recovery ledger is incomplete or malformed."""
+
+
+class _RestorePairReadError(DoctorError):
+    """The canonical recovery ledger/tombstone pair cannot be validated."""
+
+    def __init__(self, message: str, *, tombstone_present: bool) -> None:
+        super().__init__(message)
+        self.tombstone_present = tombstone_present
+
+
+def _attach_cleanup_owner(error: BaseException, owner: CleanupOwner) -> bool:
+    existing_owner = getattr(error, "cleanup_owner", None)
+    if existing_owner is None:
+        try:
+            foreign_owner = vars(error).get("_cleanup_capability")
+        except (AttributeError, TypeError):
+            foreign_owner = None
+        if isinstance(foreign_owner, CleanupOwner):
+            existing_owner = foreign_owner
+        elif foreign_owner is not None:
+            retry = getattr(foreign_owner, "retry_cleanup", None)
+            if callable(retry):
+                existing_owner = CleanupOwner(retry)
+    if existing_owner is owner:
+        return True
+    if isinstance(existing_owner, CleanupOwner):
+        owner = _combine_cleanup_owners(existing_owner, owner)
+    if isinstance(error, DoctorError):
+        if existing_owner is None:
+            error._set_cleanup_owner(owner)
+        else:
+            error._replace_cleanup_owner(owner)
+        return True
+    try:
+        error_attributes = vars(error)
+        error_attributes["_cleanup_capability"] = owner
+        error_attributes["cleanup_owner"] = owner
+        error_attributes["retry_cleanup"] = owner.retry_cleanup
+    except (AttributeError, TypeError):
+        return False
+    return True
+
+
+def _mark_cleanup_uncertainty(
+    error: BaseException,
+    cleanup_error: CleanupUncertaintyError,
+) -> bool:
+    try:
+        vars(error)["_cleanup_uncertainty"] = cleanup_error
+    except (AttributeError, TypeError):
+        return False
+    return True
+
+
+def _has_cleanup_uncertainty(error: BaseException) -> bool:
+    return (
+        isinstance(error, CleanupOwnerError)
+        or getattr(
+            error,
+            "_cleanup_uncertainty",
+            None,
+        )
+        is not None
+    )
+
+
+def _cleanup_owner_or_wrap(
+    error: BaseException,
+    owner: CleanupOwner,
+    *,
+    cleanup_error: CleanupUncertaintyError | None = None,
+) -> BaseException:
+    if _attach_cleanup_owner(error, owner):
+        if cleanup_error is not None:
+            _mark_cleanup_uncertainty(error, cleanup_error)
+        return error
+    wrapped_error = CleanupOwnerError(error)
+    wrapped_error._set_cleanup_owner(owner)
+    if cleanup_error is not None:
+        _mark_cleanup_uncertainty(wrapped_error, cleanup_error)
+    return wrapped_error
+
+
+def _foreign_cleanup_owner(error: BaseException) -> CleanupOwner | None:
+    owner = getattr(error, "cleanup_owner", None)
+    if isinstance(owner, CleanupOwner):
+        return owner
+    try:
+        foreign_owner = vars(error).get("_cleanup_capability")
+    except (AttributeError, TypeError):
+        return None
+    if isinstance(foreign_owner, CleanupOwner):
+        return foreign_owner
+    retry = getattr(foreign_owner, "retry_cleanup", None)
+    if callable(retry):
+        return CleanupOwner(retry)
+    return None
+
+
+def _find_cleanup_owner(error: BaseException) -> CleanupOwner | None:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        owner = getattr(current, "cleanup_owner", None)
+        if isinstance(owner, CleanupOwner):
+            return owner
+        try:
+            foreign_owner = vars(current).get("_cleanup_capability")
+        except (AttributeError, TypeError):
+            foreign_owner = None
+        if isinstance(foreign_owner, CleanupOwner):
+            return foreign_owner
+        next_error = current.__cause__
+        if next_error is None and not current.__suppress_context__:
+            next_error = current.__context__
+        current = next_error
+    return None
 
 
 def _require_int(value: object, name: str, *, minimum: int = 0) -> int:
@@ -477,33 +702,45 @@ def _close_temporary_fd(
 ) -> None:
     """Close a temporary descriptor with an identity-checked retry."""
 
+    if expected_identity is None:
+        raise StateFilesystemError(f"{label} descriptor identity is unavailable")
+    try:
+        metadata = os.fstat(fd)
+    except _CLEANUP_EXCEPTION as status_error:
+        if isinstance(status_error, OSError) and status_error.errno == errno.EBADF:
+            raise CleanupUncertaintyError(
+                f"{label} close status is unknown",
+                cleanup_complete=True,
+            ) from status_error
+        raise CleanupUncertaintyError(
+            f"{label} descriptor status is unknown"
+        ) from status_error
+    if _metadata_identity(metadata) != expected_identity:
+        raise StateFilesystemError(f"{label} descriptor was reused")
     try:
         os.close(fd)
-    except _CLEANUP_EXCEPTION:
+    except _CLEANUP_EXCEPTION as first_error:
         try:
             metadata = os.fstat(fd)
-        except OSError as status_error:
-            if status_error.errno == errno.EBADF:
-                raise StateFilesystemError(
-                    f"{label} close status is unknown"
-                ) from status_error
-            raise StateFilesystemError(
+        except _CLEANUP_EXCEPTION as status_error:
+            if isinstance(status_error, OSError) and status_error.errno == errno.EBADF:
+                raise CleanupUncertaintyError(
+                    f"{label} close status is unknown",
+                    cleanup_complete=True,
+                ) from first_error
+            raise CleanupUncertaintyError(
                 f"{label} close status is unknown"
             ) from status_error
-        if (
-            expected_identity is not None
-            and (
-                metadata.st_dev,
-                metadata.st_ino,
-            )
-            != expected_identity
-        ):
+        if _metadata_identity(metadata) != expected_identity:
             raise StateFilesystemError(f"{label} descriptor was reused")
         try:
             os.close(fd)
         except _CLEANUP_EXCEPTION as retry_error:
-            raise StateFilesystemError(f"{label} cannot be closed") from retry_error
-        raise StateFilesystemError(f"{label} close failed before retry")
+            raise CleanupUncertaintyError(f"{label} cannot be closed") from retry_error
+        raise CleanupUncertaintyError(
+            f"{label} close failed before retry",
+            cleanup_complete=True,
+        )
 
 
 def _close_temporary_connection(
@@ -514,11 +751,15 @@ def _close_temporary_connection(
 
     try:
         connection.close()
-    except _CLEANUP_EXCEPTION:
+    except _CLEANUP_EXCEPTION as first_error:
         try:
             connection.close()
         except _CLEANUP_EXCEPTION as retry_error:
-            raise StateFilesystemError(f"{label} cannot be closed") from retry_error
+            raise CleanupUncertaintyError(f"{label} cannot be closed") from retry_error
+        raise CleanupUncertaintyError(
+            f"{label} close failed before retry",
+            cleanup_complete=True,
+        ) from first_error
 
 
 def _deserialize_database_from_fd(fd: int) -> sqlite3.Connection:
@@ -572,12 +813,45 @@ def _deserialize_database_from_fd(fd: int) -> sqlite3.Connection:
             isolation_level=None,
         )
         connection.deserialize(bytes(image))
-    except (AttributeError, sqlite3.DatabaseError) as exc:
+    except BaseException as exc:
+        primary_error: BaseException
+        if isinstance(exc, (AttributeError, sqlite3.DatabaseError)):
+            primary_error = _store.StoreIntegrityError(
+                "SQLite in-memory database deserialization failed"
+            )
+        else:
+            primary_error = exc
+        cleanup_error: CleanupUncertaintyError | None = None
         if connection is not None:
-            _close_temporary_connection(connection, "SQLite in-memory database")
-        raise _store.StoreIntegrityError(
-            "SQLite in-memory database deserialization failed"
-        ) from exc
+            try:
+                _close_temporary_connection(
+                    connection,
+                    "SQLite in-memory database",
+                )
+            except CleanupUncertaintyError as error:
+                cleanup_error = error
+        if cleanup_error is not None:
+            if not cleanup_error.cleanup_complete:
+                assert connection is not None
+                owner = CleanupOwner(connection.close)
+                cleanup_error._set_cleanup_owner(owner)
+                wrapped_error = _cleanup_owner_or_wrap(
+                    primary_error,
+                    owner,
+                    cleanup_error=cleanup_error,
+                )
+                if wrapped_error is not primary_error:
+                    raise wrapped_error from primary_error
+            elif not _mark_cleanup_uncertainty(primary_error, cleanup_error):
+                assert connection is not None
+                owner = CleanupOwner(connection.close)
+                wrapped_error = CleanupOwnerError(primary_error)
+                wrapped_error._set_cleanup_owner(owner)
+                _mark_cleanup_uncertainty(wrapped_error, cleanup_error)
+                raise wrapped_error from primary_error
+        if primary_error is exc:
+            raise
+        raise primary_error from exc
     return connection
 
 
@@ -600,15 +874,21 @@ class StateFilesystem:
         self._root_identity: tuple[int, int] | None = None
         self._root_signature: tuple[int, ...] | None = None
         self._parent_fd: int | None = None
+        self._parent_identity: tuple[int, int] | None = None
         self._gate_fd: int | None = None
         self._gate_identity: tuple[int, int] | None = None
         self._marker_fd: int | None = None
         self._marker_identity: tuple[int, int] | None = None
         self._marker_signature: tuple[int, ...] | None = None
         self._marker_state: str | None = None
+        self._gate_shared = False
         self._marker_shared = False
         self._marker_exclusive = False
+        self._marker_handoff_pending = False
+        self._marker_invalidated = False
+        self._filesystem_invalidated = False
         self._orphan_fds: list[tuple[int, tuple[int, int] | None, str]] = []
+        self._cleanup_owner: CleanupOwner | None = None
         self._closed = False
 
     @classmethod
@@ -654,19 +934,39 @@ class StateFilesystem:
             try:
                 root_fd = _store._open_state_root(root)
             except _store.StoreError as exc:
-                raise StateFilesystemError("state root cannot be opened") from exc
+                root_error = StateFilesystemError("state root cannot be opened")
+                owner = _foreign_cleanup_owner(exc)
+                if owner is not None:
+                    root_error._set_cleanup_owner(owner)
+                raise root_error from exc
             instance._root_fd = root_fd
+            instance._root_identity = _metadata_identity(root_before)
+            instance._root_signature = _metadata_signature(root_before)
             metadata = os.fstat(root_fd)
             if _metadata_signature(metadata) != _metadata_signature(root_before):
                 raise UnstableSnapshotError("state root changed while opening")
-            instance._root_identity = (metadata.st_dev, metadata.st_ino)
+            instance._root_identity = _metadata_identity(metadata)
             instance._root_signature = _metadata_signature(metadata)
             instance._open_existing_gate()
             instance._open_existing_marker()
             instance._assert_root_identity()
             return instance
-        except BaseException:
-            instance.close()
+        except BaseException as primary_error:
+            try:
+                instance.close()
+            except _CLEANUP_EXCEPTION as cleanup_error:
+                owner = instance._cleanup_owner_handle()
+                wrapped_error = _cleanup_owner_or_wrap(
+                    primary_error,
+                    owner,
+                    cleanup_error=(
+                        cleanup_error
+                        if isinstance(cleanup_error, CleanupUncertaintyError)
+                        else None
+                    ),
+                )
+                if wrapped_error is not primary_error:
+                    raise wrapped_error from primary_error
             raise
 
     def _fault(self, point: str) -> None:
@@ -676,6 +976,134 @@ class StateFilesystem:
         if self._closed or self._root_fd is None:
             raise StateFilesystemError("state filesystem is closed")
         return self._root_fd
+
+    def _ensure_ready_for_io(self) -> int:
+        root_fd = self._assert_open()
+        if self._filesystem_invalidated:
+            raise StateFilesystemError("state filesystem was invalidated")
+        self._retry_orphan_fds()
+        self._retry_marker_handoff()
+        return root_fd
+
+    def _retry_marker_handoff(self) -> None:
+        if not self._marker_handoff_pending:
+            return
+        if self._marker_invalidated:
+            raise StateFilesystemError("writer marker was invalidated")
+        marker_fd = self._marker_fd
+        expected_identity = self._marker_identity
+        expected_signature = self._marker_signature
+        expected_state = self._marker_state
+        if marker_fd is None or expected_identity is None or expected_signature is None:
+            if marker_fd is not None or expected_identity is None:
+                raise StateFilesystemError("writer marker handoff is incomplete")
+            try:
+                self._open_existing_marker()
+            except _CLEANUP_EXCEPTION as error:
+                if isinstance(error, (UnsafeFilesystemError, UnstableSnapshotError)):
+                    self._marker_invalidated = True
+                    self._filesystem_invalidated = True
+                raise StateFilesystemError(
+                    "writer marker handoff cannot reopen marker"
+                ) from error
+            marker_fd = self._marker_fd
+            if (
+                marker_fd is None
+                or self._marker_identity != expected_identity
+                or self._marker_signature != expected_signature
+                or self._marker_state != expected_state
+            ):
+                self._marker_invalidated = True
+                self._filesystem_invalidated = True
+                self._marker_handoff_pending = True
+                raise UnstableSnapshotError(
+                    "writer marker changed while reopening handoff"
+                )
+            self._marker_shared = True
+            self._marker_exclusive = False
+            self._marker_handoff_pending = False
+            self._assert_marker_identity()
+            return
+        try:
+            metadata = os.fstat(marker_fd)
+        except OSError as exc:
+            raise StateFilesystemError(
+                "writer marker handoff descriptor is unavailable"
+            ) from exc
+        except _CLEANUP_EXCEPTION as exc:
+            status_unknown = CleanupUncertaintyError(
+                "writer marker handoff status is unknown"
+            )
+            status_unknown._set_cleanup_owner(self._cleanup_owner_handle())
+            raise status_unknown from exc
+        if (
+            _metadata_identity(metadata) != expected_identity
+            or _metadata_signature(metadata) != expected_signature
+        ):
+            self._drop_descriptor_number(marker_fd)
+            raise StateFilesystemError("writer marker handoff descriptor was reused")
+        try:
+            fcntl.flock(marker_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise StateFilesystemError(
+                "writer marker handoff cannot reacquire shared lock"
+            ) from exc
+        self._marker_shared = True
+        self._marker_exclusive = False
+        self._marker_handoff_pending = False
+        try:
+            self._assert_marker_identity()
+        except BaseException:
+            self._marker_invalidated = True
+            self._filesystem_invalidated = True
+            self._marker_shared = False
+            self._marker_handoff_pending = True
+            raise
+
+    def _cleanup_owner_handle(self) -> CleanupOwner:
+        owner = self._cleanup_owner
+        if owner is None:
+            owner = CleanupOwner(self.close)
+            self._cleanup_owner = owner
+        return owner
+
+    def _temporary_fd_cleanup_owner(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> CleanupOwner:
+        def retry() -> None:
+            _close_temporary_fd(fd, expected_identity, label)
+            self._orphan_fds = [item for item in self._orphan_fds if item[0] != fd]
+
+        return CleanupOwner(retry)
+
+    def _drop_descriptor_number(self, fd: int) -> None:
+        """Forget a descriptor number after identity proof no longer holds."""
+
+        self._orphan_fds = [item for item in self._orphan_fds if item[0] != fd]
+        if self._marker_fd == fd:
+            self._marker_fd = None
+            self._marker_identity = None
+            self._marker_signature = None
+            self._marker_state = None
+            self._marker_shared = False
+            self._marker_exclusive = False
+            self._marker_handoff_pending = False
+            self._marker_invalidated = True
+        if self._gate_fd == fd:
+            self._gate_fd = None
+            self._gate_identity = None
+            self._gate_shared = False
+        if self._root_fd == fd:
+            self._root_fd = None
+            self._root_identity = None
+            self._root_signature = None
+        if self._parent_fd == fd:
+            self._parent_fd = None
+            self._parent_identity = None
+        self._filesystem_invalidated = True
 
     def _assert_root_identity(self) -> None:
         root_fd = self._assert_open()
@@ -688,6 +1116,10 @@ class StateFilesystem:
             path_metadata = os.stat(self.state_root, follow_symlinks=False)
         except OSError as exc:
             raise UnstableSnapshotError("state root identity is unavailable") from exc
+        except _CLEANUP_EXCEPTION as exc:
+            error = CleanupUncertaintyError("state root status is unknown")
+            error._set_cleanup_owner(self._cleanup_owner_handle())
+            raise error from exc
         if (
             _metadata_signature(fd_metadata) != expected_signature
             or _metadata_signature(path_metadata) != expected_signature
@@ -699,14 +1131,33 @@ class StateFilesystem:
         root_fd = self._assert_open()
         directory_flags = _read_only_open_flags(directory=True)
         try:
+            parent_before = os.stat(
+                "..",
+                dir_fd=root_fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise StateFilesystemError("state parent cannot be inspected") from exc
+        try:
             parent_fd = os.open("..", directory_flags, dir_fd=root_fd)
         except OSError as exc:
             raise StateFilesystemError("state parent cannot be opened") from exc
         self._parent_fd = parent_fd
+        self._parent_identity = _metadata_identity(parent_before)
         try:
             _store._validate_directory_fd(parent_fd, state_root=False)
         except _store.StoreError as exc:
             raise StateFilesystemError("state parent is unsafe") from exc
+        try:
+            parent_metadata = os.fstat(parent_fd)
+        except OSError as exc:
+            raise StateFilesystemError("state parent cannot be inspected") from exc
+        except _CLEANUP_EXCEPTION as exc:
+            error = CleanupUncertaintyError("state parent status is unknown")
+            error._set_cleanup_owner(self._cleanup_owner_handle())
+            raise error from exc
+        if _metadata_identity(parent_metadata) != self._parent_identity:
+            raise UnstableSnapshotError("state parent changed while opening")
         gate_name = _store.LIFETIME_GATE_FILENAME
         flags = _read_only_open_flags(directory=False)
         try:
@@ -724,6 +1175,8 @@ class StateFilesystem:
         except OSError as exc:
             raise StateFilesystemError("lifetime gate cannot be opened") from exc
         try:
+            self._gate_fd = gate_fd
+            self._gate_identity = _metadata_identity(before)
             metadata = os.fstat(gate_fd)
             after = os.stat(gate_name, dir_fd=parent_fd, follow_symlinks=False)
             if _metadata_signature(metadata) != _metadata_signature(
@@ -738,14 +1191,30 @@ class StateFilesystem:
                         "lifetime gate is held exclusively"
                     ) from exc
                 raise StateFilesystemError("lifetime gate cannot be locked") from exc
-            self._gate_fd = gate_fd
-            self._gate_identity = (metadata.st_dev, metadata.st_ino)
-        except BaseException:
-            self._close_owned_temporary_fd(
-                gate_fd,
-                _metadata_identity(before),
-                "lifetime gate",
-            )
+            self._gate_shared = True
+        except BaseException as primary_error:
+            cleanup_error: BaseException | None = None
+            try:
+                self._close_owned_temporary_fd(
+                    gate_fd,
+                    _metadata_identity(before),
+                    "lifetime gate",
+                )
+            except _CLEANUP_EXCEPTION as error:
+                cleanup_error = error
+            if cleanup_error is not None:
+                owner = self._cleanup_owner_handle()
+                wrapped_error = _cleanup_owner_or_wrap(
+                    primary_error,
+                    owner,
+                    cleanup_error=(
+                        cleanup_error
+                        if isinstance(cleanup_error, CleanupUncertaintyError)
+                        else None
+                    ),
+                )
+                if wrapped_error is not primary_error:
+                    raise wrapped_error from primary_error
             raise
 
     def _open_existing_marker(self) -> None:
@@ -767,6 +1236,9 @@ class StateFilesystem:
         except OSError as exc:
             raise StateFilesystemError("writer marker cannot be opened") from exc
         try:
+            self._marker_fd = marker_fd
+            self._marker_identity = _metadata_identity(marker)
+            self._marker_signature = _metadata_signature(marker)
             metadata = os.fstat(marker_fd)
             after = self._lstat(self.marker_name)
             if (
@@ -783,21 +1255,35 @@ class StateFilesystem:
                         "writer marker is held exclusively"
                     ) from exc
                 raise StateFilesystemError("writer marker cannot be locked") from exc
+            self._marker_shared = True
             try:
                 marker_state = _store._read_writer_marker_state(marker_fd)
             except _store.StoreError as exc:
                 raise UnsafeFilesystemError("writer marker content is invalid") from exc
-            self._marker_fd = marker_fd
-            self._marker_identity = (metadata.st_dev, metadata.st_ino)
-            self._marker_signature = _metadata_signature(metadata)
             self._marker_state = marker_state
-            self._marker_shared = True
-        except BaseException:
-            self._close_owned_temporary_fd(
-                marker_fd,
-                _metadata_identity(marker),
-                "writer marker",
-            )
+        except BaseException as primary_error:
+            cleanup_error: BaseException | None = None
+            try:
+                self._close_owned_temporary_fd(
+                    marker_fd,
+                    _metadata_identity(marker),
+                    "writer marker",
+                )
+            except _CLEANUP_EXCEPTION as error:
+                cleanup_error = error
+            if cleanup_error is not None:
+                owner = self._cleanup_owner_handle()
+                wrapped_error = _cleanup_owner_or_wrap(
+                    primary_error,
+                    owner,
+                    cleanup_error=(
+                        cleanup_error
+                        if isinstance(cleanup_error, CleanupUncertaintyError)
+                        else None
+                    ),
+                )
+                if wrapped_error is not primary_error:
+                    raise wrapped_error from primary_error
             raise
 
     def _lstat(self, name: str) -> os.stat_result | None:
@@ -810,23 +1296,43 @@ class StateFilesystem:
             raise StateFilesystemError("state entry cannot be inspected") from exc
 
     def _assert_marker_identity(self) -> None:
+        if self._marker_handoff_pending:
+            raise StateFilesystemError("writer marker handoff is pending")
+        self._retry_orphan_fds()
         marker_fd = self._marker_fd
         expected_identity = self._marker_identity
         expected_signature = self._marker_signature
         if marker_fd is None:
             if expected_identity is not None or self._marker_state is not None:
+                self._marker_invalidated = True
+                self._filesystem_invalidated = True
                 raise UnstableSnapshotError("writer marker descriptor is unavailable")
             return
         if expected_identity is None or expected_signature is None:
+            self._marker_invalidated = True
+            self._filesystem_invalidated = True
             raise UnstableSnapshotError("writer marker identity is unavailable")
         try:
             fd_metadata = os.fstat(marker_fd)
         except OSError as exc:
+            if exc.errno == errno.EBADF:
+                self._drop_descriptor_number(marker_fd)
+            else:
+                self._marker_invalidated = True
+                self._filesystem_invalidated = True
             raise UnstableSnapshotError(
                 "writer marker descriptor is unavailable"
             ) from exc
+        except _CLEANUP_EXCEPTION as exc:
+            self._marker_invalidated = True
+            self._filesystem_invalidated = True
+            error = CleanupUncertaintyError("writer marker status is unknown")
+            error._set_cleanup_owner(self._cleanup_owner_handle())
+            raise error from exc
         path_metadata = self._lstat(self.marker_name)
         if path_metadata is None:
+            self._marker_invalidated = True
+            self._filesystem_invalidated = True
             raise UnstableSnapshotError("writer marker disappeared while observed")
         if (
             (fd_metadata.st_dev, fd_metadata.st_ino) != expected_identity
@@ -834,12 +1340,17 @@ class StateFilesystem:
             or _metadata_signature(fd_metadata) != expected_signature
             or _metadata_signature(path_metadata) != expected_signature
         ):
+            self._drop_descriptor_number(marker_fd)
             raise UnstableSnapshotError("writer marker changed while observed")
         try:
             state = _store._read_writer_marker_state(marker_fd)
         except _store.StoreError as exc:
+            self._marker_invalidated = True
+            self._filesystem_invalidated = True
             raise UnstableSnapshotError("writer marker content changed") from exc
         if state != self._marker_state:
+            self._marker_invalidated = True
+            self._filesystem_invalidated = True
             raise UnstableSnapshotError("writer marker state changed while observed")
 
     def _close_owned_temporary_fd(
@@ -853,27 +1364,237 @@ class StateFilesystem:
         except StateFilesystemError as close_error:
             try:
                 metadata = os.fstat(fd)
-            except OSError as status_error:
-                if status_error.errno == errno.EBADF:
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
                     raise close_error
-                raise StateFilesystemError(
+                try:
+                    self._remember_orphan_fd(fd, expected_identity, label)
+                except StateFilesystemError as registry_error:
+                    cleanup_error = CleanupUncertaintyError(
+                        f"{label} descriptor cannot be retained"
+                    )
+                    cleanup_error._set_cleanup_owner(
+                        self._temporary_fd_cleanup_owner(
+                            fd,
+                            expected_identity,
+                            label,
+                        )
+                    )
+                    raise cleanup_error from registry_error
+                cleanup_error = CleanupUncertaintyError(
                     f"{label} descriptor status is unknown"
-                ) from status_error
+                )
+                wrapped_error = _cleanup_owner_or_wrap(
+                    cleanup_error,
+                    self._cleanup_owner_handle(),
+                )
+                if wrapped_error is not cleanup_error:
+                    raise wrapped_error from status_error
+                raise cleanup_error from status_error
             if (
                 expected_identity is not None
-                and (
-                    metadata.st_dev,
-                    metadata.st_ino,
-                )
-                != expected_identity
+                and _metadata_identity(metadata) != expected_identity
             ):
+                if "marker" in label:
+                    self._drop_descriptor_number(fd)
                 raise StateFilesystemError(f"{label} descriptor was reused")
-            if not any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
-                self._orphan_fds.append((fd, expected_identity, label))
-            raise
+            try:
+                self._remember_orphan_fd(
+                    fd,
+                    expected_identity,
+                    label,
+                )
+            except StateFilesystemError as registry_error:
+                cleanup_error = CleanupUncertaintyError(
+                    f"{label} descriptor cannot be retained"
+                )
+                cleanup_error._set_cleanup_owner(
+                    self._temporary_fd_cleanup_owner(
+                        fd,
+                        expected_identity,
+                        label,
+                    )
+                )
+                raise cleanup_error from registry_error
+            if isinstance(close_error, CleanupUncertaintyError):
+                wrapped_error = _cleanup_owner_or_wrap(
+                    close_error,
+                    self._cleanup_owner_handle(),
+                )
+                if wrapped_error is not close_error:
+                    raise wrapped_error from close_error
+                raise
+            raise CleanupUncertaintyError(
+                f"{label} close status is unknown"
+            ) from close_error
 
-    def _open_regular(self, name: str) -> tuple[int, os.stat_result]:
-        root_fd = self._assert_open()
+    def _remember_orphan_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> None:
+        if any(existing_fd == fd for existing_fd, _, _ in self._orphan_fds):
+            return
+        if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+            error = CleanupUncertaintyError(
+                "state filesystem descriptor retry registry is full"
+            )
+            error._set_cleanup_owner(
+                self._temporary_fd_cleanup_owner(fd, expected_identity, label)
+            )
+            raise error
+        self._orphan_fds.append((fd, expected_identity, label))
+
+    def _retain_failed_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> None:
+        """Retain one close-uncertain preflight descriptor for safe retry."""
+
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                return
+            try:
+                self._remember_orphan_fd(fd, expected_identity, label)
+            except StateFilesystemError as registry_error:
+                cleanup_error = CleanupUncertaintyError(
+                    f"{label} descriptor cannot be retained"
+                )
+                cleanup_error._set_cleanup_owner(
+                    self._temporary_fd_cleanup_owner(
+                        fd,
+                        expected_identity,
+                        label,
+                    )
+                )
+                raise cleanup_error from registry_error
+            cleanup_error = CleanupUncertaintyError(
+                f"{label} descriptor status is unknown"
+            )
+            cleanup_error._set_cleanup_owner(
+                self._temporary_fd_cleanup_owner(fd, expected_identity, label)
+            )
+            raise cleanup_error from exc
+        actual_identity = _metadata_identity(metadata)
+        if expected_identity is not None and actual_identity != expected_identity:
+            raise StateFilesystemError(f"{label} descriptor was reused")
+        try:
+            self._remember_orphan_fd(fd, expected_identity, label)
+        except StateFilesystemError as registry_error:
+            cleanup_error = CleanupUncertaintyError(
+                f"{label} descriptor cannot be retained"
+            )
+            cleanup_error._set_cleanup_owner(
+                self._temporary_fd_cleanup_owner(fd, expected_identity, label)
+            )
+            raise cleanup_error from registry_error
+
+    def _retry_orphan_fds(self) -> None:
+        """Drain retained temporary descriptors before starting another read."""
+
+        remaining: list[tuple[int, tuple[int, int] | None, str]] = []
+        first_error: BaseException | None = None
+        for fd, expected_identity, label in self._orphan_fds:
+            marker_orphan = "marker" in label
+            if label.startswith("unresolved "):
+                remaining.append((fd, expected_identity, label))
+                self._filesystem_invalidated = True
+                if first_error is None:
+                    first_error = StateFilesystemError(
+                        f"{label} descriptor identity is unavailable"
+                    )
+                continue
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    continue
+                remaining.append((fd, expected_identity, label))
+                if first_error is None:
+                    first_error = CleanupUncertaintyError(
+                        f"{label} descriptor status is unknown"
+                    )
+                    first_error.__cause__ = status_error
+                continue
+            if (
+                expected_identity is None
+                or _metadata_identity(metadata) != expected_identity
+            ):
+                if marker_orphan:
+                    self._marker_invalidated = True
+                    self._drop_descriptor_number(fd)
+                else:
+                    remaining.append((fd, expected_identity, label))
+                    self._filesystem_invalidated = True
+                if first_error is None:
+                    first_error = StateFilesystemError(
+                        f"{label} descriptor identity is unavailable"
+                        if expected_identity is None
+                        else f"{label} descriptor was reused"
+                    )
+                continue
+            try:
+                os.close(fd)
+            except _CLEANUP_EXCEPTION as close_error:
+                try:
+                    retry_metadata = os.fstat(fd)
+                except _CLEANUP_EXCEPTION as status_error:
+                    if (
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
+                    ):
+                        continue
+                    remaining.append((fd, expected_identity, label))
+                    if first_error is None:
+                        first_error = CleanupUncertaintyError(
+                            f"{label} descriptor status is unknown"
+                        )
+                    continue
+                if _metadata_identity(retry_metadata) != expected_identity:
+                    if marker_orphan:
+                        self._marker_invalidated = True
+                        self._drop_descriptor_number(fd)
+                    else:
+                        remaining.append((fd, expected_identity, label))
+                        self._filesystem_invalidated = True
+                    if first_error is None:
+                        first_error = StateFilesystemError(
+                            f"{label} descriptor was reused"
+                        )
+                    continue
+                remaining.append((fd, expected_identity, label))
+                if first_error is None:
+                    first_error = StateFilesystemError(f"{label} cannot be closed")
+                del close_error
+        self._orphan_fds = remaining
+        if first_error is not None:
+            if remaining:
+                wrapped_error = _cleanup_owner_or_wrap(
+                    first_error,
+                    self._cleanup_owner_handle(),
+                )
+                if wrapped_error is not first_error:
+                    raise wrapped_error from first_error
+            raise first_error
+
+    def _open_regular(
+        self,
+        name: str,
+        *,
+        ensure_ready: bool = True,
+    ) -> tuple[int, os.stat_result]:
+        root_fd = self._ensure_ready_for_io() if ensure_ready else self._assert_open()
         _require_basename(name, "name")
         before = self._lstat(name)
         if before is None:
@@ -901,12 +1622,29 @@ class StateFilesystem:
             if _metadata_signature(metadata) != _metadata_signature(before):
                 raise UnstableSnapshotError("state entry changed while opening")
             return fd, metadata
-        except BaseException:
-            self._close_owned_temporary_fd(
-                fd,
-                _metadata_identity(before),
-                "state entry",
-            )
+        except BaseException as body_error:
+            try:
+                self._close_owned_temporary_fd(
+                    fd,
+                    _metadata_identity(before),
+                    "state entry",
+                )
+            except _CLEANUP_EXCEPTION as cleanup_error:
+                owner = self._cleanup_owner_handle()
+                current_owner = _foreign_cleanup_owner(cleanup_error)
+                if current_owner is not None:
+                    owner = _combine_cleanup_owners(owner, current_owner)
+                wrapped_error = _cleanup_owner_or_wrap(
+                    body_error,
+                    owner,
+                    cleanup_error=(
+                        cleanup_error
+                        if isinstance(cleanup_error, CleanupUncertaintyError)
+                        else None
+                    ),
+                )
+                if wrapped_error is not body_error:
+                    raise wrapped_error from body_error
             raise
 
     def open_existing_regular(self, name: str) -> int:
@@ -936,11 +1674,37 @@ class StateFilesystem:
         except OSError as exc:
             raise StateFilesystemError("state entry cannot be read") from exc
         finally:
-            self._close_owned_temporary_fd(
-                fd,
-                _metadata_identity(opened),
-                "state entry digest",
-            )
+            body_error = sys.exc_info()[1]
+            try:
+                self._close_owned_temporary_fd(
+                    fd,
+                    _metadata_identity(opened),
+                    "state entry digest",
+                )
+            except _CLEANUP_EXCEPTION as cleanup_error:
+                if body_error is None:
+                    if isinstance(cleanup_error, CleanupUncertaintyError) and not (
+                        self._orphan_fds
+                    ):
+                        raise
+                    wrapped_error = _cleanup_owner_or_wrap(
+                        cleanup_error,
+                        self._cleanup_owner_handle(),
+                    )
+                    if wrapped_error is not cleanup_error:
+                        raise wrapped_error from cleanup_error
+                    raise
+                wrapped_error = _cleanup_owner_or_wrap(
+                    body_error,
+                    self._cleanup_owner_handle(),
+                    cleanup_error=(
+                        cleanup_error
+                        if isinstance(cleanup_error, CleanupUncertaintyError)
+                        else None
+                    ),
+                )
+                if wrapped_error is not body_error:
+                    raise wrapped_error from body_error
         return f"sha256:{digest.hexdigest()}"
 
     def _entry(self, name: str, metadata: os.stat_result) -> FilesystemEntry:
@@ -988,12 +1752,14 @@ class StateFilesystem:
     def marker_state(self) -> str | None:
         """Return the validated stable-marker lifecycle state, if present."""
 
+        if self._marker_invalidated:
+            raise StateFilesystemError("writer marker was invalidated")
         return self._marker_state
 
     def inventory(self) -> FilesetInventory:
         """Return all root-direct entries, including unrelated names."""
 
-        root_fd = self._assert_open()
+        root_fd = self._ensure_ready_for_io()
         self._assert_root_identity()
         self._assert_marker_identity()
         names: list[str]
@@ -1018,6 +1784,7 @@ class StateFilesystem:
         parent_fd = self._parent_fd
         if parent_fd is None:
             raise StateFilesystemError("state parent is unavailable")
+        gate_path_metadata: os.stat_result | None = None
         try:
             gate_path_metadata = os.stat(
                 _store.LIFETIME_GATE_FILENAME,
@@ -1038,7 +1805,19 @@ class StateFilesystem:
         if current_gate_identity != gate_identity:
             raise UnstableSnapshotError("lifetime gate changed while observing")
         if self._gate_fd is not None:
-            gate_fd_metadata = os.fstat(self._gate_fd)
+            if current_gate_identity is None:
+                raise UnstableSnapshotError("lifetime gate changed while observing")
+            try:
+                gate_fd_metadata = os.fstat(self._gate_fd)
+            except OSError as exc:
+                raise UnstableSnapshotError(
+                    "lifetime gate descriptor is unavailable"
+                ) from exc
+            except _CLEANUP_EXCEPTION as exc:
+                error = CleanupUncertaintyError("lifetime gate status is unknown")
+                error._set_cleanup_owner(self._cleanup_owner_handle())
+                raise error from exc
+            assert gate_path_metadata is not None
             if _metadata_signature(gate_fd_metadata) != _metadata_signature(
                 gate_path_metadata
             ):
@@ -1058,29 +1837,111 @@ class StateFilesystem:
         if not isinstance(inventory, FilesetInventory):
             msg = "inventory is invalid"
             raise TypeError(msg)
+        self._ensure_ready_for_io()
         self._assert_root_identity()
         self._fault("before_final_inventory")
         current = self.inventory()
         if current != inventory:
             raise UnstableSnapshotError("state fileset changed while observed")
 
+    def _restore_marker_handoff(
+        self,
+        marker_fd: int,
+        expected_identity: tuple[int, int] | None,
+        expected_signature: tuple[int, ...] | None,
+        expected_state: str | None,
+    ) -> None:
+        self._marker_fd = marker_fd
+        self._marker_identity = expected_identity
+        self._marker_signature = expected_signature
+        self._marker_state = expected_state
+        self._marker_shared = False
+        self._marker_exclusive = False
+        self._marker_handoff_pending = True
+
+    def _cleanup_marker_handoff_fd(
+        self,
+        fd: int,
+        expected_identity: tuple[int, int] | None,
+        label: str,
+    ) -> BaseException | None:
+        cleanup_error: BaseException | None = None
+        try:
+            metadata = os.fstat(fd)
+        except _CLEANUP_EXCEPTION as error:
+            if isinstance(error, OSError) and error.errno == errno.EBADF:
+                return None
+            cleanup_error = CleanupUncertaintyError(
+                f"{label} descriptor status is unknown"
+            )
+            cleanup_error.__cause__ = error
+            cleanup_error._set_cleanup_owner(
+                self._temporary_fd_cleanup_owner(fd, expected_identity, label)
+            )
+            return cleanup_error
+        if (
+            expected_identity is None
+            or _metadata_identity(metadata) != expected_identity
+        ):
+            self._drop_descriptor_number(fd)
+            return StateFilesystemError(f"{label} descriptor was reused")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except _CLEANUP_EXCEPTION as error:
+            cleanup_error = error
+        try:
+            _close_temporary_fd(fd, expected_identity, label)
+        except _CLEANUP_EXCEPTION as error:
+            if cleanup_error is None:
+                cleanup_error = error
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if not (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    try:
+                        self._remember_orphan_fd(fd, expected_identity, label)
+                    except _CLEANUP_EXCEPTION as remember_error:
+                        if cleanup_error is None:
+                            cleanup_error = remember_error
+            else:
+                if (
+                    expected_identity is None
+                    or _metadata_identity(metadata) == expected_identity
+                ):
+                    try:
+                        self._remember_orphan_fd(fd, expected_identity, label)
+                    except _CLEANUP_EXCEPTION as remember_error:
+                        if cleanup_error is None:
+                            cleanup_error = remember_error
+        return cleanup_error
+
     def try_marker_exclusive(self) -> bool:
         """Try a non-blocking exclusive lock on an existing stable marker."""
 
+        self._ensure_ready_for_io()
         if self._marker_fd is not None and self._marker_exclusive:
             self._assert_marker_identity()
             return True
         if self._marker_fd is not None and self._marker_shared:
+            if len(self._orphan_fds) >= _MAX_ORPHAN_FDS:
+                raise StateFilesystemError(
+                    "state filesystem descriptor retry registry is full"
+                )
             marker_fd = self._marker_fd
             expected_identity = self._marker_identity
             expected_signature = self._marker_signature
             expected_state = self._marker_state
             self._assert_marker_identity()
             self._marker_shared = False
+            self._marker_handoff_pending = True
             try:
                 fcntl.flock(marker_fd, fcntl.LOCK_UN)
             except OSError as exc:
                 self._marker_shared = True
+                self._marker_handoff_pending = False
                 raise StateFilesystemError("writer marker cannot be released") from exc
             marker_path = self._lstat(self.marker_name)
             if (
@@ -1090,6 +1951,8 @@ class StateFilesystem:
                 or (marker_path.st_dev, marker_path.st_ino) != expected_identity
                 or _metadata_signature(marker_path) != expected_signature
             ):
+                self._marker_invalidated = True
+                self._filesystem_invalidated = True
                 _close_temporary_fd(
                     marker_fd,
                     expected_identity,
@@ -1099,16 +1962,49 @@ class StateFilesystem:
                 self._marker_identity = None
                 self._marker_signature = None
                 self._marker_state = None
+                self._marker_handoff_pending = False
                 raise UnstableSnapshotError("writer marker changed before reacquire")
             fd: int | None = None
             retained_old_descriptor = False
             try:
-                fd, metadata = self._open_regular(self.marker_name)
+                fd, metadata = self._open_regular(
+                    self.marker_name,
+                    ensure_ready=False,
+                )
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError as exc:
                     if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
-                        _close_temporary_fd(fd, expected_identity, "writer marker")
+                        handoff_cleanup_error = self._cleanup_marker_handoff_fd(
+                            fd,
+                            expected_identity,
+                            "writer marker EAGAIN handoff",
+                        )
+                        if handoff_cleanup_error is not None:
+                            self._restore_marker_handoff(
+                                marker_fd,
+                                expected_identity,
+                                expected_signature,
+                                expected_state,
+                            )
+                            fd = None
+                            marker_fd = -1
+                            retained_old_descriptor = True
+                            primary_error = StateFilesystemError(
+                                "writer marker is busy"
+                            )
+                            handoff_owner = _foreign_cleanup_owner(
+                                handoff_cleanup_error
+                            )
+                            owner = self._cleanup_owner_handle()
+                            if handoff_owner is not None:
+                                owner = _combine_cleanup_owners(owner, handoff_owner)
+                            _cleanup_owner_or_wrap(
+                                primary_error,
+                                owner,
+                            )
+                            raise primary_error from exc
+                        fd = None
                         self._marker_fd = marker_fd
                         try:
                             fcntl.flock(marker_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -1122,11 +2018,13 @@ class StateFilesystem:
                             self._marker_identity = None
                             self._marker_signature = None
                             self._marker_state = None
+                            self._marker_handoff_pending = False
                             raise UnstableSnapshotError(
                                 "writer marker cannot be reacquired"
                             ) from reacquire_exc
                         self._marker_shared = True
                         self._marker_exclusive = False
+                        self._marker_handoff_pending = False
                         self._marker_state = expected_state
                         self._assert_marker_identity()
                         return False
@@ -1139,16 +2037,22 @@ class StateFilesystem:
                     or (metadata.st_dev, metadata.st_ino) != expected_identity
                     or _metadata_signature(metadata) != expected_signature
                 ):
+                    self._marker_invalidated = True
+                    self._filesystem_invalidated = True
                     raise UnstableSnapshotError(
                         "writer marker changed while reacquiring"
                     )
                 try:
                     state = _store._read_writer_marker_state(fd)
                 except _store.StoreError as exc:
+                    self._marker_invalidated = True
+                    self._filesystem_invalidated = True
                     raise UnstableSnapshotError(
                         "writer marker content changed while reacquiring"
                     ) from exc
                 if state != expected_state:
+                    self._marker_invalidated = True
+                    self._filesystem_invalidated = True
                     raise UnstableSnapshotError(
                         "writer marker state changed while reacquiring"
                     )
@@ -1168,52 +2072,41 @@ class StateFilesystem:
                 try:
                     os.close(marker_fd)
                 except _CLEANUP_EXCEPTION as exc:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_UN)
-                    except _CLEANUP_EXCEPTION:
-                        pass
-                    try:
-                        _close_temporary_fd(
-                            fd,
-                            expected_identity,
-                            "writer marker handoff",
-                        )
-                    except StateFilesystemError:
-                        try:
-                            metadata = os.fstat(fd)
-                        except OSError as status_error:
-                            if status_error.errno != errno.EBADF:
-                                self._orphan_fds.append(
-                                    (
-                                        fd,
-                                        expected_identity,
-                                        "writer marker handoff",
-                                    )
-                                )
-                        else:
-                            if (
-                                expected_identity is None
-                                or _metadata_identity(metadata) == expected_identity
-                            ):
-                                self._orphan_fds.append(
-                                    (
-                                        fd,
-                                        expected_identity,
-                                        "writer marker handoff",
-                                    )
-                                )
-                    self._marker_fd = marker_fd
-                    self._marker_identity = expected_identity
-                    self._marker_signature = expected_signature
-                    self._marker_state = expected_state
-                    self._marker_shared = False
-                    self._marker_exclusive = False
+                    handoff_cleanup_error = self._cleanup_marker_handoff_fd(
+                        fd,
+                        expected_identity,
+                        "writer marker handoff",
+                    )
+                    self._restore_marker_handoff(
+                        marker_fd,
+                        expected_identity,
+                        expected_signature,
+                        expected_state,
+                    )
                     fd = None
                     marker_fd = -1
                     retained_old_descriptor = True
-                    raise StateFilesystemError(
+                    primary_error = StateFilesystemError(
                         "writer marker handoff cannot close old descriptor"
-                    ) from exc
+                    )
+                    if handoff_cleanup_error is not None:
+                        handoff_owner = _foreign_cleanup_owner(handoff_cleanup_error)
+                        owner = self._cleanup_owner_handle()
+                        if handoff_owner is not None:
+                            owner = _combine_cleanup_owners(owner, handoff_owner)
+                        _cleanup_owner_or_wrap(
+                            primary_error,
+                            owner,
+                            cleanup_error=(
+                                handoff_cleanup_error
+                                if isinstance(
+                                    handoff_cleanup_error,
+                                    CleanupUncertaintyError,
+                                )
+                                else None
+                            ),
+                        )
+                    raise primary_error from exc
                 marker_fd = -1
                 self._marker_fd = fd
                 self._marker_identity = expected_identity
@@ -1221,25 +2114,51 @@ class StateFilesystem:
                 self._marker_state = state
                 self._marker_shared = False
                 self._marker_exclusive = True
+                self._marker_handoff_pending = False
                 self._assert_marker_identity()
                 return True
-            except BaseException:
+            except BaseException as primary_error:
+                if isinstance(primary_error, UnstableSnapshotError):
+                    self._marker_invalidated = True
+                    self._filesystem_invalidated = True
                 if retained_old_descriptor:
                     raise
+                cleanup_error: BaseException | None = None
                 if fd is not None:
-                    _close_temporary_fd(fd, expected_identity, "writer marker")
+                    cleanup_error = self._cleanup_marker_handoff_fd(
+                        fd,
+                        expected_identity,
+                        "writer marker post-lock cleanup",
+                    )
                 if marker_fd != -1:
-                    _close_temporary_fd(
+                    self._restore_marker_handoff(
                         marker_fd,
                         expected_identity,
-                        "writer marker",
+                        expected_signature,
+                        expected_state,
                     )
-                self._marker_fd = None
-                self._marker_identity = None
-                self._marker_signature = None
-                self._marker_state = None
-                self._marker_shared = False
-                self._marker_exclusive = False
+                    marker_fd = -1
+                elif fd is not None and self._marker_fd == fd:
+                    self._marker_fd = None
+                    self._marker_shared = False
+                    self._marker_exclusive = False
+                    self._marker_handoff_pending = True
+                if cleanup_error is not None:
+                    cleanup_owner = _foreign_cleanup_owner(cleanup_error)
+                    owner = self._cleanup_owner_handle()
+                    if cleanup_owner is not None:
+                        owner = _combine_cleanup_owners(owner, cleanup_owner)
+                    wrapped_error = _cleanup_owner_or_wrap(
+                        primary_error,
+                        owner,
+                        cleanup_error=(
+                            cleanup_error
+                            if isinstance(cleanup_error, CleanupUncertaintyError)
+                            else None
+                        ),
+                    )
+                    if wrapped_error is not primary_error:
+                        raise wrapped_error from primary_error
                 raise
         marker = self._lstat(self.marker_name)
         if marker is None:
@@ -1281,87 +2200,292 @@ class StateFilesystem:
             except _CLEANUP_EXCEPTION:
                 remember_current_exception()
 
-        marker_fd = self._marker_fd
-        if marker_fd is not None:
-            if self._marker_shared or self._marker_exclusive:
+        def close_held_fd(
+            attr_name: str,
+            identity_attr_name: str,
+            fd: int | None,
+            *,
+            unlock: bool,
+            lock_state_attr_names: tuple[str, ...] = (),
+        ) -> None:
+            if fd is None:
+                return
+
+            def clear() -> None:
+                setattr(self, attr_name, None)
+                setattr(self, identity_attr_name, None)
+                for lock_state_attr_name in lock_state_attr_names:
+                    setattr(self, lock_state_attr_name, False)
+                if attr_name == "_marker_fd":
+                    self._marker_handoff_pending = False
+
+            def retain_unresolved(
+                expected_identity: tuple[int, int] | None,
+            ) -> None:
                 try:
-                    fcntl.flock(marker_fd, fcntl.LOCK_UN)
-                except _CLEANUP_EXCEPTION:
-                    remember_current_exception()
+                    self._remember_orphan_fd(
+                        fd,
+                        expected_identity,
+                        f"unresolved {attr_name}",
+                    )
+                except _CLEANUP_EXCEPTION as error:
+                    remember(error)
+                    return
+                clear()
+                self._filesystem_invalidated = True
+
+            expected_identity = getattr(self, identity_attr_name)
+            try:
+                metadata = os.fstat(fd)
+            except _CLEANUP_EXCEPTION as error:
+                if isinstance(error, OSError) and error.errno == errno.EBADF:
+                    clear()
                 else:
-                    self._marker_shared = False
-                    self._marker_exclusive = False
+                    self._filesystem_invalidated = True
+                    status_error = CleanupUncertaintyError(
+                        f"{attr_name} descriptor status is unknown"
+                    )
+                    status_error.__cause__ = error
+                    status_error._set_cleanup_owner(self._cleanup_owner_handle())
+                    remember(status_error)
+                return
+            actual_identity = _metadata_identity(metadata)
+            if expected_identity is None:
+                if attr_name == "_marker_fd":
+                    self._drop_descriptor_number(fd)
+                else:
+                    retain_unresolved(None)
+                remember(
+                    StateFilesystemError(
+                        f"{attr_name} descriptor identity is unavailable"
+                    )
+                )
+                return
+            if actual_identity != expected_identity:
+                if attr_name == "_marker_fd":
+                    self._drop_descriptor_number(fd)
+                else:
+                    retain_unresolved(expected_identity)
+                remember(StateFilesystemError(f"{attr_name} descriptor was reused"))
+                return
+            close_error: BaseException | None = None
+            unlock_attempted = unlock and any(
+                bool(getattr(self, lock_state_attr_name))
+                for lock_state_attr_name in lock_state_attr_names
+            )
+            if unlock_attempted:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except _CLEANUP_EXCEPTION as error:
+                    close_error = error
+                else:
+                    for lock_state_attr_name in lock_state_attr_names:
+                        setattr(self, lock_state_attr_name, False)
+                try:
+                    after_unlock = os.fstat(fd)
+                except _CLEANUP_EXCEPTION as status_error:
+                    if (
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
+                    ):
+                        clear()
+                        if close_error is not None:
+                            remember(close_error)
+                        return
+                    self._filesystem_invalidated = True
+                    close_status = CleanupUncertaintyError(
+                        f"{attr_name} status is unknown after unlock"
+                    )
+                    close_status.__cause__ = status_error
+                    close_status._set_cleanup_owner(self._cleanup_owner_handle())
+                    remember(close_status)
+                    return
+                if _metadata_identity(after_unlock) != expected_identity:
+                    self._drop_descriptor_number(fd)
+                    remember(StateFilesystemError(f"{attr_name} descriptor was reused"))
+                    return
             try:
-                os.close(marker_fd)
-            except _CLEANUP_EXCEPTION:
-                remember_current_exception()
+                os.close(fd)
+            except _CLEANUP_EXCEPTION as error:
+                close_error = close_error or error
+                try:
+                    after = os.fstat(fd)
+                except _CLEANUP_EXCEPTION as status_error:
+                    if (
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
+                    ):
+                        clear()
+                    else:
+                        self._filesystem_invalidated = True
+                        close_status = CleanupUncertaintyError(
+                            f"{attr_name} close status is unknown"
+                        )
+                        close_status.__cause__ = status_error
+                        close_status._set_cleanup_owner(self._cleanup_owner_handle())
+                        remember(close_status)
+                else:
+                    if _metadata_identity(after) != expected_identity:
+                        if attr_name == "_marker_fd":
+                            self._drop_descriptor_number(fd)
+                        else:
+                            retain_unresolved(expected_identity)
+                        remember(
+                            StateFilesystemError(f"{attr_name} descriptor was reused")
+                        )
             else:
-                self._marker_fd = None
-                self._marker_identity = None
-                self._marker_signature = None
-                self._marker_state = None
-                self._marker_shared = False
-                self._marker_exclusive = False
+                clear()
+            if close_error is not None:
+                remember(close_error)
 
-        gate_fd = self._gate_fd
-        if gate_fd is not None:
-            attempt_cleanup(lambda: fcntl.flock(gate_fd, fcntl.LOCK_UN))
-            try:
-                os.close(gate_fd)
-            except _CLEANUP_EXCEPTION:
-                remember_current_exception()
-            else:
-                self._gate_fd = None
-
-        root_fd = self._root_fd
-        if root_fd is not None:
-            try:
-                os.close(root_fd)
-            except _CLEANUP_EXCEPTION:
-                remember_current_exception()
-            else:
-                self._root_fd = None
-                self._root_identity = None
-                self._root_signature = None
-
-        parent_fd = self._parent_fd
-        if parent_fd is not None:
-            try:
-                os.close(parent_fd)
-            except _CLEANUP_EXCEPTION:
-                remember_current_exception()
-            else:
-                self._parent_fd = None
+        close_held_fd(
+            "_marker_fd",
+            "_marker_identity",
+            self._marker_fd,
+            unlock=True,
+            lock_state_attr_names=("_marker_shared", "_marker_exclusive"),
+        )
+        close_held_fd(
+            "_gate_fd",
+            "_gate_identity",
+            self._gate_fd,
+            unlock=True,
+            lock_state_attr_names=("_gate_shared",),
+        )
+        close_held_fd(
+            "_root_fd",
+            "_root_identity",
+            self._root_fd,
+            unlock=False,
+        )
+        close_held_fd(
+            "_parent_fd",
+            "_parent_identity",
+            self._parent_fd,
+            unlock=False,
+        )
         remaining_orphans: list[tuple[int, tuple[int, int] | None, str]] = []
         for orphan_fd, expected_identity, label in self._orphan_fds:
+            marker_orphan = "marker" in label
+            if label.startswith("unresolved "):
+                remaining_orphans.append((orphan_fd, expected_identity, label))
+                remember(
+                    StateFilesystemError(f"{label} descriptor identity is unavailable")
+                )
+                continue
+            try:
+                metadata = os.fstat(orphan_fd)
+            except _CLEANUP_EXCEPTION as status_error:
+                if (
+                    isinstance(status_error, OSError)
+                    and status_error.errno == errno.EBADF
+                ):
+                    continue
+                close_status: DoctorError = CleanupUncertaintyError(
+                    f"{label} descriptor status is unknown"
+                )
+                close_status._set_cleanup_owner(self._cleanup_owner_handle())
+                remember(close_status)
+                remaining_orphans.append((orphan_fd, expected_identity, label))
+                continue
+            if (
+                expected_identity is None
+                or _metadata_identity(metadata) != expected_identity
+            ):
+                if marker_orphan:
+                    self._marker_invalidated = True
+                    self._drop_descriptor_number(orphan_fd)
+                else:
+                    remaining_orphans.append((orphan_fd, expected_identity, label))
+                    self._filesystem_invalidated = True
+                remember(
+                    StateFilesystemError(
+                        f"{label} descriptor identity is unavailable"
+                        if expected_identity is None
+                        else f"{label} descriptor was reused"
+                    )
+                )
+                continue
             try:
                 os.close(orphan_fd)
-            except _CLEANUP_EXCEPTION as first_error:
+            except _CLEANUP_EXCEPTION as first_close_error:
                 try:
-                    metadata = os.fstat(orphan_fd)
-                except OSError as status_error:
-                    if status_error.errno == errno.EBADF:
-                        continue
-                    remember(status_error)
-                    remaining_orphans.append((orphan_fd, expected_identity, label))
+                    retry_metadata = os.fstat(orphan_fd)
+                except _CLEANUP_EXCEPTION as status_error:
+                    if (
+                        isinstance(status_error, OSError)
+                        and status_error.errno == errno.EBADF
+                    ):
+                        close_status = StateFilesystemError(
+                            f"{label} close status is unknown"
+                        )
+                        close_status.__cause__ = first_close_error
+                        remember(close_status)
+                    else:
+                        close_status = CleanupUncertaintyError(
+                            f"{label} close status is unknown"
+                        )
+                        close_status._set_cleanup_owner(self._cleanup_owner_handle())
+                        remember(close_status)
+                        remaining_orphans.append((orphan_fd, expected_identity, label))
                     continue
-                if (
-                    expected_identity is not None
-                    and (
-                        metadata.st_dev,
-                        metadata.st_ino,
-                    )
-                    != expected_identity
-                ):
+                if _metadata_identity(retry_metadata) != expected_identity:
                     remember(UnstableSnapshotError(f"{label} descriptor was reused"))
+                    if marker_orphan:
+                        self._marker_invalidated = True
+                        self._drop_descriptor_number(orphan_fd)
+                    else:
+                        self._filesystem_invalidated = True
+                        remaining_orphans.append((orphan_fd, expected_identity, label))
                     continue
                 try:
                     os.close(orphan_fd)
-                except _CLEANUP_EXCEPTION:
-                    remember(first_error)
-                    remaining_orphans.append((orphan_fd, expected_identity, label))
+                except _CLEANUP_EXCEPTION as retry_error:
+                    try:
+                        final_metadata = os.fstat(orphan_fd)
+                    except _CLEANUP_EXCEPTION as status_error:
+                        if (
+                            isinstance(status_error, OSError)
+                            and status_error.errno == errno.EBADF
+                        ):
+                            close_status = StateFilesystemError(
+                                f"{label} close status is unknown"
+                            )
+                            close_status.__cause__ = retry_error
+                            remember(close_status)
+                        else:
+                            close_status = CleanupUncertaintyError(
+                                f"{label} close status is unknown"
+                            )
+                            close_status._set_cleanup_owner(
+                                self._cleanup_owner_handle()
+                            )
+                            remember(close_status)
+                            remaining_orphans.append(
+                                (orphan_fd, expected_identity, label)
+                            )
+                    else:
+                        if _metadata_identity(final_metadata) != expected_identity:
+                            if marker_orphan:
+                                self._marker_invalidated = True
+                                self._drop_descriptor_number(orphan_fd)
+                            else:
+                                self._filesystem_invalidated = True
+                                remaining_orphans.append(
+                                    (orphan_fd, expected_identity, label)
+                                )
+                            remember(
+                                StateFilesystemError(f"{label} descriptor was reused")
+                            )
+                        else:
+                            remaining_orphans.append(
+                                (orphan_fd, expected_identity, label)
+                            )
+                            remember(retry_error)
         self._orphan_fds = remaining_orphans
         if first_error is not None:
+            if isinstance(first_error, CleanupUncertaintyError):
+                raise first_error
             if isinstance(first_error, Exception):
                 raise StateFilesystemError(
                     "state filesystem close failed"
@@ -1369,10 +2493,37 @@ class StateFilesystem:
             raise first_error
 
     def __enter__(self) -> Self:
+        self._ensure_ready_for_io()
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        self.close()
+        del exc_type, traceback
+        if not isinstance(exc_value, BaseException):
+            try:
+                self.close()
+            except _CLEANUP_EXCEPTION as cleanup_error:
+                wrapped_error = _cleanup_owner_or_wrap(
+                    cleanup_error,
+                    self._cleanup_owner_handle(),
+                )
+                if wrapped_error is not cleanup_error:
+                    raise wrapped_error from cleanup_error
+                raise
+            return
+        try:
+            self.close()
+        except _CLEANUP_EXCEPTION as cleanup_error:
+            wrapped_error = _cleanup_owner_or_wrap(
+                exc_value,
+                self._cleanup_owner_handle(),
+                cleanup_error=(
+                    cleanup_error
+                    if isinstance(cleanup_error, CleanupUncertaintyError)
+                    else None
+                ),
+            )
+            if wrapped_error is not exc_value:
+                raise wrapped_error from exc_value
 
 
 def _json_object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -1444,19 +2595,37 @@ def _ledger_snapshot(record: dict[str, object]) -> LedgerSnapshot:
 class RecoveryLedgerReader:
     """Read an existing canonical JSON ledger without opening it for writing."""
 
-    def read(self, filesystem: StateFilesystem) -> LedgerSnapshot | None:
+    def __init__(self) -> None:
+        self._latest_committed: LedgerSnapshot | None = None
+
+    @property
+    def latest_committed(self) -> LedgerSnapshot | None:
+        """Return the latest committed generation from the last successful read."""
+
+        return self._latest_committed
+
+    def read(
+        self,
+        filesystem: StateFilesystem,
+        *,
+        ledger_name: str | None = None,
+    ) -> LedgerSnapshot | None:
         if not isinstance(filesystem, StateFilesystem):
             msg = "filesystem is invalid"
             raise TypeError(msg)
+        if ledger_name is None:
+            ledger_name = filesystem.ledger_name
+        ledger_name = _require_basename(ledger_name, "ledger_name")
+        self._latest_committed = None
         before = filesystem.inventory()
-        entry = before.entry(filesystem.ledger_name)
+        entry = before.entry(ledger_name)
         if entry is None:
             filesystem._fault("after_ledger_absence")
             filesystem.assert_identity(before)
             return None
         if entry.file_type != "regular" or entry.digest is None:
             raise LedgerReadError("recovery ledger is not a safe regular file")
-        fd = filesystem.open_existing_regular(filesystem.ledger_name)
+        fd = filesystem.open_existing_regular(ledger_name)
         chunks: list[bytes] = []
         total = 0
         try:
@@ -1471,15 +2640,65 @@ class RecoveryLedgerReader:
         except OSError as exc:
             raise LedgerReadError("recovery ledger cannot be read") from exc
         finally:
-            filesystem._close_owned_temporary_fd(
-                fd,
-                entry.identity,
-                "recovery ledger",
-            )
+            body_error = sys.exc_info()[1]
+            try:
+                filesystem._close_owned_temporary_fd(
+                    fd,
+                    entry.identity,
+                    "recovery ledger",
+                )
+            except _CLEANUP_EXCEPTION as cleanup_error:
+                cleanup_owners: list[CleanupOwner] = []
+                current_owner = getattr(cleanup_error, "cleanup_owner", None)
+                if isinstance(current_owner, CleanupOwner):
+                    cleanup_owners.append(current_owner)
+                elif not (
+                    isinstance(cleanup_error, CleanupUncertaintyError)
+                    and cleanup_error.cleanup_complete
+                    and not filesystem._orphan_fds
+                ):
+                    cleanup_owners.append(
+                        filesystem._temporary_fd_cleanup_owner(
+                            fd,
+                            entry.identity,
+                            "recovery ledger",
+                        )
+                    )
+                if filesystem._orphan_fds:
+                    cleanup_owners.append(filesystem._cleanup_owner_handle())
+                if not cleanup_owners:
+                    cleanup_owners.append(filesystem._cleanup_owner_handle())
+                owner = (
+                    cleanup_owners[0]
+                    if len(cleanup_owners) == 1
+                    else _combine_cleanup_owners(*cleanup_owners)
+                )
+                if body_error is not None:
+                    wrapped_error = _cleanup_owner_or_wrap(
+                        body_error,
+                        owner,
+                        cleanup_error=(
+                            cleanup_error
+                            if isinstance(cleanup_error, CleanupUncertaintyError)
+                            else None
+                        ),
+                    )
+                    if wrapped_error is not body_error:
+                        raise wrapped_error from body_error
+                else:
+                    if isinstance(cleanup_error, CleanupUncertaintyError) and not (
+                        filesystem._orphan_fds
+                    ):
+                        raise
+                    wrapped_error = _cleanup_owner_or_wrap(cleanup_error, owner)
+                    if wrapped_error is not cleanup_error:
+                        raise wrapped_error from cleanup_error
+                    raise
         raw = b"".join(chunks)
         records = _ledger_records(raw)
         snapshots = [_ledger_snapshot(record) for record in records]
         previous: LedgerSnapshot | None = None
+        latest_committed: LedgerSnapshot | None = None
         for snapshot in snapshots:
             if previous is None and snapshot.sequence != 1:
                 raise LedgerReadError("recovery ledger sequence does not start at one")
@@ -1493,7 +2712,8 @@ class RecoveryLedgerReader:
                 if previous.phase in _TERMINAL_LEDGER_PHASES:
                     if (
                         snapshot.phase != "RESTORE_PREPARED"
-                        or snapshot.restore_generation <= previous.restore_generation
+                        or snapshot.restore_generation
+                        != previous.restore_generation + 1
                     ):
                         raise LedgerReadError(
                             "recovery ledger terminal transition is invalid"
@@ -1511,16 +2731,168 @@ class RecoveryLedgerReader:
                     raise LedgerReadError("recovery ledger epoch moved backwards")
                 if snapshot.fencing_token_floor < previous.fencing_token_floor:
                     raise LedgerReadError("recovery ledger floor moved backwards")
-                if (
-                    snapshot.restore_generation == previous.restore_generation
-                    and snapshot.backup_digest != previous.backup_digest
+                if snapshot.restore_generation == previous.restore_generation and (
+                    snapshot.backup_digest != previous.backup_digest
+                    or snapshot.actor != previous.actor
+                    or snapshot.audit_ref != previous.audit_ref
                 ):
                     raise LedgerReadError(
                         "recovery ledger digest changed in one generation"
                     )
+            if snapshot.phase == "RESTORE_COMMITTED":
+                latest_committed = snapshot
             previous = snapshot
         filesystem.assert_identity(before)
+        self._latest_committed = latest_committed
         return previous
+
+
+def _read_existing_operation_for_observation(
+    connection: sqlite3.Connection,
+    operation_id: str,
+    *,
+    committed_generation: LedgerSnapshot | None,
+) -> _store.ExistingOperationObservation | None:
+    """Read one operation with validated restore-invalidated lease evidence."""
+
+    try:
+        row, receipt_row = _store._existing_operation_rows(connection, operation_id)
+        if row is None:
+            return None
+        recovery_epoch_row = connection.execute(
+            "SELECT value FROM store_meta WHERE key = 'recovery_epoch'"
+        ).fetchone()
+        fencing_token_floor_row = connection.execute(
+            "SELECT value FROM store_meta WHERE key = 'fencing_token_floor'"
+        ).fetchone()
+        if recovery_epoch_row is None or fencing_token_floor_row is None:
+            raise _store.StoreIntegrityError(
+                "SQLite store recovery floor metadata is unavailable"
+            )
+        store_recovery_epoch = _store._require_sqlite_integer(
+            recovery_epoch_row["value"],
+            "recovery_epoch",
+        )
+        store_fencing_token_floor = _store._require_sqlite_integer(
+            fencing_token_floor_row["value"],
+            "fencing_token_floor",
+        )
+        # A committed restore ledger and matching store floor prove this mismatch is intentional.
+        allow_mismatch = (
+            committed_generation is not None
+            and store_recovery_epoch == committed_generation.recovery_epoch
+            and store_fencing_token_floor >= committed_generation.fencing_token_floor
+            and row["recovery_epoch"] == store_recovery_epoch
+            and row["recovery_epoch"] > row["lease_epoch"]
+            and row["status"]
+            in {
+                "FENCE_PENDING",
+                "FENCE_RESERVATION_STARTED",
+                "CLAIMED",
+                "EFFECT_PREPARED",
+                "UNKNOWN_EFFECT",
+                "UNKNOWN",
+                "COMPLETED",
+            }
+        )
+        return _store._validate_existing_operation_rows(
+            row,
+            receipt_row,
+            allow_recovery_epoch_mismatch=allow_mismatch,
+        )
+    except _store.StoreError:
+        raise
+    except sqlite3.DatabaseError as exc:
+        raise _store.StoreIntegrityError("SQLite operation observation failed") from exc
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _store.StoreIntegrityError(
+            "SQLite operation observation is invalid"
+        ) from exc
+
+
+def _is_recovery_cleanup_uncertainty(error: BaseException) -> bool:
+    """Recognize the recovery reader's close-status marker without fd access."""
+
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if str(current) == "recovery read close status is unknown":
+            return True
+        next_error = current.__cause__
+        if next_error is None and not current.__suppress_context__:
+            next_error = current.__context__
+        current = next_error
+    return False
+
+
+def _run_restore_pair_preflight(
+    filesystem: StateFilesystem,
+    inventory: FilesetInventory,
+) -> bool:
+    """Validate the fixed recovery pair through the held root descriptor."""
+
+    try:
+        from . import recovery as _recovery
+    except ImportError as exc:
+        raise _RestorePairReadError(
+            "recovery preflight is unavailable",
+            tombstone_present=True,
+        ) from exc
+    tombstone_present = True
+
+    def cleanup_error(cause: BaseException) -> CleanupUncertaintyError:
+        error = CleanupUncertaintyError("recovery preflight cleanup status is unknown")
+        owner = _find_cleanup_owner(cause)
+        if owner is None and filesystem._orphan_fds:
+            owner = CleanupOwner(filesystem._retry_orphan_fds)
+        if owner is not None:
+            error._set_cleanup_owner(owner)
+        error.__cause__ = cause
+        return error
+
+    try:
+        filesystem._retry_orphan_fds()
+        tombstone_name = _recovery.RECOVERY_TOMBSTONES_BASENAME
+        tombstone_present = inventory.entry(tombstone_name) is not None
+        if (
+            not tombstone_present
+            and filesystem.ledger_name != _recovery.RECOVERY_LEDGER_BASENAME
+            and inventory.entry(filesystem.ledger_name) is not None
+        ):
+            raise _RestorePairReadError(
+                "canonical recovery ledger and tombstone pair is missing",
+                tombstone_present=False,
+            )
+        _recovery._normal_open_preflight(
+            filesystem._assert_open(),
+            retain_fd=filesystem._retain_failed_fd,
+        )
+    except _RestorePairReadError:
+        raise
+    except _recovery.RecoveryError as exc:
+        if (
+            _is_recovery_cleanup_uncertainty(exc)
+            or _find_cleanup_owner(exc) is not None
+        ):
+            raise cleanup_error(exc)
+        raise _RestorePairReadError(
+            "recovery ledger and tombstone pair is incomplete",
+            tombstone_present=tombstone_present,
+        ) from exc
+    except StateFilesystemError as exc:
+        if filesystem._orphan_fds or _find_cleanup_owner(exc) is not None:
+            raise cleanup_error(exc)
+        raise _RestorePairReadError(
+            "recovery preflight is unavailable",
+            tombstone_present=tombstone_present,
+        ) from exc
+    except Exception as exc:
+        raise _RestorePairReadError(
+            "recovery preflight is unavailable",
+            tombstone_present=tombstone_present,
+        ) from exc
+    return tombstone_present
 
 
 def _all_forbidden() -> tuple[Mutation, ...]:
@@ -1576,7 +2948,7 @@ def _status_report(
         "UNKNOWN",
     }:
         state = "UNKNOWN_EFFECT"
-        action = "QUERY_PROVIDER_THEN_RESOLVE"
+        action = "OPERATOR_REVIEW"
         forbidden = _all_forbidden()
         confidence = "LOW"
     elif status == "RECEIPTED":
@@ -1642,6 +3014,7 @@ class ReadOnlyDoctor:
         self._filesystem = filesystem
         self._marker_name = marker_name
         self._ledger_name = ledger_name
+        self._owned_cleanup: CleanupOwner | None = None
 
     def _layout(
         self, marker_name: str | None, ledger_name: str | None
@@ -1673,6 +3046,46 @@ class ReadOnlyDoctor:
     def _missing_root_report() -> DoctorReport:
         return _report("MISSING_ROOT", "HIGH", None, "OPERATOR_REVIEW")
 
+    def _retain_filesystem(self, filesystem: StateFilesystem) -> CleanupOwner:
+        owner = filesystem._cleanup_owner_handle()
+        if self._owned_cleanup is None:
+            self._owned_cleanup = owner
+        elif self._owned_cleanup is not owner:
+            self._owned_cleanup = _combine_cleanup_owners(
+                self._owned_cleanup,
+                owner,
+            )
+        return self._owned_cleanup
+
+    def _retry_owned_cleanup(self) -> None:
+        owner = self._owned_cleanup
+        if owner is None:
+            return
+        try:
+            owner.retry_cleanup()
+        except _CLEANUP_EXCEPTION as error:
+            wrapped_error = _cleanup_owner_or_wrap(error, owner)
+            if wrapped_error is not error:
+                raise wrapped_error from error
+            if isinstance(error, DoctorError):
+                raise
+            cleanup_error = StateFilesystemError(
+                "internally-owned filesystem cleanup failed"
+            )
+            cleanup_error._set_cleanup_owner(owner)
+            raise cleanup_error from error
+        self._owned_cleanup = None
+
+    def retry_cleanup(self) -> None:
+        """Retry cleanup retained by an internally-owned inspection."""
+
+        self._retry_owned_cleanup()
+
+    def close(self) -> None:
+        """Release or retry cleanup retained by an internal inspection."""
+
+        self._retry_owned_cleanup()
+
     def inspect(
         self,
         state_root: Path,
@@ -1687,7 +3100,19 @@ class ReadOnlyDoctor:
             msg = "operation_id is invalid"
             raise ValueError(msg) from exc
         marker, ledger = self._layout(marker_name, ledger_name)
+        self._retry_owned_cleanup()
         root = _coerce_root(state_root)
+        external_filesystem = self._filesystem
+        if external_filesystem is not None:
+            try:
+                external_filesystem._ensure_ready_for_io()
+            except StateFilesystemError as error:
+                if (
+                    isinstance(error, CleanupUncertaintyError)
+                    or error.cleanup_owner is not None
+                ):
+                    raise
+                return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
         try:
             root_metadata = os.stat(root, follow_symlinks=False)
         except FileNotFoundError:
@@ -1705,11 +3130,22 @@ class ReadOnlyDoctor:
                     marker_name=marker,
                     ledger_name=ledger,
                 )
-            except WriterActiveError:
+            except WriterActiveError as error:
+                if error.cleanup_owner is not None:
+                    self._owned_cleanup = error.cleanup_owner
+                    raise
                 return _report("WRITER_ACTIVE", "MEDIUM", None, "OPERATOR_REVIEW")
-            except UnsafeFilesystemError:
+            except UnsafeFilesystemError as error:
+                if error.cleanup_owner is not None:
+                    self._owned_cleanup = error.cleanup_owner
+                    raise
                 return _report("UNSAFE_SIDECAR", "HIGH", None, "OPERATOR_REVIEW")
-            except (StateFilesystemError, OSError):
+            except (StateFilesystemError, OSError) as error:
+                if isinstance(error, StateFilesystemError):
+                    cleanup_owner = error.cleanup_owner
+                    if cleanup_owner is not None:
+                        self._owned_cleanup = cleanup_owner
+                        raise
                 return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
         else:
             if filesystem.state_root != root:
@@ -1718,8 +3154,33 @@ class ReadOnlyDoctor:
         try:
             before = filesystem.inventory()
             marker_entry = before.entry(marker)
+            from . import recovery as _recovery
+
+            canonical_ledger_name = _recovery.RECOVERY_LEDGER_BASENAME
+            canonical_ledger_reader = RecoveryLedgerReader()
             ledger_reader = RecoveryLedgerReader()
-            ledger_snapshot = ledger_reader.read(filesystem)
+            try:
+                _run_restore_pair_preflight(filesystem, before)
+            except _RestorePairReadError as pair_error:
+                if not pair_error.tombstone_present:
+                    # Keep the historical bare-ledger diagnosis for malformed
+                    # ledgers; a valid ledger without its companion is still
+                    # an incomplete restore pair.
+                    canonical_ledger_reader.read(
+                        filesystem,
+                        ledger_name=canonical_ledger_name,
+                    )
+                _assert_stable(filesystem, before)
+                return _report("RESTORE_INCOMPLETE", "HIGH", None, "OPERATOR_REVIEW")
+            canonical_snapshot = canonical_ledger_reader.read(
+                filesystem,
+                ledger_name=canonical_ledger_name,
+            )
+            if ledger == canonical_ledger_name:
+                ledger_reader = canonical_ledger_reader
+                ledger_snapshot = canonical_snapshot
+            else:
+                ledger_snapshot = ledger_reader.read(filesystem, ledger_name=ledger)
             if (
                 ledger_snapshot is not None
                 and ledger_snapshot.phase in _PENDING_LEDGER_PHASES
@@ -1764,7 +3225,12 @@ class ReadOnlyDoctor:
                 connection = _deserialize_database_from_fd(db_fd)
                 connection.row_factory = sqlite3.Row
                 _store._validate_existing_schema(connection)
-                observation = _store._read_existing_operation(connection, operation_id)
+                _store._validate_existing_image_high_water(connection)
+                observation = _read_existing_operation_for_observation(
+                    connection,
+                    operation_id,
+                    committed_generation=canonical_ledger_reader.latest_committed,
+                )
                 if observation is None:
                     _assert_stable(filesystem, before)
                     return _report("NOT_FOUND", "HIGH", None, "OPERATOR_REVIEW")
@@ -1772,46 +3238,169 @@ class ReadOnlyDoctor:
                 _assert_stable(filesystem, before)
                 return result
             finally:
+                body_error = sys.exc_info()[1]
                 cleanup_error: BaseException | None = None
+                connection_cleanup_error: CleanupUncertaintyError | None = None
+                connection_cleanup_owner: CleanupOwner | None = None
+                retained_fd_owner: CleanupOwner | None = None
                 if connection is not None:
                     try:
                         _close_temporary_connection(
                             connection, "SQLite doctor database"
                         )
+                    except CleanupUncertaintyError as error:
+                        cleanup_error = error
+                        connection_cleanup_error = error
+                        if not error.cleanup_complete:
+                            connection_cleanup_owner = CleanupOwner(connection.close)
+                            error._set_cleanup_owner(connection_cleanup_owner)
                     except _CLEANUP_EXCEPTION as error:
                         cleanup_error = error
                 try:
-                    _close_temporary_fd(db_fd, None, "SQLite doctor database")
+                    _close_temporary_fd(
+                        db_fd,
+                        primary.identity,
+                        "SQLite doctor database",
+                    )
                 except _CLEANUP_EXCEPTION as error:
                     if cleanup_error is None:
                         cleanup_error = error
+                    try:
+                        filesystem._retain_failed_fd(
+                            db_fd,
+                            primary.identity,
+                            "SQLite doctor database",
+                        )
+                    except _CLEANUP_EXCEPTION as error:
+                        owner = getattr(error, "cleanup_owner", None)
+                        if isinstance(owner, CleanupOwner):
+                            retained_fd_owner = owner
+                        else:
+                            retained_fd_owner = filesystem._temporary_fd_cleanup_owner(
+                                db_fd,
+                                primary.identity,
+                                "SQLite doctor database",
+                            )
                 if cleanup_error is not None:
-                    raise cleanup_error
-        except LedgerReadError:
+                    cleanup_owners: list[CleanupOwner] = []
+                    body_owner = getattr(body_error, "cleanup_owner", None)
+                    if isinstance(body_owner, CleanupOwner):
+                        cleanup_owners.append(body_owner)
+                    if connection_cleanup_error is not None:
+                        if connection_cleanup_owner is None and (
+                            body_error is not None
+                            or not connection_cleanup_error.cleanup_complete
+                        ):
+                            assert connection is not None
+                            connection_cleanup_owner = CleanupOwner(connection.close)
+                        if connection_cleanup_owner is not None:
+                            cleanup_owners.append(connection_cleanup_owner)
+                    if filesystem._orphan_fds:
+                        cleanup_owners.append(filesystem._cleanup_owner_handle())
+                    if retained_fd_owner is not None:
+                        cleanup_owners.append(retained_fd_owner)
+                    if not cleanup_owners:
+                        cleanup_owners.append(filesystem._cleanup_owner_handle())
+                    owner = (
+                        cleanup_owners[0]
+                        if len(cleanup_owners) == 1
+                        else _combine_cleanup_owners(*cleanup_owners)
+                    )
+                    if body_error is not None:
+                        if isinstance(cleanup_error, CleanupUncertaintyError):
+                            _mark_cleanup_uncertainty(body_error, cleanup_error)
+                        wrapped_error = _cleanup_owner_or_wrap(
+                            body_error,
+                            owner,
+                            cleanup_error=(
+                                cleanup_error
+                                if isinstance(
+                                    cleanup_error,
+                                    CleanupUncertaintyError,
+                                )
+                                else None
+                            ),
+                        )
+                        if wrapped_error is not body_error:
+                            raise wrapped_error from body_error
+                    elif (
+                        isinstance(cleanup_error, CleanupUncertaintyError)
+                        and cleanup_error.cleanup_complete
+                        and not filesystem._orphan_fds
+                    ):
+                        raise cleanup_error
+                    else:
+                        wrapped_error = _cleanup_owner_or_wrap(
+                            cleanup_error,
+                            owner,
+                        )
+                        if wrapped_error is not cleanup_error:
+                            raise wrapped_error from cleanup_error
+                        raise cleanup_error
+        except CleanupUncertaintyError:
+            raise
+        except LedgerReadError as error:
+            if _has_cleanup_uncertainty(error):
+                raise
             try:
                 _assert_stable(filesystem, before)
             except StateFilesystemError:
                 return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
             return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
-        except _store.StoreSchemaError:
+        except _store.StoreSchemaError as error:
+            if _has_cleanup_uncertainty(error):
+                raise
             try:
                 _assert_stable(filesystem, before)
             except StateFilesystemError:
                 return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
             return _report("SCHEMA_INVALID", "HIGH", None, "INSPECT_SCHEMA")
-        except (_store.StoreIntegrityError, sqlite3.DatabaseError):
+        except (_store.StoreIntegrityError, sqlite3.DatabaseError) as error:
+            if _has_cleanup_uncertainty(error):
+                raise
             try:
                 _assert_stable(filesystem, before)
             except StateFilesystemError:
                 return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
             return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
-        except UnsafeFilesystemError:
+        except UnsafeFilesystemError as error:
+            if _has_cleanup_uncertainty(error):
+                raise
             return _report("UNSAFE_SIDECAR", "HIGH", None, "OPERATOR_REVIEW")
-        except (UnstableSnapshotError, StateFilesystemError, OSError):
+        except (UnstableSnapshotError, StateFilesystemError, OSError) as error:
+            if _has_cleanup_uncertainty(error):
+                raise
             return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
         finally:
             if owns_filesystem:
-                filesystem.close()
+                body_error = sys.exc_info()[1]
+                try:
+                    filesystem.close()
+                except _CLEANUP_EXCEPTION as error:
+                    owner = self._retain_filesystem(filesystem)
+                    if body_error is not None:
+                        wrapped_error = _cleanup_owner_or_wrap(
+                            body_error,
+                            owner,
+                            cleanup_error=(
+                                error
+                                if isinstance(error, CleanupUncertaintyError)
+                                else None
+                            ),
+                        )
+                        if wrapped_error is not body_error:
+                            raise wrapped_error from body_error
+                    elif isinstance(error, DoctorError):
+                        error._set_cleanup_owner(owner)
+                        raise
+                    else:
+                        cleanup_error = StateFilesystemError(
+                            "internally-owned filesystem cleanup failed"
+                        )
+                        cleanup_error._set_cleanup_owner(owner)
+                        raise cleanup_error from error
+                else:
+                    self._owned_cleanup = None
 
 
 def doctor(
@@ -1823,16 +3412,28 @@ def doctor(
 ) -> DoctorReport:
     """Convenience wrapper around :class:`ReadOnlyDoctor`."""
 
-    return ReadOnlyDoctor(
+    instance = ReadOnlyDoctor(
         marker_name=marker_name,
         ledger_name=ledger_name,
-    ).inspect(state_root, operation_id)
+    )
+    try:
+        return instance.inspect(state_root, operation_id)
+    except BaseException as error:
+        cleanup_owner = instance._owned_cleanup
+        if cleanup_owner is not None:
+            wrapped_error = _cleanup_owner_or_wrap(error, cleanup_owner)
+            if wrapped_error is not error:
+                raise wrapped_error from error
+        raise
 
 
 __all__ = [
     "DOCTOR_PROTOCOL_VERSION",
     "RECOVERY_LEDGER_VERSION",
     "WRITER_MARKER_BASENAME",
+    "CleanupOwner",
+    "CleanupOwnerError",
+    "CleanupUncertaintyError",
     "Confidence",
     "DoctorError",
     "DoctorReport",

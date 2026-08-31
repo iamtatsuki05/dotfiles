@@ -54,8 +54,9 @@ The SQLite spike used Python SQLite 3.53.1, `WAL`, `synchronous=FULL`, `BEGIN IM
 - Treat effect-without-receipt as `UNKNOWN_EFFECT`. `doctor` may report it but must not mutate or retry it.
 - A normal `CoordinationStore` reopen must not automatically change
   `FENCE_RESERVATION_STARTED` or `EFFECT_PREPARED`. These remain recovery-required markers;
-  only the explicit trusted `RecoveryStoreTx.mark_prepared_unknown` authority may move them to
-  `UNKNOWN_EFFECT`.
+  only the private trusted transaction returned by
+  `CoordinationStore._recovery_transaction()` may call
+  `_RecoveryStoreTx.mark_prepared_unknown` to move them to `UNKNOWN_EFFECT`.
 - A recovery-floor advance fences stale authority globally but never rewrites a `CLEANED`
   tombstone row or its events. Typed rebasing is limited to `INTENT`, `RECEIPTED`, and `COMPLETED`.
 - The typed recovery seam maps SQLite snapshot-query failures and malformed persisted observation
@@ -89,7 +90,7 @@ The prototypes are disposable evidence. Production code must be implemented from
 `agent_team.doctor` provides the read-only `ReadOnlyDoctor`, `StateFilesystem`,
 and `RecoveryLedgerReader` seams for recovery work. Callers must pass the
 stable writer-marker and recovery-ledger basenames explicitly because their
-names are owned by the later marker/ledger implementations. The doctor does
+names are owned by the marker and ledger implementations. The doctor does
 not invent a filename, construct `CoordinationStore`, or execute recovery.
 
 The filesystem reader opens only an existing owner-only directory/file through
@@ -115,8 +116,12 @@ The recovery ledger is strict append-only JSONL: every line is one complete
 object terminated by the canonical newline, with no arrays, padded/blank
 lines, partial final records, or terminal-first generation. Each generation
 must progress through `RESTORE_PREPARED`, `RESTORE_REPLACED`, and then
-`RESTORE_COMMITTED` or the contractually allowed `RESTORE_ABORTED` edge; only
-a later generation may begin with a new `RESTORE_PREPARED` record. The primary database, exact SQLite
+`RESTORE_COMMITTED` or the contractually allowed `RESTORE_ABORTED` edge.
+Generation numbering starts at one and advances by exactly one; only
+`RESTORE_PREPARED` may follow a terminal generation, and `RESTORE_ABORTED`
+may follow only `RESTORE_PREPARED`. This applies both to a standalone first
+generation and to every generation appended after a terminal prefix. The
+primary database, exact SQLite
 sidecars, marker, and ledger basenames are regular files only; unrelated
 owner-only directories remain inventory entries but are never opened.
 
@@ -177,7 +182,27 @@ directory, and rejects malformed, duplicate, partial, version-incompatible,
 non-monotonic, or missing ledgers. It reconstructs and canonical-encodes exact
 record fields and verifies the complete post-write bytes. It implements no
 backup, restore, checkpoint, sidecar cleanup, or writer-marker lifecycle;
-those phases remain the contract of #55/#56.
+`agent_team.backup`, `agent_team.restore`, and `agent_team.wal` own those
+separate responsibilities.
+
+The unowned mutation API participates in the same startup/quiescence protocol
+as normal Store open. An initialized root uses the WAL controller's exclusive
+lifetime-gate and marker span; a bootstrap or explicitly missing-gate root
+holds the Store-compatible root startup lock through recheck, append, fsync,
+and readback. Owner-aware restore append reuses its existing quiescence owner
+and never reacquires those locks. Read-only access remains shared. A writer,
+Store, Doctor filesystem, WAL controller, backup, or restore object retains
+close-uncertain descriptors, resources, or sessions with their observed
+identity and requires cleanup retry before new I/O. It never closes a reused
+or identity-unknown descriptor by number alone.
+
+Commit response loss, rollback failure, temporary SQLite-connection cleanup
+failure, and a full bounded descriptor registry are all cleanup uncertainty,
+not success. The body error remains primary. An opaque best-effort composite
+retry capability carries every cleanup owner, attempts every member, removes
+members that succeed, and retains only failures for an idempotent retry. A
+registry overflow never drops the current resource. Cleanup retry does not
+re-run SQL, a phase append, a primary replacement, or a provider operation.
 
 The provider adapter is a trusted composition-root dependency. A malicious
 full-shape in-process adapter is outside this Python value boundary; task data
@@ -216,14 +241,14 @@ type, owner, mode, link count, device, and inode before any effect.
 Backup/restore consumers can call `hold_quiescence()` to receive an opaque
 `QuiescenceSession`. Its typed `checkpoint`, `cleanup`, `assert_identity`, and
 `copy_database_to` methods retain the same exclusive guards across multiple
-phases, so a later restore implementation does not duplicate marker/lifetime
-locking. `copy_database_to` requires its exact checkpoint request, performs one
+phases, so `BackupRestore` does not duplicate marker/lifetime locking.
+`copy_database_to` requires its exact checkpoint request, performs one
 controller-owned SQLite backup call into memory, and writes the serialized image
 to a newly created `O_CREAT|O_EXCL|O_NOFOLLOW` mode-`0600` target held by file
 descriptor. It validates source/target identities, exact target sidecars, and
 the final target bytes, and returns the target `sha256:` digest together with
-the identities. A #56 consumer must no-follow open the basename and
-revalidate its identity, size, and digest immediately before consumption; the
+the identities. `SQLiteBackup` must no-follow open the basename and revalidate
+its identity, size, and digest immediately before consumption; the
 result is not a publication or restore authority. The controller never
 overwrites an existing known or unknown file. The package-private database
 rebind refreshes the held descriptor after an authorized primary replacement;
@@ -262,3 +287,275 @@ an arbitrary filesystem writer after that final check is outside this
 SQLite-lock protocol and is reported conservatively when observed, rather than
 claimed impossible. Unknown provider, terminal, prompt, and other files are
 never globbed or removed.
+
+## Version-1 backup artifact
+
+`agent_team.backup.SQLiteBackup` creates and inspects a backup in the existing
+owner-only state root. Version 1 uses exactly two final files: a caller-chosen
+database basename and its derived `<name>.manifest`. Nested paths, external
+archive directories, retention, rotation, and generation pointers are not
+part of this version.
+
+`create()` holds one quiescence session while
+`copy_database_to(CheckpointRequest("TRUNCATE"), ...)` checkpoints and copies
+the primary. It then closes that session and validates the copied image through
+the Store-owned image reader. The manifest is canonical UTF-8 JSON followed by
+one LF and has ten fixed fields: its version and database basename, the Store
+and event schema versions, SQLite `user_version`, integrity result, database
+size and SHA-256 digest, and the captured recovery epoch and fencing-token
+floor. Duplicate, missing, unknown, non-canonical, or incorrectly typed fields
+are rejected. The manifest never supplies a recovery-floor mutation.
+
+The destination name must be one exact basename. Path components, reserved
+names, the restore-candidate namespace `.coordination.sqlite3.restore-`, and
+wildcard characters (`*`, `?`, `[`, and `]`) fail fast before retained
+resources are retried or opened. Any name beginning with that candidate prefix
+belongs to restore and cannot be a backup destination. `create()` returns its own
+`BackupArtifact` only after a final pair inspection rechecks the published
+database and manifest identities, canonical manifest content, database
+size/digest, and captured floor against the values planned for that call. A
+visible pathname or an earlier inspection is not sufficient; a final manifest
+content or identity mismatch is an error.
+
+The database and manifest are separate files, so POSIX does not provide one
+operation that makes the pair visible atomically. Publication replaces the
+database, then the manifest, and finally fsyncs the containing directory. A
+crash between those replacements may leave a missing or old/new mixed pair.
+`inspect()` accepts only a complete pair whose basename, identities, size,
+digest, schema, integrity, and captured floor agree. It does not fall back to
+the old half, roll back the new half, or promote an orphan temp file. Unsafe
+types, links, owner/mode mismatches, artifact sidecars, and close uncertainty
+fail closed. `create()` also refuses success when its publication or directory
+fsync is uncertain. A later read-only `inspect()` validates the current bytes
+and identities; it cannot prove how an earlier directory fsync completed.
+Likewise, a non-cooperating same-UID process can swap a pathname after the
+last explicit precondition check and before `os.replace`; that final syscall
+window is outside the version-1 guarantee. An observed mismatch is preserved
+and never reported as a successful artifact.
+
+## Candidate-first restore and durable fencing
+
+`agent_team.restore.BackupRestore` exposes `restore()` and `resume()` as the
+only high-level restore operations. A caller supplies a freshly inspected
+`BackupArtifact`, an opaque actor identifier, and an audit reference. The
+result contains the terminal phase, restore generation, source and candidate
+digests, Store-issued final `RecoveryFloor`, and the destination-only
+operation/effect identities preserved as tombstones. It contains no path,
+descriptor, SQLite row, provider payload, or per-operation token.
+
+Restore uses one lifetime-gate-exclusive, writer-marker-exclusive
+`QuiescenceSession` and one session-issued owner through final readback. Before
+candidate creation it checks the source against every previously committed
+tombstone, so an old backup cannot resurrect a retired operation ID or effect
+key. The Store authority reads the source and current primary, issues an
+epoch/token floor strictly above the source, destination, ledger, and attempt
+high-water marks, and applies the status policy in one in-memory
+`BEGIN IMMEDIATE` transaction. The fully serialized, fsynced, and verified
+candidate is the only image eligible for descriptor-relative primary
+replacement. The supplied restore timestamp must be at least the source and
+destination durable clock high-water marks; an older value fails with
+`ClockRollbackError` rather than being clamped.
+
+The ten operation statuses preserve external truth:
+
+`INTENT`, `FENCE_PENDING`, `FENCE_RESERVATION_STARTED`, `CLAIMED`,
+`EFFECT_PREPARED`, `UNKNOWN_EFFECT`, `UNKNOWN`, `RECEIPTED`, `COMPLETED`,
+and `CLEANED` are the operation-state policy. `RESTORE_INCOMPLETE` is a
+separate incomplete-restore sentinel; it is rejected as a restore source and
+is outside this ten-status policy.
+
+- `INTENT` stays `INTENT` with attempt zero under the new epoch.
+- `FENCE_PENDING`, `FENCE_RESERVATION_STARTED`, `CLAIMED`, `EFFECT_PREPARED`,
+  `UNKNOWN_EFFECT`, and `UNKNOWN` retain their status and evidence, but their
+  old lease authority becomes stale. Restore never queries, executes, retries,
+  or reclaims the provider effect.
+- `RECEIPTED` keeps the effect/proof/owner/attempt identity while Store-issued
+  exact expected epoch/token values update the attempt and receipt atomically.
+  Candidate and resume verification reject any token other than the planned
+  exact token.
+- `COMPLETED` keeps its terminal receipt and gains only the restore epoch/event.
+- `CLEANED` permits the global `RecoveryFloor` and store-wide durable clock to
+  advance, but its row, attempt, receipt, events, and `updated_ns` remain
+  immutable.
+- A source containing `RESTORE_INCOMPLETE` is rejected for operator review.
+
+Restore performs no provider execution or status query, automatic retry,
+backend fallback, or terminal-resource close. It validates but does not change
+the DDL, `STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`.
+
+The existing nine-field `recovery.ledger` version 1 remains unchanged. A
+separate strict append-only `recovery.tombstones` version 1 records each
+generation's source/old-primary/candidate digests, destination-only operation
+and effect keys, and the old primary's epoch, fencing-token, and clock
+high-water marks. Normal Store open validates both histories before it creates
+or opens the lifetime gate, marker, database, or SQLite connection, then checks
+them again while holding the shared lifetime gate. Pending, partial,
+malformed, cross-generation, phase, digest, or high-water inconsistencies stop
+normal open. Committed tombstones also reject later `create_intent` collisions.
+`ReadOnlyDoctor` runs the same ledger/tombstone pair preflight and reports a
+pending or malformed restore pair as `RESTORE_INCOMPLETE` with operator review,
+without changing either log. A malformed bare `recovery.ledger` with no
+tombstone history retains the older `UNREADABLE` classification and still
+requires operator review.
+
+When the marker is clean, all six uncertain operation statuses—
+`FENCE_PENDING`, `FENCE_RESERVATION_STARTED`, `CLAIMED`, `EFFECT_PREPARED`,
+`UNKNOWN_EFFECT`, and `UNKNOWN`—are reported as `UNKNOWN_EFFECT` with
+`safe_action=OPERATOR_REVIEW` and low confidence. This action is an operator
+advisory, not permission to call the coordinator. The public observation does
+not establish provider proof, expiry, or a current recovery epoch, and the
+coordinator accepts only narrower exact preconditions. Doctor therefore makes
+no provider call for these statuses. Marker, pair, or identity hazards may
+produce an even more conservative review state.
+
+For a restored operation whose recovery epoch intentionally differs from its
+retained lease epoch, Doctor uses only the fully validated canonical
+ledger/tombstone history as authorization. The committed recovery epoch must
+match the current Store image, the current token high-water must be at least
+the committed floor, and the Store-owned whole-image high-water checks must
+pass. A caller-selected diagnostic ledger cannot authorize this exception;
+an aborted-only history or row/token corruption remains `UNREADABLE`.
+
+### Stable restore-history binding
+
+For a committed generation, the Store derives a stable
+`restore-history-binding` digest from the latest committed log fields:
+generation, actor, the audit-reference digest, source and previous-primary
+digests, previous recovery epoch/token/clock high-water marks, and the final
+epoch/token floor. It also includes the current generation's tombstone batch
+and the cumulative union of identities from all committed tombstones. The
+candidate's restore events carry this binding, and the normal-open verifier
+uses a matching primary restore event as the history anchor.
+
+`candidate_digest` has a separate, exact-evidence role. During the current
+generation's candidate apply, primary replacement, final result, and resume,
+it binds the expected candidate bytes and, after replacement, the full primary
+image. Those bytes are expected to remain unchanged between the relevant
+checks, so these paths retain their exact digest and identity comparisons.
+The stable normal-open binding deliberately excludes `candidate_digest`:
+including it would self-reference the event stored in the primary and would
+make later legitimate writes that change the primary invalidate the history
+anchor. Under version 1's no-wire contract, a consistent rewrite of only
+`candidate_digest` in already committed history is therefore not authenticated
+or necessarily detected by normal open or a new restore. It does not change
+the cumulative tombstone identity fence. A signature, attestation, or
+versioned durable anchor is required to cover that case.
+
+The constructor performs the recovery pair preflight before normal state is
+opened and verifies the binding against the opened image before later PRAGMA
+or schema initialization. `create_intent()` repeats the pair and binding checks
+under the shared lifetime gate. A new restore generation verifies the current
+committed binding before it creates a candidate or appends recovery records.
+This rejects post-open history tampering and prevents an older backup from
+re-anchoring a forged history. The mutable operation/status/token plan is not
+part of this stable binding; candidate and resume paths retain their separate
+exact operation, evidence, receipt, and expected-token checks.
+
+If the latest generation is `RESTORE_ABORTED`/`ABORTED`, normal-open state uses
+the immediately preceding committed generation's handle and cumulative union,
+when one exists; otherwise the state is empty. The aborted generation's
+identities are not active. If both the current batch
+and cumulative union are empty, there is no collision anchor to verify. A
+zero-event restore is then subject to the guarantee boundary below, while a
+zero-event restore with a nonempty current or cumulative tombstone union fails
+before candidate transaction commit, ledger preparation, or
+`RESTORE_COMMITTED`.
+
+Ledger and tombstone records are separate append-only files and are not one
+atomic publication. These are the only allowed same-generation pairs,
+including the two response-loss states:
+
+| Recovery ledger | Tombstone log | Meaning |
+|---|---|---|
+| `RESTORE_PREPARED` | `PREPARED` | Normal prepared state |
+| `RESTORE_PREPARED` | `ABORTED` | Abort record persisted before ledger response |
+| `RESTORE_REPLACED` | `PREPARED` | Normal replaced state |
+| `RESTORE_REPLACED` | `COMMITTED` | Tombstone commit persisted before ledger response |
+| `RESTORE_COMMITTED` | `COMMITTED` | Terminal committed state |
+| `RESTORE_ABORTED` | `ABORTED` | Terminal aborted state |
+
+Every other cross-product pair, missing half, invalid history prefix, or
+high-water inconsistency is recovery-required.
+
+### Pair-level resume durability barrier
+
+`RestoreLedger.read_for_resume()` is the first consumer of recovery state. It
+uses the already held quiescence owner, opens existing log files only, and
+acquires their non-blocking locks in the fixed `tombstone` then `ledger`
+order. It strictly parses and classifies both byte streams before any fsync or
+mutation. Missing, partial, malformed, unsafe, mixed, or generation-skewed
+state therefore causes a fail-closed review with the logs, primary, and
+candidate untouched.
+
+For a valid pair, the barrier fsyncs each existing log and then the state-root
+directory. It reads the exact bytes back from the same locked descriptors and
+rechecks file and root identities and the pair classification. Visible bytes,
+a successful JSON parse, or a previous process's result is not proof of
+durability. Any file/root fsync, readback, identity, unlock, or close
+uncertainty yields no durability proof and no phase or success result. The
+barrier does not create an absent log, trim a partial record, or silently
+repair either file. Only after the barrier succeeds may `resume()` append the
+single missing record for a permitted tombstone-first state; it never reapplies
+the candidate transaction or primary replacement as part of that proof.
+
+The durable phases have exact meanings:
+
+- `RESTORE_PREPARED`: the candidate transaction, image verification, and
+  tombstone evidence are durable; the primary is still old unless replacement
+  durability is explicitly known.
+- `RESTORE_REPLACED`: descriptor-relative replacement, directory fsync,
+  descriptor rebind, and primary image verification completed.
+- `RESTORE_COMMITTED`: tombstone and ledger commit records are durable. The
+  high-level operation returns success only after a subsequent final artifact,
+  primary, fileset, sidecar, and owner readback. A terminal record can remain
+  when that final readback fails; `resume()` repeats the verification rather
+  than assuming that a record alone proves success.
+- `RESTORE_ABORTED`: an explicit operator proved that replacement did not
+  occur. The high-level restore path never aborts automatically.
+
+`resume()` never recreates or reapplies a missing candidate. Because prepare
+publishes the tombstone before the ledger record, it accepts exactly two
+tombstone-first response-loss states: the first generation with no ledger, or
+the next generation after a complete terminal prefix. It verifies the source,
+old primary, candidate, prior epoch/token/clock high-water, committed identity
+set, and candidate floor before appending only the missing prepared ledger
+record. Every other one-sided or generation-skew state remains operator review.
+For `RESTORE_PREPARED` plus an `ABORTED` tombstone, resume verifies the old
+primary before appending only the missing abort ledger record and never applies
+or replaces the candidate. A prepared old primary plus the exact candidate can
+be verified and replaced. A prepared new
+primary with no candidate is deliberately operator review because a crash
+between rename and directory fsync cannot be distinguished afterward. A
+replaced generation performs only final verification and commit; a committed
+generation is a verified no-op. Mixed, missing, ambiguous, or mismatched state
+is never rolled back, promoted, or silently repaired.
+
+## Backup and restore guarantee boundary
+
+The tested guarantee covers Python's standard `sqlite3`, the default local
+POSIX VFS, an owner-only local state root, cooperating `CoordinationStore`
+clients, deterministic fault barriers, and observable pathname/inode races.
+There is no portable POSIX compare-and-unlink operation, so a non-cooperating
+same-UID process that swaps a pathname after the final explicit identity check
+is outside the contract. Unknown and already mismatched identities are
+preserved, and observed uncertainty is reported conservatively. The contract
+does not detect a coherent same-UID rewrite of the primary, its
+`transition_events`, and both recovery logs. A zero-event restore with an
+empty active tombstone union has no durable provenance anchor. The binding is
+a SHA-256 integrity reference, not a cryptographic signature or attestation.
+The final non-cooperating syscall race remains outside the guarantee even when
+the path swap is observable in some runs. Custom or `nolock` VFSes,
+network/distributed filesystems, power-loss guarantees beyond the executed
+fsync contract, provider execution/status, automatic retry, backend fallback,
+and schema migration are also outside version 1.
+
+The current-generation `candidate_digest` checks above are still required for
+apply, replacement, final-result, and resume evidence. They do not extend the
+stable normal-open guarantee: a candidate-digest-only rewrite of a committed
+history is outside version-1 authentication and does not alter the cumulative
+tombstone fence.
+
+This work does not change the DDL, `STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or
+SQLite `user_version`. The nine-field `recovery.ledger` version 1 and the
+thirteen-field `recovery.tombstones` version 1 remain wire-compatible; the
+stable binding is stored in the existing restore-event `evidence_ref` field.
