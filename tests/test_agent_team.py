@@ -886,11 +886,12 @@ class AgentTeamStartTest(AgentTeamTestCase):
         fake_bin.mkdir()
         log_path = root / "orca-log.jsonl"
         fake_orca = fake_bin / "orca"
+        fake_orca_linux = fake_bin / "orca-ide"
         fake_orca.write_text(
             textwrap.dedent(
                 f"""\
                 #!{sys.executable}
-                import json, os, sys
+                import hashlib, json, os, sys
                 from pathlib import Path
                 args = sys.argv[1:]
                 with Path(os.environ["FAKE_ORCA_LOG"]).open("a", encoding="utf-8") as f:
@@ -904,23 +905,43 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 elif args == ["worktree", "current", "--json"]:
                     if os.environ.get("FAKE_ORCA_MANAGED") == "0":
                         print(json.dumps({{"ok": False, "error": {{"message": "not managed"}}}})); raise SystemExit(1)
-                    print(json.dumps({{"ok": True, "result": {{"worktree": {{"id": "repo::/project"}}}}}}))
+                    print(json.dumps({{"ok": True, "result": {{"worktree": {{"id": "repo::/project", "path": str(Path.cwd())}}}}}}))
                 elif args[:2] == ["terminal", "create"]:
-                    print(json.dumps({{"ok": True, "result": {{"terminal": {{"handle": "term_main"}}}}}}))
+                    title = args[args.index("--title") + 1]
+                    print(json.dumps({{"ok": True, "result": {{"terminal": {{"handle": "term_main", "worktreeId": "repo::/project", "title": title}}}}}}))
                 elif args[:2] == ["terminal", "wait"]:
-                    print(json.dumps({{"ok": True, "result": {{"wait": {{"satisfied": True}}}}}}))
+                    terminal = args[args.index("--terminal") + 1]
+                    condition = args[args.index("--for") + 1]
+                    print(json.dumps({{"ok": True, "result": {{"wait": {{"handle": terminal, "condition": condition, "satisfied": True}}}}}}))
                 elif args[:2] == ["orchestration", "run-create"]:
-                    print(json.dumps({{"ok": True, "result": {{"run": {{"id": "run_1"}}}}}}))
+                    objective = args[args.index("--objective") + 1]
+                    coordinator = args[args.index("--from") + 1]
+                    print(json.dumps({{"ok": True, "result": {{"run": {{"id": "run_1", "objective": objective, "coordinator_handle": coordinator}}}}}}))
                 elif args[:2] in (["terminal", "switch"], ["terminal", "close"]):
-                    print(json.dumps({{"ok": True, "result": {{}}}}))
+                    if args[:2] == ["terminal", "close"]:
+                        terminal = args[args.index("--terminal") + 1]
+                        print(json.dumps({{"ok": True, "result": {{"close": {{"handle": terminal, "ptyKilled": True}}}}}}))
+                    else:
+                        terminal = args[args.index("--terminal") + 1]
+                        print(json.dumps({{"ok": True, "result": {{"focus": {{"handle": terminal, "navigated": True}}}}}}))
                 elif args[:2] == ["orchestration", "run-show"]:
-                    print(json.dumps({{"ok": True, "result": {{"run": {{"id": "run_1", "objective": "team"}}}}}}))
+                    digest = hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:8]
+                    objective = f"agent-team-project-{{digest}}: Planner / Worker / Reviewer coordination for {{Path.cwd()}}"
+                    print(json.dumps({{"ok": True, "result": {{"run": {{"id": "run_1", "objective": objective, "coordinator_handle": "term_main"}}}}}}))
                 elif args[:2] == ["terminal", "show"]:
-                    print(json.dumps({{"ok": True, "result": {{"terminal": {{"handle": "term_main"}}}}}}))
+                    terminal = args[args.index("--terminal") + 1]
+                    digest = hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:8]
+                    team = "agent-team-" + Path.cwd().name + "-" + digest
+                    title = team + "-main" if terminal == "term_main" else team + "-worker"
+                    print(json.dumps({{"ok": True, "result": {{"terminal": {{"handle": terminal, "worktreeId": "repo::/project", "title": title, "worktreePath": str(Path.cwd())}}}}}}))
                 elif args[:2] == ["orchestration", "worker-list"]:
                     print(json.dumps({{"ok": True, "result": {{"workers": []}}}}))
+                elif args[:2] == ["orchestration", "worker-show"]:
+                    dispatch = args[args.index("--dispatch") + 1]
+                    print(json.dumps({{"ok": True, "result": {{"dispatch": {{"id": dispatch, "task_id": "task_worker", "run_id": "run_1", "assignee_handle": "term_worker"}}, "worker": {{"dispatch_id": dispatch, "worktree_id": "repo::/project", "agent_terminal_handle": "term_worker", "state": "ready"}}}}}}))
                 elif args[:2] == ["orchestration", "worker-stop"]:
-                    print(json.dumps({{"ok": True, "result": {{"state": "stopped"}}}}))
+                    dispatch = args[args.index("--dispatch") + 1]
+                    print(json.dumps({{"ok": True, "result": {{"dispatchId": dispatch, "state": "stopped", "processAction": "closed_agent_terminal", "alreadySettled": False, "close": {{"ptyKilled": True}}}}}}))
                 else:
                     print(json.dumps({{"ok": False, "error": {{"message": "unsupported"}}}})); raise SystemExit(2)
                 """
@@ -928,6 +949,10 @@ class AgentTeamStartTest(AgentTeamTestCase):
             encoding="utf-8",
         )
         fake_orca.chmod(0o755)
+        fake_orca_linux.write_text(
+            fake_orca.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        fake_orca_linux.chmod(0o755)
         for binary in ("claude", "codex", "npx"):
             path = fake_bin / binary
             path.write_text(f"#!{sys.executable}\n", encoding="utf-8")
@@ -1002,7 +1027,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
         self.assertTrue(state_root_removed)
         self.assertTrue(outside_remains)
         self.assertIn(
-            ["terminal", "close", "--terminal", "term_main", "--tab", "--json"],
+            ["terminal", "close", "--terminal", "term_main", "--json"],
             commands,
         )
 
@@ -1138,8 +1163,10 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 ["status", "--json"],
                 ["worktree", "current"],
                 ["terminal", "create"],
+                ["terminal", "show"],
                 ["terminal", "wait"],
                 ["orchestration", "run-create"],
+                ["orchestration", "run-show"],
                 ["terminal", "switch"],
             ],
         )
@@ -1226,7 +1253,6 @@ class AgentTeamStartTest(AgentTeamTestCase):
                     "close",
                     "--terminal",
                     "term_main",
-                    "--tab",
                     "--json",
                 ]
             ],
@@ -1284,7 +1310,6 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 "close",
                 "--terminal",
                 "term_main",
-                "--tab",
                 "--json",
             ],
             log,
@@ -1329,12 +1354,12 @@ class AgentTeamStartTest(AgentTeamTestCase):
 
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         closes = [row for row in log if row[:2] == ["terminal", "close"]]
-        self.assertIn(
-            ["terminal", "close", "--terminal", "term_worker", "--tab", "--json"],
+        self.assertNotIn(
+            ["terminal", "close", "--terminal", "term_worker", "--json"],
             closes,
         )
         self.assertIn(
-            ["terminal", "close", "--terminal", "term_main", "--tab", "--json"],
+            ["terminal", "close", "--terminal", "term_main", "--json"],
             closes,
         )
         self.assertFalse(state_path.parent.exists())

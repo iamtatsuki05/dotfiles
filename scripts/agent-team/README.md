@@ -44,6 +44,12 @@ and only one background role may be active at a time.
 The project has no third-party Python dependency. Python 3.11 or newer is
 required. From a checkout, the launcher is directly executable:
 
+The Orca lifecycle backend and bounded provider runner are POSIX-only; they
+fail fast on Windows because the current runtime metadata contract requires a
+Unix socket and process-group semantics.
+The CLI name is selected deterministically by platform: `orca` on macOS and
+`orca-ide` on Linux, with no PATH fallback or environment override.
+
 ```bash
 scripts/agent-team/agent-team harnesses
 scripts/agent-team/agent-team start --dry-run
@@ -77,19 +83,33 @@ leaves it untouched and the bundled defaults remain available.
 
 ## Meet the prerequisites
 
-The current implementation is validated on macOS. Before starting a team:
+The current implementation has been smoke-tested against a live Orca runtime on
+macOS. The Linux executable mapping is implemented as `orca-ide`, but this
+checkout has not had a live Linux Orca smoke test. Windows is unsupported and
+fails fast. Orca executable selection is exact by platform, with no PATH
+fallback or environment override:
 
-1. Make sure `orca`, `claude`, `codex`, Node.js, and `npx` are available.
-2. Open Orca and confirm that `orca status --json` reports a ready runtime and
-   graph.
+- macOS: `orca`
+- Linux: `orca-ide`
+
+Before starting a team:
+
+1. Make sure the platform-specific Orca executable above, `claude`, `codex`,
+   Node.js, and `npx` are available.
+2. Open Orca and confirm that the platform-specific `status --json` command
+   reports a ready runtime and graph.
 3. Log in to Claude and Codex with the accounts you intend to use.
 4. Register the target repository with Orca once.
 
 ```bash
 claude auth status
 codex login status
+# macOS
 orca status --json
 orca repo add --path "$PWD"
+# Linux
+orca-ide status --json
+orca-ide repo add --path "$PWD"
 ```
 
 The ACP Planner uses the exact packages `acpx@0.13.2` and
@@ -187,7 +207,7 @@ flow.
 
 | Symptom | What to check |
 |---|---|
-| `workspace is not managed by Orca` | Run `orca repo add --path "$PWD"`. |
+| `workspace is not managed by Orca` | Run `orca repo add --path "$PWD"` on macOS, or `orca-ide repo add --path "$PWD"` on Linux. |
 | `agent-team state already exists` | Use `agent-team status`, `attach`, or `stop`; do not start a second owner. |
 | `role has no active Orca Dispatch` | Main has not started that background role, or it has already been released. |
 | Authentication is required | Run `claude auth status` or `codex login status` outside agent-team. |
