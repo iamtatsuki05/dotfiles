@@ -20,7 +20,12 @@ from unittest import mock
 from agent_team import doctor as doctor_module
 from agent_team import recovery as recovery_module
 from agent_team import store as store_module
-from agent_team.doctor import LedgerReadError, RecoveryLedgerReader, StateFilesystem
+from agent_team.doctor import (
+    DoctorReport,
+    LedgerReadError,
+    RecoveryLedgerReader,
+    StateFilesystem,
+)
 from agent_team.lease import (
     ClockRollbackError,
     LeaseConflictError,
@@ -7274,6 +7279,56 @@ class RecoveryCoordinatorTest(unittest.TestCase):
                 store.heartbeat(claim, lease_ttl_ns=20, now_ns=104)
             self.assertEqual(1, provider.status_calls)
             self.assertEqual(0, provider.execute_calls)
+        finally:
+            store.close()
+            temporary.cleanup()
+
+    def test_migration_required_preflight_blocks_provider_query_and_mutation(
+        self,
+    ) -> None:
+        clock = FakeClock()
+        temporary, store = _store(clock)
+        try:
+            provider = RecoveryProvider()
+            claim = store.claim(
+                "op-recovery",
+                owner="owner-a",
+                provider_id="provider/test",
+                lease_ttl_ns=20,
+                now_ns=100,
+            )
+            claim = store.reserve_fence(claim, provider)
+            effect = store._begin_effect(claim, now_ns=101)
+            store._mark_unknown_effect(effect, now_ns=102)
+            _checkpoint(store)
+            events_before = store.events("op-recovery")
+            operation_before = store.operation("op-recovery")
+            report = DoctorReport(
+                observed_state="MIGRATION_REQUIRED",
+                confidence="HIGH",
+                owner=None,
+                safe_action="INSPECT_SCHEMA",
+                forbidden_mutations=doctor_module._MUTATIONS,
+            )
+            coordinator = RecoveryCoordinator(store, marker_name=MARKER_NAME)
+            with (
+                mock.patch.object(
+                    RecoveryCoordinator,
+                    "startup_preflight",
+                    return_value=report,
+                ),
+                self.assertRaises(RecoveryRequiredError),
+            ):
+                coordinator.resolve_unknown(
+                    "op-recovery",
+                    provider=provider,
+                    actor="operator",
+                    now_ns=103,
+                )
+            self.assertEqual(0, provider.status_calls)
+            self.assertEqual(0, provider.execute_calls)
+            self.assertEqual(events_before, store.events("op-recovery"))
+            self.assertEqual(operation_before, store.operation("op-recovery"))
         finally:
             store.close()
             temporary.cleanup()

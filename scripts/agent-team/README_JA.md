@@ -25,7 +25,8 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
   adapter実装、snapshot境界、復旧方法を説明します。
 - [Coordination store、recovery、backup、restore](docs/coordination-store_JA.md)は
   SQLiteのschema境界、stable writer marker、WAL sidecar controller、backup artifact、
-  candidate-first restoreを説明します。
+  candidate-first restoreを説明します。Issue #72のcurrent headでは、v3 workflow
+  checkpoint/CAS contractを追加し、Storeの外部effectを呼び出さない境界も定めています。
 - [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
   保存やworkflow実行を含まないstate観測契約を説明します。
 - [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
@@ -191,11 +192,25 @@ agent-team status \
   identityが一致したときだけlifecycleを進めます。
 - Claude ACPはambientな`claude.ai` loginを使い、API keyをchild processへ
   渡しません。ただしsubscription billing ledgerそのものは未確認です。
+- 現在のStoreは`STORE_SCHEMA=3`とSQLite `user_version=3`を要求します。
+  provider eventは`EVENT_SCHEMA_VERSION=2`のまま、workflow eventは別namespaceの
+  `WORKFLOW_EVENT_SCHEMA_VERSION=1`を使います。
+- 正常なv2 Storeは`StoreMigrationRequiredError`として停止し、Doctorは
+  `MIGRATION_REQUIRED`を報告します。malformedやfuture schemaは別のerrorです。
+  v2からv3へ変換できるのはIssue #48の明示的なmigration gateだけであり、Storeは
+  default補完や別backendへのfallbackを行いません。
 - backupのdestinationは1つのexactなbasenameに限ります。database/manifest pairのidentityと
   contentをfinal readbackで確認できた場合だけ成功し、partialやmixedなpairは拒否します。
   restore candidate namespaceの`.coordination.sqlite3.restore-`は予約済みで、destinationには使えません。
+- version-1 backup/inspectは従来の2-file manifest shapeを維持し、version値は
+  `3/2/3`（Store/provider event/SQLite user version）を記録します。workflow rowも
+  imageの一部として保持・検証します。
 - restoreはcandidate-firstで、providerを呼びません。resumeはtombstone、次にledgerの順で
   durability barrierを通し、logを暗黙に修復したり外部effectをretryしたりしません。
+- 専用のworkflow restore bindingができるまでは、workflow rowを含むsourceまたはcurrent
+  imageをpromotion/replacementより前に拒否します。
+- P0 StoreはWorkflowEngine reducerや外部effect adapterを配線せず、外部effectの
+  exactly-onceも主張しません。
 
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 

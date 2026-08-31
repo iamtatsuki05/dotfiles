@@ -5814,6 +5814,7 @@ class RecoveryCoordinator:
             "WAL_PENDING",
             "RESTORE_INCOMPLETE",
             "UNSAFE_SIDECAR",
+            "MIGRATION_REQUIRED",
             "SCHEMA_INVALID",
             "UNREADABLE",
         }:

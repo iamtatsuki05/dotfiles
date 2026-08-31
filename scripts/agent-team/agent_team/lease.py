@@ -464,6 +464,7 @@ class StoreImageObservation:
     last_clock_ns: int
     operations: tuple[RecoverySnapshot, ...]
     identities: tuple[RestoreIdentity, ...]
+    workflow_row_counts: tuple[int, int, int, int]
 
     def __post_init__(self) -> None:
         if (
@@ -507,6 +508,21 @@ class StoreImageObservation:
         for operation, identity in zip(self.operations, self.identities, strict=True):
             if identity.effect_key != operation.effect_key:
                 _fail("identities do not match operations")
+        if (
+            type(self.workflow_row_counts) is not tuple
+            or len(self.workflow_row_counts) != 4
+            or any(
+                type(value) is not int or not 0 <= value <= SQLITE_INTEGER_MAX
+                for value in self.workflow_row_counts
+            )
+        ):
+            _fail("workflow_row_counts is invalid")
+
+    @property
+    def workflow_rows_present(self) -> bool:
+        """Whether any workflow checkpoint, operation, receipt, or event exists."""
+
+        return any(self.workflow_row_counts)
 
 
 def _restore_identity_keys(

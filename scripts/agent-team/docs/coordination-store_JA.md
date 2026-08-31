@@ -64,6 +64,187 @@ SQLite spikeではPython SQLite 3.53.1、`WAL`、`synchronous=FULL`、`BEGIN IMM
 - SQLiteのbackup APIを使う。migrationとrestoreは、versionとrollbackを検証する明示操作にする
 - SQLiteが利用不能、timeout超過、破損、version不一致の場合、atomic fileや別backendへfallbackしない
 
+## workflow checkpoint store（Issue #72）
+
+Issue #72では、SQLite storeにdurableなworkflow checkpointと
+Compare-And-Swap（CAS）のcontractを追加する。ここでは現在のP0 headの
+contractを説明する。後続のWorkflowEngineや外部effect adapterが実装済みだと
+いう意味ではない。
+
+### version境界とmigration
+
+versionの境界を明示する。
+
+- `STORE_SCHEMA=3`を`PRAGMA user_version`、`store_meta`、exact schema
+  validatorのすべてで要求する。
+- 既存provider journalの`EVENT_SCHEMA_VERSION=2`は維持する。
+  workflow journalは別namespaceの`WORKFLOW_EVENT_SCHEMA_VERSION=1`を使う。
+- 新しいv3 databaseは既存provider tableと、次の4つのworkflow tableだけを作る。
+  `workflow_checkpoints`、`workflow_operations`、`workflow_receipts`、
+  `workflow_events`である。
+- `BACKUP_MANIFEST_VERSION=1`の10-field wire shapeは維持する。新しいmanifest
+  には`store_schema=3`、`event_schema_version=2`、
+  `sqlite_user_version=3`を記録する。
+
+既存databaseは通常の初期化より前に分類する。完全かつ正確なv2 databaseだけを
+`StoreMigrationRequiredError`（typedな`StoreSchemaError` subclass）として報告し、
+read-only Doctorも`MIGRATION_REQUIRED`として報告する。malformed、mixed、missing、
+unknown、futureのschema objectは、別のschema/integrity errorのまま扱う。
+Storeはcolumn追加、default補完、空checkpoint生成、v2 imageの暗黙受理を行わない。
+v2 manifest/database pairも、v3の`inspect()`と`restore()`で拒否する。
+
+v2からv3への変換を所有するのは、Issue #48の明示的なmigration gateだけである。
+migration ID、quiescence、backup、epoch/fencing、candidate検証、cutover、readbackを
+完了し、変換後のv3 artifactを確定してからv3 Storeへ渡す。P0 Storeはmigrationを
+推測・実行せず、別backendへfallbackしない。
+
+### checkpointとtyped composition seam
+
+`WorkflowCheckpointV4`は、fieldを固定したstrictなvalueである。rootと
+workspace/config/state-rootのidentity、RunとMain terminal、serial workflow state、
+workflow/task sequenceのprojection、assignment、Deliveryとmessage order、
+reply/read/release state、policy/review/verification reference、last operation、
+`updated_ns`を束縛する。payloadはfield setを固定したcanonical UTF-8 JSONである。
+`checkpoint_digest`はdigest fieldを除くcanonical bodyを、専用のv4 domainでhashして
+計算し、`sha256:<64 lowercase hex>`として保存する。scalar columnとpayload bytesは、
+保存時とload時の両方向で照合する。configはdevice/inodeとcontent digestで束縛し、
+canonical pathnameだけをauthorityにはしない。
+
+fresh startの境界は、不完全なv4 checkpointでは表現せず、strictな別codecの
+`WorkflowRootSeed`で表す。start operationにはcallerが事前に確定したstableな
+operation IDと、expected workflow sequence 0が必要である。seedにはRun、Main terminal、
+task、assignment、Delivery、authorityを持たせず、専用seed codecでだけ受理する。
+seed、start intent、最初のworkflow eventは一緒にcommitする。verified start receiptだけが
+そのrowを一度だけfull checkpointへ昇格できる。seed、intent、eventの一部だけが残る状態は
+`RecoveryRequired`である。`load_checkpoint()`が`None`を返すのは、fresh startの
+rootが存在しない場合に限る。full checkpointはworkflow sequence 2から始まり、
+sequence 0と1はstrictなseed protocolでだけ使う。
+
+publicなcomposition seamはtypedかつopaqueである。
+
+- `WorkflowCheckpointDraft`はreducerからの入力である。version、timestamp、canonical
+  bytes、digestはStoreが付与し、caller指定のdigestやtimestampは信用しない。
+- `OperationHandle`はStoreが発行するfrozen valueで、Store instance、root、stableな
+  operation ID、sequence、owner/fence identityに束縛する。connection、row、lock、
+  mutable stateを公開せず、dictionary、copy、pickle、synthetic objectから再生成できない。
+- `DurableReceipt`はtrusted effect adapterだけが発行するimmutable valueである。P0は
+  forge用のJSON/status/body factoryを公開せず、provider、Orca、Herdr、terminal、backendを
+  呼び出さない。
+- `WorkflowStorePort`はload、begin、effect commit、transition commit、lookup、unknown
+  markingを公開する。raw result body、provider payload、SQL row、SQLite connectionは返さない。
+
+`load_checkpoint()`が`None`を返すのはroot不在だけである。startが未解決の間はdurableな
+`WorkflowRootSeed`、verified start commit後は`WorkflowCheckpointV4`を返す。seedは観測値で
+あり、effect authorityではない。`lookup_operation()`はverified committed lookupだけを返し、
+absent、intent、unknownは`None`に丸めず`RecoveryRequired`とする。
+
+全identifier、enum、integer range、nullability、nested cardinality、Delivery order、
+opaque referenceをfail-closedで検証する。prompt、reply、event、terminal output、
+provider response、credential、token、environmentなどのraw bodyは保存しない。
+
+### 4つのworkflow tableとtransaction規則
+
+| table | durableな責務 |
+|---|---|
+| `workflow_checkpoints` | rootごとに1つのcurrent aggregateを持ち、canonical checkpoint bytes/digestとscalar projectionを保存する |
+| `workflow_operations` | stableなoperation intent、expected sequence pair、identity、`INTENT`/`UNKNOWN_EFFECT`/`COMMITTED` lifecycleを保存する |
+| `workflow_receipts` | identityに束縛したverified receiptをimmutableに保存する。operationとcheckpointのcommitなしに成功receiptだけを作れない |
+| `workflow_events` | 独自のevent schema、workflow sequence、mutation後のcanonical checkpoint/seed snapshotを持つappend-only journal。IDはCAS値ではない |
+
+各workflow eventには`checkpoint_bytes`として、mutation後のcanonical checkpointまたは
+seedのbytesとself-excluding digestを保存する。image validatorは過去のsnapshotをすべてdecodeし、root、
+workflow/task sequence、state、clock、operation、receipt、evidence、前後のtransitionを、
+current aggregateとほかのjournal rowに照合する。ここで証明するのは、検証対象のSQLite
+image内部の意味的な整合性である。database全体と全digestを整合する形で書き換えられる
+主体に対する外部署名ではない。artifactのidentity/content bindingは、引き続き
+backup/migration authorityが担う。
+保存する`event_digest`は、監査用`workflow_event_id`、transitionのactor、request、
+evidence identityを含むeventの全fieldとcanonical snapshotを、
+`WORKFLOW_EVENT_DIGEST_DOMAIN`で束縛する。
+
+provider tableとprovider statusの制約は分離したままにする。workflow mutationは
+1つの`BEGIN IMMEDIATE` transaction内でrootとexpected workflow sequenceを照合する。
+task-policy sequenceはauthorityが発行したexpected/next pairであり、P0は比較するだけで、
+計算・再発行しない。最初のpromptだけが`None -> 1`を受け取り、既存taskへのpromptは
+task-policy reference全体を保持する。それ以外のeffect actionではnext task sequenceを
+nullに固定し、既存task sequenceを進められるのはauthority transitionだけである。
+checkpoint内のtask reference/digest/sequence projectionはworkflow rowとatomicに更新する。
+別Storeのfull stateまでatomicに更新したとは、Issue #74のprivate adapterができるまで
+主張しない。
+
+`begin_operation()`はintent、checkpoint marker、最初のjournal eventを一緒にcommitする。
+`commit_effect()`はverified receipt、next checkpoint、operation status、2つ目のjournal
+eventを一緒にcommitする。policyまたはverification transitionは、外部effectなしで同じ
+checkpoint/event CASを使う。duplicate operation/effect identity、stale sequence、foreignな
+Run/Task/Dispatch/terminal、old attempt、wrong generation、wrong fenceは、外部effectの
+前に拒否する。`commit_effect()`はcommit transaction内でcurrent recovery epochと
+fencing-token floorを再確認する。begin後にfenceが進んだeffectをstaleなままcommitせず、
+unknown/recoveryとして記録する。policy/verification transitionは、assignment、Delivery、
+reply/read/release marker、非対象authority、sequenceを据え置くtask-policy referenceを
+完全に保持する。P0のgeneric transitionはworkflow stateも保持する。review/verificationの
+state edgeは、Issue #74がtyped decision evidenceと別の検証済みcontractを提供してから
+受理する。
+
+`wait`が作るDeliveryは、必ず`PENDING`かつACK operationなしで始まる。
+`ACK_INTENT/<operation_id>`へ変更できるのは、対応するACK begin transactionだけである。
+有限の`WORKER_DONE/SUCCEEDED`は`WORKER_DONE`へ、`WORKER_DONE/FAILED`はsuccessやunknownへ
+丸めず、committedな`FAILED` checkpointへ写像する。assignmentとfailed Deliveryが残る間は
+通常のeffect actionをfail-closedで拒否する。generic transitionは`FAILED`を保持したまま
+authorityを記録する場合だけ許可する。FAILED lifecycleを離れるには、failed assignmentや
+Deliveryを再利用しない別の明示的なrecovery contractを要求する。
+
+promptでは`receipt.result_digest`をcanonical assignment digestとexact一致させる。
+Deliveryを返すwaitでは、Delivery ID、consumer generation、ordered message IDs、
+ordered event projectionから`DELIVERY_DIGEST_DOMAIN`で計算した
+`delivery_content_digest`とexact一致させる。ACK begin後もimmutableなDelivery content
+identityを保持するため、ACK lifecycle fieldとdigest field自身はpreimageに含めない。
+Deliveryを返さないtimeoutでは`result_kind="timeout"`と、
+`WAIT_TIMEOUT_DIGEST_DOMAIN`による固定`wait_timeout_digest()`を要求する。
+
+Doctorはprovider operationとworkflow operationのnamespaceを混同しない。同じoperation IDが
+両tableに存在する場合は、high confidenceの`UNREADABLE`とし、operator reviewを要求する。
+
+effect後のresponse loss、receipt欠落、commit結果不明は、通常のretryable conflictとして
+扱わない。`mark_unknown()`は`UNKNOWN_EFFECT`、`RECOVERY_REQUIRED`、last-operation marker、
+journal eventをatomicに保存し、immutableな`UnknownCommit`を返す。同じunknownの再実行は
+idempotentにする。committed operationをdowngradeせず、存在しないoperationからrowを合成しない。
+`lookup_operation()`はoperation、receipt、checkpoint marker、eventを1つのread snapshotで
+検証する。intent、unknown、欠落、不一致のevidenceは`RecoveryRequired`となり、retry、
+status query、release、acknowledgement、cleanup、backend fallbackの許可にはならない。
+P0は外部effectのexactly-onceを主張しない。
+
+### backup、inspect、restore、Doctorの境界
+
+version-1 backup artifactは従来どおりdatabase/manifestの2-file pairであり、exactな
+field shape、candidate namespace、final identity/content readback、inspectのfail-closed
+動作を維持する。v3 Storeのbackupとinspectでは、4つのworkflow table、checkpoint
+bytes/digest、operation intent、immutable receipt、append-only eventも、1つのSQLite image
+として検証する。v2 manifestをmigration instructionには使わない。
+
+PR #70のrestore ledgerとtombstone protocolは、provider operation用のrestore authority
+として残る。専用のworkflow restore bindingを追加するまで、candidate promotionやprimary
+replacementより前のrestore preflightで、次の両方を拒否する。
+
+- source imageに、空でないworkflow tableが1つでも含まれる場合
+- current primaryに、空でないworkflow tableが1つでも含まれる場合
+
+completed、uncertain、staleのworkflow rowを区別して暗黙に許可することはしない。P0は
+workflow rowをsilentにrestore、replay、rollback、rebindせず、provider-onlyのrestore
+protocolをworkflow namespaceへコピーしない。backupとread-only inspectはevidenceを保持し、
+専用bindingのcontractが実装されるまでrestoreはblockedのままとする。
+
+Doctorはread-onlyのままである。v2は`MIGRATION_REQUIRED`、v3のmissing、unknown、future、
+malformedなworkflow schema/checkpointはrecoveryまたはintegrity observation、pendingまたは
+unknown workflow operationはoperator reviewとして報告する。migration、seed/checkpointの
+合成、provider照会、effect retry、別backendの選択は行わない。
+
+### scopeと後続Issue
+
+Issue #72が所有するのは、v3 Store schema、strict codec、typed opaque value、CAS、workflow
+journal、上記のbackup/inspect/Doctor境界である。WorkflowEngine reducerの配線はIssue #33、
+durable backend/effect adapterはIssue #73、policyとverificationのhandoffはIssue #74が
+担当する。これらの後続Issueを、このStore contractの実装済み範囲として記述しない。
+
 ## 追加の環境検証
 
 - disk full、I/O error、書込み中backup
@@ -287,6 +468,9 @@ canonicalなUTF-8 JSONと末尾のLF 1つで構成する。fieldは次の10個�
 - 取得時のrecovery epoch
 - 取得時のfencing-token floor
 
+Issue #72 headでは、3つのversion値は`store_schema=3`、
+`event_schema_version=2`、`sqlite_user_version=3`になる。PR #70のhistoryにある
+v2 imageは対応する値が`2`、`2`、`2`であり、v3 migrationの入力にはしない。
 duplicate、欠落、未知、非canonical、型不一致のfieldは拒否する。manifestの値を使って
 recovery floorを更新することはない。
 
@@ -352,8 +536,12 @@ observationであり、sourceとして受け付けない。
 - `RESTORE_INCOMPLETE`を含むsourceは受理せず、operator reviewへ送る。
 
 restoreはproviderの実行・status照会、自動retry、backend fallback、terminal resourceのcloseを
-行わない。DDL、`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`は検証するが、
-変更しない。
+行わない。PR #70のrestore contractはhistory上のv2 imageを対象としており、DDL、
+`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`を変更しなかった。Issue #72
+headではv3 image（`STORE_SCHEMA=3`、providerの`EVENT_SCHEMA_VERSION=2`、workflow event
+schema `1`、SQLite `user_version=3`）を検証するが、v2からv3へのmigrationは行わない。上記の
+専用workflow restore bindingができるまでは、workflow rowを含むsourceまたはcurrent primaryを
+restore preflightで拒否する。
 
 既存の9-field `recovery.ledger` version 1は変更しない。別のstrict append-onlyな
 `recovery.tombstones` version 1には、generationごとのsource/old-primary/candidate digest、
@@ -506,6 +694,12 @@ final result、resumeで引き続き必須である。ただしstableなnormal-o
 committed historyの`candidate_digest`だけを書き換えるケースはversion 1の認証対象外であり、
 累積tombstone fenceも変えない。
 
-この変更でDDL、`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`は変えない。
-9-fieldの`recovery.ledger` version 1と、13-fieldの`recovery.tombstones` version 1もwire
-互換性を保つ。stable bindingは既存のrestore eventの`evidence_ref` fieldに保存する。
+PR #70のhistoryにあるbackup/restoreは、当時のprovider v2 imageを対象としており、DDL、
+`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`を変更しなかった。Issue #72は、
+そのhistoryに対する明示的なschema境界である。current headでは`STORE_SCHEMA`とSQLite
+`user_version`を`3`へ変更し、providerの`EVENT_SCHEMA_VERSION=2`を維持し、4つのworkflow
+table用に`WORKFLOW_EVENT_SCHEMA_VERSION=1`を追加する。`BACKUP_MANIFEST_VERSION=1`のfield
+shape、9-fieldの`recovery.ledger` version 1、13-fieldの`recovery.tombstones` version 1は
+wire互換性を保ち、新しいmanifestの値は`3/2/3`になる。stable restore-history bindingは
+既存のrestore eventの`evidence_ref` fieldに保存する。v2 artifactを暗黙にmigrationまたは
+restoreしない。

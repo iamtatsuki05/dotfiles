@@ -198,6 +198,7 @@ class BackupArtifact:
     manifest: BackupManifest
     database_identity: tuple[int, int]
     manifest_identity: tuple[int, int]
+    workflow_row_counts: tuple[int, int, int, int]
 
     def __post_init__(self) -> None:
         database_basename = _require_basename(
@@ -216,6 +217,19 @@ class BackupArtifact:
             raise ValueError("manifest database basename does not match artifact")
         _require_identity(self.database_identity, "database_identity")
         _require_identity(self.manifest_identity, "manifest_identity")
+        if (
+            type(self.workflow_row_counts) is not tuple
+            or len(self.workflow_row_counts) != 4
+            or any(
+                type(value) is not int or not 0 <= value <= _store.SQLITE_INTEGER_MAX
+                for value in self.workflow_row_counts
+            )
+        ):
+            raise ValueError("artifact workflow row counts are invalid")
+
+    @property
+    def workflow_rows_present(self) -> bool:
+        return any(self.workflow_row_counts)
 
 
 def _manifest_values(manifest: BackupManifest) -> dict[str, object]:
@@ -1262,6 +1276,7 @@ class SQLiteBackup:
                 manifest=manifest,
                 database_identity=_identity(database_metadata),
                 manifest_identity=_identity(manifest_metadata),
+                workflow_row_counts=observation.workflow_row_counts,
             )
             return artifact, _PairPrecondition(
                 database_signature=_metadata_signature(database_metadata),
@@ -1741,6 +1756,7 @@ class SQLiteBackup:
                 != observation.floor.recovery_epoch
                 or result.manifest.captured_fencing_token_floor
                 != observation.floor.fencing_token_floor
+                or result.workflow_row_counts != observation.workflow_row_counts
             ):
                 raise BackupIntegrityError(
                     "final backup inspect does not match its publication"

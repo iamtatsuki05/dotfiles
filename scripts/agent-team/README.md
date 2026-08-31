@@ -26,7 +26,9 @@ linked reference documents when changing the implementation or configuration.
   Copilot/OpenCode read-only adapter implementation, snapshot boundary, and recovery.
 - [Coordination store, recovery, backup, and restore](docs/coordination-store.md)
   documents the SQLite schema boundary, stable writer marker, WAL sidecar
-  controller, backup artifact, and candidate-first restore protocol.
+  controller, backup artifact, and candidate-first restore protocol. The
+  current Issue #72 head adds the v3 workflow checkpoint/CAS contract and
+  keeps provider effects outside the Store.
 - [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
   `TaskSpec`, dependency order, and state observation contract without storage
   or workflow execution.
@@ -204,13 +206,27 @@ agent-team status \
 - Claude ACP reuses the ambient `claude.ai` login and receives no API-key
   environment variables. The subscription billing ledger itself has not been
   verified.
+- The current Store requires `STORE_SCHEMA=3` and SQLite `user_version=3`.
+  Provider events remain `EVENT_SCHEMA_VERSION=2`; workflow events use the
+  separate `WORKFLOW_EVENT_SCHEMA_VERSION=1`.
+- A valid v2 Store is reported as `StoreMigrationRequiredError` and Doctor
+  `MIGRATION_REQUIRED`. Malformed or future schema is a different error. Only
+  Issue #48's explicit migration gate may convert v2 to v3; the Store never
+  fills defaults or falls back to another backend.
 - Backup destinations are exact single basenames. A backup is successful only
   after its database/manifest pair passes final identity and content readback;
   partial or mixed pairs are rejected. The restore-candidate namespace
   `.coordination.sqlite3.restore-` is reserved and rejected as a destination.
+- Version-1 backup/inspect keeps its two-file manifest shape and now records
+  version values `3/2/3` (Store/provider events/SQLite user version). It
+  preserves and validates workflow rows as part of the image.
 - Restore is candidate-first and provider-free. Resume begins with a
   tombstone-then-ledger durability barrier and never silently repairs logs or
   retries an external effect.
+- Until a dedicated workflow restore binding exists, source or current images
+  containing workflow rows are rejected before promotion/replacement.
+- The P0 Store does not wire the WorkflowEngine reducer or external effect
+  adapters, and it makes no external-effect exactly-once claim.
 
 See [Architecture](docs/architecture.md) for the complete boundary and failure
 flow.

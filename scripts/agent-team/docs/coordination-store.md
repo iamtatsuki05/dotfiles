@@ -66,6 +66,214 @@ The SQLite spike used Python SQLite 3.53.1, `WAL`, `synchronous=FULL`, `BEGIN IM
 - Back up through SQLite's backup API. Migration and restore must be explicit operations with their own version and rollback checks.
 - Do not fall back to atomic files or another backend when SQLite is unavailable, locked beyond the allowed timeout, corrupt, or version-incompatible.
 
+## Workflow checkpoint store (Issue #72)
+
+Issue #72 adds the durable workflow checkpoint and compare-and-swap (CAS) contract
+to the SQLite store. This section describes the current P0 head; it is not a
+claim that the later WorkflowEngine or external-effect adapters are complete.
+
+### Version boundary and migration
+
+The version boundary is explicit:
+
+- `STORE_SCHEMA=3` is required in `PRAGMA user_version`, `store_meta`, and the
+  exact schema validator.
+- The existing provider journal remains `EVENT_SCHEMA_VERSION=2`.
+  Workflow journal rows use the separate `WORKFLOW_EVENT_SCHEMA_VERSION=1`.
+- A fresh v3 database creates the existing provider tables and exactly these
+  four workflow tables: `workflow_checkpoints`, `workflow_operations`,
+  `workflow_receipts`, and `workflow_events`.
+- `BACKUP_MANIFEST_VERSION=1` keeps its ten-field wire shape. New manifests
+  record `store_schema=3`, `event_schema_version=2`, and
+  `sqlite_user_version=3`.
+
+An existing database is classified before normal initialization. Only an
+otherwise valid, exact v2 database is reported as
+`StoreMigrationRequiredError`, a typed `StoreSchemaError` subclass; the
+read-only Doctor reports the same condition as `MIGRATION_REQUIRED`.
+Malformed, mixed, missing, unknown, or future schema objects remain distinct
+schema/integrity errors. The Store does not add columns, fill defaults, create
+an empty checkpoint, or silently accept a v2 image. A v2 manifest/database
+pair is likewise rejected by v3 `inspect()` and `restore()`.
+
+Issue #48 owns the explicit v2-to-v3 migration gate. Its migration ID,
+quiescence, backup, epoch/fencing, candidate validation, cutover, and readback
+must complete before the v3 Store accepts the resulting artifact. The P0 Store
+does not infer or perform that migration, and it never falls back to another
+backend.
+
+### Checkpoint and typed composition seam
+
+`WorkflowCheckpointV4` is a fixed, strict value. It binds the root and
+workspace/config/state-root identity, Run and Main terminal, serial workflow
+state, workflow/task sequence projections, assignment, Delivery and message
+order, reply/read/release state, policy/review/verification references, the
+last operation, and `updated_ns`. The payload is canonical UTF-8 JSON with a
+fixed field set. Its `checkpoint_digest` is computed over the canonical body
+without the digest field, using the dedicated v4 domain; it is stored as
+`sha256:<64 lowercase hex>`. Scalar columns and payload bytes are checked in
+both directions on write and load. Device/inode plus a content digest bind the
+configuration; a canonical pathname alone is not authority.
+
+The fresh-start boundary is represented by a separate strict
+`WorkflowRootSeed`, not by an incomplete v4 checkpoint. A start operation has a
+caller-supplied stable operation ID and expected workflow sequence zero. The
+seed has no Run, Main terminal, task, assignment, Delivery, or authority and
+is valid only in its dedicated seed codec. The seed, start intent, and first
+workflow event are committed together. Only a verified start receipt can
+promote that row once to a full checkpoint; a partial seed/intent/event is
+`RecoveryRequired`. `load_checkpoint()` returns `None` only for a missing root
+at a fresh start. A full checkpoint starts at workflow sequence 2; sequence 0
+and 1 belong only to the strict seed protocol.
+
+The public composition seam is typed and opaque:
+
+- `WorkflowCheckpointDraft` is reducer input. The Store supplies the version,
+  timestamp, canonical bytes, and digest; caller-provided digest or timestamp
+  is not trusted.
+- `OperationHandle` is a Store-issued frozen value bound to its Store instance,
+  root, stable operation ID, sequence, and owner/fence identity. It does not
+  expose a connection, row, lock, or mutable state, and it cannot be recreated
+  from a dictionary, copy, pickle, or synthetic object.
+- `DurableReceipt` is an immutable value issued by a trusted effect adapter.
+  P0 does not expose a JSON/status/body factory for forging one and does not
+  call a provider, Orca, Herdr, terminal, or backend.
+- `WorkflowStorePort` exposes load, begin, effect commit, transition commit,
+  lookup, and unknown marking. It returns observations only, never raw result
+  bodies, provider payloads, SQL rows, or SQLite connections.
+
+`load_checkpoint()` returns a durable `WorkflowRootSeed` while start is
+unresolved and `WorkflowCheckpointV4` after the verified start commit. It
+returns `None` only for an absent root. A seed is an observation, not effect
+authority.
+`lookup_operation()` returns only a verified committed lookup; absent, intent,
+and unknown operations raise `RecoveryRequired` instead of returning `None`.
+
+All identifiers, enum values, integer ranges, nullability, nested cardinality,
+Delivery order, and opaque references are fail-closed. Prompt, reply, event,
+terminal output, provider response, credential, token, environment, and other
+raw bodies are not persisted.
+
+### Four workflow tables and transaction rules
+
+| Table | Durable responsibility |
+|---|---|
+| `workflow_checkpoints` | One current aggregate per root, including canonical checkpoint bytes/digest and scalar projections |
+| `workflow_operations` | Stable operation intent, expected sequence pair, identity, and `INTENT`/`UNKNOWN_EFFECT`/`COMMITTED` lifecycle |
+| `workflow_receipts` | Immutable, identity-bound verified receipt; it cannot exist as a success without its operation and checkpoint commit |
+| `workflow_events` | Append-only workflow journal with its own event schema, workflow sequence, and canonical post-mutation checkpoint/seed snapshot; its ID is not a CAS value |
+
+Each workflow event stores `checkpoint_bytes`, the canonical post-mutation
+checkpoint or seed bytes, and its self-excluding digest. Image validation decodes every historical
+snapshot and checks its root, workflow/task sequence, state, clock, operation,
+receipt, evidence, and adjacent transition against the current aggregate and
+the other journal rows. This proves semantic consistency inside the validated
+SQLite image. It is not an external signature against an actor that can rewrite
+the entire database and every digest coherently; artifact identity and content
+binding remain the backup/migration authority.
+The stored `event_digest` binds every other event field, including the audit
+`workflow_event_id`, and the canonical snapshot under
+`WORKFLOW_EVENT_DIGEST_DOMAIN`, including transition actor, request, and
+evidence identity.
+
+The provider tables and their provider status constraints remain separate. A
+workflow mutation checks the root and expected workflow sequence in one
+`BEGIN IMMEDIATE` transaction. Task-policy sequence is an authority-issued
+expected/next pair; P0 compares the pair and does not calculate or reissue the
+policy sequence. The first prompt accepts only `None -> 1`; a prompt for an
+existing task preserves the complete task-policy reference, and every other
+effect action has a null next-task sequence. Only an authority transition may
+advance an existing task sequence. The checkpoint's task
+reference/digest/sequence projection is atomic with the workflow row. A full
+state in another Store is not claimed to be atomic until the private adapter
+owned by Issue #74 exists.
+
+`begin_operation()` commits the intent, checkpoint marker, and first journal
+event together. `commit_effect()` commits the verified receipt, next
+checkpoint, operation status, and second journal event together. A policy or
+verification transition uses the same checkpoint/event CAS without an
+external effect. Duplicate operation/effect identity, stale sequence, foreign
+Run/Task/Dispatch/terminal, old attempt, wrong generation, or wrong fence is
+rejected before any external effect. `commit_effect()` rechecks the current
+recovery epoch and fencing-token floor in its commit transaction; a fence that
+advanced after begin is recorded as unknown/recovery, never as a committed
+stale effect. Policy and verification transitions preserve assignment,
+Delivery, reply/read/release markers, the non-target authority, and an
+unchanged task-policy reference exactly. The generic P0 transition also
+preserves workflow state; Issue #74 must provide typed decision evidence and a
+separate validated contract before any review/verification state edge is
+accepted.
+
+A Delivery produced by `wait` always begins as `PENDING` with no ACK operation.
+Only the matching ACK begin transaction may change it to
+`ACK_INTENT/<operation_id>`. A finite `WORKER_DONE/SUCCEEDED` observation maps
+to `WORKER_DONE`; `WORKER_DONE/FAILED` maps to a committed `FAILED` checkpoint,
+not success or unknown. While its assignment and failed Delivery remain, normal
+effect actions fail closed. A generic transition may record authority only
+while preserving the current state; leaving `FAILED` requires a separate
+explicit recovery contract that does not reuse the failed assignment or
+Delivery.
+
+For prompt, `receipt.result_digest` must equal the canonical assignment digest.
+For wait with a Delivery, it must equal `delivery_content_digest`, computed
+from Delivery ID, consumer generation, ordered message IDs, and ordered event
+projections under `DELIVERY_DIGEST_DOMAIN`. ACK lifecycle fields and the digest
+field itself are excluded so ACK begin preserves the immutable Delivery-content
+identity. A timeout has no Delivery and instead requires `result_kind="timeout"`
+and the fixed `wait_timeout_digest()` under `WAIT_TIMEOUT_DIGEST_DOMAIN`.
+
+Doctor does not merge provider and workflow operation namespaces. If the same
+operation ID exists in both tables, it returns `UNREADABLE` with high
+confidence and requires operator review.
+
+An effect followed by response loss, a missing receipt, or an uncertain commit
+is never treated as a retryable ordinary conflict. `mark_unknown()` stores
+`UNKNOWN_EFFECT`, `RECOVERY_REQUIRED`, the last-operation marker, and its
+journal event atomically, and returns an immutable `UnknownCommit`. Repeating
+the exact unknown is idempotent; a committed operation cannot be downgraded,
+and an absent operation cannot be synthesized. `lookup_operation()` verifies
+the operation, receipt, checkpoint marker, and event in one read snapshot.
+Intent, unknown, absent, or mismatched evidence returns `RecoveryRequired` and
+does not authorize retry, status query, release, acknowledgement, cleanup, or
+backend fallback. P0 makes no external-effect exactly-once claim.
+
+### Backup, inspect, restore, and Doctor boundary
+
+The version-1 backup artifact remains the same two-file database/manifest pair
+and keeps its exact field shape, candidate namespace, final identity/content
+readback, and inspect fail-closed behavior. In the v3 Store, backup and inspect
+also validate the four workflow tables, checkpoint bytes/digest, operation
+intent, immutable receipt, and append-only event as one SQLite image. They do
+not use a v2 manifest as a migration instruction.
+
+The PR #70 restore ledger and tombstone protocol remains the provider-operation
+restore authority. Until a dedicated workflow restore binding is introduced,
+restore preflight rejects both of these cases before candidate promotion or
+primary replacement:
+
+- the source image contains any non-empty workflow table; or
+- the current primary contains any non-empty workflow table.
+
+This is deliberately fail-closed for completed, uncertain, and stale workflow
+rows alike. P0 does not silently restore, replay, roll back, or rebind workflow
+rows, and it does not copy the provider-only restore protocol into the workflow
+namespace. Backup and read-only inspect preserve the evidence; restore remains
+blocked until its dedicated binding contract is implemented.
+
+Doctor remains read-only. It reports v2 as `MIGRATION_REQUIRED`; missing,
+unknown, future, or malformed v3 workflow schema/checkpoint state as a recovery
+or integrity observation; and pending or unknown workflow operations as
+operator review. It does not migrate, synthesize a seed/checkpoint, query a
+provider, retry an effect, or choose another backend.
+
+### Scope and next issues
+
+Issue #72 owns the v3 Store schema, strict codecs, typed opaque values, CAS,
+workflow journal, and the backup/inspect/Doctor boundary above. WorkflowEngine
+reducer wiring is Issue #33. The durable backend/effect adapter is Issue #73;
+policy and verification handoff is Issue #74. Those follow-up issues must not
+be described as implemented by this Store contract.
+
 ## Additional environment validation
 
 - Disk-full, I/O error, and long-running concurrent backup cases.
@@ -303,8 +511,12 @@ the Store-owned image reader. The manifest is canonical UTF-8 JSON followed by
 one LF and has ten fixed fields: its version and database basename, the Store
 and event schema versions, SQLite `user_version`, integrity result, database
 size and SHA-256 digest, and the captured recovery epoch and fencing-token
-floor. Duplicate, missing, unknown, non-canonical, or incorrectly typed fields
-are rejected. The manifest never supplies a recovery-floor mutation.
+floor. On the Issue #72 head, the three version values are
+`store_schema=3`, `event_schema_version=2`, and `sqlite_user_version=3`.
+The historical PR #70 v2 image used the corresponding values `2`, `2`, and
+`2`; that old pair is not a v3 migration input. Duplicate, missing, unknown,
+non-canonical, or incorrectly typed fields are rejected. The manifest never
+supplies a recovery-floor mutation.
 
 The destination name must be one exact basename. Path components, reserved
 names, the restore-candidate namespace `.coordination.sqlite3.restore-`, and
@@ -380,8 +592,14 @@ is outside this ten-status policy.
 - A source containing `RESTORE_INCOMPLETE` is rejected for operator review.
 
 Restore performs no provider execution or status query, automatic retry,
-backend fallback, or terminal-resource close. It validates but does not change
-the DDL, `STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`.
+backend fallback, or terminal-resource close. The PR #70 restore contract was
+defined against its historical v2 image and did not change the DDL,
+`STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`. On the Issue
+#72 head, restore preflight validates the v3 image (`STORE_SCHEMA=3`, provider
+`EVENT_SCHEMA_VERSION=2`, workflow event schema `1`, and SQLite
+`user_version=3`) and still does not perform a v2-to-v3 migration. A source or
+current primary containing workflow rows is rejected until the dedicated
+workflow restore binding described above exists.
 
 The existing nine-field `recovery.ledger` version 1 remains unchanged. A
 separate strict append-only `recovery.tombstones` version 1 records each
@@ -555,7 +773,14 @@ stable normal-open guarantee: a candidate-digest-only rewrite of a committed
 history is outside version-1 authentication and does not alter the cumulative
 tombstone fence.
 
-This work does not change the DDL, `STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or
-SQLite `user_version`. The nine-field `recovery.ledger` version 1 and the
-thirteen-field `recovery.tombstones` version 1 remain wire-compatible; the
-stable binding is stored in the existing restore-event `evidence_ref` field.
+The historical PR #70 backup/restore work did not change the DDL,
+`STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`: it targeted
+the then-current v2 provider image. Issue #72 is the explicit schema boundary
+after that history. Its current head changes `STORE_SCHEMA` and SQLite
+`user_version` to `3`, keeps provider `EVENT_SCHEMA_VERSION=2`, and introduces
+`WORKFLOW_EVENT_SCHEMA_VERSION=1` for the four workflow tables. The
+`BACKUP_MANIFEST_VERSION=1` field shape, the nine-field `recovery.ledger` v1,
+and the thirteen-field `recovery.tombstones` v1 remain wire-compatible; new
+manifests carry values `3/2/3`. The stable restore-history binding remains in
+the existing restore-event `evidence_ref` field. No v2 artifact is silently
+migrated or restored.

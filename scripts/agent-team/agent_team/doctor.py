@@ -41,6 +41,7 @@ ObservedState = Literal[
     "WAL_PENDING",
     "RESTORE_INCOMPLETE",
     "UNSAFE_SIDECAR",
+    "MIGRATION_REQUIRED",
     "SCHEMA_INVALID",
     "UNREADABLE",
     "NOT_FOUND",
@@ -110,6 +111,7 @@ _OBSERVED_STATES: Final[tuple[ObservedState, ...]] = (
     "WAL_PENDING",
     "RESTORE_INCOMPLETE",
     "UNSAFE_SIDECAR",
+    "MIGRATION_REQUIRED",
     "SCHEMA_INVALID",
     "UNREADABLE",
     "NOT_FOUND",
@@ -3226,6 +3228,46 @@ class ReadOnlyDoctor:
                 connection.row_factory = sqlite3.Row
                 _store._validate_existing_schema(connection)
                 _store._validate_existing_image_high_water(connection)
+                workflow_row = connection.execute(
+                    "SELECT status FROM workflow_operations WHERE operation_id = ?",
+                    (operation_id,),
+                ).fetchone()
+                provider_row = connection.execute(
+                    "SELECT 1 FROM operations WHERE operation_id = ?",
+                    (operation_id,),
+                ).fetchone()
+                if workflow_row is not None and provider_row is not None:
+                    _assert_stable(filesystem, before)
+                    return _report(
+                        "UNREADABLE",
+                        "HIGH",
+                        None,
+                        "OPERATOR_REVIEW",
+                    )
+                if workflow_row is not None and workflow_row["status"] in {
+                    "INTENT",
+                    "UNKNOWN_EFFECT",
+                }:
+                    _assert_stable(filesystem, before)
+                    workflow_state: ObservedState = (
+                        "INTENT_ONLY"
+                        if workflow_row["status"] == "INTENT"
+                        else "UNKNOWN_EFFECT"
+                    )
+                    return _report(
+                        workflow_state,
+                        "HIGH",
+                        None,
+                        "OPERATOR_REVIEW",
+                    )
+                if workflow_row is not None:
+                    _assert_stable(filesystem, before)
+                    return _report(
+                        "UNREADABLE",
+                        "HIGH",
+                        None,
+                        "OPERATOR_REVIEW",
+                    )
                 observation = _read_existing_operation_for_observation(
                     connection,
                     operation_id,
@@ -3347,6 +3389,14 @@ class ReadOnlyDoctor:
             except StateFilesystemError:
                 return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
             return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
+        except _store.StoreMigrationRequiredError as error:
+            if _has_cleanup_uncertainty(error):
+                raise
+            try:
+                _assert_stable(filesystem, before)
+            except StateFilesystemError:
+                return _report("UNREADABLE", "LOW", None, "OPERATOR_REVIEW")
+            return _report("MIGRATION_REQUIRED", "HIGH", None, "INSPECT_SCHEMA")
         except _store.StoreSchemaError as error:
             if _has_cleanup_uncertainty(error):
                 raise

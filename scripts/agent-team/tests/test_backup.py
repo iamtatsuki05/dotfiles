@@ -195,9 +195,9 @@ def _valid_manifest(
     return BackupManifest(
         version=BACKUP_MANIFEST_VERSION,
         database_basename=name,
-        store_schema=2,
+        store_schema=3,
         event_schema_version=2,
-        sqlite_user_version=2,
+        sqlite_user_version=3,
         integrity_check="ok",
         database_size=size,
         database_digest=digest,
@@ -212,7 +212,7 @@ class BackupManifestTest(unittest.TestCase):
         raw = _encode_manifest(manifest)
         self.assertEqual(
             b'{"version":1,"database_basename":"snapshot",'
-            b'"store_schema":2,"event_schema_version":2,"sqlite_user_version":2,'
+            b'"store_schema":3,"event_schema_version":2,"sqlite_user_version":3,'
             b'"integrity_check":"ok","database_size":1,'
             b'"database_digest":"sha256:' + b"a" * 64 + b'",'
             b'"captured_recovery_epoch":0,"captured_fencing_token_floor":0}\n',
@@ -246,9 +246,9 @@ class BackupManifestTest(unittest.TestCase):
         base = {
             "version": 1,
             "database_basename": "snapshot",
-            "store_schema": 2,
+            "store_schema": 3,
             "event_schema_version": 2,
-            "sqlite_user_version": 2,
+            "sqlite_user_version": 3,
             "integrity_check": "ok",
             "database_size": 1,
             "database_digest": "sha256:" + "a" * 64,
@@ -260,9 +260,9 @@ class BackupManifestTest(unittest.TestCase):
             ("database_basename", "../snapshot"),
             ("database_basename", "coordination.sqlite3"),
             ("database_basename", "a" * 247),
-            ("store_schema", 3),
+            ("store_schema", 2),
             ("event_schema_version", 3),
-            ("sqlite_user_version", 3),
+            ("sqlite_user_version", 2),
             ("integrity_check", "OK"),
             ("database_size", -1),
             ("database_digest", "sha256:" + "A" * 64),
@@ -1797,7 +1797,7 @@ class BackupManifestCrossCheckTest(unittest.TestCase):
             database = root / "snapshot"
             fd = os.open(database, os.O_RDWR)
             try:
-                os.pwrite(fd, b"\x00\x00\x00\x03", 60)
+                os.pwrite(fd, b"\x00\x00\x00\x04", 60)
             finally:
                 os.close(fd)
             _rewrite_manifest_digest(root, "snapshot")

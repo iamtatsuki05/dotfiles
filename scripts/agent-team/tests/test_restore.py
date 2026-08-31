@@ -599,7 +599,7 @@ def _assert_captured_candidate_result(
 
     candidate_snapshot = _read_only_sqlite_snapshot(candidate_path)
     candidate_meta = dict(candidate_snapshot["store_meta"])
-    testcase.assertEqual(2, candidate_snapshot["user_version"])
+    testcase.assertEqual(3, candidate_snapshot["user_version"])
     testcase.assertEqual(
         captured.floor.recovery_epoch,
         candidate_meta["recovery_epoch"],
@@ -2681,9 +2681,9 @@ class RestoreIntegrationTest(unittest.TestCase):
             old_manifest_value = BackupManifest(
                 version=1,
                 database_basename="old",
-                store_schema=2,
+                store_schema=3,
                 event_schema_version=2,
-                sqlite_user_version=2,
+                sqlite_user_version=3,
                 integrity_check="ok",
                 database_size=old_observation.size,
                 database_digest=old_observation.digest,
@@ -2704,6 +2704,7 @@ class RestoreIntegrationTest(unittest.TestCase):
                     old_manifest.stat().st_dev,
                     old_manifest.stat().st_ino,
                 ),
+                workflow_row_counts=old_observation.workflow_row_counts,
             )
             primary_before = (root / "coordination.sqlite3").read_bytes()
             candidate_path = root / _candidate_basename(old_artifact)

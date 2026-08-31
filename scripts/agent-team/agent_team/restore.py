@@ -402,6 +402,8 @@ def _assert_apply_results_match(
         != actual_observation.max_fencing_token
         or expected_observation.last_clock_ns != actual_observation.last_clock_ns
         or expected_observation.operations != actual_observation.operations
+        or expected_observation.workflow_row_counts
+        != actual_observation.workflow_row_counts
         or not _identities_equal(
             expected_observation.identities,
             actual_observation.identities,
@@ -422,6 +424,7 @@ def _assert_source_artifact(
         or observation.floor.recovery_epoch != manifest.captured_recovery_epoch
         or observation.floor.fencing_token_floor
         != manifest.captured_fencing_token_floor
+        or observation.workflow_row_counts != artifact.workflow_row_counts
     ):
         raise RestoreReviewRequiredError("backup source image changed")
 
@@ -2218,7 +2221,11 @@ class BackupRestore:
         actor = _identifier(actor, "actor")
         audit_ref = _identifier(audit_ref, "audit_ref")
         backup = self._backup()
-        self._inspect_artifact(backup, artifact)
+        artifact = self._inspect_artifact(backup, artifact)
+        if artifact.workflow_rows_present:
+            raise RestoreReviewRequiredError(
+                "restore source contains workflow state without a restore binding"
+            )
         candidate_name = _candidate_basename(artifact)
         allowlist = self._allowlist(artifact, candidate_name)
         controller = self._controller()
@@ -2232,7 +2239,19 @@ class BackupRestore:
         with self._session_lifecycle(session):
             self._fault("after_quiescence_call")
             owner = session.issue_owner()
-            self._inspect_artifact(backup, artifact)
+            artifact = self._inspect_artifact(backup, artifact)
+            if artifact.workflow_rows_present:
+                raise RestoreReviewRequiredError(
+                    "restore source contains workflow state without a restore binding"
+                )
+            primary_observation = self._inspect_primary_observation(
+                owner=owner,
+                authority=authority,
+            )
+            if primary_observation.workflow_rows_present:
+                raise RestoreReviewRequiredError(
+                    "restore primary contains workflow state without a restore binding"
+                )
             resume_state = ledger.read_for_resume(owner)
             if type(resume_state) is RestoreTombstoneOrphan:
                 normal_state = self._normal_open_state_before_generation(

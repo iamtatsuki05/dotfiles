@@ -48,7 +48,11 @@ from agent_team.recovery import (
     _encode_tombstone,
 )
 from agent_team.restore import BackupRestore, _candidate_basename
-from agent_team.store import WRITER_MARKER_CLEAN_CONTENT, CoordinationStore
+from agent_team.store import (
+    WRITER_MARKER_CLEAN_CONTENT,
+    CoordinationStore,
+    StoreMigrationRequiredError,
+)
 from agent_team.wal import WalSidecarController
 
 MARKER_NAME = "writer.marker"
@@ -56,9 +60,323 @@ LEDGER_NAME = "recovery.ledger"
 TOMBSTONE_NAME = RECOVERY_TOMBSTONES_BASENAME
 
 
+# Keep this fixture independent from the current provider/workflow DDL.  The
+# Doctor migration classification must be exercised against the complete
+# frozen provider schema that was shipped as store schema v2, not a v3 image
+# with only a version marker changed.
+_FROZEN_V2_SCHEMA_SQL = """
+CREATE TABLE store_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value INTEGER NOT NULL CHECK(
+        typeof(value) = 'integer' AND value BETWEEN 0 AND 9223372036854775807
+    )
+);
+CREATE TABLE operations (
+    operation_id TEXT NOT NULL PRIMARY KEY CHECK(
+        typeof(operation_id) = 'text' AND length(operation_id) BETWEEN 1 AND 128
+    ),
+    effect_key TEXT NOT NULL UNIQUE CHECK(
+        typeof(effect_key) = 'text' AND length(effect_key) BETWEEN 1 AND 128
+    ),
+    status TEXT NOT NULL CHECK(
+        typeof(status) = 'text' AND status IN (
+            'INTENT', 'FENCE_PENDING', 'FENCE_RESERVATION_STARTED', 'CLAIMED',
+            'EFFECT_PREPARED',
+            'UNKNOWN_EFFECT', 'UNKNOWN', 'RECEIPTED', 'COMPLETED', 'CLEANED',
+            'RESTORE_INCOMPLETE'
+        )
+    ),
+    provider_id TEXT CHECK(
+        provider_id IS NULL OR (
+            typeof(provider_id) = 'text' AND length(provider_id) BETWEEN 1 AND 128
+        )
+    ),
+    current_attempt INTEGER NOT NULL CHECK(
+        typeof(current_attempt) = 'integer'
+        AND current_attempt BETWEEN 0 AND 9223372036854775807
+    ),
+    recovery_epoch INTEGER NOT NULL CHECK(
+        typeof(recovery_epoch) = 'integer'
+        AND recovery_epoch BETWEEN 0 AND 9223372036854775807
+    ),
+    created_ns INTEGER NOT NULL CHECK(
+        typeof(created_ns) = 'integer'
+        AND created_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    updated_ns INTEGER NOT NULL CHECK(
+        typeof(updated_ns) = 'integer'
+        AND updated_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    CHECK(status = 'INTENT' OR (provider_id IS NOT NULL AND current_attempt >= 1))
+);
+CREATE TABLE operation_attempts (
+    operation_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK(
+        typeof(attempt) = 'integer'
+        AND attempt BETWEEN 0 AND 9223372036854775807
+    ),
+    owner TEXT CHECK(
+        owner IS NULL OR (
+            typeof(owner) = 'text' AND length(owner) BETWEEN 1 AND 128
+        )
+    ),
+    provider_id TEXT CHECK(
+        provider_id IS NULL OR (
+            typeof(provider_id) = 'text' AND length(provider_id) BETWEEN 1 AND 128
+        )
+    ),
+    lease_epoch INTEGER NOT NULL DEFAULT 0 CHECK(
+        typeof(lease_epoch) = 'integer'
+        AND lease_epoch BETWEEN 0 AND 9223372036854775807
+    ),
+    fencing_token INTEGER NOT NULL DEFAULT 0 CHECK(
+        typeof(fencing_token) = 'integer'
+        AND fencing_token BETWEEN 0 AND 9223372036854775807
+    ),
+    lease_heartbeat_ns INTEGER CHECK(
+        lease_heartbeat_ns IS NULL OR (
+            typeof(lease_heartbeat_ns) = 'integer'
+            AND lease_heartbeat_ns BETWEEN 0 AND 9223372036854775807
+        )
+    ),
+    lease_expires_ns INTEGER CHECK(
+        lease_expires_ns IS NULL OR (
+            typeof(lease_expires_ns) = 'integer'
+            AND lease_expires_ns BETWEEN 0 AND 9223372036854775807
+        )
+    ),
+    fence_proof_version INTEGER CHECK(
+        fence_proof_version IS NULL OR (
+            typeof(fence_proof_version) = 'integer'
+            AND fence_proof_version BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    fence_proof_ref TEXT CHECK(
+        fence_proof_ref IS NULL OR (
+            typeof(fence_proof_ref) = 'text'
+            AND length(fence_proof_ref) BETWEEN 1 AND 128
+        )
+    ),
+    effect_started_ns INTEGER CHECK(
+        effect_started_ns IS NULL OR (
+            typeof(effect_started_ns) = 'integer'
+            AND effect_started_ns BETWEEN 0 AND 9223372036854775807
+        )
+    ),
+    fence_started_ns INTEGER CHECK(
+        fence_started_ns IS NULL OR (
+            typeof(fence_started_ns) = 'integer'
+            AND fence_started_ns BETWEEN 0 AND 9223372036854775807
+        )
+    ),
+    CHECK(
+        (attempt = 0 AND owner IS NULL AND provider_id IS NULL
+         AND lease_epoch = 0 AND fencing_token = 0 AND lease_heartbeat_ns IS NULL
+         AND lease_expires_ns IS NULL AND fence_proof_version IS NULL
+         AND fence_proof_ref IS NULL AND effect_started_ns IS NULL
+         AND fence_started_ns IS NULL)
+        OR (attempt >= 1 AND owner IS NOT NULL AND provider_id IS NOT NULL
+            AND fencing_token >= 1 AND lease_heartbeat_ns IS NOT NULL
+            AND lease_expires_ns IS NOT NULL
+            AND lease_expires_ns > lease_heartbeat_ns)
+    ),
+    CHECK((fence_proof_version IS NULL) = (fence_proof_ref IS NULL)),
+    PRIMARY KEY(operation_id, attempt),
+    FOREIGN KEY(operation_id) REFERENCES operations(operation_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+CREATE TABLE effect_receipts (
+    operation_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK(
+        typeof(attempt) = 'integer'
+        AND attempt BETWEEN 1 AND 9223372036854775807
+    ),
+    effect_key TEXT NOT NULL CHECK(
+        typeof(effect_key) = 'text' AND length(effect_key) BETWEEN 1 AND 128
+    ),
+    provider_effect_id TEXT NOT NULL CHECK(
+        typeof(provider_effect_id) = 'text'
+        AND length(provider_effect_id) BETWEEN 1 AND 128
+    ),
+    provider_status TEXT NOT NULL CHECK(
+        typeof(provider_status) = 'text'
+        AND provider_status = 'COMPLETED'
+    ),
+    provider_id TEXT NOT NULL CHECK(
+        typeof(provider_id) = 'text' AND length(provider_id) BETWEEN 1 AND 128
+    ),
+    owner TEXT NOT NULL CHECK(
+        typeof(owner) = 'text' AND length(owner) BETWEEN 1 AND 128
+    ),
+    fencing_token INTEGER NOT NULL CHECK(
+        typeof(fencing_token) = 'integer'
+        AND fencing_token BETWEEN 1 AND 9223372036854775807
+    ),
+    lease_epoch INTEGER NOT NULL CHECK(
+        typeof(lease_epoch) = 'integer'
+        AND lease_epoch BETWEEN 0 AND 9223372036854775807
+    ),
+    received_ns INTEGER NOT NULL CHECK(
+        typeof(received_ns) = 'integer'
+        AND received_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    proof_version INTEGER NOT NULL CHECK(
+        typeof(proof_version) = 'integer'
+        AND proof_version BETWEEN 1 AND 9223372036854775807
+    ),
+    proof_ref TEXT NOT NULL CHECK(
+        typeof(proof_ref) = 'text' AND length(proof_ref) BETWEEN 1 AND 128
+    ),
+    PRIMARY KEY(operation_id, attempt),
+    UNIQUE(effect_key, provider_effect_id),
+    FOREIGN KEY(operation_id, attempt)
+        REFERENCES operation_attempts(operation_id, attempt)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+CREATE TABLE transition_events (
+    event_id INTEGER PRIMARY KEY CHECK(
+        typeof(event_id) = 'integer'
+        AND event_id BETWEEN 1 AND 9223372036854775807
+    ),
+    event_schema_version INTEGER NOT NULL CHECK(
+        typeof(event_schema_version) = 'integer' AND event_schema_version = 2
+    ),
+    operation_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK(
+        typeof(attempt) = 'integer'
+        AND attempt BETWEEN 0 AND 9223372036854775807
+    ),
+    from_status TEXT CHECK(
+        from_status IS NULL OR (
+            typeof(from_status) = 'text' AND from_status IN (
+                'INTENT', 'FENCE_PENDING', 'FENCE_RESERVATION_STARTED', 'CLAIMED',
+                'EFFECT_PREPARED',
+                'UNKNOWN_EFFECT', 'UNKNOWN', 'RECEIPTED', 'COMPLETED', 'CLEANED',
+                'RESTORE_INCOMPLETE'
+            )
+        )
+    ),
+    to_status TEXT NOT NULL CHECK(
+        typeof(to_status) = 'text' AND to_status IN (
+            'INTENT', 'FENCE_PENDING', 'FENCE_RESERVATION_STARTED', 'CLAIMED',
+            'EFFECT_PREPARED',
+            'UNKNOWN_EFFECT', 'UNKNOWN', 'RECEIPTED', 'COMPLETED', 'CLEANED',
+            'RESTORE_INCOMPLETE'
+        )
+    ),
+    kind TEXT NOT NULL CHECK(
+        typeof(kind) = 'text' AND kind IN (
+            'intent', 'claim', 'heartbeat', 'reclaim', 'fence', 'effect',
+            'unknown_effect', 'receipt', 'complete', 'recover', 'force_recover',
+            'resolve_unknown', 'rebind_receipt',
+            'cleaned', 'checkpoint', 'cleanup', 'restore'
+        )
+    ),
+    actor TEXT NOT NULL CHECK(
+        typeof(actor) = 'text' AND length(actor) BETWEEN 1 AND 128
+    ),
+    clock_ns INTEGER NOT NULL CHECK(
+        typeof(clock_ns) = 'integer'
+        AND clock_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    reason_code TEXT NOT NULL CHECK(
+        typeof(reason_code) = 'text' AND reason_code IN (
+            'intent_created', 'lease_claimed', 'lease_heartbeat',
+            'lease_reclaimed', 'fence_activated', 'fence_reservation_started',
+            'effect_prepared',
+            'effect_unknown', 'receipt_recorded', 'operation_completed',
+            'recover', 'force_recover', 'resolve_unknown', 'rebind_receipt',
+            'cleaned', 'checkpoint', 'cleanup', 'restore'
+        )
+    ),
+    evidence_ref TEXT CHECK(
+        evidence_ref IS NULL OR (
+            typeof(evidence_ref) = 'text'
+            AND length(evidence_ref) = 71
+            AND substr(evidence_ref, 1, 7) = 'sha256:'
+            AND substr(evidence_ref, 8) NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    CHECK(
+        (kind = 'intent' AND reason_code = 'intent_created')
+        OR (kind = 'claim' AND reason_code = 'lease_claimed')
+        OR (kind = 'heartbeat' AND reason_code = 'lease_heartbeat')
+        OR (kind = 'reclaim' AND reason_code = 'lease_reclaimed')
+        OR (kind = 'fence' AND reason_code = 'fence_activated')
+        OR (kind = 'fence' AND reason_code = 'fence_reservation_started')
+        OR (kind = 'effect' AND reason_code = 'effect_prepared')
+        OR (kind = 'unknown_effect' AND reason_code = 'effect_unknown')
+        OR (kind = 'receipt' AND reason_code = 'receipt_recorded')
+        OR (kind = 'complete' AND reason_code = 'operation_completed')
+        OR (kind = 'recover' AND reason_code = 'recover')
+        OR (kind = 'force_recover' AND reason_code = 'force_recover')
+        OR (kind = 'resolve_unknown' AND reason_code = 'resolve_unknown')
+        OR (kind = 'rebind_receipt' AND reason_code = 'rebind_receipt')
+        OR (kind = 'cleaned' AND reason_code = 'cleaned')
+        OR (kind = 'checkpoint' AND reason_code = 'checkpoint')
+        OR (kind = 'cleanup' AND reason_code = 'cleanup')
+        OR (kind = 'restore' AND reason_code = 'restore')
+    ),
+    FOREIGN KEY(operation_id, attempt)
+        REFERENCES operation_attempts(operation_id, attempt)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+CREATE INDEX operations_status_idx ON operations(status);
+CREATE INDEX transition_events_operation_idx ON transition_events(operation_id, event_id);
+CREATE INDEX transition_events_attempt_idx ON transition_events(operation_id, attempt, event_id);
+CREATE TRIGGER transition_events_no_update
+BEFORE UPDATE ON transition_events
+BEGIN
+    SELECT RAISE(ABORT, 'transition_events is append-only');
+END;
+CREATE TRIGGER transition_events_no_delete
+BEFORE DELETE ON transition_events
+BEGIN
+    SELECT RAISE(ABORT, 'transition_events is append-only');
+END;
+CREATE TRIGGER transition_events_no_replace
+BEFORE INSERT ON transition_events
+WHEN EXISTS(
+    SELECT 1 FROM transition_events WHERE event_id = NEW.event_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'transition_events is append-only');
+END;
+"""
+
+
 def _make_root(temporary: str, name: str = "state") -> Path:
     root = Path(os.path.realpath(temporary)) / name
     root.mkdir(mode=0o700)
+    return root
+
+
+def _create_valid_v2_root(temporary: str, name: str = "state") -> Path:
+    root = _make_root(temporary, name)
+    database = root / _database_name()
+    connection = sqlite3.connect(database)
+    try:
+        connection.executescript(_FROZEN_V2_SCHEMA_SQL)
+        connection.executemany(
+            "INSERT INTO store_meta(key, value) VALUES (?, ?)",
+            (
+                ("store_schema", 2),
+                ("recovery_epoch", 0),
+                ("fencing_token_floor", 0),
+                ("last_clock_ns", 0),
+            ),
+        )
+        connection.execute("PRAGMA user_version = 2")
+        connection.commit()
+    finally:
+        connection.close()
+    database.chmod(0o600)
+    marker = root / MARKER_NAME
+    marker.write_bytes(WRITER_MARKER_CLEAN_CONTENT)
+    marker.chmod(0o600)
+    gate = root.parent / ".coordination-lifetime.lock"
+    gate.write_bytes(b"")
+    gate.chmod(0o600)
     return root
 
 
@@ -3948,6 +4266,69 @@ class DoctorFilesystemTest(unittest.TestCase):
                     ledger_name=LEDGER_NAME,
                 ).inspect(root, "op-schema")
             self.assertEqual("SCHEMA_INVALID", report.observed_state)
+
+    def test_valid_v2_is_migration_required_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
+            root = _create_valid_v2_root(temporary)
+            database = root / _database_name()
+            before = (
+                database.read_bytes(),
+                _root_listing(root),
+                (root / MARKER_NAME).read_bytes(),
+            )
+            with self.assertRaises(StoreMigrationRequiredError):
+                CoordinationStore(root)
+            with mock.patch.object(
+                CoordinationStore,
+                "__init__",
+                side_effect=AssertionError("doctor must not construct a store"),
+            ):
+                report = ReadOnlyDoctor(
+                    marker_name=MARKER_NAME,
+                    ledger_name=LEDGER_NAME,
+                ).inspect(root, "op-v2-migration")
+            self.assertEqual("MIGRATION_REQUIRED", report.observed_state)
+            self.assertEqual("HIGH", report.confidence)
+            self.assertEqual("INSPECT_SCHEMA", report.safe_action)
+            self.assertEqual(doctor_module._MUTATIONS, report.forbidden_mutations)
+            self.assertEqual(
+                before,
+                (
+                    database.read_bytes(),
+                    _root_listing(root),
+                    (root / MARKER_NAME).read_bytes(),
+                ),
+            )
+
+    def test_malformed_or_future_v2_markers_remain_schema_invalid(self) -> None:
+        variants = ("malformed", "mixed", "future")
+        with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
+            for variant in variants:
+                with self.subTest(variant=variant):
+                    root = _create_valid_v2_root(temporary, variant)
+                    database = root / _database_name()
+                    connection = sqlite3.connect(database, isolation_level=None)
+                    try:
+                        if variant == "malformed":
+                            connection.execute("DROP INDEX operations_status_idx")
+                        elif variant == "mixed":
+                            connection.execute("PRAGMA user_version = 3")
+                        else:
+                            connection.execute(
+                                "UPDATE store_meta SET value = 4 "
+                                "WHERE key = 'store_schema'"
+                            )
+                            connection.execute("PRAGMA user_version = 4")
+                        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    finally:
+                        connection.close()
+                    report = ReadOnlyDoctor(
+                        marker_name=MARKER_NAME,
+                        ledger_name=LEDGER_NAME,
+                    ).inspect(root, "op-v2-invalid")
+                    self.assertEqual("SCHEMA_INVALID", report.observed_state)
+                    self.assertEqual("HIGH", report.confidence)
+                    self.assertEqual("INSPECT_SCHEMA", report.safe_action)
 
     def test_pending_ledger_blocks_missing_primary(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-doctor-") as temporary:
