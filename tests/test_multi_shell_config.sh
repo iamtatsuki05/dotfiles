@@ -54,6 +54,21 @@ file_digest() {
   else sha256sum "$1" | awk '{print $1}'; fi
 }
 
+emit_foreign_secret_debug() {
+  local target="$1" before_mode="$2" before_digest="$3"
+  local after_mode after_digest digest_equal chezmoi_version uname_value
+  after_mode="$(file_mode "$target" 2>/dev/null || print -r -- unavailable)"
+  after_digest="$(file_digest "$target" 2>/dev/null || print -r -- unavailable)"
+  if [[ "$after_digest" == "$before_digest" ]]; then digest_equal=true; else digest_equal=false; fi
+  if chezmoi_version="$("$CHEZMOI_BIN" --version 2>/dev/null | sed -n '1p')"; then
+    [[ -n "$chezmoi_version" ]] || chezmoi_version=unavailable
+  else
+    chezmoi_version=unavailable
+  fi
+  uname_value="$(uname -srm 2>/dev/null || print -r -- unavailable)"
+  print -u2 -r -- "[DEBUG-pr68-secret] target_type=foreign-secret|before_mode=$before_mode|after_mode=$after_mode|digest_equal=$digest_equal|chezmoi_path=$CHEZMOI_BIN|chezmoi_version=$chezmoi_version|os=$(matrix_os_name)|uname=$uname_value" || :
+}
+
 bash_major() {
   /usr/bin/env -i HOME="$FIXTURE/bash-version-home" PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
     "$1" --noprofile --norc -c 'printf "%s\n" "${BASH_VERSINFO[0]}"'
@@ -1011,7 +1026,10 @@ run_render() {
   run_apply "$src" "$dest" "$src"
   assert_rendered "$dest"; assert_file "$dest/.config/fish/conf.d/zz-dotfiles.fish"; assert_file "$dest/.config/shell/dotfiles-shell-common.csh"
   assert_not_exists "$dest/.chezmoidata.toml"
-  [[ "$(file_mode "$secret")" == "$SECRET_MODE" && "$(file_digest "$secret")" == "$SECRET_DIGEST" ]] || fail "foreign secret target changed"
+  if ! [[ "$(file_mode "$secret")" == "$SECRET_MODE" && "$(file_digest "$secret")" == "$SECRET_DIGEST" ]]; then
+    emit_foreign_secret_debug "$secret" "$SECRET_MODE" "$SECRET_DIGEST"
+    fail "foreign secret target changed"
+  fi
   [[ "$(file_mode "$mutated_secret")" == "$mutated_secret_mode" && "$(file_digest "$mutated_secret")" == "$mutated_secret_digest" ]] || fail "foreign mutated-config secret target changed"
   assert_file_content "$dest/.config/fish/conf.d/uv.env.fish" 'set -gx UV_FOREIGN_SENTINEL foreign'
   assert_file_content "$dest/.cshrc" 'foreign-csh'; assert_file_content "$dest/.tcshrc" 'foreign-tcsh'
