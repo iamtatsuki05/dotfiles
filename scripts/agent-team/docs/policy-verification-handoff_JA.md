@@ -34,7 +34,7 @@ provider outputへ置き換えられません。`ApprovalRef` はbounded identif
 できますが、注入したcontract registry内のexactなapproval recordと2つのowner recordへ
 解決できる場合だけauthorityになります。
 
-## 現在の状態: handoffは実装済み、durable ledgerは未実装
+## 現在の状態: #74 handoffは実装済み、#80はempty-ledger foundationを提供する
 
 現在の #74 codeには、private module `PolicyVerificationHandoff` と、注入するpackage-privateな
 contract registryがあります。focusedなdeterministic testもあります。registryはprocess-localな
@@ -50,6 +50,11 @@ implementationやdurable codecを提供しません。
 
 focused suiteが証明するのはhandoff contractとdeterministic fakeのstate modelです。fakeを
 production persistenceの証拠へ読み替えません。
+
+[Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)は、schema-4の
+物理的な12 tableとtask/verificationのpure codecを固定します。ただし、#74 handoff自体をdurableな
+authorityへ変えるものではありません。#80のproduction pathでは新しいverification tableは空のままで、
+non-empty image、lifecycle、capture、adapter、hydration、recoveryの主張は下記の後続作業に残ります。
 
 ## #49は実際のupdateとpolicyからreview authorityを発行する
 
@@ -133,8 +138,10 @@ completion ownerは`Run`、`Dispatch`、`Attempt`、Worker/Reviewer terminal、r
 target `HEAD`/tree、`claim_ref`を持ちません。これらは#49専有のruntime fieldです。
 composerは#49 record内でそれらを検証し、bound approvalには#49 provenanceとして保持します。
 #50のroute/reservationと照合済みとは主張しません。adapterがそれらをraw引数として追加したり、
-Task本文、path名、reservation IDから推測したりすることもありません。full runtime joinは
-[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)の責務です。
+Task本文、path名、reservation IDから推測したりすることもありません。full runtime joinは、
+[Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)の後続にあたる
+[#82 verification](https://github.com/iamtatsuki05/dotfiles/issues/82)と
+[#83 image](https://github.com/iamtatsuki05/dotfiles/issues/83)の責務です。
 
 overlapの検査後、composerはstableなapproval identityを導出し、検証済みbound approvalを
 #51のprivate factoryへの入力とします。両方のowner ref/digestと#51 authority digestを含むapproval
@@ -170,7 +177,8 @@ recovery-required errorを返します。
 recordはprimitive identityとdomain-separated digestだけで構成します。raw request/result/
 receipt本文、TaskやReviewerの本文、authority payloadとしてのpath、reservation object、
 provider output、secret、tokenはこの境界を越えません。module-localなrecord classとissuer sentinelは、
-#78のdurable hydration APIではありません。
+#80や後続Issueのdurable hydration APIではありません。#80のprojection codecはpureなままであり、
+Store-issued hydrationは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)の責務です。
 
 ## #51のGate入口2つとstate操作6つを維持する
 
@@ -210,23 +218,30 @@ mismatchのrefではstateとeffectを変更しません。
 だけです。SQLite schema、transaction durability、process restart/reopen、crash recovery、
 cross-process atomicity、provider-side exactly-once executionは示しません。
 
-## durable ledgerとrestart境界はIssue #78が所有する
+## schema-4 workはIssue #80–#83に分かれる
 
-次のdurable childである[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)は、
-production Store imageと、明示的なschema/codec/version contractを担当します。そこでは
-`STORE_SCHEMA=4`、full `TaskPolicyStateV4`、verification request/effect fence/full receipt/
-terminal record、`UNKNOWN_EFFECT`/`RecoveryRequired`、task/workflow dual-sequence CAS、
-fresh processでのreopen/replay、`mark_unknown`のrecovery境界を定義・検証します。
-durable backup/restore/Doctorとfull runtime joinも#78の責務です。
+[Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)は、物理的な
+Store contractを固定します。対象は`STORE_SCHEMA=4`、provider/workflow event schema `2/1`、
+正確な12 table、version-1 manifestの`4/2/4`、read-only WAL/SHM-aware pre-gate、
+TaskPolicy/approval/request/receiptのpure version-1 codecです。新しい3 tableは#80のproduction pathで
+空のままです。いずれかがnon-emptyならfail-closedにし、#80で証明するbackup/restoreは空のschema-4
+imageのround tripだけです。
 
-#78は独自のcanonical payload、decoder、Store-issued hydration seamを定義します。#74から消費するのは
-owner refとapproval contractだけです。`_ReviewAuthorityRecord`、`_CompletionAdmissionRecord`、
-`_ApprovalRecord`を`object.__new__`で復元したり、module-localなissuer sentinelを複製したり、
-package-private registry protocolをdurable wire contractとして実装したりしません。
+non-empty lifecycleとimage semanticsは、[#81 task/review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82 verification transaction/adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+[#83 image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)が担当します。
+live owner capture/context、Store adapter、snapshot hydration、58-fieldのoperation-row digest、
+non-empty lifecycle、verification-aware Doctor、non-empty image evidenceは#80の主張ではありません。
+exact schema-2とschema-3 imageはtarget schema `4`への`StoreMigrationRequiredError`となり、#80はmigrationを行いません。
 
-#78がrecordを用意するまでは、#74はSQLite persistence、schema-4 compatibility、restart
-recovery、durable `mark_unknown`、provider exactly-onceを主張しません。deterministic fake、
-in-memory registry、terminal state、effect resultは、その証拠になりません。
+schema-4の各childは、独自のcanonical payloadとdecoder境界を定義します。#74から消費するのはowner refと
+approval contractだけです。`_ReviewAuthorityRecord`、`_CompletionAdmissionRecord`、`_ApprovalRecord`を
+`object.__new__`で復元したり、module-localなissuer sentinelを複製したり、package-private registry protocolを
+durable wire contractとして実装したりしません。
+
+後続childがrecordを用意するまでは、#74はSQLite persistence、restart recovery、durable `mark_unknown`、
+provider exactly-onceを主張しません。deterministic fake、in-memory registry、terminal state、effect resultは、
+その証拠になりません。
 
 ## rejectionとnon-goalはfail-closedにする
 
@@ -254,5 +269,5 @@ fakeの明示的なcall-order trace、dual-CAS/all-or-none、handoff経由で既
 effect-once/replayを対象にします。
 
 SQLite reopen、crash injection、provider login/effect test、schema-4 validation、durable
-`mark_unknown`、production migrationは#74では未実施です。#78または後続Issueのacceptanceに
+`mark_unknown`、production migrationは#74では未実施です。#80または後続Issueのacceptanceに
 残します。

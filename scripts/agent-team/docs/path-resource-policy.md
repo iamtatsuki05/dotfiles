@@ -165,4 +165,10 @@ digests for path/resource observations and routing. It does not retain raw
 route or reservation objects, mutable observations, task text, or provider
 output. `Run`, `Dispatch`, `Attempt`, terminal, review-round, target, and
 `claim_ref` belong to the #49 review owner; this module does not invent or
-cross-check those fields. Full runtime correlation is deferred to [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78).
+cross-check those fields. Full runtime correlation was deferred to the
+historical [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78) plan.
+Current ownership is split across the [Issue #80 schema-4
+foundation](https://github.com/iamtatsuki05/dotfiles/issues/80), [#81 task/review
+persistence](https://github.com/iamtatsuki05/dotfiles/issues/81), [#82
+verification transaction and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
+and [#83 non-empty image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83).

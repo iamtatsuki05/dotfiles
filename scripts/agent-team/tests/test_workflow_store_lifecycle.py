@@ -748,7 +748,7 @@ class WorkflowStoreLifecycleTests(unittest.TestCase):
                 field_name,
             )
         self.assertEqual(4, actual.checkpoint_version)
-        self.assertEqual(3, actual.store_schema)
+        self.assertEqual(4, actual.store_schema)
         self.assertEqual(
             actual.checkpoint_digest,
             workflow.compute_checkpoint_digest(workflow.encode_checkpoint(actual)),

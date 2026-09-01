@@ -15,12 +15,12 @@ import re
 import sqlite3
 import stat
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from itertools import pairwise
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, NoReturn, Self, cast
@@ -57,9 +57,12 @@ from .lease import (
     require_provider_capabilities,
 )
 
-STORE_SCHEMA: Final[int] = 3
+STORE_SCHEMA: Final[int] = 4
+_CURRENT_STORE_SCHEMA: Final[int] = 4
 EVENT_SCHEMA_VERSION: Final[int] = 2
+_CURRENT_EVENT_SCHEMA_VERSION: Final[int] = 2
 WORKFLOW_EVENT_SCHEMA_VERSION: Final[int] = 1
+_CURRENT_WORKFLOW_EVENT_SCHEMA_VERSION: Final[int] = 1
 DATABASE_FILENAME: Final[str] = "coordination.sqlite3"
 WRITER_MARKER_FILENAME: Final[str] = "writer.marker"
 WRITER_MARKER_VERSION: Final[int] = 1
@@ -75,6 +78,13 @@ MAX_BUSY_TIMEOUT_MS: Final[int] = 30_000
 SQLITE_INTEGER_MAX: Final[int] = 2**63 - 1
 MAX_IDENTIFIER_LENGTH: Final[int] = 128
 MAX_IMAGE_BYTES: Final[int] = 256 * 1024 * 1024
+_CLASSIFIER_COPY_CHUNK_BYTES: Final[int] = 1024 * 1024
+_MAX_CLASSIFIER_SNAPSHOT_BYTES: Final[int] = MAX_IMAGE_BYTES
+_SQLITE_WAL_MAGIC_VALUES: Final[frozenset[int]] = frozenset({0x377F0682, 0x377F0683})
+_SQLITE_WAL_HEADER_BYTES: Final[int] = 32
+_SQLITE_WAL_FRAME_HEADER_BYTES: Final[int] = 24
+_SQLITE_SHM_PAGE_BYTES: Final[int] = 32 * 1024
+_SQLITE_WAL_FORMAT_VERSION: Final[int] = 3_007_000
 _CLEANUP_EXCEPTION: Final[type[BaseException]] = BaseException
 _OrphanFD = tuple[int, tuple[int, int] | None, str]
 _MAX_ORPHAN_FDS: Final[int] = 8
@@ -1328,13 +1338,591 @@ BEGIN
 END
 """
 
+# Schema 4 keeps the generic workflow projections and adds a separate
+# verification ledger.  The generic workflow event namespace is intentionally
+# unchanged; verification stages use the existing null-operation transition
+# shape and do not add a VERIFY action or a verification_events table.
+_WORKFLOW_CHECKPOINTS_V4_SQL = _WORKFLOW_CHECKPOINTS_SQL.replace(
+    "AND store_schema = 3", "AND store_schema = 4"
+)
+_WORKFLOW_OPERATIONS_V4_SQL = _WORKFLOW_OPERATIONS_SQL
+_WORKFLOW_RECEIPTS_V4_SQL = _WORKFLOW_RECEIPTS_SQL
+_WORKFLOW_EVENTS_V4_SQL = _WORKFLOW_EVENTS_SQL
+
+_TASK_POLICY_STATES_SQL = """
+CREATE TABLE task_policy_states (
+    root_key TEXT NOT NULL CHECK(
+        typeof(root_key) = 'text' AND length(root_key) BETWEEN 1 AND 128
+    ),
+    task_id TEXT NOT NULL CHECK(
+        typeof(task_id) = 'text' AND length(task_id) BETWEEN 1 AND 64
+    ),
+    version INTEGER NOT NULL CHECK(
+        typeof(version) = 'integer' AND version = 4
+    ),
+    state_codec_version INTEGER NOT NULL CHECK(
+        typeof(state_codec_version) = 'integer' AND state_codec_version = 1
+    ),
+    team_id TEXT NOT NULL CHECK(
+        typeof(team_id) = 'text' AND length(team_id) BETWEEN 1 AND 128
+    ),
+    workspace TEXT NOT NULL CHECK(
+        typeof(workspace) = 'text' AND length(workspace) BETWEEN 1 AND 4096
+    ),
+    sequence INTEGER NOT NULL CHECK(
+        typeof(sequence) = 'integer'
+        AND sequence BETWEEN 0 AND 9223372036854775807
+    ),
+    attempt_id TEXT CHECK(
+        attempt_id IS NULL OR (
+            typeof(attempt_id) = 'text' AND length(attempt_id) BETWEEN 1 AND 256
+        )
+    ),
+    dispatch_id TEXT CHECK(
+        dispatch_id IS NULL OR (
+            typeof(dispatch_id) = 'text' AND length(dispatch_id) BETWEEN 1 AND 256
+        )
+    ),
+    worker_node TEXT CHECK(
+        worker_node IS NULL OR (
+            typeof(worker_node) = 'text' AND length(worker_node) BETWEEN 1 AND 64
+        )
+    ),
+    reviewer_node TEXT CHECK(
+        reviewer_node IS NULL OR (
+            typeof(reviewer_node) = 'text' AND length(reviewer_node) BETWEEN 1 AND 64
+        )
+    ),
+    review_round INTEGER NOT NULL CHECK(
+        typeof(review_round) = 'integer'
+        AND review_round BETWEEN 0 AND 9223372036854775807
+    ),
+    target_head TEXT CHECK(
+        target_head IS NULL OR (
+            typeof(target_head) = 'text'
+            AND length(target_head) IN (40, 64)
+            AND target_head NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    target_tree_digest TEXT CHECK(
+        target_tree_digest IS NULL OR (
+            typeof(target_tree_digest) = 'text'
+            AND length(target_tree_digest) = 64
+            AND target_tree_digest NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    claim_ref TEXT CHECK(
+        claim_ref IS NULL OR (
+            typeof(claim_ref) = 'text' AND length(claim_ref) BETWEEN 1 AND 256
+        )
+    ),
+    receipt_ref TEXT CHECK(
+        receipt_ref IS NULL OR (
+            typeof(receipt_ref) = 'text' AND length(receipt_ref) BETWEEN 1 AND 256
+        )
+    ),
+    phase TEXT NOT NULL CHECK(
+        typeof(phase) = 'text' AND phase IN (
+            'pending', 'assigned', 'worker_done', 'review_pending',
+            'approved', 'changes_requested', 'verifying', 'completed',
+            'failed', 'ask_user', 'verification_failed'
+        )
+    ),
+    state_bytes BLOB NOT NULL CHECK(
+        typeof(state_bytes) = 'blob'
+        AND length(state_bytes) BETWEEN 1 AND 1048576
+    ),
+    state_digest TEXT NOT NULL CHECK(
+        typeof(state_digest) = 'text'
+        AND length(state_digest) = 71
+        AND substr(state_digest, 1, 7) = 'sha256:'
+        AND substr(state_digest, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    run_id TEXT NOT NULL CHECK(
+        typeof(run_id) = 'text' AND length(run_id) BETWEEN 1 AND 128
+    ),
+    updated_ns INTEGER NOT NULL CHECK(
+        typeof(updated_ns) = 'integer'
+        AND updated_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    PRIMARY KEY(root_key, task_id),
+    CHECK((attempt_id IS NULL) = (dispatch_id IS NULL)),
+    CHECK((target_head IS NULL) = (target_tree_digest IS NULL)),
+    FOREIGN KEY(root_key)
+        REFERENCES workflow_checkpoints(root_key)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+)
+"""
+
+_VERIFICATION_OPERATIONS_SQL = """
+CREATE TABLE verification_operations (
+    root_key TEXT NOT NULL CHECK(
+        typeof(root_key) = 'text' AND length(root_key) BETWEEN 1 AND 128
+    ),
+    verification_ref TEXT NOT NULL CHECK(
+        typeof(verification_ref) = 'text' AND length(verification_ref) BETWEEN 1 AND 256
+    ),
+    record_version INTEGER NOT NULL CHECK(
+        typeof(record_version) = 'integer' AND record_version = 1
+    ),
+    approval_binding_version INTEGER NOT NULL CHECK(
+        typeof(approval_binding_version) = 'integer'
+        AND approval_binding_version = 1
+    ),
+    approval_binding_bytes BLOB NOT NULL CHECK(
+        typeof(approval_binding_bytes) = 'blob'
+        AND length(approval_binding_bytes) BETWEEN 1 AND 1048576
+    ),
+    approval_binding_digest TEXT NOT NULL CHECK(
+        typeof(approval_binding_digest) = 'text'
+        AND length(approval_binding_digest) = 71
+        AND substr(approval_binding_digest, 1, 7) = 'sha256:'
+        AND substr(approval_binding_digest, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    request_schema_version INTEGER NOT NULL CHECK(
+        typeof(request_schema_version) = 'integer'
+        AND request_schema_version = 1
+    ),
+    approval_ref TEXT NOT NULL CHECK(
+        typeof(approval_ref) = 'text' AND length(approval_ref) BETWEEN 1 AND 256
+    ),
+    approval_digest TEXT NOT NULL CHECK(
+        typeof(approval_digest) = 'text'
+        AND length(approval_digest) = 64
+        AND approval_digest NOT GLOB '*[^0-9a-f]*'
+    ),
+    review_ref TEXT NOT NULL CHECK(
+        typeof(review_ref) = 'text' AND length(review_ref) BETWEEN 1 AND 256
+    ),
+    review_digest TEXT NOT NULL CHECK(
+        typeof(review_digest) = 'text'
+        AND length(review_digest) = 64
+        AND review_digest NOT GLOB '*[^0-9a-f]*'
+    ),
+    completion_ref TEXT NOT NULL CHECK(
+        typeof(completion_ref) = 'text' AND length(completion_ref) BETWEEN 1 AND 256
+    ),
+    completion_digest TEXT NOT NULL CHECK(
+        typeof(completion_digest) = 'text'
+        AND length(completion_digest) = 64
+        AND completion_digest NOT GLOB '*[^0-9a-f]*'
+    ),
+    request_bytes BLOB NOT NULL CHECK(
+        typeof(request_bytes) = 'blob'
+        AND length(request_bytes) BETWEEN 1 AND 1048576
+    ),
+    request_digest TEXT NOT NULL CHECK(
+        typeof(request_digest) = 'text'
+        AND length(request_digest) = 64
+        AND request_digest NOT GLOB '*[^0-9a-f]*'
+    ),
+    record_digest TEXT NOT NULL CHECK(
+        typeof(record_digest) = 'text'
+        AND length(record_digest) = 71
+        AND substr(record_digest, 1, 7) = 'sha256:'
+        AND substr(record_digest, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    run_id TEXT NOT NULL CHECK(
+        typeof(run_id) = 'text' AND length(run_id) BETWEEN 1 AND 256
+    ),
+    main_terminal_id TEXT NOT NULL CHECK(
+        typeof(main_terminal_id) = 'text' AND length(main_terminal_id) BETWEEN 1 AND 256
+    ),
+    task_id TEXT NOT NULL CHECK(
+        typeof(task_id) = 'text' AND length(task_id) BETWEEN 1 AND 64
+    ),
+    dispatch_id TEXT NOT NULL CHECK(
+        typeof(dispatch_id) = 'text' AND length(dispatch_id) BETWEEN 1 AND 256
+    ),
+    attempt_id TEXT NOT NULL CHECK(
+        typeof(attempt_id) = 'text' AND length(attempt_id) BETWEEN 1 AND 256
+    ),
+    worker_node TEXT NOT NULL CHECK(
+        typeof(worker_node) = 'text' AND length(worker_node) BETWEEN 1 AND 64
+    ),
+    reviewer_node TEXT NOT NULL CHECK(
+        typeof(reviewer_node) = 'text' AND length(reviewer_node) BETWEEN 1 AND 64
+    ),
+    worker_terminal_id TEXT NOT NULL CHECK(
+        typeof(worker_terminal_id) = 'text'
+        AND length(worker_terminal_id) BETWEEN 1 AND 256
+    ),
+    reviewer_terminal_id TEXT NOT NULL CHECK(
+        typeof(reviewer_terminal_id) = 'text'
+        AND length(reviewer_terminal_id) BETWEEN 1 AND 256
+    ),
+    team_id TEXT NOT NULL CHECK(
+        typeof(team_id) = 'text' AND length(team_id) BETWEEN 1 AND 64
+    ),
+    workspace TEXT NOT NULL CHECK(
+        typeof(workspace) = 'text' AND length(workspace) BETWEEN 1 AND 4096
+    ),
+    review_round INTEGER NOT NULL CHECK(
+        typeof(review_round) = 'integer'
+        AND review_round BETWEEN 0 AND 9223372036854775807
+    ),
+    task_sequence_before INTEGER NOT NULL CHECK(
+        typeof(task_sequence_before) = 'integer'
+        AND task_sequence_before BETWEEN 0 AND 9223372036854775807
+    ),
+    task_sequence_after INTEGER NOT NULL CHECK(
+        typeof(task_sequence_after) = 'integer'
+        AND task_sequence_after BETWEEN 0 AND 9223372036854775807
+    ),
+    task_digest_before TEXT NOT NULL CHECK(
+        typeof(task_digest_before) = 'text'
+        AND length(task_digest_before) = 71
+        AND substr(task_digest_before, 1, 7) = 'sha256:'
+        AND substr(task_digest_before, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    task_digest_after TEXT NOT NULL CHECK(
+        typeof(task_digest_after) = 'text'
+        AND length(task_digest_after) = 71
+        AND substr(task_digest_after, 1, 7) = 'sha256:'
+        AND substr(task_digest_after, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    workflow_sequence_before INTEGER NOT NULL CHECK(
+        typeof(workflow_sequence_before) = 'integer'
+        AND workflow_sequence_before BETWEEN 0 AND 9223372036854775807
+    ),
+    workflow_sequence_after INTEGER NOT NULL CHECK(
+        typeof(workflow_sequence_after) = 'integer'
+        AND workflow_sequence_after BETWEEN 0 AND 9223372036854775807
+    ),
+    workflow_digest_before TEXT NOT NULL CHECK(
+        typeof(workflow_digest_before) = 'text'
+        AND length(workflow_digest_before) = 71
+        AND substr(workflow_digest_before, 1, 7) = 'sha256:'
+        AND substr(workflow_digest_before, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    workflow_digest_after TEXT NOT NULL CHECK(
+        typeof(workflow_digest_after) = 'text'
+        AND length(workflow_digest_after) = 71
+        AND substr(workflow_digest_after, 1, 7) = 'sha256:'
+        AND substr(workflow_digest_after, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK(
+        typeof(status) = 'text' AND status IN (
+            'PREPARED', 'EFFECT_PREPARED', 'RECEIPTED', 'TERMINAL',
+            'UNKNOWN_EFFECT'
+        )
+    ),
+    effect_owner TEXT CHECK(
+        effect_owner IS NULL OR (
+            typeof(effect_owner) = 'text' AND length(effect_owner) BETWEEN 1 AND 256
+        )
+    ),
+    effect_attempt INTEGER CHECK(
+        effect_attempt IS NULL OR (
+            typeof(effect_attempt) = 'integer'
+            AND effect_attempt BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    effect_epoch INTEGER CHECK(
+        effect_epoch IS NULL OR (
+            typeof(effect_epoch) = 'integer'
+            AND effect_epoch BETWEEN 0 AND 9223372036854775807
+        )
+    ),
+    effect_fence INTEGER CHECK(
+        effect_fence IS NULL OR (
+            typeof(effect_fence) = 'integer'
+            AND effect_fence BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    effect_nonce TEXT CHECK(
+        effect_nonce IS NULL OR (
+            typeof(effect_nonce) = 'text' AND length(effect_nonce) BETWEEN 1 AND 256
+        )
+    ),
+    receipt_ref TEXT CHECK(
+        receipt_ref IS NULL OR (
+            typeof(receipt_ref) = 'text' AND length(receipt_ref) BETWEEN 1 AND 256
+        )
+    ),
+    receipt_digest TEXT CHECK(
+        receipt_digest IS NULL OR (
+            typeof(receipt_digest) = 'text'
+            AND length(receipt_digest) = 64
+            AND receipt_digest NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    terminal_phase TEXT CHECK(
+        terminal_phase IS NULL OR terminal_phase IN ('completed', 'verification_failed')
+    ),
+    terminal_receipt_ref TEXT CHECK(
+        terminal_receipt_ref IS NULL OR (
+            typeof(terminal_receipt_ref) = 'text'
+            AND length(terminal_receipt_ref) BETWEEN 1 AND 256
+        )
+    ),
+    terminal_receipt_digest TEXT CHECK(
+        terminal_receipt_digest IS NULL OR (
+            typeof(terminal_receipt_digest) = 'text'
+            AND length(terminal_receipt_digest) = 64
+            AND terminal_receipt_digest NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    unknown_code TEXT CHECK(
+        unknown_code IS NULL OR unknown_code IN (
+            'effect-response-loss', 'runner-response-loss',
+            'runner-response-invalid', 'cleanup-unknown', 'snapshot-drift',
+            'receipt-response-loss', 'receipt-commit-unknown',
+            'effect-fence-unknown', 'restore_invalidation'
+        )
+    ),
+    unknown_evidence_digest TEXT CHECK(
+        unknown_evidence_digest IS NULL OR (
+            typeof(unknown_evidence_digest) = 'text'
+            AND length(unknown_evidence_digest) = 71
+            AND substr(unknown_evidence_digest, 1, 7) = 'sha256:'
+            AND substr(unknown_evidence_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    prepare_event_id INTEGER CHECK(
+        prepare_event_id IS NULL OR (
+            typeof(prepare_event_id) = 'integer'
+            AND prepare_event_id BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    prepare_event_digest TEXT CHECK(
+        prepare_event_digest IS NULL OR (
+            typeof(prepare_event_digest) = 'text'
+            AND length(prepare_event_digest) = 71
+            AND substr(prepare_event_digest, 1, 7) = 'sha256:'
+            AND substr(prepare_event_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    receipt_event_id INTEGER CHECK(
+        receipt_event_id IS NULL OR (
+            typeof(receipt_event_id) = 'integer'
+            AND receipt_event_id BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    receipt_event_digest TEXT CHECK(
+        receipt_event_digest IS NULL OR (
+            typeof(receipt_event_digest) = 'text'
+            AND length(receipt_event_digest) = 71
+            AND substr(receipt_event_digest, 1, 7) = 'sha256:'
+            AND substr(receipt_event_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    terminal_event_id INTEGER CHECK(
+        terminal_event_id IS NULL OR (
+            typeof(terminal_event_id) = 'integer'
+            AND terminal_event_id BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    terminal_event_digest TEXT CHECK(
+        terminal_event_digest IS NULL OR (
+            typeof(terminal_event_digest) = 'text'
+            AND length(terminal_event_digest) = 71
+            AND substr(terminal_event_digest, 1, 7) = 'sha256:'
+            AND substr(terminal_event_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    unknown_event_id INTEGER CHECK(
+        unknown_event_id IS NULL OR (
+            typeof(unknown_event_id) = 'integer'
+            AND unknown_event_id BETWEEN 1 AND 9223372036854775807
+        )
+    ),
+    unknown_event_digest TEXT CHECK(
+        unknown_event_digest IS NULL OR (
+            typeof(unknown_event_digest) = 'text'
+            AND length(unknown_event_digest) = 71
+            AND substr(unknown_event_digest, 1, 7) = 'sha256:'
+            AND substr(unknown_event_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    created_ns INTEGER NOT NULL CHECK(
+        typeof(created_ns) = 'integer'
+        AND created_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    updated_ns INTEGER NOT NULL CHECK(
+        typeof(updated_ns) = 'integer'
+        AND updated_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    CHECK(updated_ns >= created_ns),
+    PRIMARY KEY(root_key, verification_ref),
+    CHECK(
+        (status = 'PREPARED'
+         AND effect_owner IS NULL AND effect_attempt IS NULL
+         AND effect_epoch IS NULL AND effect_fence IS NULL AND effect_nonce IS NULL
+         AND receipt_ref IS NULL AND receipt_digest IS NULL
+         AND terminal_phase IS NULL AND terminal_receipt_ref IS NULL
+         AND terminal_receipt_digest IS NULL
+         AND unknown_code IS NULL AND unknown_evidence_digest IS NULL
+         AND prepare_event_id IS NOT NULL AND prepare_event_digest IS NOT NULL
+         AND receipt_event_id IS NULL AND receipt_event_digest IS NULL
+         AND terminal_event_id IS NULL AND terminal_event_digest IS NULL
+         AND unknown_event_id IS NULL AND unknown_event_digest IS NULL)
+        OR
+        (status = 'EFFECT_PREPARED'
+         AND effect_owner IS NOT NULL AND effect_attempt IS NOT NULL
+         AND effect_epoch IS NOT NULL AND effect_fence IS NOT NULL
+         AND effect_nonce IS NOT NULL
+         AND receipt_ref IS NULL AND receipt_digest IS NULL
+         AND terminal_phase IS NULL AND terminal_receipt_ref IS NULL
+         AND terminal_receipt_digest IS NULL
+         AND unknown_code IS NULL AND unknown_evidence_digest IS NULL
+         AND prepare_event_id IS NOT NULL AND prepare_event_digest IS NOT NULL
+         AND receipt_event_id IS NULL AND receipt_event_digest IS NULL
+         AND terminal_event_id IS NULL AND terminal_event_digest IS NULL
+         AND unknown_event_id IS NULL AND unknown_event_digest IS NULL)
+        OR
+        (status = 'RECEIPTED'
+         AND effect_owner IS NOT NULL AND effect_attempt IS NOT NULL
+         AND effect_epoch IS NOT NULL AND effect_fence IS NOT NULL
+         AND effect_nonce IS NOT NULL
+         AND receipt_ref IS NOT NULL AND receipt_digest IS NOT NULL
+         AND terminal_phase IS NULL AND terminal_receipt_ref IS NULL
+         AND terminal_receipt_digest IS NULL
+         AND unknown_code IS NULL AND unknown_evidence_digest IS NULL
+         AND prepare_event_id IS NOT NULL AND prepare_event_digest IS NOT NULL
+         AND receipt_event_id IS NOT NULL AND receipt_event_digest IS NOT NULL
+         AND terminal_event_id IS NULL AND terminal_event_digest IS NULL
+         AND unknown_event_id IS NULL AND unknown_event_digest IS NULL)
+        OR
+        (status = 'TERMINAL'
+         AND effect_owner IS NOT NULL AND effect_attempt IS NOT NULL
+         AND effect_epoch IS NOT NULL AND effect_fence IS NOT NULL
+         AND effect_nonce IS NOT NULL
+         AND receipt_ref IS NOT NULL AND receipt_digest IS NOT NULL
+         AND terminal_phase IS NOT NULL AND terminal_receipt_ref IS NOT NULL
+         AND terminal_receipt_digest IS NOT NULL
+         AND unknown_code IS NULL AND unknown_evidence_digest IS NULL
+         AND prepare_event_id IS NOT NULL AND prepare_event_digest IS NOT NULL
+         AND receipt_event_id IS NOT NULL AND receipt_event_digest IS NOT NULL
+         AND terminal_event_id IS NOT NULL AND terminal_event_digest IS NOT NULL
+         AND unknown_event_id IS NULL AND unknown_event_digest IS NULL)
+        OR
+        (status = 'UNKNOWN_EFFECT'
+         AND effect_owner IS NOT NULL AND effect_attempt IS NOT NULL
+         AND effect_epoch IS NOT NULL AND effect_fence IS NOT NULL
+         AND effect_nonce IS NOT NULL
+         AND receipt_ref IS NULL AND receipt_digest IS NULL
+         AND terminal_phase IS NULL AND terminal_receipt_ref IS NULL
+         AND terminal_receipt_digest IS NULL
+         AND unknown_code IS NOT NULL
+         AND unknown_evidence_digest IS NOT NULL
+         AND prepare_event_id IS NOT NULL AND prepare_event_digest IS NOT NULL
+         AND receipt_event_id IS NULL AND receipt_event_digest IS NULL
+         AND terminal_event_id IS NULL AND terminal_event_digest IS NULL
+         AND unknown_event_id IS NOT NULL AND unknown_event_digest IS NOT NULL)
+    ),
+    FOREIGN KEY(root_key)
+        REFERENCES workflow_checkpoints(root_key)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(root_key, task_id)
+        REFERENCES task_policy_states(root_key, task_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY(root_key, receipt_ref)
+        REFERENCES verification_receipts(root_key, receipt_ref)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY(prepare_event_id)
+        REFERENCES workflow_events(workflow_event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY(receipt_event_id)
+        REFERENCES workflow_events(workflow_event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY(terminal_event_id)
+        REFERENCES workflow_events(workflow_event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY(unknown_event_id)
+        REFERENCES workflow_events(workflow_event_id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED
+)
+"""
+
+_VERIFICATION_RECEIPTS_SQL = """
+CREATE TABLE verification_receipts (
+    root_key TEXT NOT NULL CHECK(
+        typeof(root_key) = 'text' AND length(root_key) BETWEEN 1 AND 128
+    ),
+    receipt_ref TEXT NOT NULL CHECK(
+        typeof(receipt_ref) = 'text' AND length(receipt_ref) BETWEEN 1 AND 256
+    ),
+    verification_ref TEXT NOT NULL CHECK(
+        typeof(verification_ref) = 'text'
+        AND length(verification_ref) BETWEEN 1 AND 256
+    ),
+    receipt_schema_version INTEGER NOT NULL CHECK(
+        typeof(receipt_schema_version) = 'integer'
+        AND receipt_schema_version = 1
+    ),
+    receipt_bytes BLOB NOT NULL CHECK(
+        typeof(receipt_bytes) = 'blob'
+        AND length(receipt_bytes) BETWEEN 1 AND 1048576
+    ),
+    receipt_digest TEXT NOT NULL CHECK(
+        typeof(receipt_digest) = 'text'
+        AND length(receipt_digest) = 64
+        AND receipt_digest NOT GLOB '*[^0-9a-f]*'
+    ),
+    stored_ns INTEGER NOT NULL CHECK(
+        typeof(stored_ns) = 'integer'
+        AND stored_ns BETWEEN 0 AND 9223372036854775807
+    ),
+    PRIMARY KEY(root_key, receipt_ref),
+    UNIQUE(root_key, verification_ref),
+    FOREIGN KEY(root_key, verification_ref)
+        REFERENCES verification_operations(root_key, verification_ref)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+)
+"""
+
+_VERIFICATION_OPERATIONS_STATUS_INDEX_SQL = (
+    "CREATE INDEX verification_operations_root_status_idx "
+    "ON verification_operations(root_key, status, updated_ns, verification_ref)"
+)
+_VERIFICATION_OPERATIONS_APPROVAL_INDEX_SQL = (
+    "CREATE UNIQUE INDEX verification_operations_root_approval_idx "
+    "ON verification_operations(root_key, approval_ref)"
+)
+
+_VERIFICATION_RECEIPTS_NO_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER verification_receipts_no_update
+BEFORE UPDATE ON verification_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'verification_receipts is immutable');
+END
+"""
+_VERIFICATION_RECEIPTS_NO_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER verification_receipts_no_delete
+BEFORE DELETE ON verification_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'verification_receipts is immutable');
+END
+"""
+_VERIFICATION_RECEIPTS_NO_REPLACE_TRIGGER_SQL = """
+CREATE TRIGGER verification_receipts_no_replace
+BEFORE INSERT ON verification_receipts
+WHEN EXISTS(
+    SELECT 1 FROM verification_receipts
+    WHERE (root_key = NEW.root_key AND receipt_ref = NEW.receipt_ref)
+       OR (root_key = NEW.root_key AND verification_ref = NEW.verification_ref)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'verification_receipts is immutable');
+END
+"""
+
 _TABLE_DEFINITIONS.update(
     {
         **_V2_TABLE_DEFINITIONS,
-        "workflow_checkpoints": _WORKFLOW_CHECKPOINTS_SQL,
-        "workflow_operations": _WORKFLOW_OPERATIONS_SQL,
-        "workflow_receipts": _WORKFLOW_RECEIPTS_SQL,
-        "workflow_events": _WORKFLOW_EVENTS_SQL,
+        "workflow_checkpoints": _WORKFLOW_CHECKPOINTS_V4_SQL,
+        "workflow_operations": _WORKFLOW_OPERATIONS_V4_SQL,
+        "workflow_receipts": _WORKFLOW_RECEIPTS_V4_SQL,
+        "workflow_events": _WORKFLOW_EVENTS_V4_SQL,
+        "task_policy_states": _TASK_POLICY_STATES_SQL,
+        "verification_operations": _VERIFICATION_OPERATIONS_SQL,
+        "verification_receipts": _VERIFICATION_RECEIPTS_SQL,
     }
 )
 _INDEX_DEFINITIONS.update(
@@ -1342,6 +1930,8 @@ _INDEX_DEFINITIONS.update(
         **_V2_INDEX_DEFINITIONS,
         "workflow_operations_root_status_idx": _WORKFLOW_OPERATIONS_ROOT_STATUS_INDEX_SQL,
         "workflow_events_operation_idx": _WORKFLOW_EVENTS_OPERATION_INDEX_SQL,
+        "verification_operations_root_status_idx": _VERIFICATION_OPERATIONS_STATUS_INDEX_SQL,
+        "verification_operations_root_approval_idx": _VERIFICATION_OPERATIONS_APPROVAL_INDEX_SQL,
     }
 )
 _TRIGGER_DEFINITIONS.update(
@@ -1355,6 +1945,9 @@ _TRIGGER_DEFINITIONS.update(
         "workflow_events_no_update": _WORKFLOW_EVENTS_NO_UPDATE_TRIGGER_SQL,
         "workflow_events_no_delete": _WORKFLOW_EVENTS_NO_DELETE_TRIGGER_SQL,
         "workflow_events_no_replace": _WORKFLOW_EVENTS_NO_REPLACE_TRIGGER_SQL,
+        "verification_receipts_no_update": _VERIFICATION_RECEIPTS_NO_UPDATE_TRIGGER_SQL,
+        "verification_receipts_no_delete": _VERIFICATION_RECEIPTS_NO_DELETE_TRIGGER_SQL,
+        "verification_receipts_no_replace": _VERIFICATION_RECEIPTS_NO_REPLACE_TRIGGER_SQL,
     }
 )
 _EXPECTED_OBJECT_SQL.update(
@@ -1473,6 +2066,99 @@ _EXPECTED_COLUMNS.update(
             ("evidence_ref", "TEXT", 0, 0),
             ("event_digest", "TEXT", 1, 0),
         ),
+        "task_policy_states": (
+            ("root_key", "TEXT", 1, 1),
+            ("task_id", "TEXT", 1, 2),
+            ("version", "INTEGER", 1, 0),
+            ("state_codec_version", "INTEGER", 1, 0),
+            ("team_id", "TEXT", 1, 0),
+            ("workspace", "TEXT", 1, 0),
+            ("sequence", "INTEGER", 1, 0),
+            ("attempt_id", "TEXT", 0, 0),
+            ("dispatch_id", "TEXT", 0, 0),
+            ("worker_node", "TEXT", 0, 0),
+            ("reviewer_node", "TEXT", 0, 0),
+            ("review_round", "INTEGER", 1, 0),
+            ("target_head", "TEXT", 0, 0),
+            ("target_tree_digest", "TEXT", 0, 0),
+            ("claim_ref", "TEXT", 0, 0),
+            ("receipt_ref", "TEXT", 0, 0),
+            ("phase", "TEXT", 1, 0),
+            ("state_bytes", "BLOB", 1, 0),
+            ("state_digest", "TEXT", 1, 0),
+            ("run_id", "TEXT", 1, 0),
+            ("updated_ns", "INTEGER", 1, 0),
+        ),
+        "verification_operations": (
+            ("root_key", "TEXT", 1, 1),
+            ("verification_ref", "TEXT", 1, 2),
+            ("record_version", "INTEGER", 1, 0),
+            ("approval_binding_version", "INTEGER", 1, 0),
+            ("approval_binding_bytes", "BLOB", 1, 0),
+            ("approval_binding_digest", "TEXT", 1, 0),
+            ("request_schema_version", "INTEGER", 1, 0),
+            ("approval_ref", "TEXT", 1, 0),
+            ("approval_digest", "TEXT", 1, 0),
+            ("review_ref", "TEXT", 1, 0),
+            ("review_digest", "TEXT", 1, 0),
+            ("completion_ref", "TEXT", 1, 0),
+            ("completion_digest", "TEXT", 1, 0),
+            ("request_bytes", "BLOB", 1, 0),
+            ("request_digest", "TEXT", 1, 0),
+            ("record_digest", "TEXT", 1, 0),
+            ("run_id", "TEXT", 1, 0),
+            ("main_terminal_id", "TEXT", 1, 0),
+            ("task_id", "TEXT", 1, 0),
+            ("dispatch_id", "TEXT", 1, 0),
+            ("attempt_id", "TEXT", 1, 0),
+            ("worker_node", "TEXT", 1, 0),
+            ("reviewer_node", "TEXT", 1, 0),
+            ("worker_terminal_id", "TEXT", 1, 0),
+            ("reviewer_terminal_id", "TEXT", 1, 0),
+            ("team_id", "TEXT", 1, 0),
+            ("workspace", "TEXT", 1, 0),
+            ("review_round", "INTEGER", 1, 0),
+            ("task_sequence_before", "INTEGER", 1, 0),
+            ("task_sequence_after", "INTEGER", 1, 0),
+            ("task_digest_before", "TEXT", 1, 0),
+            ("task_digest_after", "TEXT", 1, 0),
+            ("workflow_sequence_before", "INTEGER", 1, 0),
+            ("workflow_sequence_after", "INTEGER", 1, 0),
+            ("workflow_digest_before", "TEXT", 1, 0),
+            ("workflow_digest_after", "TEXT", 1, 0),
+            ("status", "TEXT", 1, 0),
+            ("effect_owner", "TEXT", 0, 0),
+            ("effect_attempt", "INTEGER", 0, 0),
+            ("effect_epoch", "INTEGER", 0, 0),
+            ("effect_fence", "INTEGER", 0, 0),
+            ("effect_nonce", "TEXT", 0, 0),
+            ("receipt_ref", "TEXT", 0, 0),
+            ("receipt_digest", "TEXT", 0, 0),
+            ("terminal_phase", "TEXT", 0, 0),
+            ("terminal_receipt_ref", "TEXT", 0, 0),
+            ("terminal_receipt_digest", "TEXT", 0, 0),
+            ("unknown_code", "TEXT", 0, 0),
+            ("unknown_evidence_digest", "TEXT", 0, 0),
+            ("prepare_event_id", "INTEGER", 0, 0),
+            ("prepare_event_digest", "TEXT", 0, 0),
+            ("receipt_event_id", "INTEGER", 0, 0),
+            ("receipt_event_digest", "TEXT", 0, 0),
+            ("terminal_event_id", "INTEGER", 0, 0),
+            ("terminal_event_digest", "TEXT", 0, 0),
+            ("unknown_event_id", "INTEGER", 0, 0),
+            ("unknown_event_digest", "TEXT", 0, 0),
+            ("created_ns", "INTEGER", 1, 0),
+            ("updated_ns", "INTEGER", 1, 0),
+        ),
+        "verification_receipts": (
+            ("root_key", "TEXT", 1, 1),
+            ("receipt_ref", "TEXT", 1, 2),
+            ("verification_ref", "TEXT", 1, 0),
+            ("receipt_schema_version", "INTEGER", 1, 0),
+            ("receipt_bytes", "BLOB", 1, 0),
+            ("receipt_digest", "TEXT", 1, 0),
+            ("stored_ns", "INTEGER", 1, 0),
+        ),
     }
 )
 _EXPECTED_INDEX_CONTRACT.update(
@@ -1495,6 +2181,16 @@ _EXPECTED_INDEX_CONTRACT.update(
         "workflow_events": (
             (1, "u", ("root_key", "workflow_sequence")),
             (0, "c", ("operation_id", "workflow_event_id")),
+        ),
+        "task_policy_states": ((1, "pk", ("root_key", "task_id")),),
+        "verification_operations": (
+            (1, "pk", ("root_key", "verification_ref")),
+            (1, "c", ("root_key", "approval_ref")),
+            (0, "c", ("root_key", "status", "updated_ns", "verification_ref")),
+        ),
+        "verification_receipts": (
+            (1, "pk", ("root_key", "receipt_ref")),
+            (1, "u", ("root_key", "verification_ref")),
         ),
     }
 )
@@ -1550,6 +2246,170 @@ _EXPECTED_FOREIGN_KEYS.update(
             ),
             ("workflow_receipts", "receipt_id", "receipt_id", "RESTRICT", "RESTRICT"),
         ),
+        "task_policy_states": (
+            ("workflow_checkpoints", "root_key", "root_key", "RESTRICT", "RESTRICT"),
+        ),
+        "verification_operations": (
+            ("workflow_checkpoints", "root_key", "root_key", "RESTRICT", "RESTRICT"),
+            (
+                "task_policy_states",
+                "root_key",
+                "root_key",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "task_policy_states",
+                "task_id",
+                "task_id",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "verification_receipts",
+                "root_key",
+                "root_key",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "verification_receipts",
+                "receipt_ref",
+                "receipt_ref",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "workflow_events",
+                "prepare_event_id",
+                "workflow_event_id",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "workflow_events",
+                "receipt_event_id",
+                "workflow_event_id",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "workflow_events",
+                "terminal_event_id",
+                "workflow_event_id",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "workflow_events",
+                "unknown_event_id",
+                "workflow_event_id",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+        ),
+        "verification_receipts": (
+            (
+                "verification_operations",
+                "root_key",
+                "root_key",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+            (
+                "verification_operations",
+                "verification_ref",
+                "verification_ref",
+                "RESTRICT",
+                "RESTRICT",
+            ),
+        ),
+    }
+)
+
+# Freeze the complete schema-3 classifier contract independently of the
+# schema-4 object maps above.  These mappings are immutable snapshots; the
+# schema-4 definitions must never be used to validate a legacy image.
+_V3_TABLE_DEFINITIONS = MappingProxyType(
+    {
+        **_V2_TABLE_DEFINITIONS,
+        "workflow_checkpoints": _WORKFLOW_CHECKPOINTS_SQL,
+        "workflow_operations": _WORKFLOW_OPERATIONS_SQL,
+        "workflow_receipts": _WORKFLOW_RECEIPTS_SQL,
+        "workflow_events": _WORKFLOW_EVENTS_SQL,
+    }
+)
+_V3_INDEX_DEFINITIONS = MappingProxyType(
+    {
+        **_V2_INDEX_DEFINITIONS,
+        "workflow_operations_root_status_idx": _WORKFLOW_OPERATIONS_ROOT_STATUS_INDEX_SQL,
+        "workflow_events_operation_idx": _WORKFLOW_EVENTS_OPERATION_INDEX_SQL,
+    }
+)
+_V3_TRIGGER_DEFINITIONS = MappingProxyType(
+    {
+        **_V2_TRIGGER_DEFINITIONS,
+        "workflow_receipts_require_committed": _WORKFLOW_RECEIPTS_REQUIRE_COMMITTED_TRIGGER_SQL,
+        "workflow_receipts_no_update": _WORKFLOW_RECEIPTS_NO_UPDATE_TRIGGER_SQL,
+        "workflow_receipts_no_delete": _WORKFLOW_RECEIPTS_NO_DELETE_TRIGGER_SQL,
+        "workflow_receipts_no_replace": _WORKFLOW_RECEIPTS_NO_REPLACE_TRIGGER_SQL,
+        "workflow_events_receipt_matches_operation": _WORKFLOW_EVENTS_RECEIPT_MATCH_TRIGGER_SQL,
+        "workflow_events_no_update": _WORKFLOW_EVENTS_NO_UPDATE_TRIGGER_SQL,
+        "workflow_events_no_delete": _WORKFLOW_EVENTS_NO_DELETE_TRIGGER_SQL,
+        "workflow_events_no_replace": _WORKFLOW_EVENTS_NO_REPLACE_TRIGGER_SQL,
+    }
+)
+_V3_EXPECTED_META_KEYS = frozenset(_EXPECTED_META_KEYS)
+_V3_EXPECTED_OBJECT_SQL = MappingProxyType(
+    {
+        **{("table", name): sql for name, sql in _V3_TABLE_DEFINITIONS.items()},
+        **{("index", name): sql for name, sql in _V3_INDEX_DEFINITIONS.items()},
+        **{("trigger", name): sql for name, sql in _V3_TRIGGER_DEFINITIONS.items()},
+    }
+)
+_V3_EXPECTED_COLUMNS = MappingProxyType(
+    {
+        **{name: tuple(columns) for name, columns in _V2_EXPECTED_COLUMNS.items()},
+        **{
+            name: tuple(_EXPECTED_COLUMNS[name])
+            for name in (
+                "workflow_checkpoints",
+                "workflow_operations",
+                "workflow_receipts",
+                "workflow_events",
+            )
+        },
+    }
+)
+_V3_EXPECTED_INDEX_CONTRACT = MappingProxyType(
+    {
+        **{
+            name: tuple(indexes)
+            for name, indexes in _V2_EXPECTED_INDEX_CONTRACT.items()
+        },
+        **{
+            name: tuple(_EXPECTED_INDEX_CONTRACT[name])
+            for name in (
+                "workflow_checkpoints",
+                "workflow_operations",
+                "workflow_receipts",
+                "workflow_events",
+            )
+        },
+    }
+)
+_V3_EXPECTED_FOREIGN_KEYS = MappingProxyType(
+    {
+        **{name: tuple(keys) for name, keys in _V2_EXPECTED_FOREIGN_KEYS.items()},
+        **{
+            name: tuple(_EXPECTED_FOREIGN_KEYS[name])
+            for name in (
+                "workflow_checkpoints",
+                "workflow_operations",
+                "workflow_receipts",
+                "workflow_events",
+            )
+        },
     }
 )
 
@@ -1893,6 +2753,21 @@ class StoreSchemaError(StoreError):
 class StoreMigrationRequiredError(StoreSchemaError):
     """A complete legacy store requires an explicit schema migration."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        source_schema: int,
+        target_schema: int,
+    ) -> None:
+        self.source_schema = source_schema
+        self.target_schema = target_schema
+        # Keep the short aliases useful to callers while making the schema
+        # boundary explicit in the exception itself.
+        self.source = source_schema
+        self.target = target_schema
+        super().__init__(message)
+
 
 class WorkflowStateConflictError(StoreError, _workflow.StateConflict):
     """A workflow or task projection CAS precondition is stale."""
@@ -1921,6 +2796,20 @@ class StoreIntegrityError(StoreError):
 
 class StoreUnavailableError(StoreError):
     """The requested private state root or SQLite database is unavailable."""
+
+
+class _ClassifierSnapshotRace(StoreUnavailableError):
+    """A source image changed while the classifier was copying it."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ClassifierMarkerProbe:
+    """Read-only evidence that identifies a cooperating marker holder."""
+
+    root_identity: tuple[int, int]
+    gate_identity: tuple[int, int] | None
+    marker_identity: tuple[int, int] | None
+    active: bool
 
 
 class StoreBusyError(StoreError):
@@ -2222,27 +3111,60 @@ class TransitionEvent:
     evidence_ref: str | None
 
     def __post_init__(self) -> None:
-        _require_sqlite_integer(self.sequence, "sequence", minimum=1)
-        _require_sqlite_integer(
-            self.event_schema_version,
-            "event_schema_version",
-            minimum=1,
+        _validate_transition_event_fields(
+            sequence=self.sequence,
+            event_schema_version=self.event_schema_version,
+            operation_id=self.operation_id,
+            attempt=self.attempt,
+            from_status=self.from_status,
+            to_status=self.to_status,
+            kind=self.kind,
+            actor=self.actor,
+            clock_ns=self.clock_ns,
+            reason_code=self.reason_code,
+            evidence_ref=self.evidence_ref,
+            expected_event_schema_version=_CURRENT_EVENT_SCHEMA_VERSION,
         )
-        if self.event_schema_version != EVENT_SCHEMA_VERSION:
-            raise ValueError("event_schema_version is unsupported")
-        _require_opaque_identifier(self.operation_id, "operation_id")
-        _require_sqlite_integer(self.attempt, "attempt")
-        _require_optional_status(self.from_status, "from_status")
-        _require_status(self.to_status, "to_status")
-        if type(self.kind) is not str or self.kind not in _VALID_EVENT_KINDS:
-            raise ValueError("kind is unsupported")
-        _require_opaque_identifier(self.actor, "actor")
-        _require_sqlite_integer(self.clock_ns, "clock_ns")
-        _require_reason_code(self.reason_code)
-        if (self.kind, self.reason_code) not in _EVENT_REASON_PAIRS:
-            raise ValueError("event kind and reason_code are inconsistent")
-        if self.evidence_ref is not None:
-            _require_evidence_ref(self.evidence_ref)
+
+
+def _validate_transition_event_fields(
+    *,
+    sequence: object,
+    event_schema_version: object,
+    operation_id: object,
+    attempt: object,
+    from_status: object,
+    to_status: object,
+    kind: object,
+    actor: object,
+    clock_ns: object,
+    reason_code: object,
+    evidence_ref: object,
+    expected_event_schema_version: int,
+) -> None:
+    """Validate one provider event against an explicit schema version."""
+
+    _require_sqlite_integer(sequence, "sequence", minimum=1)
+    _require_sqlite_integer(
+        event_schema_version,
+        "event_schema_version",
+        minimum=1,
+    )
+    if event_schema_version != expected_event_schema_version:
+        raise ValueError("event_schema_version is unsupported")
+    _require_opaque_identifier(operation_id, "operation_id")
+    _require_sqlite_integer(attempt, "attempt")
+    _require_optional_status(from_status, "from_status")
+    _require_status(to_status)
+    if type(kind) is not str or kind not in _VALID_EVENT_KINDS:
+        raise ValueError("kind is unsupported")
+    _require_opaque_identifier(actor, "actor")
+    _require_sqlite_integer(clock_ns, "clock_ns")
+    _require_reason_code(reason_code)
+    if (kind, reason_code) not in _EVENT_REASON_PAIRS:
+        raise ValueError("event kind and reason_code are inconsistent")
+    if evidence_ref is not None:
+        _require_evidence_ref(evidence_ref)
 
 
 def _coerce_state_root(value: object) -> Path:
@@ -2788,6 +3710,85 @@ def _validate_sqlite_image_header(image: bytes, *, label: str) -> None:
         raise StoreIntegrityError(f"{label} has an invalid SQLite page count")
 
 
+def _validate_sqlite_wal_shape(size: int, header: bytes) -> None:
+    """Validate the bounded structural contract of one SQLite WAL image."""
+
+    if type(size) is not int or size < _SQLITE_WAL_HEADER_BYTES:
+        raise ValueError("SQLite WAL header is incomplete")
+    if type(header) is not bytes or len(header) != _SQLITE_WAL_HEADER_BYTES:
+        raise ValueError("SQLite WAL header is incomplete")
+    magic = int.from_bytes(header[0:4], "big")
+    page_size = int.from_bytes(header[8:12], "big")
+    frame_size = page_size + _SQLITE_WAL_FRAME_HEADER_BYTES
+    if (
+        magic not in _SQLITE_WAL_MAGIC_VALUES
+        or page_size < 512
+        or page_size > 65_536
+        or page_size & (page_size - 1)
+        or (size - _SQLITE_WAL_HEADER_BYTES) % frame_size != 0
+    ):
+        raise ValueError("SQLite WAL structure is invalid")
+
+
+def _validate_sqlite_shm_shape(size: int) -> None:
+    """Validate the size-only contract of SQLite's ephemeral WAL index."""
+
+    if type(size) is not int or (
+        size > 0
+        and (size < _SQLITE_SHM_PAGE_BYTES or size % _SQLITE_SHM_PAGE_BYTES != 0)
+    ):
+        raise ValueError("SQLite SHM structure is invalid")
+
+
+def _validate_sqlite_wal_binding(
+    main_header: bytes,
+    wal_header: bytes,
+    wal_size: int,
+    *,
+    require_main_wal_mode: bool = False,
+) -> None:
+    """Validate known-compatible SQLite main/WAL header fields.
+
+    SQLite's standard WAL format has no main-file UUID or authenticated
+    provenance field.  This check therefore rejects only known-incompatible
+    page size, mode, and WAL format combinations; salt/checksum fields are
+    intentionally not compared with the main header.
+    """
+
+    if type(main_header) is not bytes or len(main_header) < 100:
+        raise ValueError("SQLite main database header is invalid")
+    if main_header[:16] != b"SQLite format 3\x00":
+        raise ValueError("SQLite main database header is invalid")
+    raw_page_size = int.from_bytes(main_header[16:18], "big")
+    if raw_page_size == 1:
+        main_page_size = 65_536
+    elif (
+        raw_page_size < 512
+        or raw_page_size > 32_768
+        or raw_page_size & (raw_page_size - 1)
+    ):
+        raise ValueError("SQLite main database header is invalid")
+    else:
+        main_page_size = raw_page_size
+    if type(wal_size) is not int or wal_size < 0:
+        raise ValueError("SQLite WAL size is invalid")
+    if require_main_wal_mode and main_header[18:20] != b"\x02\x02":
+        raise ValueError("SQLite main database is not in WAL mode")
+    if wal_size == 0:
+        return
+    if main_header[18:20] != b"\x02\x02":
+        raise ValueError("SQLite WAL is incompatible with main database")
+    try:
+        _validate_sqlite_wal_shape(wal_size, wal_header)
+    except ValueError as exc:
+        raise ValueError("SQLite WAL is incompatible with main database") from exc
+    wal_page_size = int.from_bytes(wal_header[8:12], "big")
+    if wal_page_size != main_page_size:
+        raise ValueError("SQLite WAL is incompatible with main database")
+    if int.from_bytes(wal_header[4:8], "big") != _SQLITE_WAL_FORMAT_VERSION:
+        raise ValueError("SQLite WAL format version is unsupported")
+
+
 def _memory_image(image: bytes) -> bytes:
     """Make a WAL image loadable by SQLite's in-memory deserializer."""
 
@@ -3047,546 +4048,707 @@ def _foreign_key_contract_for_connection(
     return tuple(sorted(contracts))
 
 
-def _validate_workflow_rows_for_connection(
+def _validate_schema4_ledger_is_empty(connection: sqlite3.Connection) -> None:
+    """Reject schema-4 ledger rows until their Store writer is authoritative."""
+
+    for table in (
+        "task_policy_states",
+        "verification_operations",
+        "verification_receipts",
+    ):
+        if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
+            raise StoreIntegrityError(
+                "SQLite schema-4 verification ledger validation is unavailable"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkflowOperationEventFrame:
+    """One validated operation event; at most two are retained per operation."""
+
+    row: sqlite3.Row
+    checkpoint: _workflow.WorkflowCheckpointObservation
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkflowOperationEventPair:
+    """The first/last event of one operation, without an unbounded row list."""
+
+    first: _WorkflowOperationEventFrame
+    last: _WorkflowOperationEventFrame
+    count: int
+
+
+@contextmanager
+def _workflow_stream_rows(
     connection: sqlite3.Connection,
-) -> tuple[int, int, int, int]:
-    """Validate every v3 workflow row and its cross-table correlations."""
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> Iterator[Iterator[sqlite3.Row]]:
+    """Yield a one-row iterator with deterministic cursor cleanup."""
 
-    previous_row_factory = connection.row_factory
+    cursor = connection.execute(sql, parameters)
+
+    def rows() -> Iterator[sqlite3.Row]:
+        while True:
+            row = cursor.fetchone()
+            if row is None:
+                return
+            yield cast(sqlite3.Row, row)
+
+    body_error: BaseException | None = None
     try:
-        connection.row_factory = sqlite3.Row
-        checkpoint_rows = connection.execute(
-            "SELECT * FROM workflow_checkpoints ORDER BY root_key"
-        ).fetchall()
-        operation_rows = connection.execute(
-            "SELECT * FROM workflow_operations ORDER BY operation_id"
-        ).fetchall()
-        receipt_rows = connection.execute(
-            "SELECT * FROM workflow_receipts ORDER BY receipt_id"
-        ).fetchall()
-        event_rows = connection.execute(
-            "SELECT * FROM workflow_events ORDER BY workflow_event_id"
-        ).fetchall()
+        yield rows()
+    except _CLEANUP_EXCEPTION as exc:
+        body_error = exc
+        raise
     finally:
-        connection.row_factory = previous_row_factory
-    checkpoints: dict[str, _workflow.WorkflowCheckpointObservation] = {}
-    for row in checkpoint_rows:
         try:
-            raw = row["checkpoint_bytes"]
-            if type(raw) is not bytes:
-                raise ValueError("checkpoint bytes are invalid")
-            if row["run_id"] is None:
-                seed = _workflow.decode_seed(raw)
-                if seed.workflow_sequence == 0:
-                    raise ValueError("seed zero must not be durable")
-                checkpoint: _workflow.WorkflowCheckpointObservation = seed
+            cursor.close()
+        except _CLEANUP_EXCEPTION:
+            if body_error is None:
+                raise
+
+
+def _workflow_read_one(
+    connection: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> sqlite3.Row | None:
+    """Read one row from a unique relation and close its cursor immediately."""
+
+    cursor = connection.execute(sql, parameters)
+    body_error: BaseException | None = None
+    try:
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        if cursor.fetchone() is not None:
+            raise StoreIntegrityError("SQLite workflow relation is not unique")
+        return cast(sqlite3.Row, row)
+    except _CLEANUP_EXCEPTION as exc:
+        body_error = exc
+        raise
+    finally:
+        try:
+            cursor.close()
+        except _CLEANUP_EXCEPTION:
+            if body_error is None:
+                raise
+
+
+def _workflow_checkpoint_from_row(
+    row: sqlite3.Row,
+    *,
+    store_schema: int,
+) -> _workflow.WorkflowCheckpointObservation:
+    """Decode and strictly compare one checkpoint row to its typed payload."""
+
+    try:
+        raw = row["checkpoint_bytes"]
+        if type(raw) is not bytes:
+            raise ValueError("checkpoint bytes are invalid")
+        if row["run_id"] is None:
+            seed = _workflow.decode_seed(
+                raw,
+                expected_store_schema=store_schema,
+            )
+            if seed.workflow_sequence == 0:
+                raise ValueError("seed zero must not be durable")
+            checkpoint: _workflow.WorkflowCheckpointObservation = seed
+            if store_schema == 3:
+                projection = _workflow._legacy_seed_scalar_projection(seed)
+            else:
                 projection = _workflow.seed_scalar_projection(seed)
-            else:
-                checkpoint = _workflow.decode_checkpoint(raw)
-                projection = _workflow.checkpoint_scalar_projection(checkpoint)
-                projection = dict(projection)
-                projection["checkpoint_bytes"] = raw
-            for column in _WORKFLOW_CHECKPOINT_ROW_COLUMNS:
-                actual = row[column]
-                expected = projection[column]
-                if type(actual) is not type(expected) or actual != expected:
-                    raise ValueError("checkpoint scalar projection differs")
-            checkpoints[str(row["root_key"])] = checkpoint
-        except (KeyError, TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
-            raise StoreIntegrityError("SQLite workflow checkpoint is invalid") from exc
-
-    operations: dict[str, sqlite3.Row] = {}
-    for row in operation_rows:
-        CoordinationStore._workflow_validate_operation_row(row)
-        root_key = str(row["root_key"])
-        if root_key not in checkpoints:
-            raise StoreIntegrityError("SQLite workflow operation root is missing")
-        operations[str(row["operation_id"])] = row
-
-    receipts: dict[str, _workflow.DurableReceipt] = {}
-    receipt_issuer = object()
-    for row in receipt_rows:
-        try:
-            operation_id = str(row["operation_id"])
-            operation = operations.get(operation_id)
-            if operation is None:
-                raise ValueError("receipt operation is missing")
-            receipt = _workflow._issue_durable_receipt(
-                issuer=receipt_issuer,
-                receipt_id=row["receipt_id"],
-                operation_id=operation_id,
-                effect_key=row["effect_key"],
-                action=_workflow.OperationAction(row["action"]),
-                request_digest=row["request_digest"],
-                root_key=operation["root_key"],
-                run_id=row["run_id"],
-                main_terminal_id=row["main_terminal_id"],
-                task_id=row["task_id"],
-                dispatch_id=row["dispatch_id"],
-                attempt=row["attempt"],
-                terminal_id=row["terminal_id"],
-                delivery_id=row["delivery_id"],
-                message_id=row["message_id"],
-                consumer_generation=row["consumer_generation"],
-                owner=row["owner"],
-                lease_epoch=row["lease_epoch"],
-                fencing_token=row["fencing_token"],
-                effect_ref=row["effect_ref"],
-                result_kind=row["result_kind"],
-                result_digest=row["result_digest"],
-                evidence_ref=row["evidence_ref"],
-                issued_ns=row["issued_ns"],
-            )
-            if row["request_digest"] != operation["request_digest"]:
-                raise ValueError("receipt request digest differs")
-            for receipt_value, operation_value in (
-                (receipt.effect_key, operation["effect_key"]),
-                (receipt.action.value, operation["action"]),
-                (receipt.run_id, operation["run_id"]),
-                (receipt.main_terminal_id, operation["main_terminal_id"]),
-                (receipt.task_id, operation["task_id"]),
-                (receipt.dispatch_id, operation["dispatch_id"]),
-                (receipt.attempt, operation["attempt"]),
-                (receipt.terminal_id, operation["terminal_id"]),
-                (receipt.delivery_id, operation["delivery_id"]),
-                (receipt.message_id, operation["message_id"]),
-                (receipt.owner, operation["owner"]),
-                (receipt.lease_epoch, operation["lease_epoch"]),
-                (receipt.fencing_token, operation["fencing_token"]),
-            ):
-                if receipt_value != operation_value:
-                    raise ValueError("receipt operation identity differs")
-            if (
-                receipt.action is not _workflow.OperationAction.START
-                and receipt.consumer_generation != operation["consumer_generation"]
-            ):
-                raise ValueError("receipt operation generation differs")
-            if _workflow.durable_receipt_digest(receipt) != operation["receipt_digest"]:
-                raise ValueError("receipt digest differs")
-            if receipt.receipt_id != operation["receipt_id"]:
-                raise ValueError("receipt marker differs")
-            receipts[receipt.receipt_id] = receipt
-        except (KeyError, TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
-            raise StoreIntegrityError("SQLite workflow receipt is invalid") from exc
-
-    events_by_root: dict[str, list[sqlite3.Row]] = {}
-    event_checkpoints_by_root: dict[
-        str,
-        list[_workflow.WorkflowCheckpointObservation],
-    ] = {}
-    events_by_operation: dict[str, list[sqlite3.Row]] = {}
-    for row in event_rows:
-        CoordinationStore._workflow_validate_event_row(row)
-        event_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(row)
-        root_key = str(row["root_key"])
-        if root_key not in checkpoints:
-            raise StoreIntegrityError("SQLite workflow event root is missing")
-        events_by_root.setdefault(root_key, []).append(row)
-        event_checkpoints_by_root.setdefault(root_key, []).append(event_checkpoint)
-        operation_id = row["operation_id"]
-        if operation_id is not None:
-            operation_key = str(operation_id)
-            if operation_key not in operations:
-                raise StoreIntegrityError("SQLite workflow event operation is missing")
-            events_by_operation.setdefault(operation_key, []).append(row)
-        elif row["kind"] not in {
-            _workflow.TransitionKind.POLICY.value,
-            _workflow.TransitionKind.VERIFICATION.value,
-        }:
-            raise StoreIntegrityError(
-                "SQLite workflow transition event kind is invalid"
-            )
-
-    for root_key, checkpoint in checkpoints.items():
-        root_events = events_by_root.get(root_key, [])
-        if len(root_events) != checkpoint.workflow_sequence:
-            raise StoreIntegrityError("SQLite workflow event sequence has a gap")
-        for expected_sequence, row in enumerate(root_events, start=1):
-            if row["workflow_sequence"] != expected_sequence:
-                raise StoreIntegrityError("SQLite workflow event sequence has a gap")
-        if root_events:
-            for previous, current in pairwise(root_events):
-                if current["from_state"] != previous["to_state"]:
-                    raise StoreIntegrityError(
-                        "SQLite workflow event state chain differs"
-                    )
-                if current["task_sequence_before"] != previous["task_sequence_after"]:
-                    raise StoreIntegrityError(
-                        "SQLite workflow task sequence chain differs"
-                    )
-            checkpoint_digest = (
-                checkpoint.seed_digest
-                if isinstance(checkpoint, _workflow.WorkflowRootSeed)
-                else checkpoint.checkpoint_digest
-            )
-            if root_events[-1]["checkpoint_digest"] != checkpoint_digest:
-                raise StoreIntegrityError(
-                    "SQLite workflow current event digest differs"
-                )
-            checkpoint_state = checkpoint.workflow_state.value
-            checkpoint_task_sequence = (
-                None
-                if isinstance(checkpoint, _workflow.WorkflowRootSeed)
-                else checkpoint.task_sequence
-            )
-            if (
-                root_events[-1]["to_state"] != checkpoint_state
-                or root_events[-1]["task_sequence_after"] != checkpoint_task_sequence
-            ):
-                raise StoreIntegrityError(
-                    "SQLite workflow event projection differs from checkpoint"
-                )
-            event_checkpoints = event_checkpoints_by_root[root_key]
-            if event_checkpoints[-1] != checkpoint:
-                raise StoreIntegrityError(
-                    "SQLite workflow current event checkpoint differs"
-                )
-
-    for root_key, root_events in events_by_root.items():
-        root_event_checkpoints = event_checkpoints_by_root[root_key]
-        for index, event in enumerate(root_events):
-            if event["operation_id"] is not None:
-                continue
-            if index == 0:
-                raise StoreIntegrityError(
-                    "SQLite workflow transition has no prior checkpoint"
-                )
-            before = root_event_checkpoints[index - 1]
-            after = root_event_checkpoints[index]
-            if (
-                type(before) is not _workflow.WorkflowCheckpointV4
-                or type(after) is not _workflow.WorkflowCheckpointV4
-            ):
-                raise StoreIntegrityError(
-                    "SQLite workflow transition checkpoint is not a run"
-                )
-            if (
-                after.root != before.root
-                or after.run != before.run
-                or after.workflow_sequence != before.workflow_sequence + 1
-                or after.execution_mode != before.execution_mode
-                or after.active_assignment != before.active_assignment
-                or after.pending_delivery != before.pending_delivery
-                or after.replied_message_ids != before.replied_message_ids
-                or after.read_observed != before.read_observed
-                or after.released != before.released
-                or after.last_operation != before.last_operation
-            ):
-                raise StoreIntegrityError(
-                    "SQLite workflow transition projection differs"
-                )
-            kind = _workflow.TransitionKind(event["kind"])
-            target_authority = (
-                after.review_authority
-                if kind is _workflow.TransitionKind.POLICY
-                else after.verification_authority
-            )
-            non_target_matches = (
-                after.verification_authority == before.verification_authority
-                if kind is _workflow.TransitionKind.POLICY
-                else after.review_authority == before.review_authority
-            )
-            if (
-                target_authority is None
-                or target_authority.digest != event["evidence_ref"]
-                or not non_target_matches
-            ):
-                raise StoreIntegrityError(
-                    "SQLite workflow transition authority differs"
-                )
-            if after.task_sequence == before.task_sequence:
-                if after.task_policy != before.task_policy:
-                    raise StoreIntegrityError(
-                        "SQLite workflow transition stable task differs"
-                    )
-            else:
-                expected_task_sequence = (
-                    1 if before.task_sequence is None else before.task_sequence + 1
-                )
-                if after.task_sequence != expected_task_sequence:
-                    raise StoreIntegrityError(
-                        "SQLite workflow transition task sequence differs"
-                    )
-            if after.workflow_state is not before.workflow_state:
-                raise StoreIntegrityError(
-                    "SQLite workflow transition changed workflow state"
-                )
-
-    for operation_id, operation in operations.items():
-        operation_events = events_by_operation.get(operation_id, [])
-        status = _workflow.OperationStatus(operation["status"])
-        action = _workflow.OperationAction(operation["action"])
-        expected_count = 1 if status is _workflow.OperationStatus.INTENT else 2
-        if len(operation_events) != expected_count:
-            raise StoreIntegrityError("SQLite workflow operation event count differs")
-        first = operation_events[0]
-        if (
-            first["workflow_sequence"] != operation["intent_sequence"]
-            or first["kind"] != operation["action"]
-            or first["receipt_id"] is not None
-            or first["request_digest"] != operation["request_digest"]
-            or first["evidence_ref"] != operation["evidence_ref"]
-        ):
-            raise StoreIntegrityError("SQLite workflow intent event differs")
-        if operation["expected_workflow_sequence"] == 0:
-            expected_from_state = _workflow.SeedState.STARTING.value
         else:
-            previous_event = next(
-                (
-                    row
-                    for row in events_by_root[str(operation["root_key"])]
-                    if row["workflow_sequence"]
-                    == operation["expected_workflow_sequence"]
-                ),
-                None,
+            checkpoint = _workflow.decode_checkpoint(
+                raw,
+                expected_store_schema=store_schema,
             )
-            if previous_event is None:
-                raise StoreIntegrityError("SQLite workflow previous event is missing")
-            expected_from_state = previous_event["to_state"]
-        if (
-            first["from_state"] != expected_from_state
-            or first["to_state"] != expected_from_state
-            or first["task_sequence_before"] != operation["expected_task_sequence"]
-            or first["task_sequence_after"] != operation["expected_task_sequence"]
+            if store_schema == 3:
+                projection = _workflow._legacy_checkpoint_scalar_projection(checkpoint)
+            else:
+                projection = _workflow.checkpoint_scalar_projection(checkpoint)
+            projection = dict(projection)
+            projection["checkpoint_bytes"] = raw
+        for column in _WORKFLOW_CHECKPOINT_ROW_COLUMNS:
+            actual = row[column]
+            expected = projection[column]
+            if type(actual) is not type(expected) or actual != expected:
+                raise ValueError("checkpoint scalar projection differs")
+        return checkpoint
+    except (KeyError, TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
+        raise StoreIntegrityError("SQLite workflow checkpoint is invalid") from exc
+
+
+def _workflow_checkpoint_for_root(
+    connection: sqlite3.Connection,
+    root_key: str,
+    *,
+    store_schema: int,
+) -> _workflow.WorkflowCheckpointObservation:
+    """Read one current checkpoint by primary key, without a checkpoint map."""
+
+    row = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_checkpoints WHERE root_key = ?",
+        (root_key,),
+    )
+    if row is None:
+        raise StoreIntegrityError("SQLite workflow operation root is missing")
+    checkpoint = _workflow_checkpoint_from_row(
+        row,
+        store_schema=store_schema,
+    )
+    if checkpoint.root.root_key != root_key:
+        raise StoreIntegrityError("SQLite workflow operation root differs")
+    return checkpoint
+
+
+def _workflow_receipt_from_operation_row(
+    receipt_row: sqlite3.Row,
+    operation: sqlite3.Row,
+    *,
+    issuer: object,
+) -> _workflow.DurableReceipt:
+    """Issue and compare one durable receipt against its operation row."""
+
+    try:
+        if receipt_row["receipt_schema_version"] != 1:
+            raise ValueError("receipt schema version is invalid")
+        operation_id = str(receipt_row["operation_id"])
+        receipt = _workflow._issue_durable_receipt(
+            issuer=issuer,
+            receipt_id=receipt_row["receipt_id"],
+            operation_id=operation_id,
+            effect_key=receipt_row["effect_key"],
+            action=_workflow.OperationAction(receipt_row["action"]),
+            request_digest=receipt_row["request_digest"],
+            root_key=operation["root_key"],
+            run_id=receipt_row["run_id"],
+            main_terminal_id=receipt_row["main_terminal_id"],
+            task_id=receipt_row["task_id"],
+            dispatch_id=receipt_row["dispatch_id"],
+            attempt=receipt_row["attempt"],
+            terminal_id=receipt_row["terminal_id"],
+            delivery_id=receipt_row["delivery_id"],
+            message_id=receipt_row["message_id"],
+            consumer_generation=receipt_row["consumer_generation"],
+            owner=receipt_row["owner"],
+            lease_epoch=receipt_row["lease_epoch"],
+            fencing_token=receipt_row["fencing_token"],
+            effect_ref=receipt_row["effect_ref"],
+            result_kind=receipt_row["result_kind"],
+            result_digest=receipt_row["result_digest"],
+            evidence_ref=receipt_row["evidence_ref"],
+            issued_ns=receipt_row["issued_ns"],
+        )
+        if receipt.operation_id != operation["operation_id"]:
+            raise ValueError("receipt operation differs")
+        if receipt.root_key != operation["root_key"]:
+            raise ValueError("receipt root differs")
+        if receipt_row["request_digest"] != operation["request_digest"]:
+            raise ValueError("receipt request digest differs")
+        for receipt_value, operation_value in (
+            (receipt.effect_key, operation["effect_key"]),
+            (receipt.action.value, operation["action"]),
+            (receipt.run_id, operation["run_id"]),
+            (receipt.main_terminal_id, operation["main_terminal_id"]),
+            (receipt.task_id, operation["task_id"]),
+            (receipt.dispatch_id, operation["dispatch_id"]),
+            (receipt.attempt, operation["attempt"]),
+            (receipt.terminal_id, operation["terminal_id"]),
+            (receipt.delivery_id, operation["delivery_id"]),
+            (receipt.message_id, operation["message_id"]),
+            (receipt.owner, operation["owner"]),
+            (receipt.lease_epoch, operation["lease_epoch"]),
+            (receipt.fencing_token, operation["fencing_token"]),
         ):
-            raise StoreIntegrityError("SQLite workflow intent event projection differs")
-        allowed_from_states: dict[_workflow.OperationAction, frozenset[str]] = {
-            _workflow.OperationAction.START: frozenset(
-                {_workflow.SeedState.STARTING.value}
-            ),
-            _workflow.OperationAction.PROMPT: frozenset(
-                {_workflow.CheckpointState.IDLE.value}
-            ),
-            _workflow.OperationAction.WAIT: frozenset(
-                {
-                    _workflow.CheckpointState.ACTIVE.value,
-                    _workflow.CheckpointState.WAITING.value,
-                }
-            ),
-            _workflow.OperationAction.REPLY: frozenset(
-                {_workflow.CheckpointState.QUESTION.value}
-            ),
-            _workflow.OperationAction.READ: frozenset(
-                {_workflow.CheckpointState.WORKER_DONE.value}
-            ),
-            _workflow.OperationAction.RELEASE: frozenset(
-                {_workflow.CheckpointState.WORKER_DONE.value}
-            ),
-            _workflow.OperationAction.ACK: frozenset(
-                {
-                    _workflow.CheckpointState.QUESTION.value,
-                    _workflow.CheckpointState.AWAITING_ACK.value,
-                }
-            ),
-            _workflow.OperationAction.STOP: frozenset(
-                state.value
-                for state in _workflow.CheckpointState
-                if state
-                not in (
-                    _workflow.CheckpointState.RECOVERY_REQUIRED,
-                    _workflow.CheckpointState.STOPPED,
+            if receipt_value != operation_value:
+                raise ValueError("receipt operation identity differs")
+        if (
+            receipt.action is not _workflow.OperationAction.START
+            and receipt.consumer_generation != operation["consumer_generation"]
+        ):
+            raise ValueError("receipt operation generation differs")
+        if _workflow.durable_receipt_digest(receipt) != operation["receipt_digest"]:
+            raise ValueError("receipt digest differs")
+        if receipt.receipt_id != operation["receipt_id"]:
+            raise ValueError("receipt marker differs")
+        return receipt
+    except (KeyError, TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
+        raise StoreIntegrityError("SQLite workflow receipt is invalid") from exc
+
+
+def _workflow_receipt_for_operation(
+    connection: sqlite3.Connection,
+    operation: sqlite3.Row,
+    *,
+    issuer: object,
+) -> _workflow.DurableReceipt | None:
+    """Read zero or one receipt using the schema's unique operation_id key."""
+
+    row = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_receipts WHERE operation_id = ?",
+        (operation["operation_id"],),
+    )
+    if row is None:
+        return None
+    return _workflow_receipt_from_operation_row(
+        row,
+        operation,
+        issuer=issuer,
+    )
+
+
+def _workflow_operation_event_pair(
+    connection: sqlite3.Connection,
+    operation: sqlite3.Row,
+    *,
+    store_schema: int,
+) -> _WorkflowOperationEventPair:
+    """Validate exactly one or two operation events while retaining two frames."""
+
+    status = _workflow.OperationStatus(operation["status"])
+    expected_count = 1 if status is _workflow.OperationStatus.INTENT else 2
+    cursor = connection.execute(
+        "SELECT * FROM workflow_events "
+        "WHERE operation_id = ? ORDER BY workflow_event_id",
+        (operation["operation_id"],),
+    )
+    first: _WorkflowOperationEventFrame | None = None
+    last: _WorkflowOperationEventFrame | None = None
+    count = 0
+    body_error: BaseException | None = None
+    try:
+        while True:
+            row = cursor.fetchone()
+            if row is None:
+                break
+            event_row = cast(sqlite3.Row, row)
+            CoordinationStore._workflow_validate_event_row(
+                event_row,
+                store_schema=store_schema,
+            )
+            event_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+                event_row,
+                store_schema=store_schema,
+            )
+            if event_row["root_key"] != operation["root_key"]:
+                event_root = _workflow_read_one(
+                    connection,
+                    "SELECT 1 FROM workflow_checkpoints WHERE root_key = ?",
+                    (event_row["root_key"],),
                 )
-            ),
-        }
-        if expected_from_state not in allowed_from_states[action]:
-            raise StoreIntegrityError(
-                "SQLite workflow operation state precondition differs"
-            )
-        has_assignment = operation["task_id"] is not None
-        if (
-            action
-            in (
-                _workflow.OperationAction.START,
-                _workflow.OperationAction.STOP,
-            )
-            and has_assignment
-        ):
-            raise StoreIntegrityError(
-                "SQLite workflow operation has unexpected assignment identity"
-            )
-        if action is _workflow.OperationAction.PROMPT and (
-            (status is _workflow.OperationStatus.INTENT and has_assignment)
-            or (status is _workflow.OperationStatus.COMMITTED and not has_assignment)
-        ):
-            raise StoreIntegrityError(
-                "SQLite workflow prompt assignment identity differs"
-            )
-        if (
-            action
-            in (
-                _workflow.OperationAction.WAIT,
-                _workflow.OperationAction.REPLY,
-                _workflow.OperationAction.READ,
-                _workflow.OperationAction.RELEASE,
-                _workflow.OperationAction.ACK,
-            )
-            and not has_assignment
-        ):
-            raise StoreIntegrityError(
-                "SQLite workflow operation assignment identity is missing"
-            )
-        if action is _workflow.OperationAction.WAIT:
-            if status is _workflow.OperationStatus.INTENT and (
-                operation["delivery_id"] is not None
-                or operation["message_id"] is not None
-            ):
+                if event_root is None:
+                    raise StoreIntegrityError("SQLite workflow event root is missing")
                 raise StoreIntegrityError(
-                    "SQLite workflow wait intent has a Delivery identity"
+                    "SQLite workflow operation event root differs"
                 )
-        elif (
-            action
-            in (
-                _workflow.OperationAction.REPLY,
-                _workflow.OperationAction.READ,
-                _workflow.OperationAction.RELEASE,
-                _workflow.OperationAction.ACK,
+            count += 1
+            if count > expected_count:
+                raise StoreIntegrityError(
+                    "SQLite workflow operation event count differs"
+                )
+            frame = _WorkflowOperationEventFrame(
+                row=event_row,
+                checkpoint=event_checkpoint,
             )
-            and operation["delivery_id"] is None
-        ):
-            raise StoreIntegrityError(
-                "SQLite workflow operation Delivery identity is missing"
+            if first is None:
+                first = frame
+            last = frame
+    except _CLEANUP_EXCEPTION as exc:
+        body_error = exc
+        raise
+    finally:
+        try:
+            cursor.close()
+        except _CLEANUP_EXCEPTION:
+            if body_error is None:
+                raise
+    if count != expected_count or first is None or last is None:
+        raise StoreIntegrityError("SQLite workflow operation event count differs")
+    return _WorkflowOperationEventPair(
+        first=first,
+        last=last,
+        count=count,
+    )
+
+
+def _workflow_previous_event_for_operation(
+    connection: sqlite3.Connection,
+    operation: sqlite3.Row,
+    *,
+    store_schema: int,
+) -> tuple[str, _workflow.WorkflowCheckpointObservation]:
+    """Lookup and validate the root-local event used as an intent predecessor."""
+
+    expected_sequence = int(operation["expected_workflow_sequence"])
+    if expected_sequence < 1:
+        raise ValueError("non-start operation has no prior checkpoint")
+    row = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE root_key = ? AND workflow_sequence = ?",
+        (operation["root_key"], expected_sequence),
+    )
+    if row is None:
+        raise StoreIntegrityError("SQLite workflow previous event is missing")
+    previous_row = row
+    CoordinationStore._workflow_validate_event_row(
+        previous_row,
+        store_schema=store_schema,
+    )
+    previous_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+        previous_row,
+        store_schema=store_schema,
+    )
+    if previous_row["root_key"] != operation["root_key"]:
+        raise StoreIntegrityError("SQLite workflow previous event root differs")
+    return cast(str, previous_row["to_state"]), previous_checkpoint
+
+
+def _workflow_validate_operation_semantics(
+    connection: sqlite3.Connection,
+    operation: sqlite3.Row,
+    root_checkpoint: _workflow.WorkflowCheckpointObservation,
+    receipt: _workflow.DurableReceipt | None,
+    events: _WorkflowOperationEventPair,
+    *,
+    store_schema: int,
+) -> None:
+    """Run the former per-operation semantic block with only bounded locals."""
+
+    status = _workflow.OperationStatus(operation["status"])
+    action = _workflow.OperationAction(operation["action"])
+    first = events.first.row
+    last = events.last.row
+    if (
+        first["workflow_sequence"] != operation["intent_sequence"]
+        or first["kind"] != operation["action"]
+        or first["receipt_id"] is not None
+        or first["request_digest"] != operation["request_digest"]
+        or first["evidence_ref"] != operation["evidence_ref"]
+    ):
+        raise StoreIntegrityError("SQLite workflow intent event differs")
+
+    prior_checkpoint: _workflow.WorkflowCheckpointObservation | None = None
+    if operation["expected_workflow_sequence"] == 0:
+        expected_from_state = _workflow.SeedState.STARTING.value
+    else:
+        expected_from_state, prior_checkpoint = _workflow_previous_event_for_operation(
+            connection,
+            operation,
+            store_schema=store_schema,
+        )
+    if (
+        first["from_state"] != expected_from_state
+        or first["to_state"] != expected_from_state
+        or first["task_sequence_before"] != operation["expected_task_sequence"]
+        or first["task_sequence_after"] != operation["expected_task_sequence"]
+    ):
+        raise StoreIntegrityError("SQLite workflow intent event projection differs")
+
+    allowed_from_states: dict[_workflow.OperationAction, frozenset[str]] = {
+        _workflow.OperationAction.START: frozenset(
+            {_workflow.SeedState.STARTING.value}
+        ),
+        _workflow.OperationAction.PROMPT: frozenset(
+            {_workflow.CheckpointState.IDLE.value}
+        ),
+        _workflow.OperationAction.WAIT: frozenset(
+            {
+                _workflow.CheckpointState.ACTIVE.value,
+                _workflow.CheckpointState.WAITING.value,
+            }
+        ),
+        _workflow.OperationAction.REPLY: frozenset(
+            {_workflow.CheckpointState.QUESTION.value}
+        ),
+        _workflow.OperationAction.READ: frozenset(
+            {_workflow.CheckpointState.WORKER_DONE.value}
+        ),
+        _workflow.OperationAction.RELEASE: frozenset(
+            {_workflow.CheckpointState.WORKER_DONE.value}
+        ),
+        _workflow.OperationAction.ACK: frozenset(
+            {
+                _workflow.CheckpointState.QUESTION.value,
+                _workflow.CheckpointState.AWAITING_ACK.value,
+            }
+        ),
+        _workflow.OperationAction.STOP: frozenset(
+            state.value
+            for state in _workflow.CheckpointState
+            if state
+            not in (
+                _workflow.CheckpointState.RECOVERY_REQUIRED,
+                _workflow.CheckpointState.STOPPED,
             )
-        elif action in (
+        ),
+    }
+    if expected_from_state not in allowed_from_states[action]:
+        raise StoreIntegrityError(
+            "SQLite workflow operation state precondition differs"
+        )
+
+    has_assignment = operation["task_id"] is not None
+    if (
+        action
+        in (
             _workflow.OperationAction.START,
-            _workflow.OperationAction.PROMPT,
             _workflow.OperationAction.STOP,
-        ) and (
+        )
+        and has_assignment
+    ):
+        raise StoreIntegrityError(
+            "SQLite workflow operation has unexpected assignment identity"
+        )
+    if action is _workflow.OperationAction.PROMPT and (
+        (status is _workflow.OperationStatus.INTENT and has_assignment)
+        or (status is _workflow.OperationStatus.COMMITTED and not has_assignment)
+    ):
+        raise StoreIntegrityError("SQLite workflow prompt assignment identity differs")
+    if (
+        action
+        in (
+            _workflow.OperationAction.WAIT,
+            _workflow.OperationAction.REPLY,
+            _workflow.OperationAction.READ,
+            _workflow.OperationAction.RELEASE,
+            _workflow.OperationAction.ACK,
+        )
+        and not has_assignment
+    ):
+        raise StoreIntegrityError(
+            "SQLite workflow operation assignment identity is missing"
+        )
+    if action is _workflow.OperationAction.WAIT:
+        if status is _workflow.OperationStatus.INTENT and (
             operation["delivery_id"] is not None or operation["message_id"] is not None
         ):
             raise StoreIntegrityError(
-                "SQLite workflow operation has an unexpected Delivery identity"
+                "SQLite workflow wait intent has a Delivery identity"
             )
-        root = checkpoints[str(operation["root_key"])].root
-        intent = _workflow.OperationIntent(
-            operation_id=operation["operation_id"],
-            effect_key=operation["effect_key"],
-            root_key=operation["root_key"],
-            root=root if action is _workflow.OperationAction.START else None,
-            action=action,
-            request_digest=operation["request_digest"],
-            expected_workflow_sequence=operation["expected_workflow_sequence"],
-            expected_task_sequence=operation["expected_task_sequence"],
-            run_id=None
-            if action is _workflow.OperationAction.START
-            else operation["run_id"],
-            main_terminal_id=(
-                None
-                if action is _workflow.OperationAction.START
-                else operation["main_terminal_id"]
-            ),
-            task_id=(
-                None
-                if action is _workflow.OperationAction.PROMPT
-                else operation["task_id"]
-            ),
-            dispatch_id=(
-                None
-                if action is _workflow.OperationAction.PROMPT
-                else operation["dispatch_id"]
-            ),
-            attempt=(
-                None
-                if action is _workflow.OperationAction.PROMPT
-                else operation["attempt"]
-            ),
-            terminal_id=(
-                None
-                if action is _workflow.OperationAction.PROMPT
-                else operation["terminal_id"]
-            ),
-            delivery_id=(
-                None
-                if action is _workflow.OperationAction.WAIT
-                else operation["delivery_id"]
-            ),
-            message_id=(
-                None
-                if action is _workflow.OperationAction.WAIT
-                else operation["message_id"]
-            ),
-            consumer_generation=operation["consumer_generation"],
-            owner=operation["owner"],
-            lease_epoch=operation["lease_epoch"],
-            fencing_token=operation["fencing_token"],
-            actor=first["actor"],
-            evidence_ref=operation["evidence_ref"],
-            next_task_sequence=operation["next_task_sequence"],
+    elif (
+        action
+        in (
+            _workflow.OperationAction.REPLY,
+            _workflow.OperationAction.READ,
+            _workflow.OperationAction.RELEASE,
+            _workflow.OperationAction.ACK,
         )
-        if (
-            _workflow.operation_intent_digest(
-                intent,
-                intent_sequence=operation["intent_sequence"],
-            )
-            != operation["intent_digest"]
-        ):
-            raise StoreIntegrityError("SQLite workflow intent digest differs")
-        root_event_checkpoints = event_checkpoints_by_root[str(operation["root_key"])]
-        first_checkpoint = root_event_checkpoints[int(operation["intent_sequence"]) - 1]
-        try:
-            if action is _workflow.OperationAction.START:
-                expected_first: _workflow.WorkflowCheckpointObservation = (
-                    _workflow.WorkflowRootSeed(
-                        root=root,
-                        workflow_sequence=1,
-                        operation_id=operation_id,
-                        operation_status=_workflow.OperationStatus.INTENT,
-                        updated_ns=first["clock_ns"],
-                    )
+        and operation["delivery_id"] is None
+    ):
+        raise StoreIntegrityError(
+            "SQLite workflow operation Delivery identity is missing"
+        )
+    elif action in (
+        _workflow.OperationAction.START,
+        _workflow.OperationAction.PROMPT,
+        _workflow.OperationAction.STOP,
+    ) and (operation["delivery_id"] is not None or operation["message_id"] is not None):
+        raise StoreIntegrityError(
+            "SQLite workflow operation has an unexpected Delivery identity"
+        )
+
+    root = root_checkpoint.root
+    intent = _workflow.OperationIntent(
+        operation_id=operation["operation_id"],
+        effect_key=operation["effect_key"],
+        root_key=operation["root_key"],
+        root=root if action is _workflow.OperationAction.START else None,
+        action=action,
+        request_digest=operation["request_digest"],
+        expected_workflow_sequence=operation["expected_workflow_sequence"],
+        expected_task_sequence=operation["expected_task_sequence"],
+        run_id=(
+            None if action is _workflow.OperationAction.START else operation["run_id"]
+        ),
+        main_terminal_id=(
+            None
+            if action is _workflow.OperationAction.START
+            else operation["main_terminal_id"]
+        ),
+        task_id=(
+            None if action is _workflow.OperationAction.PROMPT else operation["task_id"]
+        ),
+        dispatch_id=(
+            None
+            if action is _workflow.OperationAction.PROMPT
+            else operation["dispatch_id"]
+        ),
+        attempt=(
+            None if action is _workflow.OperationAction.PROMPT else operation["attempt"]
+        ),
+        terminal_id=(
+            None
+            if action is _workflow.OperationAction.PROMPT
+            else operation["terminal_id"]
+        ),
+        delivery_id=(
+            None
+            if action is _workflow.OperationAction.WAIT
+            else operation["delivery_id"]
+        ),
+        message_id=(
+            None
+            if action is _workflow.OperationAction.WAIT
+            else operation["message_id"]
+        ),
+        consumer_generation=operation["consumer_generation"],
+        owner=operation["owner"],
+        lease_epoch=operation["lease_epoch"],
+        fencing_token=operation["fencing_token"],
+        actor=first["actor"],
+        evidence_ref=operation["evidence_ref"],
+        next_task_sequence=operation["next_task_sequence"],
+    )
+    if (
+        _workflow.operation_intent_digest(
+            intent,
+            intent_sequence=operation["intent_sequence"],
+        )
+        != operation["intent_digest"]
+    ):
+        raise StoreIntegrityError("SQLite workflow intent digest differs")
+
+    first_checkpoint = events.first.checkpoint
+    try:
+        expected_first: _workflow.WorkflowCheckpointObservation
+        if action is _workflow.OperationAction.START:
+            if store_schema == 3:
+                expected_first = _workflow._issue_legacy_seed(
+                    root=root,
+                    workflow_sequence=1,
+                    operation_id=operation["operation_id"],
+                    operation_status=_workflow.OperationStatus.INTENT,
+                    seed_digest=None,
+                    updated_ns=first["clock_ns"],
                 )
             else:
-                expected_sequence = int(operation["expected_workflow_sequence"])
-                if expected_sequence < 1:
-                    raise ValueError("non-start operation has no prior checkpoint")
-                prior_checkpoint = root_event_checkpoints[expected_sequence - 1]
-                if type(prior_checkpoint) is not _workflow.WorkflowCheckpointV4:
-                    raise ValueError("non-start prior checkpoint is not a run")
-                CoordinationStore._workflow_validate_intent_checkpoint(
-                    intent,
-                    prior_checkpoint,
+                expected_first = _workflow.WorkflowRootSeed(
+                    root=root,
+                    workflow_sequence=1,
+                    operation_id=operation["operation_id"],
+                    operation_status=_workflow.OperationStatus.INTENT,
+                    updated_ns=first["clock_ns"],
                 )
-                prior_draft = _workflow.checkpoint_to_draft(prior_checkpoint)
-                pending_delivery = prior_draft.pending_delivery
-                if action is _workflow.OperationAction.ACK:
-                    if pending_delivery is None:
-                        raise ValueError("ack prior Delivery is missing")
-                    pending_delivery = _workflow.PendingDelivery(
-                        delivery_id=pending_delivery.delivery_id,
-                        consumer_generation=pending_delivery.consumer_generation,
-                        ordered_message_ids=pending_delivery.ordered_message_ids,
-                        ordered_event_projection=(
-                            pending_delivery.ordered_event_projection
-                        ),
-                        delivery_digest=pending_delivery.delivery_digest,
-                        ack_operation_id=operation_id,
-                        ack_status=_workflow.AckStatus.ACK_INTENT,
-                    )
-                first_draft = _workflow.WorkflowCheckpointDraft(
-                    root=prior_draft.root,
-                    run=prior_draft.run,
-                    workflow_sequence=int(operation["intent_sequence"]),
-                    task_sequence=prior_draft.task_sequence,
-                    execution_mode=prior_draft.execution_mode,
-                    workflow_state=prior_draft.workflow_state,
-                    task_policy=prior_draft.task_policy,
-                    active_assignment=prior_draft.active_assignment,
-                    pending_delivery=pending_delivery,
-                    replied_message_ids=prior_draft.replied_message_ids,
-                    read_observed=prior_draft.read_observed,
-                    released=prior_draft.released,
-                    review_authority=prior_draft.review_authority,
-                    verification_authority=prior_draft.verification_authority,
-                    last_operation=CoordinationStore._workflow_last_operation_for_intent(
-                        intent,
-                        status=_workflow.OperationStatus.INTENT,
+        else:
+            expected_sequence = int(operation["expected_workflow_sequence"])
+            if expected_sequence < 1:
+                raise ValueError("non-start operation has no prior checkpoint")
+            if prior_checkpoint is None:
+                raise ValueError("non-start operation has no prior checkpoint")
+            if type(prior_checkpoint) is not _workflow.WorkflowCheckpointV4:
+                raise ValueError("non-start prior checkpoint is not a run")
+            CoordinationStore._workflow_validate_intent_checkpoint(
+                intent,
+                prior_checkpoint,
+            )
+            prior_draft = (
+                _workflow._legacy_checkpoint_to_draft(prior_checkpoint)
+                if store_schema == 3
+                else _workflow.checkpoint_to_draft(prior_checkpoint)
+            )
+            pending_delivery = prior_draft.pending_delivery
+            if action is _workflow.OperationAction.ACK:
+                if pending_delivery is None:
+                    raise ValueError("ack prior Delivery is missing")
+                pending_delivery = _workflow.PendingDelivery(
+                    delivery_id=pending_delivery.delivery_id,
+                    consumer_generation=pending_delivery.consumer_generation,
+                    ordered_message_ids=pending_delivery.ordered_message_ids,
+                    ordered_event_projection=(
+                        pending_delivery.ordered_event_projection
                     ),
+                    delivery_digest=pending_delivery.delivery_digest,
+                    ack_operation_id=operation["operation_id"],
+                    ack_status=_workflow.AckStatus.ACK_INTENT,
                 )
+            first_draft = _workflow.WorkflowCheckpointDraft(
+                root=prior_draft.root,
+                run=prior_draft.run,
+                workflow_sequence=operation["intent_sequence"],
+                task_sequence=prior_draft.task_sequence,
+                execution_mode=prior_draft.execution_mode,
+                workflow_state=prior_draft.workflow_state,
+                task_policy=prior_draft.task_policy,
+                active_assignment=prior_draft.active_assignment,
+                pending_delivery=pending_delivery,
+                replied_message_ids=prior_draft.replied_message_ids,
+                read_observed=prior_draft.read_observed,
+                released=prior_draft.released,
+                review_authority=prior_draft.review_authority,
+                verification_authority=prior_draft.verification_authority,
+                last_operation=CoordinationStore._workflow_last_operation_for_intent(
+                    intent,
+                    status=_workflow.OperationStatus.INTENT,
+                ),
+            )
+            if store_schema == 3:
+                expected_first = _workflow._issue_legacy_checkpoint(
+                    first_draft,
+                    updated_ns=first["clock_ns"],
+                    checkpoint_digest=None,
+                )
+            else:
                 expected_first = _workflow._issue_checkpoint(
                     first_draft,
                     updated_ns=first["clock_ns"],
                     issuer=object(),
                 )
-            if first_checkpoint != expected_first:
-                raise ValueError("intent checkpoint differs")
+        if first_checkpoint != expected_first:
+            raise ValueError("intent checkpoint differs")
+    except (
+        TypeError,
+        ValueError,
+        _workflow.WorkflowStoreError,
+        WorkflowOperationIdentityError,
+        WorkflowStateConflictError,
+    ) as exc:
+        raise StoreIntegrityError(
+            "SQLite workflow intent checkpoint is invalid"
+        ) from exc
+
+    if status is _workflow.OperationStatus.COMMITTED:
+        if receipt is None:
+            raise StoreIntegrityError("SQLite committed workflow receipt is missing")
+        receipt_id = operation["receipt_id"]
+        if (
+            last["workflow_sequence"] != operation["intent_sequence"] + 1
+            or last["kind"] != operation["action"]
+            or last["receipt_id"] != receipt_id
+            or last["request_digest"] != operation["request_digest"]
+            or last["evidence_ref"] != operation["evidence_ref"]
+            or last["actor"] != first["actor"]
+            or first["clock_ns"] != operation["created_ns"]
+            or last["clock_ns"] != operation["updated_ns"]
+            or last["task_sequence_before"] != operation["expected_task_sequence"]
+            or last["task_sequence_after"]
+            != (
+                operation["expected_task_sequence"]
+                if operation["next_task_sequence"] is None
+                else operation["next_task_sequence"]
+            )
+        ):
+            raise StoreIntegrityError("SQLite workflow commit event differs")
+        committed_checkpoint = events.last.checkpoint
+        if type(committed_checkpoint) is not _workflow.WorkflowCheckpointV4:
+            raise StoreIntegrityError("SQLite workflow commit checkpoint is not a run")
+        try:
+            committed_draft = (
+                _workflow._legacy_checkpoint_to_draft(committed_checkpoint)
+                if store_schema == 3
+                else _workflow.checkpoint_to_draft(committed_checkpoint)
+            )
+            CoordinationStore._workflow_validate_effect_draft(
+                committed_draft,
+                current=first_checkpoint,
+                operation_row=operation,
+                receipt=receipt,
+                intent=intent,
+            )
         except (
             TypeError,
             ValueError,
@@ -3595,163 +4757,562 @@ def _validate_workflow_rows_for_connection(
             WorkflowStateConflictError,
         ) as exc:
             raise StoreIntegrityError(
-                "SQLite workflow intent checkpoint is invalid"
+                "SQLite workflow commit checkpoint is invalid"
             ) from exc
-        if status is _workflow.OperationStatus.COMMITTED:
-            receipt_id = operation["receipt_id"]
-            if receipt_id not in receipts:
-                raise StoreIntegrityError(
-                    "SQLite committed workflow receipt is missing"
-                )
-            last = operation_events[-1]
-            if (
-                last["workflow_sequence"] != operation["intent_sequence"] + 1
-                or last["kind"] != operation["action"]
-                or last["receipt_id"] != receipt_id
-                or last["request_digest"] != operation["request_digest"]
-                or last["evidence_ref"] != operation["evidence_ref"]
-                or last["actor"] != first["actor"]
-                or first["clock_ns"] != operation["created_ns"]
-                or last["clock_ns"] != operation["updated_ns"]
-                or last["task_sequence_before"] != operation["expected_task_sequence"]
-                or last["task_sequence_after"]
-                != (
-                    operation["expected_task_sequence"]
-                    if operation["next_task_sequence"] is None
-                    else operation["next_task_sequence"]
-                )
-            ):
-                raise StoreIntegrityError("SQLite workflow commit event differs")
-            committed_checkpoint = root_event_checkpoints[
-                int(operation["intent_sequence"])
-            ]
-            if type(committed_checkpoint) is not _workflow.WorkflowCheckpointV4:
-                raise StoreIntegrityError(
-                    "SQLite workflow commit checkpoint is not a run"
-                )
-            try:
-                CoordinationStore._workflow_validate_effect_draft(
-                    _workflow.checkpoint_to_draft(committed_checkpoint),
-                    current=first_checkpoint,
-                    operation_row=operation,
-                    receipt=receipts[str(receipt_id)],
-                    intent=intent,
-                )
-            except (
-                TypeError,
-                ValueError,
-                _workflow.WorkflowStoreError,
-                WorkflowOperationIdentityError,
-                WorkflowStateConflictError,
-            ) as exc:
-                raise StoreIntegrityError(
-                    "SQLite workflow commit checkpoint is invalid"
-                ) from exc
-        elif status is _workflow.OperationStatus.UNKNOWN_EFFECT:
-            last = operation_events[-1]
-            if (
-                last["workflow_sequence"] != operation["intent_sequence"] + 1
-                or last["kind"] != "mark_unknown"
-                or last["receipt_id"] is not None
-                or last["request_digest"] != operation["request_digest"]
-                or last["evidence_ref"] != operation["evidence_ref"]
-                or last["actor"] != first["actor"]
-                or first["clock_ns"] != operation["created_ns"]
-                or last["clock_ns"] != operation["updated_ns"]
-                or last["task_sequence_before"] != operation["expected_task_sequence"]
-                or last["task_sequence_after"] != operation["expected_task_sequence"]
-            ):
-                raise StoreIntegrityError("SQLite workflow unknown event differs")
-            try:
-                if isinstance(first_checkpoint, _workflow.WorkflowRootSeed):
-                    expected_unknown: _workflow.WorkflowCheckpointObservation = (
-                        _workflow.WorkflowRootSeed(
-                            root=first_checkpoint.root,
-                            workflow_sequence=2,
-                            operation_id=operation_id,
-                            operation_status=(_workflow.OperationStatus.UNKNOWN_EFFECT),
-                            updated_ns=last["clock_ns"],
-                        )
+    elif status is _workflow.OperationStatus.UNKNOWN_EFFECT:
+        if receipt is not None:
+            raise StoreIntegrityError("SQLite workflow receipt is invalid")
+        if (
+            last["workflow_sequence"] != operation["intent_sequence"] + 1
+            or last["kind"] != "mark_unknown"
+            or last["receipt_id"] is not None
+            or last["request_digest"] != operation["request_digest"]
+            or last["evidence_ref"] != operation["evidence_ref"]
+            or last["actor"] != first["actor"]
+            or first["clock_ns"] != operation["created_ns"]
+            or last["clock_ns"] != operation["updated_ns"]
+            or last["task_sequence_before"] != operation["expected_task_sequence"]
+            or last["task_sequence_after"] != operation["expected_task_sequence"]
+        ):
+            raise StoreIntegrityError("SQLite workflow unknown event differs")
+        try:
+            expected_unknown: _workflow.WorkflowCheckpointObservation
+            if isinstance(first_checkpoint, _workflow.WorkflowRootSeed):
+                if store_schema == 3:
+                    expected_unknown = _workflow._issue_legacy_seed(
+                        root=first_checkpoint.root,
+                        workflow_sequence=2,
+                        operation_id=operation["operation_id"],
+                        operation_status=(_workflow.OperationStatus.UNKNOWN_EFFECT),
+                        seed_digest=None,
+                        updated_ns=last["clock_ns"],
                     )
                 else:
-                    first_draft = _workflow.checkpoint_to_draft(first_checkpoint)
-                    unknown_draft = _workflow.WorkflowCheckpointDraft(
-                        root=first_draft.root,
-                        run=first_draft.run,
-                        workflow_sequence=first_checkpoint.workflow_sequence + 1,
-                        task_sequence=first_draft.task_sequence,
-                        execution_mode=first_draft.execution_mode,
-                        workflow_state=_workflow.CheckpointState.RECOVERY_REQUIRED,
-                        task_policy=first_draft.task_policy,
-                        active_assignment=first_draft.active_assignment,
-                        pending_delivery=first_draft.pending_delivery,
-                        replied_message_ids=first_draft.replied_message_ids,
-                        read_observed=first_draft.read_observed,
-                        released=first_draft.released,
-                        review_authority=first_draft.review_authority,
-                        verification_authority=(first_draft.verification_authority),
-                        last_operation=(
-                            CoordinationStore._workflow_last_operation_for_intent(
-                                intent,
-                                status=(_workflow.OperationStatus.UNKNOWN_EFFECT),
-                            )
-                        ),
+                    expected_unknown = _workflow.WorkflowRootSeed(
+                        root=first_checkpoint.root,
+                        workflow_sequence=2,
+                        operation_id=operation["operation_id"],
+                        operation_status=(_workflow.OperationStatus.UNKNOWN_EFFECT),
+                        updated_ns=last["clock_ns"],
                     )
+            else:
+                first_draft = (
+                    _workflow._legacy_checkpoint_to_draft(first_checkpoint)
+                    if store_schema == 3
+                    else _workflow.checkpoint_to_draft(first_checkpoint)
+                )
+                unknown_draft = _workflow.WorkflowCheckpointDraft(
+                    root=first_draft.root,
+                    run=first_draft.run,
+                    workflow_sequence=first_checkpoint.workflow_sequence + 1,
+                    task_sequence=first_draft.task_sequence,
+                    execution_mode=first_draft.execution_mode,
+                    workflow_state=_workflow.CheckpointState.RECOVERY_REQUIRED,
+                    task_policy=first_draft.task_policy,
+                    active_assignment=first_draft.active_assignment,
+                    pending_delivery=first_draft.pending_delivery,
+                    replied_message_ids=first_draft.replied_message_ids,
+                    read_observed=first_draft.read_observed,
+                    released=first_draft.released,
+                    review_authority=first_draft.review_authority,
+                    verification_authority=first_draft.verification_authority,
+                    last_operation=(
+                        CoordinationStore._workflow_last_operation_for_intent(
+                            intent,
+                            status=_workflow.OperationStatus.UNKNOWN_EFFECT,
+                        )
+                    ),
+                )
+                if store_schema == 3:
+                    expected_unknown = _workflow._issue_legacy_checkpoint(
+                        unknown_draft,
+                        updated_ns=last["clock_ns"],
+                        checkpoint_digest=None,
+                    )
+                else:
                     expected_unknown = _workflow._issue_checkpoint(
                         unknown_draft,
                         updated_ns=last["clock_ns"],
                         issuer=object(),
                     )
-                unknown_checkpoint = root_event_checkpoints[
-                    int(operation["intent_sequence"])
-                ]
-                if unknown_checkpoint != expected_unknown:
-                    raise ValueError("unknown checkpoint differs")
-            except (TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
-                raise StoreIntegrityError(
-                    "SQLite workflow unknown checkpoint is invalid"
-                ) from exc
-        elif first["clock_ns"] != operation["created_ns"]:
-            raise StoreIntegrityError("SQLite workflow intent clock differs")
-
-    for checkpoint in checkpoints.values():
-        if isinstance(checkpoint, _workflow.WorkflowRootSeed):
-            marker_id = checkpoint.operation_id
-            marker_status = checkpoint.operation_status
-            marker = None
-        else:
-            marker = checkpoint.last_operation
-            marker_id = None if marker is None else marker.operation_id
-            marker_status = None if marker is None else marker.status
-        if marker_id is None:
-            continue
-        operation = operations.get(marker_id)
-        if operation is None:
-            raise StoreIntegrityError("SQLite workflow checkpoint operation is missing")
-        if marker_status is not _workflow.OperationStatus(operation["status"]):
+            unknown_checkpoint = events.last.checkpoint
+            if unknown_checkpoint != expected_unknown:
+                raise ValueError("unknown checkpoint differs")
+        except (TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
             raise StoreIntegrityError(
-                "SQLite workflow checkpoint operation status differs"
-            )
-        if marker is not None and (
-            marker.effect_key != operation["effect_key"]
-            or marker.action.value != operation["action"]
-            or marker.request_digest != operation["request_digest"]
-            or marker.expected_workflow_sequence
-            != operation["expected_workflow_sequence"]
-            or marker.expected_task_sequence != operation["expected_task_sequence"]
-            or marker.receipt_id != operation["receipt_id"]
-            or marker.receipt_digest != operation["receipt_digest"]
-        ):
-            raise StoreIntegrityError(
-                "SQLite workflow checkpoint operation marker differs"
-            )
+                "SQLite workflow unknown checkpoint is invalid"
+            ) from exc
+    elif receipt is not None:
+        # The receipt helper normally rejects this through the digest/marker
+        # comparison; keep the lifecycle invariant explicit at this seam.
+        raise StoreIntegrityError("SQLite workflow receipt is invalid")
+    elif first["clock_ns"] != operation["created_ns"]:
+        raise StoreIntegrityError("SQLite workflow intent clock differs")
 
-    return (
-        len(checkpoint_rows),
-        len(operation_rows),
-        len(receipt_rows),
-        len(event_rows),
+
+def _validate_workflow_receipt_rows_stream(
+    connection: sqlite3.Connection,
+    *,
+    store_schema: int,
+) -> int:
+    """Validate every receipt once more to reject receipt-only/orphan rows."""
+
+    receipt_count = 0
+    receipt_issuer = object()
+    with _workflow_stream_rows(
+        connection,
+        "SELECT * FROM workflow_receipts ORDER BY receipt_id",
+    ) as rows:
+        for receipt_row in rows:
+            operation = _workflow_read_one(
+                connection,
+                "SELECT * FROM workflow_operations WHERE operation_id = ?",
+                (receipt_row["operation_id"],),
+            )
+            if operation is None:
+                raise StoreIntegrityError("SQLite workflow receipt is invalid")
+            operation_row = operation
+            CoordinationStore._workflow_validate_operation_row(operation_row)
+            checkpoint = _workflow_checkpoint_for_root(
+                connection,
+                operation_row["root_key"],
+                store_schema=store_schema,
+            )
+            receipt = _workflow_receipt_from_operation_row(
+                receipt_row,
+                operation_row,
+                issuer=receipt_issuer,
+            )
+            if receipt.root_key != checkpoint.root.root_key:
+                raise StoreIntegrityError("SQLite workflow receipt root differs")
+            receipt_count += 1
+    return receipt_count
+
+
+def _validate_workflow_operation_rows_stream(
+    connection: sqlite3.Connection,
+    *,
+    store_schema: int,
+) -> tuple[int, int]:
+    """Validate operation structure and receipts with bounded state."""
+
+    operation_count = 0
+    with _workflow_stream_rows(
+        connection,
+        "SELECT * FROM workflow_operations ORDER BY operation_id",
+    ) as rows:
+        for operation in rows:
+            CoordinationStore._workflow_validate_operation_row(operation)
+            _workflow_checkpoint_for_root(
+                connection,
+                operation["root_key"],
+                store_schema=store_schema,
+            )
+            operation_count += 1
+
+    receipt_count = _validate_workflow_receipt_rows_stream(
+        connection,
+        store_schema=store_schema,
     )
+    return operation_count, receipt_count
+
+
+def _validate_workflow_operation_semantics_stream(
+    connection: sqlite3.Connection,
+    *,
+    store_schema: int,
+) -> None:
+    """Validate operation events and semantics without recounting rows."""
+
+    receipt_issuer = object()
+    with _workflow_stream_rows(
+        connection,
+        "SELECT * FROM workflow_operations ORDER BY operation_id",
+    ) as rows:
+        for operation in rows:
+            CoordinationStore._workflow_validate_operation_row(operation)
+            root_checkpoint = _workflow_checkpoint_for_root(
+                connection,
+                operation["root_key"],
+                store_schema=store_schema,
+            )
+            receipt = _workflow_receipt_for_operation(
+                connection,
+                operation,
+                issuer=receipt_issuer,
+            )
+            events = _workflow_operation_event_pair(
+                connection,
+                operation,
+                store_schema=store_schema,
+            )
+            _workflow_validate_operation_semantics(
+                connection,
+                operation,
+                root_checkpoint,
+                receipt,
+                events,
+                store_schema=store_schema,
+            )
+
+
+def _workflow_stream_root_events(
+    connection: sqlite3.Connection,
+    *,
+    root_key: str,
+    checkpoint: _workflow.WorkflowCheckpointObservation,
+    store_schema: int = _CURRENT_STORE_SCHEMA,
+) -> int:
+    """Validate one root event stream without retaining its event history."""
+
+    event_count = 0
+    previous_event_id: int | None = None
+    previous_to_state: str | None = None
+    previous_task_sequence_after: int | None = None
+    previous_checkpoint: _workflow.WorkflowCheckpointObservation | None = None
+    last_checkpoint: _workflow.WorkflowCheckpointObservation | None = None
+    last_checkpoint_digest: str | None = None
+    last_to_state: str | None = None
+    last_task_sequence_after: int | None = None
+
+    with _workflow_stream_rows(
+        connection,
+        """
+        SELECT * FROM workflow_events
+        WHERE root_key = ?
+        ORDER BY workflow_sequence
+        """,
+        (root_key,),
+    ) as rows:
+        for row in rows:
+            # Call first so malformed event rows retain the current validation and
+            # StoreIntegrityError mapping.
+            CoordinationStore._workflow_validate_event_row(
+                row,
+                store_schema=store_schema,
+            )
+            event_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+                row,
+                store_schema=store_schema,
+            )
+
+            event_id = _workflow._require_int(
+                row["workflow_event_id"],
+                "workflow_event_id",
+                minimum=1,
+            )
+            if previous_event_id is not None and event_id <= previous_event_id:
+                # The old global event-id traversal reports this same accepted-set
+                # violation as a workflow sequence gap. Keep that public error.
+                raise StoreIntegrityError("SQLite workflow event sequence has a gap")
+            if row["workflow_sequence"] != event_count + 1:
+                raise StoreIntegrityError("SQLite workflow event sequence has a gap")
+
+            operation_id = row["operation_id"]
+            if operation_id is not None:
+                # A scalar root lookup is enough here; the operation pass already
+                # validates the complete operation row before this root pass.
+                operation = _workflow_read_one(
+                    connection,
+                    "SELECT root_key FROM workflow_operations WHERE operation_id = ?",
+                    (operation_id,),
+                )
+                if operation is None:
+                    raise StoreIntegrityError(
+                        "SQLite workflow event operation is missing"
+                    )
+                if operation[0] != row["root_key"]:
+                    raise StoreIntegrityError(
+                        "SQLite workflow event operation root differs"
+                    )
+            elif row["kind"] not in {
+                _workflow.TransitionKind.POLICY.value,
+                _workflow.TransitionKind.VERIFICATION.value,
+            }:
+                raise StoreIntegrityError(
+                    "SQLite workflow transition event kind is invalid"
+                )
+
+            if previous_checkpoint is not None:
+                if row["from_state"] != previous_to_state:
+                    raise StoreIntegrityError(
+                        "SQLite workflow event state chain differs"
+                    )
+                if row["task_sequence_before"] != previous_task_sequence_after:
+                    raise StoreIntegrityError(
+                        "SQLite workflow task sequence chain differs"
+                    )
+
+            if operation_id is None:
+                if previous_checkpoint is None:
+                    raise StoreIntegrityError(
+                        "SQLite workflow transition has no prior checkpoint"
+                    )
+                before = previous_checkpoint
+                after = event_checkpoint
+                if (
+                    type(before) is not _workflow.WorkflowCheckpointV4
+                    or type(after) is not _workflow.WorkflowCheckpointV4
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite workflow transition checkpoint is not a run"
+                    )
+                if (
+                    after.root != before.root
+                    or after.run != before.run
+                    or after.workflow_sequence != before.workflow_sequence + 1
+                    or after.execution_mode != before.execution_mode
+                    or after.active_assignment != before.active_assignment
+                    or after.pending_delivery != before.pending_delivery
+                    or after.replied_message_ids != before.replied_message_ids
+                    or after.read_observed != before.read_observed
+                    or after.released != before.released
+                    or after.last_operation != before.last_operation
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite workflow transition projection differs"
+                    )
+                kind = _workflow.TransitionKind(row["kind"])
+                target_authority = (
+                    after.review_authority
+                    if kind is _workflow.TransitionKind.POLICY
+                    else after.verification_authority
+                )
+                non_target_matches = (
+                    after.verification_authority == before.verification_authority
+                    if kind is _workflow.TransitionKind.POLICY
+                    else after.review_authority == before.review_authority
+                )
+                if (
+                    target_authority is None
+                    or target_authority.digest != row["evidence_ref"]
+                    or not non_target_matches
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite workflow transition authority differs"
+                    )
+                if after.task_sequence == before.task_sequence:
+                    if after.task_policy != before.task_policy:
+                        raise StoreIntegrityError(
+                            "SQLite workflow transition stable task differs"
+                        )
+                else:
+                    expected_task_sequence = (
+                        1 if before.task_sequence is None else before.task_sequence + 1
+                    )
+                    if after.task_sequence != expected_task_sequence:
+                        raise StoreIntegrityError(
+                            "SQLite workflow transition task sequence differs"
+                        )
+                if after.workflow_state is not before.workflow_state:
+                    raise StoreIntegrityError(
+                        "SQLite workflow transition changed workflow state"
+                    )
+
+            event_count += 1
+            previous_event_id = event_id
+            previous_to_state = row["to_state"]
+            previous_task_sequence_after = row["task_sequence_after"]
+            previous_checkpoint = event_checkpoint
+            last_checkpoint = event_checkpoint
+            last_checkpoint_digest = row["checkpoint_digest"]
+            last_to_state = row["to_state"]
+            last_task_sequence_after = row["task_sequence_after"]
+
+    if event_count != checkpoint.workflow_sequence:
+        raise StoreIntegrityError("SQLite workflow event sequence has a gap")
+    if event_count == 0:
+        return event_count
+
+    # event_count > 0 makes these values present; the explicit guard keeps the
+    # helper fail-closed if that invariant is ever changed accidentally.
+    if last_checkpoint is None:
+        raise StoreIntegrityError("SQLite workflow current event checkpoint differs")
+    checkpoint_digest = (
+        checkpoint.seed_digest
+        if isinstance(checkpoint, _workflow.WorkflowRootSeed)
+        else checkpoint.checkpoint_digest
+    )
+    if last_checkpoint_digest != checkpoint_digest:
+        raise StoreIntegrityError("SQLite workflow current event digest differs")
+    checkpoint_task_sequence = (
+        None
+        if isinstance(checkpoint, _workflow.WorkflowRootSeed)
+        else checkpoint.task_sequence
+    )
+    if (
+        last_to_state != checkpoint.workflow_state.value
+        or last_task_sequence_after != checkpoint_task_sequence
+    ):
+        raise StoreIntegrityError(
+            "SQLite workflow event projection differs from checkpoint"
+        )
+    if last_checkpoint != checkpoint:
+        raise StoreIntegrityError("SQLite workflow current event checkpoint differs")
+    return event_count
+
+
+def _workflow_validate_checkpoint_last_operation(
+    connection: sqlite3.Connection,
+    checkpoint: _workflow.WorkflowCheckpointObservation,
+) -> None:
+    """Validate one checkpoint marker against one operation SQL row."""
+
+    if isinstance(checkpoint, _workflow.WorkflowRootSeed):
+        marker = None
+        marker_id = checkpoint.operation_id
+        marker_status = checkpoint.operation_status
+    else:
+        marker = checkpoint.last_operation
+        marker_id = None if marker is None else marker.operation_id
+        marker_status = None if marker is None else marker.status
+    if marker_id is None:
+        return
+
+    operation = _workflow_read_one(
+        connection,
+        """
+        SELECT operation_id, effect_key, action, request_digest,
+               expected_workflow_sequence, expected_task_sequence,
+               status, receipt_id, receipt_digest
+        FROM workflow_operations
+        WHERE operation_id = ?
+        """,
+        (marker_id,),
+    )
+    if operation is None:
+        raise StoreIntegrityError("SQLite workflow checkpoint operation is missing")
+    if marker_status is not _workflow.OperationStatus(operation["status"]):
+        raise StoreIntegrityError("SQLite workflow checkpoint operation status differs")
+    if marker is not None and (
+        marker.effect_key != operation["effect_key"]
+        or marker.action.value != operation["action"]
+        or marker.request_digest != operation["request_digest"]
+        or marker.expected_workflow_sequence != operation["expected_workflow_sequence"]
+        or marker.expected_task_sequence != operation["expected_task_sequence"]
+        or marker.receipt_id != operation["receipt_id"]
+        or marker.receipt_digest != operation["receipt_digest"]
+    ):
+        raise StoreIntegrityError("SQLite workflow checkpoint operation marker differs")
+
+
+def _workflow_stream_event_links(
+    connection: sqlite3.Connection,
+    *,
+    store_schema: int,
+) -> int:
+    """Validate every event link once without retaining event rows."""
+
+    event_count = 0
+    with _workflow_stream_rows(
+        connection,
+        "SELECT * FROM workflow_events ORDER BY workflow_event_id",
+    ) as rows:
+        for row in rows:
+            CoordinationStore._workflow_validate_event_row(
+                row,
+                store_schema=store_schema,
+            )
+            CoordinationStore._workflow_decode_event_checkpoint(
+                row,
+                store_schema=store_schema,
+            )
+            checkpoint = _workflow_read_one(
+                connection,
+                "SELECT root_key FROM workflow_checkpoints WHERE root_key = ?",
+                (row["root_key"],),
+            )
+            if checkpoint is None:
+                raise StoreIntegrityError("SQLite workflow event root is missing")
+            operation_id = row["operation_id"]
+            if operation_id is not None:
+                operation = _workflow_read_one(
+                    connection,
+                    "SELECT root_key FROM workflow_operations WHERE operation_id = ?",
+                    (operation_id,),
+                )
+                if operation is None:
+                    raise StoreIntegrityError(
+                        "SQLite workflow event operation is missing"
+                    )
+                if operation[0] != row["root_key"]:
+                    raise StoreIntegrityError(
+                        "SQLite workflow event operation root differs"
+                    )
+            elif row["kind"] not in {
+                _workflow.TransitionKind.POLICY.value,
+                _workflow.TransitionKind.VERIFICATION.value,
+            }:
+                raise StoreIntegrityError(
+                    "SQLite workflow transition event kind is invalid"
+                )
+            event_count += 1
+    return event_count
+
+
+def _validate_workflow_rows_for_connection(
+    connection: sqlite3.Connection,
+    *,
+    store_schema: int = _CURRENT_STORE_SCHEMA,
+) -> tuple[int, int, int, int]:
+    """Validate workflow rows for one explicitly selected store schema."""
+
+    previous_row_factory = connection.row_factory
+    checkpoint_count = 0
+    try:
+        connection.row_factory = sqlite3.Row
+        with _workflow_stream_rows(
+            connection,
+            "SELECT * FROM workflow_checkpoints ORDER BY root_key",
+        ) as rows:
+            for row in rows:
+                _workflow_checkpoint_from_row(
+                    row,
+                    store_schema=store_schema,
+                )
+                checkpoint_count += 1
+
+        operation_count, receipt_count = _validate_workflow_operation_rows_stream(
+            connection,
+            store_schema=store_schema,
+        )
+        event_count = _workflow_stream_event_links(
+            connection,
+            store_schema=store_schema,
+        )
+
+        root_event_count = 0
+        with _workflow_stream_rows(
+            connection,
+            "SELECT * FROM workflow_checkpoints ORDER BY root_key",
+        ) as rows:
+            for row in rows:
+                checkpoint = _workflow_checkpoint_from_row(
+                    row,
+                    store_schema=store_schema,
+                )
+                root_event_count += _workflow_stream_root_events(
+                    connection,
+                    root_key=row["root_key"],
+                    checkpoint=checkpoint,
+                    store_schema=store_schema,
+                )
+                _workflow_validate_checkpoint_last_operation(connection, checkpoint)
+
+        if root_event_count != event_count:
+            raise StoreIntegrityError("SQLite workflow event sequence has a gap")
+        _validate_workflow_operation_semantics_stream(
+            connection,
+            store_schema=store_schema,
+        )
+        return (
+            checkpoint_count,
+            operation_count,
+            receipt_count,
+            event_count,
+        )
+    finally:
+        connection.row_factory = previous_row_factory
 
 
 def _validate_schema_contract(
@@ -3763,6 +5324,7 @@ def _validate_schema_contract(
     expected_indexes: Mapping[str, tuple[tuple[int, str, tuple[str, ...]], ...]],
     expected_foreign_keys: Mapping[str, tuple[tuple[str, str, str, str, str], ...]],
     expected_meta_keys: frozenset[str],
+    validate_workflow_rows: bool = True,
 ) -> None:
     """Validate one exact schema contract without changing the database."""
 
@@ -3831,8 +5393,10 @@ def _validate_schema_contract(
         integrity_row = connection.execute("PRAGMA integrity_check").fetchone()
         if integrity_row is None or str(integrity_row[0]).lower() != "ok":
             raise StoreIntegrityError("SQLite integrity_check failed")
-        if connection.execute("PRAGMA foreign_key_check").fetchall():
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise StoreIntegrityError("SQLite foreign_key_check failed")
+        if schema_version == _CURRENT_STORE_SCHEMA:
+            _validate_schema4_ledger_is_empty(connection)
         for row in connection.execute(
             """
             SELECT event_id, event_schema_version, operation_id, attempt,
@@ -3841,9 +5405,9 @@ def _validate_schema_contract(
             FROM transition_events
             ORDER BY event_id
             """
-        ).fetchall():
+        ):
             try:
-                TransitionEvent(
+                _validate_transition_event_fields(
                     sequence=row[0],
                     event_schema_version=row[1],
                     operation_id=row[2],
@@ -3855,11 +5419,19 @@ def _validate_schema_contract(
                     clock_ns=row[8],
                     reason_code=row[9],
                     evidence_ref=row[10],
+                    expected_event_schema_version=(
+                        _workflow._V3_PROVIDER_EVENT_SCHEMA
+                        if schema_version == 3
+                        else _CURRENT_EVENT_SCHEMA_VERSION
+                    ),
                 )
             except (TypeError, ValueError, OverflowError) as exc:
                 raise StoreIntegrityError("SQLite transition event is invalid") from exc
-        if schema_version == STORE_SCHEMA:
-            _validate_workflow_rows_for_connection(connection)
+        if validate_workflow_rows:
+            _validate_workflow_rows_for_connection(
+                connection,
+                store_schema=schema_version,
+            )
         _validate_existing_image_high_water(connection)
     except (StoreError, sqlite3.DatabaseError):
         raise
@@ -3868,17 +5440,18 @@ def _validate_schema_contract(
 
 
 def _validate_existing_schema(connection: sqlite3.Connection) -> None:
-    """Validate a current v3 image, classifying only exact v2 images.
+    """Validate a current schema-4 image and classify exact legacy images.
 
     This is the read-only counterpart of ``CoordinationStore._validate_schema``.
     A valid legacy image is deliberately not opened or altered: callers receive
     ``StoreMigrationRequiredError`` and must use the explicit migration owner.
     """
 
+    current_error: StoreError | None = None
     try:
         _validate_schema_contract(
             connection,
-            schema_version=STORE_SCHEMA,
+            schema_version=_CURRENT_STORE_SCHEMA,
             expected_objects=_EXPECTED_OBJECT_SQL,
             expected_columns=_EXPECTED_COLUMNS,
             expected_indexes=_EXPECTED_INDEX_CONTRACT,
@@ -3886,24 +5459,51 @@ def _validate_existing_schema(connection: sqlite3.Connection) -> None:
             expected_meta_keys=_EXPECTED_META_KEYS,
         )
         return
-    except (StoreSchemaError, StoreIntegrityError) as current_error:
+    except (StoreSchemaError, StoreIntegrityError) as error:
+        current_error = error
+    for source_schema, contract in (
+        (
+            3,
+            (
+                _V3_EXPECTED_OBJECT_SQL,
+                _V3_EXPECTED_COLUMNS,
+                _V3_EXPECTED_INDEX_CONTRACT,
+                _V3_EXPECTED_FOREIGN_KEYS,
+                _V3_EXPECTED_META_KEYS,
+            ),
+        ),
+        (
+            2,
+            (
+                _V2_EXPECTED_OBJECT_SQL,
+                _V2_EXPECTED_COLUMNS,
+                _V2_EXPECTED_INDEX_CONTRACT,
+                _V2_EXPECTED_FOREIGN_KEYS,
+                _V2_EXPECTED_META_KEYS,
+            ),
+        ),
+    ):
         try:
             _validate_schema_contract(
                 connection,
-                schema_version=2,
-                expected_objects=_V2_EXPECTED_OBJECT_SQL,
-                expected_columns=_V2_EXPECTED_COLUMNS,
-                expected_indexes=_V2_EXPECTED_INDEX_CONTRACT,
-                expected_foreign_keys=_V2_EXPECTED_FOREIGN_KEYS,
-                expected_meta_keys=_V2_EXPECTED_META_KEYS,
+                schema_version=source_schema,
+                expected_objects=contract[0],
+                expected_columns=contract[1],
+                expected_indexes=contract[2],
+                expected_foreign_keys=contract[3],
+                expected_meta_keys=contract[4],
+                validate_workflow_rows=source_schema == 3,
             )
-        except StoreIntegrityError:
-            raise
-        except StoreError:
-            raise current_error
+        except (StoreSchemaError, StoreIntegrityError):
+            continue
         raise StoreMigrationRequiredError(
-            "SQLite store schema v2 requires explicit migration to v3"
+            f"SQLite store schema v{source_schema} requires explicit migration to v4",
+            source_schema=source_schema,
+            target_schema=_CURRENT_STORE_SCHEMA,
         ) from current_error
+    if current_error is not None:
+        raise current_error
+    raise StoreSchemaError("SQLite store schema could not be classified")
 
 
 @dataclass(frozen=True, slots=True)
@@ -4257,12 +5857,10 @@ def _validate_image_high_water(
     for table, column, name in timestamp_columns:
         for row in connection.execute(
             f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
-        ).fetchall():
+        ):
             value = _require_sqlite_integer(row[0], name)
             maximum_clock = max(maximum_clock, value)
-    for row in connection.execute(
-        "SELECT created_ns, updated_ns FROM operations"
-    ).fetchall():
+    for row in connection.execute("SELECT created_ns, updated_ns FROM operations"):
         created_ns = _require_sqlite_integer(row[0], "created_ns")
         updated_ns = _require_sqlite_integer(row[1], "updated_ns")
         if created_ns > updated_ns:
@@ -4270,7 +5868,7 @@ def _validate_image_high_water(
     if has_workflow:
         for row in connection.execute(
             "SELECT created_ns, updated_ns FROM workflow_operations"
-        ).fetchall():
+        ):
             created_ns = _require_sqlite_integer(row[0], "workflow created_ns")
             updated_ns = _require_sqlite_integer(row[1], "workflow updated_ns")
             if created_ns > updated_ns:
@@ -4291,7 +5889,7 @@ def _validate_image_high_water(
             ("workflow_receipts", "lease_epoch", "workflow receipt lease_epoch"),
         )
     for table, column, name in epoch_columns:
-        for row in connection.execute(f"SELECT {column} FROM {table}").fetchall():
+        for row in connection.execute(f"SELECT {column} FROM {table}"):
             maximum_epoch = max(maximum_epoch, _require_sqlite_integer(row[0], name))
     if maximum_epoch > recovery_epoch:
         raise StoreIntegrityError("SQLite recovery epoch exceeds global floor")
@@ -4311,7 +5909,7 @@ def _validate_image_high_water(
             ),
         )
     for table, column, name in token_columns:
-        for row in connection.execute(f"SELECT {column} FROM {table}").fetchall():
+        for row in connection.execute(f"SELECT {column} FROM {table}"):
             maximum_token = max(
                 maximum_token,
                 _require_sqlite_integer(row[0], name),
@@ -4460,6 +6058,7 @@ class CoordinationStore:
             ],
         ] = {}
         fresh_bootstrap_started = False
+        classifier_gate_open = False
         try:
             self._state_root_fd = _open_state_root(self.state_root)
             self._state_root_identity = _identity(os.fstat(self._state_root_fd))
@@ -4494,7 +6093,13 @@ class CoordinationStore:
                 self._reject_nonempty_rollback_journal()
             self._fresh_bootstrap = initial_database is None and initial_marker is None
             fresh_bootstrap_started = self._fresh_bootstrap
-            self._lifetime_gate_fd = self._open_lifetime_gate(create=True)
+            if not self._fresh_bootstrap:
+                classifier_gate_open = (
+                    self._open_existing_lifetime_gate_for_classification()
+                )
+                self._classify_established_image_before_gate()
+            if not classifier_gate_open:
+                self._lifetime_gate_fd = self._open_lifetime_gate(create=True)
             self._lifetime_gate_required = True
             self._acquire_lifetime_gate(exclusive=False)
             self._lifetime_gate_persistent = True
@@ -5426,6 +7031,101 @@ class CoordinationStore:
             raise body_error
         if cleanup_error is not None:
             raise cleanup_error
+
+    def _open_existing_lifetime_gate_for_classification(self) -> bool:
+        """Hold an existing gate shared across established-image reads."""
+
+        gate_path = self.state_root.parent / LIFETIME_GATE_FILENAME
+        gate_fd: int | None = None
+        owner: _LifetimeGateCleanupOwner | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        try:
+            try:
+                path_metadata = os.stat(gate_path, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            _validate_private_file(path_metadata, sidecar=True)
+            expected_identity = _identity(path_metadata)
+            gate_fd = os.open(
+                gate_path,
+                _open_flags(directory=False, writable=True),
+            )
+            owner = _LifetimeGateCleanupOwner(
+                gate_fd,
+                expected_identity,
+                locked=False,
+            )
+            metadata = os.fstat(gate_fd)
+            _validate_private_file(metadata, sidecar=True)
+            identity = _identity(metadata)
+            owner.bind_identity(identity)
+            if identity != expected_identity:
+                raise StoreUnavailableError(
+                    "coordination lifetime gate changed while opening"
+                )
+            self._lock_lifetime_gate_fd(
+                gate_fd,
+                exclusive=False,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            owner.mark_locked()
+            path_metadata = os.stat(gate_path, follow_symlinks=False)
+            _validate_private_file(path_metadata, sidecar=True)
+            if _identity(path_metadata) != identity:
+                raise StoreUnavailableError(
+                    "coordination lifetime gate changed while locking"
+                )
+            self._lifetime_gate_fd = gate_fd
+            self._lifetime_gate_identity = identity
+            self._lifetime_gate_required = True
+            self._lifetime_gate_shared = True
+            gate_fd = None
+            owner = None
+            return True
+        except StoreError as exc:
+            body_error = exc
+        except OSError as exc:
+            body_error = StoreUnavailableError(
+                "coordination lifetime gate cannot be opened for classification"
+            )
+            body_error.__cause__ = exc
+        except _CLEANUP_EXCEPTION as exc:
+            body_error = _store_error_from_exception(
+                exc,
+                "coordination lifetime gate cannot be opened for classification",
+            )
+        finally:
+            if owner is not None:
+                try:
+                    owner.retry_cleanup()
+                except _CLEANUP_EXCEPTION as exc:
+                    cleanup_error = exc
+            elif gate_fd is not None:
+                cleanup_error = self._handoff_constructor_fd(
+                    gate_fd,
+                    None,
+                    "lifetime gate classification open",
+                )
+        if body_error is not None:
+            if cleanup_error is not None:
+                capability = (
+                    _CleanupCapability(owner.retry_cleanup)
+                    if owner is not None
+                    else _extract_cleanup_capability(cleanup_error)
+                )
+                if capability is None:
+                    capability = _CleanupCapability(self.close)
+                _raise_with_cleanup_capability(body_error, capability)
+            raise body_error
+        if cleanup_error is not None:
+            if owner is not None:
+                _raise_with_cleanup_capability(
+                    cleanup_error,
+                    _CleanupCapability(owner.retry_cleanup),
+                )
+            raise cleanup_error
+        return False
 
     def _open_lifetime_gate(self, *, create: bool) -> int:
         """Open the stable, never-unlinked gate beside the state root."""
@@ -6516,7 +8216,7 @@ class CoordinationStore:
                     ) VALUES (?, ?, 0, NULL, 'INTENT', 'intent', ?, ?, ?, ?)
                     """,
                     (
-                        EVENT_SCHEMA_VERSION,
+                        _CURRENT_EVENT_SCHEMA_VERSION,
                         operation_id,
                         actor,
                         timestamp,
@@ -7798,7 +9498,7 @@ class CoordinationStore:
         )
         values = {
             "workflow_event_id": workflow_event_id,
-            "workflow_event_schema_version": WORKFLOW_EVENT_SCHEMA_VERSION,
+            "workflow_event_schema_version": _CURRENT_WORKFLOW_EVENT_SCHEMA_VERSION,
             "root_key": root_key,
             "operation_id": operation_id,
             "workflow_sequence": workflow_sequence,
@@ -8077,22 +9777,36 @@ class CoordinationStore:
     @staticmethod
     def _workflow_decode_event_checkpoint(
         row: sqlite3.Row,
+        *,
+        store_schema: int = _CURRENT_STORE_SCHEMA,
     ) -> _workflow.WorkflowCheckpointObservation:
         raw = row["checkpoint_bytes"]
         if type(raw) is not bytes:
             raise ValueError("event checkpoint bytes are invalid")
         try:
-            return _workflow.decode_seed(raw)
+            return _workflow.decode_seed(raw, expected_store_schema=store_schema)
         except _workflow.SeedSchemaError:
-            return _workflow.decode_checkpoint(raw)
+            return _workflow.decode_checkpoint(
+                raw,
+                expected_store_schema=store_schema,
+            )
 
     @staticmethod
-    def _workflow_validate_event_row(row: sqlite3.Row) -> str:
+    def _workflow_validate_event_row(
+        row: sqlite3.Row,
+        *,
+        store_schema: int = _CURRENT_STORE_SCHEMA,
+    ) -> str:
         try:
             _workflow._require_int(
                 row["workflow_event_id"], "workflow_event_id", minimum=1
             )
-            if row["workflow_event_schema_version"] != WORKFLOW_EVENT_SCHEMA_VERSION:
+            expected_workflow_event_schema = (
+                _workflow._V3_WORKFLOW_EVENT_SCHEMA
+                if store_schema == 3
+                else _CURRENT_WORKFLOW_EVENT_SCHEMA_VERSION
+            )
+            if row["workflow_event_schema_version"] != expected_workflow_event_schema:
                 raise ValueError("workflow event schema version is invalid")
             _workflow._require_identifier(row["root_key"], "event root_key")
             _workflow._require_optional_identifier(
@@ -8130,7 +9844,10 @@ class CoordinationStore:
             _workflow._require_optional_identifier(
                 row["receipt_id"], "event receipt_id"
             )
-            checkpoint = CoordinationStore._workflow_decode_event_checkpoint(row)
+            checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+                row,
+                store_schema=store_schema,
+            )
             _workflow._require_digest(
                 row["checkpoint_digest"], "event checkpoint_digest"
             )
@@ -12874,7 +14591,7 @@ class CoordinationStore:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                EVENT_SCHEMA_VERSION,
+                _CURRENT_EVENT_SCHEMA_VERSION,
                 operation_id,
                 attempt,
                 from_status,
@@ -14059,6 +15776,493 @@ class CoordinationStore:
         self._schema_empty = False
         self._validate_schema()
 
+    def _classifier_marker_probe(self) -> _ClassifierMarkerProbe:
+        """Observe whether a peer holds the shared writer-marker lock."""
+
+        self._assert_state_root()
+        root_identity = self._state_root_identity
+        if root_identity is None:
+            raise StoreClosedError("coordination store is closed")
+        gate_fd = self._lifetime_gate_fd
+        gate_identity = self._lifetime_gate_identity
+        if gate_fd is None or gate_identity is None:
+            return _ClassifierMarkerProbe(
+                root_identity,
+                None,
+                None,
+                False,
+            )
+        gate_path = self.state_root.parent / LIFETIME_GATE_FILENAME
+        gate_metadata = os.stat(gate_path, follow_symlinks=False)
+        _validate_private_file(gate_metadata, sidecar=True)
+        if _identity(gate_metadata) != gate_identity:
+            raise StoreUnavailableError(
+                "coordination lifetime gate changed during classification"
+            )
+        marker_path = self.state_root / WRITER_MARKER_FILENAME
+        try:
+            marker_metadata = os.stat(marker_path, follow_symlinks=False)
+        except FileNotFoundError:
+            return _ClassifierMarkerProbe(
+                root_identity,
+                gate_identity,
+                None,
+                False,
+            )
+        _validate_private_file(marker_metadata, sidecar=True)
+        marker_identity = _identity(marker_metadata)
+        marker_fd: int | None = None
+        marker_locked = False
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        active = False
+        try:
+            marker_fd = os.open(
+                marker_path,
+                _open_flags(directory=False, writable=True)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
+            opened = os.fstat(marker_fd)
+            _validate_private_file(opened, sidecar=True)
+            if _identity(opened) != marker_identity:
+                raise StoreUnavailableError(
+                    "writer marker changed during classification"
+                )
+            if _read_writer_marker_state(marker_fd) != WRITER_MARKER_CLEAN_STATE:
+                raise StoreUnavailableError("writer marker is not clean")
+            try:
+                fcntl.flock(marker_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                active = True
+            else:
+                marker_locked = True
+        except StoreError as exc:
+            body_error = exc
+        except MemoryError as exc:
+            body_error = StoreUnavailableError("writer marker probe allocation failed")
+            body_error.__cause__ = exc
+        except OSError as exc:
+            body_error = StoreUnavailableError("writer marker probe is unavailable")
+            body_error.__cause__ = exc
+        finally:
+            if marker_fd is not None:
+                cleanup_error = self._handoff_constructor_fd(
+                    marker_fd,
+                    marker_identity,
+                    "classifier writer marker probe",
+                    unlock=marker_locked,
+                )
+        if body_error is not None:
+            if cleanup_error is not None:
+                capability = _extract_cleanup_capability(cleanup_error)
+                if capability is None:
+                    capability = _CleanupCapability(self.close)
+                _raise_with_cleanup_capability(body_error, capability)
+            raise body_error
+        if cleanup_error is not None:
+            raise cleanup_error
+        return _ClassifierMarkerProbe(
+            root_identity,
+            gate_identity,
+            marker_identity,
+            active,
+        )
+
+    def _classify_established_image_before_gate(self) -> None:
+        probe = self._classifier_marker_probe()
+        try:
+            self._classify_established_image_snapshot_once()
+        except _ClassifierSnapshotRace:
+            if not probe.active:
+                raise
+            retry_probe = self._classifier_marker_probe()
+            if retry_probe != probe or not retry_probe.active:
+                raise
+            self._classify_established_image_snapshot_once()
+        except MemoryError as exc:
+            raise StoreUnavailableError(
+                "SQLite established image classification allocation failed"
+            ) from exc
+        except OSError as exc:
+            raise StoreUnavailableError(
+                "SQLite established image classification is unavailable"
+            ) from exc
+
+    def _classify_established_image_snapshot_once(self) -> None:
+        """Classify an established image without changing its root.
+
+        ``immutable=1`` deliberately ignores a pending WAL.  Opening the
+        source path with an ordinary read-only connection is not a safe
+        replacement here: SQLite may create or update the source ``-shm``
+        sidecar while it reconstructs the WAL index.  Capture the database
+        and exact sidecars under identity/size checks, then let SQLite inspect
+        that private copy so the classifier observes the same DB+WAL image
+        without mutating the established root.
+        """
+
+        root_fd = self._state_root_fd
+        if root_fd is None:
+            raise StoreClosedError("coordination store is closed")
+        self._retry_orphan_fds()
+        self._assert_state_root()
+
+        filenames = (
+            DATABASE_FILENAME,
+            f"{DATABASE_FILENAME}-wal",
+            f"{DATABASE_FILENAME}-shm",
+            f"{DATABASE_FILENAME}-journal",
+        )
+
+        @contextmanager
+        def existing_gate() -> Iterator[None]:
+            """Keep the caller's pre-acquired existing gate in scope."""
+
+            yield
+
+        with existing_gate():
+            signatures: dict[str, tuple[int, ...]] = {}
+            sizes: dict[str, int] = {}
+            main_header: bytes | None = None
+            wal_header: bytes | None = None
+
+            def inspect_source(filename: str) -> None:
+                try:
+                    metadata = os.stat(
+                        filename,
+                        dir_fd=root_fd,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    if filename == DATABASE_FILENAME:
+                        raise StoreUnavailableError(
+                            "coordination database disappeared during classification"
+                        )
+                    return
+                _validate_private_file(
+                    metadata,
+                    sidecar=filename != DATABASE_FILENAME,
+                )
+                if metadata.st_size > MAX_IMAGE_BYTES:
+                    raise StoreIntegrityError(
+                        f"SQLite {filename} is too large to classify"
+                    )
+                if filename == f"{DATABASE_FILENAME}-wal":
+                    if (
+                        metadata.st_size > 0
+                        and metadata.st_size < _SQLITE_WAL_HEADER_BYTES
+                    ):
+                        raise StoreUnavailableError("SQLite WAL header is incomplete")
+                elif filename == f"{DATABASE_FILENAME}-shm":
+                    try:
+                        _validate_sqlite_shm_shape(metadata.st_size)
+                    except ValueError as exc:
+                        raise StoreUnavailableError(
+                            "SQLite SHM structure is invalid"
+                        ) from exc
+                total_size = sum(sizes.values())
+                if total_size > _MAX_CLASSIFIER_SNAPSHOT_BYTES - metadata.st_size:
+                    raise StoreIntegrityError(
+                        "SQLite established image exceeds the aggregate size limit"
+                    )
+                sizes[filename] = metadata.st_size
+                signatures[filename] = _image_stat_signature(metadata)
+
+            def assert_snapshot_stable() -> None:
+                """Reject source changes before or after temporary validation."""
+
+                for filename in filenames:
+                    try:
+                        observed = os.stat(
+                            filename,
+                            dir_fd=root_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        if filename in signatures:
+                            if filename == DATABASE_FILENAME:
+                                raise StoreUnavailableError(
+                                    f"SQLite {filename} disappeared during classification"
+                                )
+                            raise _ClassifierSnapshotRace(
+                                f"SQLite {filename} disappeared during classification"
+                            )
+                        continue
+                    if filename not in signatures:
+                        raise StoreUnavailableError(
+                            f"SQLite {filename} appeared during classification"
+                        )
+                    _validate_private_file(
+                        observed,
+                        sidecar=filename != DATABASE_FILENAME,
+                    )
+                    if (
+                        _image_stat_signature(observed) != signatures[filename]
+                        or observed.st_size != sizes[filename]
+                    ):
+                        raise _ClassifierSnapshotRace(
+                            f"SQLite {filename} changed during classification"
+                        )
+                self._assert_state_root()
+
+            def copy_source(filename: str, temporary_root: Path) -> None:
+                nonlocal main_header, wal_header
+                expected_size = sizes[filename]
+                expected_signature = signatures[filename]
+                source_fd: int | None = None
+                destination_fd: int | None = None
+                source_cleanup: BaseException | None = None
+                destination_cleanup: BaseException | None = None
+                body_error: BaseException | None = None
+                opened: os.stat_result | None = None
+                destination_opened: os.stat_result | None = None
+                try:
+                    try:
+                        source_fd = os.open(
+                            filename,
+                            _open_flags(directory=False, writable=False)
+                            | getattr(os, "O_NONBLOCK", 0),
+                            dir_fd=root_fd,
+                        )
+                    except FileNotFoundError as exc:
+                        if filename == DATABASE_FILENAME:
+                            raise StoreUnavailableError(
+                                f"SQLite {filename} disappeared during classification"
+                            ) from exc
+                        raise _ClassifierSnapshotRace(
+                            f"SQLite {filename} disappeared during classification"
+                        ) from exc
+                    opened = os.fstat(source_fd)
+                    _validate_private_file(
+                        opened,
+                        sidecar=filename != DATABASE_FILENAME,
+                    )
+                    if _image_stat_signature(opened) != expected_signature:
+                        raise _ClassifierSnapshotRace(
+                            f"SQLite {filename} changed while classifying"
+                        )
+                    if filename == DATABASE_FILENAME:
+                        main_header = os.pread(source_fd, 100, 0)
+                        if len(main_header) != 100:
+                            raise StoreIntegrityError(
+                                "SQLite main database header is invalid"
+                            )
+                    if filename == f"{DATABASE_FILENAME}-wal" and expected_size > 0:
+                        try:
+                            wal_header = os.pread(
+                                source_fd,
+                                _SQLITE_WAL_HEADER_BYTES,
+                                0,
+                            )
+                            _validate_sqlite_wal_shape(expected_size, wal_header)
+                        except ValueError as exc:
+                            raise StoreUnavailableError(
+                                "SQLite WAL structure is invalid"
+                            ) from exc
+                    destination = temporary_root / filename
+                    destination_fd = os.open(
+                        str(destination),
+                        _open_flags(directory=False, writable=True)
+                        | os.O_CREAT
+                        | os.O_EXCL,
+                        0o600,
+                    )
+                    destination_opened = os.fstat(destination_fd)
+                    _validate_private_file(destination_opened, sidecar=True)
+                    offset = 0
+                    while offset < expected_size:
+                        requested = min(
+                            _CLASSIFIER_COPY_CHUNK_BYTES,
+                            expected_size - offset,
+                        )
+                        chunk = os.pread(source_fd, requested, offset)
+                        if len(chunk) != requested:
+                            raise StoreUnavailableError(
+                                f"SQLite {filename} short read during classification"
+                            )
+                        written = 0
+                        while written < len(chunk):
+                            count = os.write(destination_fd, chunk[written:])
+                            if count <= 0:
+                                raise StoreUnavailableError(
+                                    f"SQLite {filename} short write during classification"
+                                )
+                            written += count
+                        offset += len(chunk)
+                    destination_after = os.fstat(destination_fd)
+                    _validate_private_file(destination_after, sidecar=True)
+                    if destination_after.st_size != expected_size:
+                        raise StoreUnavailableError(
+                            f"SQLite {filename} copy size is inconsistent"
+                        )
+                    source_after = os.fstat(source_fd)
+                    path_after = os.stat(
+                        filename,
+                        dir_fd=root_fd,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _image_stat_signature(source_after) != expected_signature
+                        or _image_stat_signature(path_after) != expected_signature
+                    ):
+                        raise _ClassifierSnapshotRace(
+                            f"SQLite {filename} changed while classifying"
+                        )
+                except StoreError as exc:
+                    body_error = exc
+                except MemoryError as exc:
+                    body_error = StoreUnavailableError(
+                        f"SQLite {filename} classification allocation failed"
+                    )
+                    body_error.__cause__ = exc
+                except FileNotFoundError as exc:
+                    if filename == DATABASE_FILENAME:
+                        body_error = StoreUnavailableError(
+                            f"SQLite {filename} disappeared during classification"
+                        )
+                    else:
+                        body_error = _ClassifierSnapshotRace(
+                            f"SQLite {filename} disappeared during classification"
+                        )
+                    body_error.__cause__ = exc
+                except OSError as exc:
+                    body_error = StoreUnavailableError(
+                        f"SQLite {filename} cannot be copied during classification"
+                    )
+                    body_error.__cause__ = exc
+                except (TypeError, ValueError, OverflowError) as exc:
+                    body_error = StoreSchemaError(
+                        "SQLite established image classification failed"
+                    )
+                    body_error.__cause__ = exc
+                finally:
+                    if destination_fd is not None:
+                        destination_cleanup = self._handoff_constructor_fd(
+                            destination_fd,
+                            _identity(destination_after)
+                            if "destination_after" in locals()
+                            else (
+                                _identity(destination_opened)
+                                if destination_opened is not None
+                                else None
+                            ),
+                            f"SQLite {filename} temporary copy",
+                        )
+                    if source_fd is not None:
+                        source_cleanup = self._handoff_constructor_fd(
+                            source_fd,
+                            _identity(opened) if opened is not None else None,
+                            f"SQLite {filename} classifier source",
+                        )
+                cleanup_error = destination_cleanup or source_cleanup
+                if body_error is not None:
+                    if cleanup_error is not None:
+                        capability = _extract_cleanup_capability(cleanup_error)
+                        if capability is None:
+                            capability = _CleanupCapability(self.close)
+                        _raise_with_cleanup_capability(body_error, capability)
+                    raise body_error
+                if cleanup_error is not None:
+                    raise cleanup_error
+
+            with tempfile.TemporaryDirectory(
+                prefix="agent-team-established-image-"
+            ) as temporary:
+                temporary_root = Path(temporary)
+                for filename in filenames:
+                    inspect_source(filename)
+                assert_snapshot_stable()
+                for filename in sizes:
+                    copy_source(filename, temporary_root)
+                assert_snapshot_stable()
+
+                wal_size = sizes.get(f"{DATABASE_FILENAME}-wal", 0)
+                if wal_size > 0:
+                    try:
+                        _validate_sqlite_wal_binding(
+                            main_header or b"",
+                            wal_header or b"",
+                            wal_size,
+                        )
+                    except ValueError as exc:
+                        raise StoreIntegrityError(
+                            "SQLite WAL is incompatible with main database"
+                        ) from exc
+
+                database_path = temporary_root / DATABASE_FILENAME
+                database_uri = f"file:{quote(str(database_path), safe='/')}?mode=ro"
+                connection_owner: _ConnectionCleanupOwner | None = None
+                body_error: BaseException | None = None
+                cleanup_error: BaseException | None = None
+                try:
+                    connection = sqlite3.connect(
+                        database_uri,
+                        uri=True,
+                        timeout=self.busy_timeout_ms / 1_000,
+                        isolation_level=None,
+                    )
+                    connection_owner = _ConnectionCleanupOwner(
+                        connection,
+                        "SQLite established image classifier",
+                    )
+                    connection.row_factory = sqlite3.Row
+                    connection.execute("PRAGMA query_only = ON")
+                    _validate_existing_schema(connection)
+                    if wal_size == 0:
+                        try:
+                            _validate_sqlite_wal_binding(
+                                main_header or b"",
+                                b"",
+                                0,
+                                require_main_wal_mode=True,
+                            )
+                        except ValueError as exc:
+                            raise StoreIntegrityError(
+                                "SQLite main database is not in WAL mode"
+                            ) from exc
+                except StoreError as exc:
+                    body_error = exc
+                except sqlite3.DatabaseError as exc:
+                    body_error = StoreSchemaError(
+                        "SQLite established image classification failed"
+                    )
+                    body_error.__cause__ = exc
+                except MemoryError as exc:
+                    body_error = StoreUnavailableError(
+                        "SQLite established image classification allocation failed"
+                    )
+                    body_error.__cause__ = exc
+                except OSError as exc:
+                    body_error = StoreUnavailableError(
+                        "SQLite established image temporary image is unavailable"
+                    )
+                    body_error.__cause__ = exc
+                except (TypeError, ValueError, OverflowError) as exc:
+                    body_error = StoreSchemaError(
+                        "SQLite established image classification failed"
+                    )
+                    body_error.__cause__ = exc
+                finally:
+                    if connection_owner is not None:
+                        try:
+                            connection_owner.retry_cleanup()
+                        except _CLEANUP_EXCEPTION as exc:
+                            cleanup_error = exc
+                if body_error is not None:
+                    if cleanup_error is not None and connection_owner is not None:
+                        _raise_with_cleanup_capability(
+                            body_error,
+                            _CleanupCapability(connection_owner.retry_cleanup),
+                        )
+                    raise body_error
+                if cleanup_error is not None and connection_owner is not None:
+                    _raise_with_cleanup_capability(
+                        cleanup_error,
+                        _CleanupCapability(connection_owner.retry_cleanup),
+                    )
+                assert_snapshot_stable()
+
     def _initialize_schema(self) -> None:
         with self._write_transaction() as connection:
             for statement in _TABLE_DEFINITIONS.values():
@@ -14073,9 +16277,9 @@ class CoordinationStore:
                     ('store_schema', ?), ('recovery_epoch', 0),
                     ('fencing_token_floor', 0), ('last_clock_ns', 0)
                 """,
-                (STORE_SCHEMA,),
+                (_CURRENT_STORE_SCHEMA,),
             )
-            connection.execute(f"PRAGMA user_version = {STORE_SCHEMA}")
+            connection.execute(f"PRAGMA user_version = {_CURRENT_STORE_SCHEMA}")
 
     def _validate_schema(self) -> None:
         _validate_existing_schema(self._require_connection())

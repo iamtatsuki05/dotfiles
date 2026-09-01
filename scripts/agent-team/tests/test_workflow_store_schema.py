@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_team import store as store_module
 from agent_team import workflow_store as workflow
 from agent_team.store import (
     CoordinationStore,
@@ -28,7 +29,12 @@ PROVIDER_TABLES = {
     "effect_receipts",
     "transition_events",
 }
-EXPECTED_TABLES = PROVIDER_TABLES | WORKFLOW_TABLES
+VERIFICATION_TABLES = {
+    "task_policy_states",
+    "verification_operations",
+    "verification_receipts",
+}
+EXPECTED_TABLES = PROVIDER_TABLES | WORKFLOW_TABLES | VERIFICATION_TABLES
 
 EXPECTED_COLUMNS: dict[str, tuple[tuple[str, str, int, int], ...]] = {
     "workflow_checkpoints": (
@@ -361,11 +367,19 @@ def _make_valid_legacy_v2_state(
             "workflow_events_no_update",
             "workflow_events_no_delete",
             "workflow_events_no_replace",
+            "verification_receipts_no_update",
+            "verification_receipts_no_delete",
+            "verification_receipts_no_replace",
         ):
             connection.execute(f"DROP TRIGGER {trigger}")
         connection.execute("DROP INDEX workflow_operations_root_status_idx")
         connection.execute("DROP INDEX workflow_events_operation_idx")
+        connection.execute("DROP INDEX verification_operations_root_status_idx")
+        connection.execute("DROP INDEX verification_operations_root_approval_idx")
         for table in (
+            "verification_operations",
+            "verification_receipts",
+            "task_policy_states",
             "workflow_events",
             "workflow_receipts",
             "workflow_operations",
@@ -425,7 +439,7 @@ class WorkflowStoreSchemaTests(unittest.TestCase):
             with self.assertRaises(StoreIntegrityError):
                 CoordinationStore(state_root)
 
-    def test_fresh_store_has_v3_provider_and_four_workflow_tables(self) -> None:
+    def test_fresh_store_has_v4_provider_workflow_and_verification_tables(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="agent-team-workflow-schema-"
         ) as temporary:
@@ -435,10 +449,10 @@ class WorkflowStoreSchemaTests(unittest.TestCase):
                 self.assertIsNotNone(connection)
                 assert connection is not None
                 self.assertEqual(
-                    3, connection.execute("PRAGMA user_version").fetchone()[0]
+                    4, connection.execute("PRAGMA user_version").fetchone()[0]
                 )
                 self.assertEqual(
-                    3,
+                    4,
                     connection.execute(
                         "SELECT value FROM store_meta WHERE key = 'store_schema'"
                     ).fetchone()[0],
@@ -490,6 +504,16 @@ class WorkflowStoreSchemaTests(unittest.TestCase):
                             for name in (
                                 "workflow_operations_root_status_idx",
                                 "workflow_events_operation_idx",
+                                "verification_operations_root_status_idx",
+                                "verification_operations_root_approval_idx",
+                            )
+                        ),
+                        *(
+                            ("trigger", name)
+                            for name in (
+                                "verification_receipts_no_update",
+                                "verification_receipts_no_delete",
+                                "verification_receipts_no_replace",
                             )
                         ),
                         *(("trigger", name) for name in EXPECTED_PROVIDER_TRIGGERS),
@@ -506,14 +530,16 @@ class WorkflowStoreSchemaTests(unittest.TestCase):
     def test_workflow_sql_and_trigger_contract_has_independent_digest_oracle(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="agent-team-workflow-schema-oracle-"
-        ) as temporary:
-            state_root = _state_root(temporary)
-            with CoordinationStore(state_root) as store:
-                connection = store._connection
-                self.assertIsNotNone(connection)
-                assert connection is not None
+        with tempfile.TemporaryDirectory(prefix="agent-team-workflow-schema-oracle-"):
+            connection = sqlite3.connect(":memory:")
+            try:
+                for definitions in (
+                    store_module._V3_TABLE_DEFINITIONS,
+                    store_module._V3_INDEX_DEFINITIONS,
+                    store_module._V3_TRIGGER_DEFINITIONS,
+                ):
+                    for statement in definitions.values():
+                        connection.execute(statement)
                 observed: dict[tuple[str, str], str] = {}
                 for kind, name in FROZEN_SCHEMA_SQL_DIGESTS:
                     row = connection.execute(
@@ -529,6 +555,8 @@ class WorkflowStoreSchemaTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(FROZEN_SCHEMA_SQL_DIGESTS, observed)
+            finally:
+                connection.close()
 
     def test_workflow_columns_indexes_and_foreign_keys_are_exact(self) -> None:
         with tempfile.TemporaryDirectory(
@@ -707,7 +735,7 @@ class WorkflowStoreSchemaTests(unittest.TestCase):
                         last_operation_receipt_id, updated_ns
                     ) VALUES (
                         'root-1', 'team-1', '/workspace', 1, 2, '/config', 1, 3,
-                        ?, '/state', 1, 4, NULL, NULL, 4, 3, NULL, 0, NULL,
+                        ?, '/state', 1, 4, NULL, NULL, 4, 4, NULL, 0, NULL,
                         'serial', 'STARTING', 0, 0, 0, ?, ?, NULL, NULL, NULL, 1
                     )
                     """,

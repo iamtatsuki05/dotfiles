@@ -37,7 +37,7 @@ transportable as a bounded identifier, but it is authority only when it resolves
 to the exact approval and both exact owner records in the injected contract
 registry.
 
-## Current status: handoff is implemented; durable ledger is not
+## Current status: #74 handoff is implemented; #80 provides the empty-ledger foundation
 
 The current #74 code provides the private handoff module,
 `PolicyVerificationHandoff`, and an injected package-private contract registry.
@@ -54,6 +54,13 @@ SQLite implementation or a durable codec for these private records.
 
 The focused suite proves the handoff contract and a deterministic fake state
 model. It does not turn that fake into production persistence.
+
+The [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)
+now fixes the physical twelve-table image and pure task/verification codecs,
+but it does not change the #74 handoff into a durable authority. Its new
+verification tables remain empty in the #80 production path; non-empty image,
+lifecycle, capture, adapter, hydration, and recovery claims belong to the
+downstream work linked below.
 
 ## #49 issues review authority from the actual update and policy
 
@@ -148,7 +155,10 @@ Reviewer terminal, review round, target `HEAD`/tree, or `claim_ref`. Those are
 retains them in the bound approval as #49 provenance; it does not claim that
 #50 route/reservation data was compared against them. The adapter never adds
 those fields as raw arguments or guesses them from task text, path names, or a
-reservation ID. A full runtime join belongs to [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78).
+reservation ID. The full runtime join is downstream of the [Issue #80
+foundation](https://github.com/iamtatsuki05/dotfiles/issues/80) and belongs to
+the verification and image work in [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
+and [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 After the overlap check, the composer derives a stable approval identity,
 passes the validated bound approval to #51's private factory, saves an approval
@@ -189,7 +199,8 @@ The record shape contains primitive identity and domain-separated digests only.
 Raw request/result/receipt bodies, task or reviewer text, paths as authority
 payload, reservation objects, provider output, secrets, and tokens do not
 cross this boundary. These module-local record classes and issuer sentinels are
-not the durable hydration API for #78.
+not the durable hydration API for #80 or its downstream consumers. The #80
+projection codecs remain pure; Store-issued hydration belongs to [#82](https://github.com/iamtatsuki05/dotfiles/issues/82).
 
 ## #51 keeps both Gate entrances and all six state operations
 
@@ -232,26 +243,35 @@ and the handoff's rejection behavior. They do not establish SQLite schema,
 transaction durability, process restart/reopen, crash recovery, cross-process
 atomicity, or provider-side exactly-once execution.
 
-## Issue #78 owns the durable ledger and restart boundary
+## Schema-4 work is split across Issues #80–#83
 
-The next durable child, [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78),
-owns the production Store image and its explicit schema/codec/version contract.
-That work must define and verify `STORE_SCHEMA=4`, full `TaskPolicyStateV4`,
-verification request/effect fence/full receipt/terminal records,
-`UNKNOWN_EFFECT`/`RecoveryRequired`, task/workflow dual-sequence CAS, fresh
-process reopen/replay, and the `mark_unknown` recovery boundary. It also owns
-durable backup/restore/Doctor and the full runtime join.
+The [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)
+fixes the physical Store contract: `STORE_SCHEMA=4`, provider/workflow event
+schemas `2/1`, the exact twelve-table object set, the version-1 manifest with
+values `4/2/4`, the read-only WAL/SHM-aware pre-gate, and pure version-1
+TaskPolicy/approval/request/receipt codecs. The three new ledger tables remain
+empty in the #80 production path; an image with any non-empty new table fails
+closed. #80 proves only the empty schema-4 backup/restore round trip.
 
-#78 must define its own canonical payload, decoder, and Store-issued hydration
-seam. It consumes the #74 owner-ref/approval contract; it must not reconstruct
+The downstream [#81 task and review transitions](https://github.com/iamtatsuki05/dotfiles/issues/81),
+[#82 verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
+and [#83 image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)
+own the non-empty lifecycle and image semantics. Live owner capture/context,
+Store adapter, snapshot hydration, the 58-field operation-row digest,
+non-empty lifecycle, verification-aware Doctor, and non-empty image evidence
+are not #80 claims. Exact schema-2 and schema-3 images remain
+`StoreMigrationRequiredError` to target schema `4`; #80 does not migrate them.
+
+The schema-4 children define their own canonical payload and decoder boundaries.
+They consume the #74 owner-ref/approval contract; they must not reconstruct
 `_ReviewAuthorityRecord`, `_CompletionAdmissionRecord`, or `_ApprovalRecord`
 with `object.__new__`, copy their module-local issuer sentinels, or implement
 the package-private registry protocol as a durable wire contract.
 
-Until #78 supplies those records, #74 must not claim SQLite persistence,
-schema-4 compatibility, restart recovery, durable `mark_unknown`, or provider
-exactly-once. A deterministic fake, an in-memory registry, a terminal state, or
-an effect result is not a substitute for that proof.
+Until the downstream children supply their records, #74 must not claim SQLite
+persistence, restart recovery, durable `mark_unknown`, or provider exactly-once.
+A deterministic fake, an in-memory registry, a terminal state, or an effect
+result is not a substitute for that proof.
 
 ## Rejection and non-goals are fail-closed
 
@@ -287,4 +307,4 @@ handoff.
 
 SQLite reopen, crash injection, provider login/effect tests, schema-4
 validation, durable `mark_unknown`, and production migration remain not-run in
-#74 and are acceptance work for #78 or its dependents.
+#74 and are acceptance work for #80 and its downstream children.

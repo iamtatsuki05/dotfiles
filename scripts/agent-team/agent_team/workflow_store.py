@@ -28,10 +28,15 @@ from typing import (
     cast,
 )
 
-STORE_SCHEMA: Final = 3
+STORE_SCHEMA: Final = 4
 CHECKPOINT_VERSION: Final = 4
 SEED_VERSION: Final = 1
 WORKFLOW_EVENT_SCHEMA_VERSION: Final = 1
+_V3_STORE_SCHEMA: Final = 3
+_V3_CHECKPOINT_VERSION: Final = 4
+_V3_SEED_VERSION: Final = 1
+_V3_PROVIDER_EVENT_SCHEMA: Final = 2
+_V3_WORKFLOW_EVENT_SCHEMA: Final = 1
 
 MAX_CHECKPOINT_BYTES: Final = 1_048_576
 MAX_IDENTIFIER_BYTES: Final = 128
@@ -63,6 +68,15 @@ INTENT_DIGEST_DOMAIN: Final = b"agent-team/workflow-intent/v1\0"
 RECEIPT_DIGEST_DOMAIN: Final = b"agent-team/workflow-receipt/v1\0"
 WORKFLOW_EVENT_DIGEST_DOMAIN: Final = b"agent-team/workflow-event/v1\0"
 ASSIGNMENT_DIGEST_DOMAIN: Final = b"agent-team/workflow-assignment/v1\0"
+
+# Public version constants document the current wire contract.  These private
+# snapshots are the runtime authority so rebinding a module attribute cannot
+# turn a schema-3 observation into a current schema-4 value.
+_CURRENT_STORE_SCHEMA: Final = 4
+_CURRENT_CHECKPOINT_VERSION: Final = 4
+_CURRENT_SEED_VERSION: Final = 1
+_CURRENT_CHECKPOINT_DIGEST_DOMAIN: Final = b"agent-team/workflow-checkpoint/v4\0"
+_CURRENT_SEED_DIGEST_DOMAIN: Final = b"agent-team/workflow-seed/v1\0"
 
 CHECKPOINT_FIELDS: Final = (
     "checkpoint_version",
@@ -98,6 +112,79 @@ SEED_FIELDS: Final = (
     "seed_digest",
     "updated_ns",
 )
+# These tuples are intentionally independent from the current schema-4
+# globals.  The migration classifier must keep accepting the historical v3
+# wire shape even after a future schema-4 codec changes its fields.
+_V3_CHECKPOINT_FIELDS: Final = (
+    "checkpoint_version",
+    "store_schema",
+    "task_policy_version",
+    "root",
+    "run",
+    "workflow_sequence",
+    "task_sequence",
+    "execution_mode",
+    "workflow_state",
+    "task_policy",
+    "active_assignment",
+    "pending_delivery",
+    "replied_message_ids",
+    "read_observed",
+    "released",
+    "review_authority",
+    "verification_authority",
+    "last_operation",
+    "checkpoint_digest",
+    "updated_ns",
+)
+_V3_SEED_FIELDS: Final = (
+    "seed_version",
+    "checkpoint_version",
+    "store_schema",
+    "root",
+    "workflow_sequence",
+    "operation_id",
+    "operation_status",
+    "workflow_state",
+    "seed_digest",
+    "updated_ns",
+)
+_CURRENT_CHECKPOINT_FIELDS: Final = (
+    "checkpoint_version",
+    "store_schema",
+    "task_policy_version",
+    "root",
+    "run",
+    "workflow_sequence",
+    "task_sequence",
+    "execution_mode",
+    "workflow_state",
+    "task_policy",
+    "active_assignment",
+    "pending_delivery",
+    "replied_message_ids",
+    "read_observed",
+    "released",
+    "review_authority",
+    "verification_authority",
+    "last_operation",
+    "checkpoint_digest",
+    "updated_ns",
+)
+_CURRENT_SEED_FIELDS: Final = (
+    "seed_version",
+    "checkpoint_version",
+    "store_schema",
+    "root",
+    "workflow_sequence",
+    "operation_id",
+    "operation_status",
+    "workflow_state",
+    "seed_digest",
+    "updated_ns",
+)
+_V3_CHECKPOINT_DIGEST_DOMAIN: Final = b"agent-team/workflow-checkpoint/v4\0"
+_V3_SEED_DIGEST_DOMAIN: Final = b"agent-team/workflow-seed/v1\0"
 ROOT_FIELDS: Final = (
     "root_key",
     "team_id",
@@ -793,6 +880,37 @@ def _validate_checkpoint_parts(
         raise TypeError("last operation is invalid")
 
 
+def _validate_seed_parts(
+    *,
+    root: object,
+    workflow_sequence: object,
+    operation_id: object,
+    operation_status: object,
+) -> None:
+    """Validate seed values without consulting a target-schema global."""
+
+    if type(root) is not RootIdentity:
+        raise TypeError("seed root identity is invalid")
+    _require_int(workflow_sequence, "seed workflow_sequence")
+    _require_optional_identifier(operation_id, "seed operation_id")
+    if operation_status is not None:
+        _require_enum(operation_status, OperationStatus, "seed operation_status")
+    if workflow_sequence == 0:
+        if operation_id is not None or operation_status is not None:
+            raise ValueError("empty seed cannot have an operation")
+    elif workflow_sequence == 1:
+        if operation_id is None or operation_status is not OperationStatus.INTENT:
+            raise ValueError("start intent seed is invalid")
+    elif workflow_sequence == 2:
+        if (
+            operation_id is None
+            or operation_status is not OperationStatus.UNKNOWN_EFFECT
+        ):
+            raise ValueError("unknown seed is invalid")
+    else:
+        raise ValueError("seed sequence is invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class WorkflowCheckpointDraft:
     """Strict reducer input; Store metadata and digest are not caller fields."""
@@ -875,10 +993,13 @@ class WorkflowCheckpointV4:
     def __post_init__(self) -> None:
         if (
             type(self.checkpoint_version) is not int
-            or self.checkpoint_version != CHECKPOINT_VERSION
+            or self.checkpoint_version != _CURRENT_CHECKPOINT_VERSION
         ):
             raise ValueError("checkpoint version is invalid")
-        if type(self.store_schema) is not int or self.store_schema != STORE_SCHEMA:
+        if (
+            type(self.store_schema) is not int
+            or self.store_schema != _CURRENT_STORE_SCHEMA
+        ):
             raise ValueError("store schema is invalid")
         _validate_checkpoint_parts(
             root=self.root,
@@ -916,8 +1037,12 @@ def _validate_checkpoint_observation(
         raise CheckpointSchemaError("checkpoint observation type is invalid")
     try:
         provenance = object.__getattribute__(value, "_provenance")
+        if object.__getattribute__(value, "store_schema") != _CURRENT_STORE_SCHEMA:
+            raise CheckpointSchemaError("schema-3 checkpoint is migration-only")
         value.__post_init__()
-    except (AttributeError, TypeError, ValueError) as exc:
+    except (AttributeError, TypeError, ValueError, CheckpointSchemaError) as exc:
+        if isinstance(exc, CheckpointSchemaError):
+            raise
         raise CheckpointSchemaError("checkpoint observation is invalid") from exc
     if provenance is None or (issuer is not None and provenance is not issuer):
         raise CheckpointSchemaError("checkpoint observation issuer is invalid")
@@ -932,46 +1057,42 @@ class WorkflowRootSeed:
     operation_id: str | None = None
     operation_status: OperationStatus | None = None
     updated_ns: int = 0
-    seed_version: int = field(init=False, default=SEED_VERSION)
-    checkpoint_version: int = field(init=False, default=CHECKPOINT_VERSION)
-    store_schema: int = field(init=False, default=STORE_SCHEMA)
+    seed_version: int = field(init=False, default=_CURRENT_SEED_VERSION)
+    checkpoint_version: int = field(
+        init=False,
+        default=_CURRENT_CHECKPOINT_VERSION,
+    )
+    store_schema: int = field(init=False, default=_CURRENT_STORE_SCHEMA)
+    _legacy_seed_digest: str | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
-        if type(self.root) is not RootIdentity:
-            raise TypeError("seed root identity is invalid")
-        if type(self.seed_version) is not int or self.seed_version != SEED_VERSION:
+        if (
+            type(self.seed_version) is not int
+            or self.seed_version != _CURRENT_SEED_VERSION
+        ):
             raise ValueError("seed version is invalid")
         if (
             type(self.checkpoint_version) is not int
-            or self.checkpoint_version != CHECKPOINT_VERSION
+            or self.checkpoint_version != _CURRENT_CHECKPOINT_VERSION
         ):
             raise ValueError("seed checkpoint version is invalid")
-        if type(self.store_schema) is not int or self.store_schema != STORE_SCHEMA:
+        if (
+            type(self.store_schema) is not int
+            or self.store_schema != _CURRENT_STORE_SCHEMA
+        ):
             raise ValueError("seed store schema is invalid")
-        _require_int(self.workflow_sequence, "seed workflow_sequence")
-        _require_optional_identifier(self.operation_id, "seed operation_id")
         _require_int(self.updated_ns, "seed updated_ns")
-        if self.operation_status is not None:
-            _require_enum(
-                self.operation_status, OperationStatus, "seed operation_status"
-            )
-        if self.workflow_sequence == 0:
-            if self.operation_id is not None or self.operation_status is not None:
-                raise ValueError("empty seed cannot have an operation")
-        elif self.workflow_sequence == 1:
-            if (
-                self.operation_id is None
-                or self.operation_status is not OperationStatus.INTENT
-            ):
-                raise ValueError("start intent seed is invalid")
-        elif self.workflow_sequence == 2:
-            if (
-                self.operation_id is None
-                or self.operation_status is not OperationStatus.UNKNOWN_EFFECT
-            ):
-                raise ValueError("unknown seed is invalid")
-        else:
-            raise ValueError("seed sequence is invalid")
+        _validate_seed_parts(
+            root=self.root,
+            workflow_sequence=self.workflow_sequence,
+            operation_id=self.operation_id,
+            operation_status=self.operation_status,
+        )
 
     @property
     def workflow_state(self) -> SeedState:
@@ -981,8 +1102,14 @@ class WorkflowRootSeed:
 
     @property
     def seed_digest(self) -> str:
+        if self.store_schema == _V3_STORE_SCHEMA:
+            digest = self._legacy_seed_digest
+            if digest is None:
+                raise SeedSchemaError("legacy seed digest is missing")
+            return digest
         return _domain_digest(
-            SEED_DIGEST_DOMAIN, _canonical_json(_seed_body_mapping(self))
+            _CURRENT_SEED_DIGEST_DOMAIN,
+            _canonical_json(_seed_body_mapping(self)),
         )
 
 
@@ -1351,6 +1478,7 @@ class StoredReplay:
             raise TypeError("stored replay receipt is invalid")
         if type(self.checkpoint) is not WorkflowCheckpointV4:
             raise TypeError("stored replay checkpoint is invalid")
+        _validate_checkpoint_observation(self.checkpoint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1363,6 +1491,7 @@ class WorkflowCommit:
             raise TypeError("workflow commit checkpoint is invalid")
         if type(self.receipt) is not DurableReceipt:
             raise TypeError("workflow commit receipt is invalid")
+        _validate_checkpoint_observation(self.checkpoint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1380,6 +1509,7 @@ class WorkflowEffectSnapshot:
             raise TypeError("effect snapshot receipt is invalid")
         if type(self.checkpoint) is not WorkflowCheckpointV4:
             raise TypeError("effect snapshot checkpoint is invalid")
+        _validate_checkpoint_observation(self.checkpoint)
         _require_digest(self.event_digest, "effect snapshot event_digest")
         last = self.checkpoint.last_operation
         if (
@@ -1413,7 +1543,16 @@ class UnknownCommit:
         _require_identifier(self.operation_id, "unknown operation_id")
         if self.status is not OperationStatus.UNKNOWN_EFFECT:
             raise ValueError("unknown commit status is invalid")
-        if type(self.checkpoint) not in (WorkflowCheckpointV4, WorkflowRootSeed):
+        if type(self.checkpoint) is WorkflowCheckpointV4:
+            _validate_checkpoint_observation(self.checkpoint)
+        elif type(self.checkpoint) is WorkflowRootSeed:
+            try:
+                self.checkpoint.__post_init__()
+            except (TypeError, ValueError) as exc:
+                raise CheckpointSchemaError(
+                    "unknown checkpoint observation is invalid"
+                ) from exc
+        else:
             raise TypeError("unknown checkpoint observation is invalid")
         _require_enum(self.reason, RecoveryCode, "recovery code")
         if self.event_digest is not None:
@@ -1734,6 +1873,8 @@ def _parse_constant(value: str) -> object:
 def _strict_json(raw: bytes, *, seed: bool = False) -> dict[str, object]:
     if type(raw) is not bytes or not raw or len(raw) > MAX_CHECKPOINT_BYTES:
         raise _schema_error("wire bytes are invalid", seed=seed)
+    parsed: object | None = None
+    parse_failed = False
     try:
         text = raw.decode("utf-8")
         parsed = json.loads(
@@ -1743,16 +1884,29 @@ def _strict_json(raw: bytes, *, seed: bool = False) -> dict[str, object]:
             parse_float=_parse_float,
             parse_constant=_parse_constant,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise _schema_error("wire JSON is invalid", seed=seed) from exc
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        ValueError,
+    ):
+        parse_failed = True
+    if parse_failed:
+        raise _schema_error("wire JSON is invalid", seed=seed)
     if type(parsed) is not dict:
         raise _schema_error("wire value must be one JSON object", seed=seed)
+    canonical: bytes | None = None
+    canonical_failed = False
     try:
         canonical = _canonical_json(parsed)
-    except CheckpointSchemaError as exc:
+    except CheckpointSchemaError:
+        canonical_failed = True
+    if canonical_failed:
         if seed:
-            raise SeedSchemaError("seed JSON is not canonical") from exc
-        raise
+            raise SeedSchemaError("seed JSON is not canonical")
+        raise CheckpointSchemaError("checkpoint JSON is not canonical")
+    assert canonical is not None
     if canonical != raw:
         raise _schema_error("wire bytes are not canonical", seed=seed)
     return parsed
@@ -2129,7 +2283,7 @@ def checkpoint_mapping(value: WorkflowCheckpointV4) -> dict[str, object]:
     body_without_digest = dict(body)
     # Insert the digest at its fixed wire position rather than appending it.
     result: dict[str, object] = {}
-    for name in CHECKPOINT_FIELDS:
+    for name in _CURRENT_CHECKPOINT_FIELDS:
         if name == "checkpoint_digest":
             result[name] = value.checkpoint_digest
         else:
@@ -2141,6 +2295,23 @@ def checkpoint_scalar_projection(value: WorkflowCheckpointV4) -> dict[str, objec
     """Derive SQL scalar columns from the typed checkpoint, never vice versa."""
 
     _validate_checkpoint_observation(value)
+    return _checkpoint_scalar_projection(value)
+
+
+def _legacy_checkpoint_scalar_projection(
+    value: WorkflowCheckpointV4,
+) -> dict[str, object]:
+    """Project a verified v3 observation for the legacy classifier only."""
+
+    _validate_legacy_checkpoint_observation(value)
+    return _checkpoint_scalar_projection(value)
+
+
+def _checkpoint_scalar_projection(
+    value: WorkflowCheckpointV4,
+) -> dict[str, object]:
+    """Project an already validated checkpoint without choosing its schema."""
+
     last = value.last_operation
     return {
         "root_key": value.root.root_key,
@@ -2198,6 +2369,31 @@ def checkpoint_to_draft(value: WorkflowCheckpointV4) -> WorkflowCheckpointDraft:
     )
 
 
+def _legacy_checkpoint_to_draft(
+    value: WorkflowCheckpointV4,
+) -> WorkflowCheckpointDraft:
+    """Return reducer fields for the migration-only v3 validator."""
+
+    _validate_legacy_checkpoint_observation(value)
+    return WorkflowCheckpointDraft(
+        root=value.root,
+        run=value.run,
+        workflow_sequence=value.workflow_sequence,
+        task_sequence=value.task_sequence,
+        execution_mode=value.execution_mode,
+        workflow_state=value.workflow_state,
+        task_policy=value.task_policy,
+        active_assignment=value.active_assignment,
+        pending_delivery=value.pending_delivery,
+        replied_message_ids=value.replied_message_ids,
+        read_observed=value.read_observed,
+        released=value.released,
+        review_authority=value.review_authority,
+        verification_authority=value.verification_authority,
+        last_operation=value.last_operation,
+    )
+
+
 def _seed_body_mapping(seed: WorkflowRootSeed) -> dict[str, object]:
     return {
         "seed_version": seed.seed_version,
@@ -2214,13 +2410,135 @@ def _seed_body_mapping(seed: WorkflowRootSeed) -> dict[str, object]:
     }
 
 
+def _validate_legacy_checkpoint_observation(value: object) -> None:
+    if type(value) is not WorkflowCheckpointV4:
+        raise CheckpointSchemaError("legacy checkpoint observation type is invalid")
+    try:
+        provenance = object.__getattribute__(value, "_provenance")
+        if provenance is not _V3_DECODE_ISSUER:
+            raise CheckpointSchemaError("legacy checkpoint provenance is invalid")
+        if (
+            value.checkpoint_version != _V3_CHECKPOINT_VERSION
+            or value.store_schema != _V3_STORE_SCHEMA
+        ):
+            raise CheckpointSchemaError("legacy checkpoint version is invalid")
+        _validate_checkpoint_parts(
+            root=value.root,
+            run=value.run,
+            workflow_sequence=value.workflow_sequence,
+            task_sequence=value.task_sequence,
+            execution_mode=value.execution_mode,
+            workflow_state=value.workflow_state,
+            task_policy=value.task_policy,
+            active_assignment=value.active_assignment,
+            pending_delivery=value.pending_delivery,
+            replied_message_ids=value.replied_message_ids,
+            read_observed=value.read_observed,
+            released=value.released,
+            review_authority=value.review_authority,
+            verification_authority=value.verification_authority,
+            last_operation=value.last_operation,
+        )
+        expected_policy_version = (
+            None if value.task_policy is None else value.task_policy.version
+        )
+        if value.task_policy_version != expected_policy_version:
+            raise CheckpointSchemaError("legacy task policy version differs")
+        _require_digest(value.checkpoint_digest, "legacy checkpoint_digest")
+        _require_int(value.updated_ns, "legacy updated_ns")
+    except CheckpointSchemaError:
+        raise
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise CheckpointSchemaError("legacy checkpoint observation is invalid") from exc
+
+
+def _validate_legacy_seed_observation(value: object) -> None:
+    if type(value) is not WorkflowRootSeed:
+        raise SeedSchemaError("legacy seed observation type is invalid")
+    try:
+        if (
+            value.seed_version != _V3_SEED_VERSION
+            or value.checkpoint_version != _V3_CHECKPOINT_VERSION
+            or value.store_schema != _V3_STORE_SCHEMA
+        ):
+            raise SeedSchemaError("legacy seed version is invalid")
+        _require_int(value.updated_ns, "legacy seed updated_ns")
+        _validate_seed_parts(
+            root=value.root,
+            workflow_sequence=value.workflow_sequence,
+            operation_id=value.operation_id,
+            operation_status=value.operation_status,
+        )
+        _require_digest(value._legacy_seed_digest, "legacy seed_digest")
+    except SeedSchemaError:
+        raise
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise SeedSchemaError("legacy seed observation is invalid") from exc
+
+
+def _issue_legacy_seed(
+    *,
+    root: RootIdentity,
+    workflow_sequence: int,
+    operation_id: str | None,
+    operation_status: OperationStatus | None,
+    seed_digest: str | None,
+    updated_ns: int,
+) -> WorkflowRootSeed:
+    seed = object.__new__(WorkflowRootSeed)
+    values = {
+        "root": root,
+        "workflow_sequence": workflow_sequence,
+        "operation_id": operation_id,
+        "operation_status": operation_status,
+        "updated_ns": updated_ns,
+        "seed_version": _V3_SEED_VERSION,
+        "checkpoint_version": _V3_CHECKPOINT_VERSION,
+        "store_schema": _V3_STORE_SCHEMA,
+        "_legacy_seed_digest": (
+            "sha256:" + "0" * 64 if seed_digest is None else seed_digest
+        ),
+    }
+    for name, value in values.items():
+        object.__setattr__(seed, name, value)
+    if seed_digest is None:
+        object.__setattr__(
+            seed,
+            "_legacy_seed_digest",
+            _domain_digest(
+                _V3_SEED_DIGEST_DOMAIN,
+                _canonical_json(_seed_body_mapping(seed)),
+            ),
+        )
+    _validate_legacy_seed_observation(seed)
+    return seed
+
+
+def _legacy_seed_digest_for(seed: WorkflowRootSeed) -> str:
+    """Return the frozen digest for an already validated v3 seed."""
+
+    expected_digest = _domain_digest(
+        _V3_SEED_DIGEST_DOMAIN,
+        _canonical_json(_seed_body_mapping(seed)),
+    )
+    stored_digest = seed._legacy_seed_digest
+    if stored_digest is None or not hmac.compare_digest(
+        stored_digest,
+        expected_digest,
+    ):
+        raise SeedSchemaError("legacy seed digest is invalid")
+    return expected_digest
+
+
 def encode_seed(seed: WorkflowRootSeed) -> bytes:
     if type(seed) is not WorkflowRootSeed:
         raise TypeError("seed must be a WorkflowRootSeed")
+    if seed.store_schema != _CURRENT_STORE_SCHEMA:
+        raise SeedSchemaError("schema-3 seed is migration-only")
     seed.__post_init__()
     body = _seed_body_mapping(seed)
     result: dict[str, object] = {}
-    for name in SEED_FIELDS:
+    for name in _CURRENT_SEED_FIELDS:
         if name == "seed_digest":
             result[name] = seed.seed_digest
         else:
@@ -2236,8 +2554,42 @@ def seed_scalar_projection(seed: WorkflowRootSeed) -> dict[str, object]:
 
     if type(seed) is not WorkflowRootSeed:
         raise TypeError("seed must be a WorkflowRootSeed")
-    seed.__post_init__()
-    encoded = encode_seed(seed)
+    try:
+        seed.__post_init__()
+        encoded = encode_seed(seed)
+    except SeedSchemaError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise SeedSchemaError("seed observation is invalid") from exc
+    return _seed_scalar_projection(
+        seed,
+        encoded=encoded,
+        checkpoint_digest=seed.seed_digest,
+    )
+
+
+def _legacy_seed_scalar_projection(seed: WorkflowRootSeed) -> dict[str, object]:
+    """Project a verified v3 seed for the legacy classifier only."""
+
+    if type(seed) is not WorkflowRootSeed:
+        raise TypeError("legacy seed must be a WorkflowRootSeed")
+    _validate_legacy_seed_observation(seed)
+    legacy_digest = _legacy_seed_digest_for(seed)
+    return _seed_scalar_projection(
+        seed,
+        encoded=_encode_seed_v3(seed),
+        checkpoint_digest=legacy_digest,
+    )
+
+
+def _seed_scalar_projection(
+    seed: WorkflowRootSeed,
+    *,
+    encoded: bytes,
+    checkpoint_digest: str,
+) -> dict[str, object]:
+    """Project an already validated seed without choosing its schema."""
+
     return {
         "root_key": seed.root.root_key,
         "team_id": seed.root.team_id,
@@ -2264,7 +2616,7 @@ def seed_scalar_projection(seed: WorkflowRootSeed) -> dict[str, object]:
         "read_observed": 0,
         "released": 0,
         "checkpoint_bytes": encoded,
-        "checkpoint_digest": seed.seed_digest,
+        "checkpoint_digest": checkpoint_digest,
         "last_operation_id": seed.operation_id,
         "last_operation_status": (
             None if seed.operation_status is None else seed.operation_status.value
@@ -2274,16 +2626,24 @@ def seed_scalar_projection(seed: WorkflowRootSeed) -> dict[str, object]:
     }
 
 
-def decode_seed(raw: bytes) -> WorkflowRootSeed:
+def decode_seed(
+    raw: bytes, *, expected_store_schema: int = STORE_SCHEMA
+) -> WorkflowRootSeed:
+    if type(expected_store_schema) is not int:
+        raise SeedSchemaError("expected store schema is invalid")
+    if expected_store_schema == _V3_STORE_SCHEMA:
+        return _decode_seed_v3(raw)
+    if expected_store_schema != _CURRENT_STORE_SCHEMA:
+        raise SeedSchemaError("expected store schema is invalid")
     parsed = _strict_json(raw, seed=True)
-    if tuple(parsed) != SEED_FIELDS:
+    if tuple(parsed) != _CURRENT_SEED_FIELDS:
         raise SeedSchemaError("seed fields are not canonical")
     try:
-        if parsed["seed_version"] != SEED_VERSION:
+        if parsed["seed_version"] != _CURRENT_SEED_VERSION:
             raise ValueError("seed version")
-        if parsed["checkpoint_version"] != CHECKPOINT_VERSION:
+        if parsed["checkpoint_version"] != _CURRENT_CHECKPOINT_VERSION:
             raise ValueError("checkpoint version")
-        if parsed["store_schema"] != STORE_SCHEMA:
+        if parsed["store_schema"] != expected_store_schema:
             raise ValueError("store schema")
         seed = WorkflowRootSeed(
             root=_decode_root(parsed["root"]),
@@ -2306,7 +2666,8 @@ def decode_seed(raw: bytes) -> WorkflowRootSeed:
             raise ValueError("seed state")
         provided_digest = _require_digest(parsed["seed_digest"], "seed_digest")
         expected_digest = _domain_digest(
-            SEED_DIGEST_DOMAIN, _canonical_json(_seed_body_mapping(seed))
+            _CURRENT_SEED_DIGEST_DOMAIN,
+            _canonical_json(_seed_body_mapping(seed)),
         )
         if not hmac.compare_digest(provided_digest, expected_digest):
             raise ValueError("seed digest")
@@ -2315,14 +2676,84 @@ def decode_seed(raw: bytes) -> WorkflowRootSeed:
         raise SeedSchemaError("seed values are invalid") from exc
 
 
+def _encode_seed_v3(seed: WorkflowRootSeed) -> bytes:
+    """Canonicalize a v3 seed for migration classification only."""
+
+    _validate_legacy_seed_observation(seed)
+    body = _seed_body_mapping(seed)
+    expected_digest = _legacy_seed_digest_for(seed)
+    result: dict[str, object] = {}
+    for name in _V3_SEED_FIELDS:
+        if name == "seed_digest":
+            result[name] = expected_digest
+        else:
+            result[name] = body[name]
+    encoded = _canonical_json(result)
+    if len(encoded) > MAX_CHECKPOINT_BYTES:
+        raise SeedSchemaError("legacy seed is too large")
+    return encoded
+
+
+def _decode_seed_v3(raw: bytes) -> WorkflowRootSeed:
+    """Decode the frozen schema-3 seed wire contract for migration only."""
+
+    parsed = _strict_json(raw, seed=True)
+    if tuple(parsed) != _V3_SEED_FIELDS:
+        raise SeedSchemaError("legacy seed fields are not canonical")
+    try:
+        if parsed["seed_version"] != _V3_SEED_VERSION:
+            raise ValueError("seed version")
+        if parsed["checkpoint_version"] != _V3_CHECKPOINT_VERSION:
+            raise ValueError("checkpoint version")
+        if parsed["store_schema"] != _V3_STORE_SCHEMA:
+            raise ValueError("store schema")
+        provided_digest = _require_digest(parsed["seed_digest"], "seed_digest")
+        seed = _issue_legacy_seed(
+            root=_decode_root(parsed["root"]),
+            workflow_sequence=_require_int(
+                parsed["workflow_sequence"], "legacy seed workflow_sequence"
+            ),
+            operation_id=_require_optional_text(
+                parsed["operation_id"], "legacy seed operation_id"
+            ),
+            operation_status=(
+                None
+                if parsed["operation_status"] is None
+                else _enum_value(
+                    parsed["operation_status"],
+                    OperationStatus,
+                    "legacy seed operation_status",
+                )
+            ),
+            seed_digest=provided_digest,
+            updated_ns=_require_int(parsed["updated_ns"], "legacy seed updated_ns"),
+        )
+        if parsed["workflow_state"] != seed.workflow_state.value:
+            raise ValueError("seed state")
+        expected_digest = _domain_digest(
+            _V3_SEED_DIGEST_DOMAIN,
+            _canonical_json(_seed_body_mapping(seed)),
+        )
+        if not hmac.compare_digest(provided_digest, expected_digest):
+            raise ValueError("seed digest")
+        if _encode_seed_v3(seed) != raw:
+            raise ValueError("seed bytes are not canonical")
+        return seed
+    except (KeyError, TypeError, ValueError, CheckpointSchemaError) as exc:
+        raise SeedSchemaError("legacy seed values are invalid") from exc
+
+
 def encode_checkpoint(value: WorkflowCheckpointV4) -> bytes:
     _validate_checkpoint_observation(value)
     body = _checkpoint_body_mapping(value)
-    expected_digest = _domain_digest(CHECKPOINT_DIGEST_DOMAIN, _canonical_json(body))
+    expected_digest = _domain_digest(
+        _CURRENT_CHECKPOINT_DIGEST_DOMAIN,
+        _canonical_json(body),
+    )
     if not hmac.compare_digest(value.checkpoint_digest, expected_digest):
         raise CheckpointSchemaError("checkpoint digest is invalid")
     result: dict[str, object] = {}
-    for name in CHECKPOINT_FIELDS:
+    for name in _CURRENT_CHECKPOINT_FIELDS:
         if name == "checkpoint_digest":
             result[name] = value.checkpoint_digest
         else:
@@ -2330,13 +2761,20 @@ def encode_checkpoint(value: WorkflowCheckpointV4) -> bytes:
     return _canonical_json(result)
 
 
-def _decode_checkpoint_mapping(parsed: dict[str, object]) -> WorkflowCheckpointV4:
-    if tuple(parsed) != CHECKPOINT_FIELDS:
+def _decode_checkpoint_mapping(
+    parsed: dict[str, object], *, expected_store_schema: int = STORE_SCHEMA
+) -> WorkflowCheckpointV4:
+    if tuple(parsed) != _CURRENT_CHECKPOINT_FIELDS:
         raise CheckpointSchemaError("checkpoint fields are not canonical")
     try:
-        if parsed["checkpoint_version"] != CHECKPOINT_VERSION:
+        if (
+            type(expected_store_schema) is not int
+            or expected_store_schema != _CURRENT_STORE_SCHEMA
+        ):
+            raise ValueError("expected store schema")
+        if parsed["checkpoint_version"] != _CURRENT_CHECKPOINT_VERSION:
             raise ValueError("checkpoint version")
-        if parsed["store_schema"] != STORE_SCHEMA:
+        if parsed["store_schema"] != expected_store_schema:
             raise ValueError("store schema")
         policy = (
             None
@@ -2403,16 +2841,208 @@ def _decode_checkpoint_mapping(parsed: dict[str, object]) -> WorkflowCheckpointV
         body = dict(parsed)
         del body["checkpoint_digest"]
         expected_digest = _domain_digest(
-            CHECKPOINT_DIGEST_DOMAIN, _canonical_json(body)
+            _CURRENT_CHECKPOINT_DIGEST_DOMAIN,
+            _canonical_json(body),
         )
         if not hmac.compare_digest(provided_digest, expected_digest):
             raise ValueError("checkpoint digest")
-        return _issue_checkpoint(draft, updated_ns=updated_ns, issuer=_DECODE_ISSUER)
+        return _issue_checkpoint(
+            draft,
+            updated_ns=updated_ns,
+            issuer=_DECODE_ISSUER,
+        )
     except (KeyError, TypeError, ValueError, CheckpointSchemaError) as exc:
         raise CheckpointSchemaError("checkpoint values are invalid") from exc
 
 
-def decode_checkpoint(raw: bytes) -> WorkflowCheckpointV4:
+def _issue_legacy_checkpoint(
+    draft: WorkflowCheckpointDraft,
+    *,
+    updated_ns: int,
+    checkpoint_digest: str | None,
+) -> WorkflowCheckpointV4:
+    """Build the internal v3 observation without issuing a current value."""
+
+    if type(draft) is not WorkflowCheckpointDraft:
+        raise TypeError("legacy checkpoint draft is invalid")
+    _require_int(updated_ns, "legacy updated_ns")
+    checkpoint = object.__new__(WorkflowCheckpointV4)
+    values = {
+        "checkpoint_version": _V3_CHECKPOINT_VERSION,
+        "store_schema": _V3_STORE_SCHEMA,
+        "task_policy_version": draft.task_policy_version,
+        "root": draft.root,
+        "run": draft.run,
+        "workflow_sequence": draft.workflow_sequence,
+        "task_sequence": draft.task_sequence,
+        "execution_mode": draft.execution_mode,
+        "workflow_state": draft.workflow_state,
+        "task_policy": draft.task_policy,
+        "active_assignment": draft.active_assignment,
+        "pending_delivery": draft.pending_delivery,
+        "replied_message_ids": draft.replied_message_ids,
+        "read_observed": draft.read_observed,
+        "released": draft.released,
+        "review_authority": draft.review_authority,
+        "verification_authority": draft.verification_authority,
+        "last_operation": draft.last_operation,
+        "checkpoint_digest": (
+            "sha256:" + "0" * 64 if checkpoint_digest is None else checkpoint_digest
+        ),
+        "updated_ns": updated_ns,
+        "_provenance": _V3_DECODE_ISSUER,
+    }
+    for name, value in values.items():
+        object.__setattr__(checkpoint, name, value)
+    if checkpoint_digest is None:
+        object.__setattr__(
+            checkpoint,
+            "checkpoint_digest",
+            _domain_digest(
+                _V3_CHECKPOINT_DIGEST_DOMAIN,
+                _canonical_json(_checkpoint_body_mapping(checkpoint)),
+            ),
+        )
+    _validate_legacy_checkpoint_observation(checkpoint)
+    _legacy_checkpoint_digest_for(checkpoint)
+    return checkpoint
+
+
+def _legacy_checkpoint_digest_for(value: WorkflowCheckpointV4) -> str:
+    """Return the frozen digest for an already validated v3 checkpoint."""
+
+    expected_digest = _domain_digest(
+        _V3_CHECKPOINT_DIGEST_DOMAIN,
+        _canonical_json(_checkpoint_body_mapping(value)),
+    )
+    if not hmac.compare_digest(value.checkpoint_digest, expected_digest):
+        raise CheckpointSchemaError("legacy checkpoint digest is invalid")
+    return expected_digest
+
+
+def _encode_checkpoint_v3(value: WorkflowCheckpointV4) -> bytes:
+    """Canonicalize a v3 checkpoint for migration classification only."""
+
+    _validate_legacy_checkpoint_observation(value)
+    body = _checkpoint_body_mapping(value)
+    expected_digest = _legacy_checkpoint_digest_for(value)
+    result: dict[str, object] = {}
+    for name in _V3_CHECKPOINT_FIELDS:
+        if name == "checkpoint_digest":
+            result[name] = expected_digest
+        else:
+            result[name] = body[name]
+    encoded = _canonical_json(result)
+    if len(encoded) > MAX_CHECKPOINT_BYTES:
+        raise CheckpointSchemaError("legacy checkpoint is too large")
+    return encoded
+
+
+def _decode_checkpoint_v3(raw: bytes) -> WorkflowCheckpointV4:
+    """Decode the frozen schema-3 checkpoint wire contract for migration only."""
+
+    parsed = _strict_json(raw)
+    if tuple(parsed) != _V3_CHECKPOINT_FIELDS:
+        raise CheckpointSchemaError("legacy checkpoint fields are not canonical")
+    try:
+        if parsed["checkpoint_version"] != _V3_CHECKPOINT_VERSION:
+            raise ValueError("checkpoint version")
+        if parsed["store_schema"] != _V3_STORE_SCHEMA:
+            raise ValueError("store schema")
+        policy = (
+            None
+            if parsed["task_policy"] is None
+            else _decode_policy(parsed["task_policy"])
+        )
+        replied_values = parsed["replied_message_ids"]
+        if type(replied_values) is not list:
+            raise ValueError("replied message list")
+        draft = WorkflowCheckpointDraft(
+            root=_decode_root(parsed["root"]),
+            run=_decode_run(parsed["run"]),
+            workflow_sequence=_require_int(
+                parsed["workflow_sequence"], "legacy workflow_sequence"
+            ),
+            task_sequence=_require_optional_int(
+                parsed["task_sequence"], "legacy task_sequence"
+            ),
+            execution_mode=_enum_value(
+                parsed["execution_mode"], ExecutionMode, "legacy execution_mode"
+            ),
+            workflow_state=_enum_value(
+                parsed["workflow_state"], CheckpointState, "legacy workflow_state"
+            ),
+            task_policy=policy,
+            active_assignment=(
+                None
+                if parsed["active_assignment"] is None
+                else _decode_assignment(parsed["active_assignment"])
+            ),
+            pending_delivery=(
+                None
+                if parsed["pending_delivery"] is None
+                else _decode_delivery(parsed["pending_delivery"])
+            ),
+            replied_message_ids=tuple(
+                _require_text(item, "legacy replied_message_ids item")
+                for item in cast(list[object], replied_values)
+            ),
+            read_observed=_require_bool(parsed["read_observed"], "read_observed"),
+            released=_require_bool(parsed["released"], "released"),
+            review_authority=(
+                None
+                if parsed["review_authority"] is None
+                else _decode_authority(parsed["review_authority"])
+            ),
+            verification_authority=(
+                None
+                if parsed["verification_authority"] is None
+                else _decode_authority(parsed["verification_authority"])
+            ),
+            last_operation=(
+                None
+                if parsed["last_operation"] is None
+                else _decode_last_operation(parsed["last_operation"])
+            ),
+        )
+        if parsed["task_policy_version"] != draft.task_policy_version:
+            raise ValueError("task policy version projection")
+        provided_digest = _require_digest(
+            parsed["checkpoint_digest"], "checkpoint_digest"
+        )
+        checkpoint = _issue_legacy_checkpoint(
+            draft,
+            updated_ns=_require_int(parsed["updated_ns"], "legacy updated_ns"),
+            checkpoint_digest=provided_digest,
+        )
+        expected_digest = _domain_digest(
+            _V3_CHECKPOINT_DIGEST_DOMAIN,
+            _canonical_json(
+                {
+                    name: parsed[name]
+                    for name in _V3_CHECKPOINT_FIELDS
+                    if name != "checkpoint_digest"
+                }
+            ),
+        )
+        if not hmac.compare_digest(provided_digest, expected_digest):
+            raise ValueError("checkpoint digest")
+        if _encode_checkpoint_v3(checkpoint) != raw:
+            raise ValueError("checkpoint bytes are not canonical")
+        return checkpoint
+    except (KeyError, TypeError, ValueError, CheckpointSchemaError) as exc:
+        raise CheckpointSchemaError("legacy checkpoint values are invalid") from exc
+
+
+def decode_checkpoint(
+    raw: bytes, *, expected_store_schema: int = STORE_SCHEMA
+) -> WorkflowCheckpointV4:
+    if type(expected_store_schema) is not int:
+        raise CheckpointSchemaError("expected store schema is invalid")
+    if expected_store_schema == _V3_STORE_SCHEMA:
+        return _decode_checkpoint_v3(raw)
+    if expected_store_schema != _CURRENT_STORE_SCHEMA:
+        raise CheckpointSchemaError("expected store schema is invalid")
     parsed = _strict_json(raw)
     checkpoint = _decode_checkpoint_mapping(parsed)
     if encode_checkpoint(checkpoint) != raw:
@@ -2426,30 +3056,37 @@ def compute_checkpoint_digest(value: bytes | WorkflowCheckpointV4) -> str:
     if type(value) is WorkflowCheckpointV4:
         _validate_checkpoint_observation(value)
         return _domain_digest(
-            CHECKPOINT_DIGEST_DOMAIN,
+            _CURRENT_CHECKPOINT_DIGEST_DOMAIN,
             _canonical_json(_checkpoint_body_mapping(value)),
         )
     if type(value) is not bytes:
         raise TypeError("checkpoint digest input is invalid")
     parsed = _strict_json(value)
-    if tuple(parsed) != CHECKPOINT_FIELDS:
+    if tuple(parsed) != _CURRENT_CHECKPOINT_FIELDS:
         raise CheckpointSchemaError("checkpoint fields are not canonical")
+    if parsed["store_schema"] != _CURRENT_STORE_SCHEMA:
+        raise CheckpointSchemaError("schema-3 checkpoint is migration-only")
     body = dict(parsed)
     del body["checkpoint_digest"]
-    return _domain_digest(CHECKPOINT_DIGEST_DOMAIN, _canonical_json(body))
+    return _domain_digest(_CURRENT_CHECKPOINT_DIGEST_DOMAIN, _canonical_json(body))
 
 
 def compute_seed_digest(value: bytes | WorkflowRootSeed) -> str:
     if type(value) is WorkflowRootSeed:
+        if value.store_schema != _CURRENT_STORE_SCHEMA:
+            raise SeedSchemaError("schema-3 seed is migration-only")
+        value.__post_init__()
         return value.seed_digest
     if type(value) is not bytes:
         raise TypeError("seed digest input is invalid")
     parsed = _strict_json(value, seed=True)
-    if tuple(parsed) != SEED_FIELDS:
+    if tuple(parsed) != _CURRENT_SEED_FIELDS:
         raise SeedSchemaError("seed fields are not canonical")
+    if parsed["store_schema"] != _CURRENT_STORE_SCHEMA:
+        raise SeedSchemaError("schema-3 seed is migration-only")
     body = dict(parsed)
     del body["seed_digest"]
-    return _domain_digest(SEED_DIGEST_DOMAIN, _canonical_json(body))
+    return _domain_digest(_CURRENT_SEED_DIGEST_DOMAIN, _canonical_json(body))
 
 
 def _issue_checkpoint(
@@ -2457,14 +3094,17 @@ def _issue_checkpoint(
     *,
     updated_ns: int,
     issuer: object,
+    store_schema: int = STORE_SCHEMA,
 ) -> WorkflowCheckpointV4:
     if type(draft) is not WorkflowCheckpointDraft:
         raise TypeError("checkpoint draft is invalid")
     _require_int(updated_ns, "updated_ns")
+    if type(store_schema) is not int or store_schema != _CURRENT_STORE_SCHEMA:
+        raise ValueError("store schema is invalid")
     checkpoint = object.__new__(WorkflowCheckpointV4)
     values = {
-        "checkpoint_version": CHECKPOINT_VERSION,
-        "store_schema": STORE_SCHEMA,
+        "checkpoint_version": _CURRENT_CHECKPOINT_VERSION,
+        "store_schema": _CURRENT_STORE_SCHEMA,
         "task_policy_version": draft.task_policy_version,
         "root": draft.root,
         "run": draft.run,
@@ -2491,13 +3131,14 @@ def _issue_checkpoint(
     object.__setattr__(
         checkpoint,
         "checkpoint_digest",
-        _domain_digest(CHECKPOINT_DIGEST_DOMAIN, _canonical_json(body)),
+        _domain_digest(_CURRENT_CHECKPOINT_DIGEST_DOMAIN, _canonical_json(body)),
     )
     checkpoint.__post_init__()
     return checkpoint
 
 
 _DECODE_ISSUER = object()
+_V3_DECODE_ISSUER = object()
 
 
 __all__ = [

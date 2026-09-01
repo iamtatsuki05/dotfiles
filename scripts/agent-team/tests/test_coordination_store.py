@@ -2932,7 +2932,7 @@ class CoordinationStoreTest(unittest.TestCase):
             invalid_bytes_before = invalid_database.read_bytes()
             with self.assertRaises(StoreSchemaError):
                 CoordinationStore(invalid_root)
-            self.assertTrue((root / LIFETIME_GATE_FILENAME).exists())
+            self.assertFalse((root / LIFETIME_GATE_FILENAME).exists())
             self.assertEqual(
                 invalid_files_before,
                 tuple(sorted(path.name for path in invalid_root.iterdir())),

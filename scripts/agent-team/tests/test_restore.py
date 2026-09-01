@@ -21,6 +21,7 @@ from agent_team import restore as restore_module
 from agent_team import store as store_module
 from agent_team import wal as wal_module
 from agent_team.backup import (
+    BACKUP_MANIFEST_FIELDS,
     BackupArtifact,
     BackupIncompleteError,
     BackupManifest,
@@ -599,7 +600,7 @@ def _assert_captured_candidate_result(
 
     candidate_snapshot = _read_only_sqlite_snapshot(candidate_path)
     candidate_meta = dict(candidate_snapshot["store_meta"])
-    testcase.assertEqual(3, candidate_snapshot["user_version"])
+    testcase.assertEqual(4, candidate_snapshot["user_version"])
     testcase.assertEqual(
         captured.floor.recovery_epoch,
         candidate_meta["recovery_epoch"],
@@ -997,6 +998,97 @@ class RestoreContractTest(unittest.TestCase):
 
 
 class RestoreIntegrationTest(unittest.TestCase):
+    def test_empty_schema4_backup_restore_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-restore-empty-schema4-"
+        ) as temporary:
+            root = _make_root(temporary)
+
+            def new_table_counts() -> tuple[int, int, int]:
+                connection = sqlite3.connect(root / store_module.DATABASE_FILENAME)
+                try:
+                    return cast(
+                        tuple[int, int, int],
+                        tuple(
+                            int(
+                                connection.execute(
+                                    f"SELECT COUNT(*) FROM {table}"
+                                ).fetchone()[0]
+                            )
+                            for table in (
+                                "task_policy_states",
+                                "verification_operations",
+                                "verification_receipts",
+                            )
+                        ),
+                    )
+                finally:
+                    connection.close()
+
+            self.assertEqual((0, 0, 0), new_table_counts())
+            with SQLiteBackup(root, busy_timeout_ms=100) as backup:
+                artifact = backup.create("empty-schema4")
+                inspected = backup.inspect("empty-schema4")
+
+            self.assertEqual(
+                (
+                    "version",
+                    "database_basename",
+                    "store_schema",
+                    "event_schema_version",
+                    "sqlite_user_version",
+                    "integrity_check",
+                    "database_size",
+                    "database_digest",
+                    "captured_recovery_epoch",
+                    "captured_fencing_token_floor",
+                ),
+                BACKUP_MANIFEST_FIELDS,
+            )
+            self.assertEqual(10, len(BACKUP_MANIFEST_FIELDS))
+            self.assertEqual(artifact, inspected)
+            self.assertEqual(
+                (1, "empty-schema4", 4, 2, 4, "ok"),
+                (
+                    artifact.manifest.version,
+                    artifact.manifest.database_basename,
+                    artifact.manifest.store_schema,
+                    artifact.manifest.event_schema_version,
+                    artifact.manifest.sqlite_user_version,
+                    artifact.manifest.integrity_check,
+                ),
+            )
+            self.assertEqual((0, 0, 0, 0), artifact.workflow_row_counts)
+            self.assertEqual((0, 0, 0, 0), inspected.workflow_row_counts)
+
+            source_database = root / artifact.database_basename
+            source_manifest = root / artifact.manifest_basename
+            source_database_bytes = source_database.read_bytes()
+            source_manifest_bytes = source_manifest.read_bytes()
+            manifest_fields = tuple(json.loads(source_manifest_bytes))
+            self.assertEqual(BACKUP_MANIFEST_FIELDS, manifest_fields)
+
+            with BackupRestore(root, busy_timeout_ms=100) as restore:
+                result = restore.restore(
+                    artifact,
+                    actor="review80-empty",
+                    audit_ref="review80-empty-restore",
+                )
+
+            self.assertEqual("RESTORE_COMMITTED", result.phase)
+            self.assertEqual(source_database_bytes, source_database.read_bytes())
+            self.assertEqual(source_manifest_bytes, source_manifest.read_bytes())
+
+            with CoordinationStore(root, busy_timeout_ms=100):
+                pass
+            self.assertEqual((0, 0, 0), new_table_counts())
+            self.assertEqual(
+                (0, 0, 0, 0),
+                _read_store_observation(
+                    root / store_module.DATABASE_FILENAME
+                ).workflow_row_counts,
+            )
+
     def test_new_restore_passes_generation_and_audit_evidence_ref(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-restore-") as temporary:
             root, artifact = _artifact_and_newer_destination(temporary)
@@ -2681,9 +2773,9 @@ class RestoreIntegrationTest(unittest.TestCase):
             old_manifest_value = BackupManifest(
                 version=1,
                 database_basename="old",
-                store_schema=3,
+                store_schema=4,
                 event_schema_version=2,
-                sqlite_user_version=3,
+                sqlite_user_version=4,
                 integrity_check="ok",
                 database_size=old_observation.size,
                 database_digest=old_observation.digest,

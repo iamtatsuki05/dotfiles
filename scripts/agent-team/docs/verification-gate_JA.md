@@ -72,7 +72,10 @@ provenance ではありません。authority は trusted `ApprovalAdmissionPort`
 `VerificationStatePort` は gate の生成時に必須です。production implementationがCAS、
 persistence、idempotence、effect fencing、restart recoveryを担当します。Issue #74は既存6操作の
 shapeを凍結し、deterministic fakeで確認しますが、SQLite implementationやfresh processでの
-recovery proofは提供しません。durableな責務は[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)へ渡します。
+recovery proofは提供しません。[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)が提供するのは
+schema-4の物理foundationとpure codecだけです。production adapter、non-empty lifecycle、restart proofは
+含まれず、durableな後続責務は[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)へ分かれます。
 
 ```python
 class VerificationStatePort(Protocol):
@@ -137,6 +140,11 @@ binding、executable before/after、effect nonce/epoch/fencing、argv/cwd/env/sc
 validation でも同じ receipt/result validator を再実行し、同じ ref の別 digest は replay として
 受け付けません。
 
+ここでいう`VerificationReceipt`は#51 Gate内のruntime valueであり、schema-4の永続operation
+recordではありません。#80が定めるのはSQLの`record_version=1` discriminatorとpureな
+request/receipt projectionだけです。58-fieldのoperation-row digestとStore-issued hydrationは
+後続作業です。
+
 resume/replay は profile を再解決し、fresh current snapshot を取得し、durable receipt の
 after と比較します。記録済み executable-after も保持するため、古い after 観測だけで task を
 completed にできません。
@@ -145,9 +153,13 @@ completed にできません。
 
 #49はreview transitionとapproval provenance、#50はpath/resource admissionとreservation identity、
 #74はtyped owner-ref compositionとdeterministic fakeの境界をそれぞれ所有します。productionの
-durable state/effect/receipt portとterminal CASは#11/#31/#33の責務です。
-[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)はschema-4 full ledger、restart/replay、
-durable `mark_unknown`の境界を担当し、#32がそのrecovery handoffを受け取ります。このmoduleが
-定義するのはverification contractとpureなport orchestrationだけです。
+durable state/effect/receipt portとterminal CASは#11/#31/#33の責務です。schema-4 workは、
+[Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)、
+[#81 task/review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82 verification transaction/adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+[#83 image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。
+#80のproduction pathは新しい3 tableを空のままにし、non-empty image semantics、lifecycle、capture、
+adapter、hydration、logical record digest、verification-aware Doctor/restoreを主張しません。#32が
+recovery handoffを受け取ります。このmoduleが定義するのはverification contractとpureなport orchestrationだけです。
 focused testはfake port・providerなし・実workspaceなしで行うため、SQLite durabilityやprovider
 exactly-once executionは証明しません。

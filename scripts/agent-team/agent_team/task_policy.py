@@ -30,7 +30,11 @@ VerificationProfileRef = NewType("VerificationProfileRef", str)
 GitObjectId = NewType("GitObjectId", str)
 TreeDigest = NewType("TreeDigest", str)
 
-STATE_POLICY_VERSION: Final = 4
+_CURRENT_STATE_POLICY_VERSION: Final = 4
+# Public compatibility name for callers that inspect the policy version.  All
+# runtime validation uses the private snapshot above so rebinding this name
+# cannot change the current-state contract.
+STATE_POLICY_VERSION: Final = _CURRENT_STATE_POLICY_VERSION
 MAX_TASKS: Final = 256
 MAX_TASK_ID_CHARS: Final = 64
 MAX_TASK_TEXT_CHARS: Final = 4096
@@ -910,7 +914,7 @@ class TaskPolicyStateV4:
         if (
             not isinstance(self.version, int)
             or isinstance(self.version, bool)
-            or self.version != STATE_POLICY_VERSION
+            or self.version != _CURRENT_STATE_POLICY_VERSION
         ):
             raise _issue("state-version-mismatch", "state version must be integer 4")
         _safe_identifier(self.team_id, "state.team_id")
@@ -1002,7 +1006,7 @@ def parse_task_state(value: Mapping[str, object]) -> TaskPolicyStateV4:
 
     if not isinstance(value, Mapping):
         raise _issue("invalid-type", "state must be a table")
-    if value.get("version") != STATE_POLICY_VERSION:
+    if value.get("version") != _CURRENT_STATE_POLICY_VERSION:
         raise _issue("state-version-mismatch", "state version must be integer 4")
     _require_mapping_fields(value, _STATE_FIELDS, "state")
     phase = _parse_enum(TaskPhase, value["phase"], "state.phase", "unknown-phase")

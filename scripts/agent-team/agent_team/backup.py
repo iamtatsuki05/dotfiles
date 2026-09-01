@@ -44,6 +44,19 @@ BACKUP_MANIFEST_FIELDS: Final[tuple[str, ...]] = (
     "captured_recovery_epoch",
     "captured_fencing_token_floor",
 )
+_CURRENT_BACKUP_MANIFEST_VERSION: Final[int] = 1
+_CURRENT_BACKUP_MANIFEST_FIELDS: Final[tuple[str, ...]] = (
+    "version",
+    "database_basename",
+    "store_schema",
+    "event_schema_version",
+    "sqlite_user_version",
+    "integrity_check",
+    "database_size",
+    "database_digest",
+    "captured_recovery_epoch",
+    "captured_fencing_token_floor",
+)
 MAX_MANIFEST_BYTES: Final[int] = 64 * 1024
 MAX_BACKUP_BYTES: Final[int] = _doctor.MAX_DATABASE_BYTES
 _MAX_TEMP_ATTEMPTS: Final[int] = 8
@@ -141,7 +154,10 @@ class BackupManifest:
     captured_fencing_token_floor: int
 
     def __post_init__(self) -> None:
-        if type(self.version) is not int or self.version != BACKUP_MANIFEST_VERSION:
+        if (
+            type(self.version) is not int
+            or self.version != _CURRENT_BACKUP_MANIFEST_VERSION
+        ):
             raise ValueError("manifest version is unsupported")
         _require_basename(self.database_basename, "database_basename")
         if (
@@ -161,17 +177,17 @@ class BackupManifest:
             raise ValueError("manifest derived basename is too long")
         if (
             type(self.store_schema) is not int
-            or self.store_schema != _store.STORE_SCHEMA
+            or self.store_schema != _store._CURRENT_STORE_SCHEMA
         ):
             raise ValueError("manifest store schema is unsupported")
         if (
             type(self.event_schema_version) is not int
-            or self.event_schema_version != _store.EVENT_SCHEMA_VERSION
+            or self.event_schema_version != _store._CURRENT_EVENT_SCHEMA_VERSION
         ):
             raise ValueError("manifest event schema is unsupported")
         if (
             type(self.sqlite_user_version) is not int
-            or self.sqlite_user_version != _store.STORE_SCHEMA
+            or self.sqlite_user_version != _store._CURRENT_STORE_SCHEMA
         ):
             raise ValueError("manifest SQLite user version is unsupported")
         if type(self.integrity_check) is not str or self.integrity_check != "ok":
@@ -250,7 +266,7 @@ def _manifest_values(manifest: BackupManifest) -> dict[str, object]:
         )
     except (AttributeError, TypeError, ValueError) as exc:
         raise BackupIntegrityError("manifest values are invalid") from exc
-    return {name: getattr(normalized, name) for name in BACKUP_MANIFEST_FIELDS}
+    return {name: getattr(normalized, name) for name in _CURRENT_BACKUP_MANIFEST_FIELDS}
 
 
 def _encode_manifest(manifest: BackupManifest) -> bytes:
@@ -295,7 +311,7 @@ def _decode_manifest(raw: bytes) -> BackupManifest:
         raise BackupIntegrityError("manifest JSON is invalid") from exc
     if type(parsed) is not dict:
         raise BackupIntegrityError("manifest must be one JSON object")
-    if tuple(parsed) != BACKUP_MANIFEST_FIELDS:
+    if tuple(parsed) != _CURRENT_BACKUP_MANIFEST_FIELDS:
         raise BackupIntegrityError("manifest fields are not canonical")
     try:
         manifest = BackupManifest(**parsed)
@@ -1567,11 +1583,11 @@ class SQLiteBackup:
                     "WAL copy observation does not match Store image"
                 )
             manifest = BackupManifest(
-                version=BACKUP_MANIFEST_VERSION,
+                version=_CURRENT_BACKUP_MANIFEST_VERSION,
                 database_basename=database_name,
-                store_schema=_store.STORE_SCHEMA,
-                event_schema_version=_store.EVENT_SCHEMA_VERSION,
-                sqlite_user_version=_store.STORE_SCHEMA,
+                store_schema=_store._CURRENT_STORE_SCHEMA,
+                event_schema_version=_store._CURRENT_EVENT_SCHEMA_VERSION,
+                sqlite_user_version=_store._CURRENT_STORE_SCHEMA,
                 integrity_check="ok",
                 database_size=observation.size,
                 database_digest=observation.digest,

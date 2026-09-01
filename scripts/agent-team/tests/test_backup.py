@@ -195,9 +195,9 @@ def _valid_manifest(
     return BackupManifest(
         version=BACKUP_MANIFEST_VERSION,
         database_basename=name,
-        store_schema=3,
+        store_schema=4,
         event_schema_version=2,
-        sqlite_user_version=3,
+        sqlite_user_version=4,
         integrity_check="ok",
         database_size=size,
         database_digest=digest,
@@ -212,7 +212,7 @@ class BackupManifestTest(unittest.TestCase):
         raw = _encode_manifest(manifest)
         self.assertEqual(
             b'{"version":1,"database_basename":"snapshot",'
-            b'"store_schema":3,"event_schema_version":2,"sqlite_user_version":3,'
+            b'"store_schema":4,"event_schema_version":2,"sqlite_user_version":4,'
             b'"integrity_check":"ok","database_size":1,'
             b'"database_digest":"sha256:' + b"a" * 64 + b'",'
             b'"captured_recovery_epoch":0,"captured_fencing_token_floor":0}\n',
@@ -246,9 +246,9 @@ class BackupManifestTest(unittest.TestCase):
         base = {
             "version": 1,
             "database_basename": "snapshot",
-            "store_schema": 3,
+            "store_schema": 4,
             "event_schema_version": 2,
-            "sqlite_user_version": 3,
+            "sqlite_user_version": 4,
             "integrity_check": "ok",
             "database_size": 1,
             "database_digest": "sha256:" + "a" * 64,
@@ -282,6 +282,32 @@ class BackupManifestTest(unittest.TestCase):
                         ).encode()
                         + b"\n"
                     )
+
+    def test_public_version_alias_rebinding_cannot_split_manifest_from_image(
+        self,
+    ) -> None:
+        """Current artifact metadata remains bound to the inspected image."""
+
+        with tempfile.TemporaryDirectory(prefix="agent-team-backup-") as temporary:
+            root = _make_root(temporary)
+            backup = DeterministicBackup(root)
+            with (
+                mock.patch.object(backup_module, "BACKUP_MANIFEST_VERSION", 99),
+                mock.patch.object(backup_module, "BACKUP_MANIFEST_FIELDS", ("future",)),
+                mock.patch.object(store_module, "STORE_SCHEMA", 3),
+                mock.patch.object(store_module, "EVENT_SCHEMA_VERSION", 99),
+                mock.patch.object(store_module, "WORKFLOW_EVENT_SCHEMA_VERSION", 99),
+            ):
+                artifact = backup.create("snapshot")
+                inspected = backup.inspect("snapshot")
+                manifest = artifact.manifest
+                self.assertEqual(1, manifest.version)
+                self.assertEqual(4, manifest.store_schema)
+                self.assertEqual(2, manifest.event_schema_version)
+                self.assertEqual(4, manifest.sqlite_user_version)
+                self.assertEqual(artifact, inspected)
+                raw = (root / "snapshot.manifest").read_bytes()
+                self.assertEqual(manifest, _decode_manifest(raw))
 
 
 class BackupFilesystemContractTest(unittest.TestCase):
@@ -1797,7 +1823,7 @@ class BackupManifestCrossCheckTest(unittest.TestCase):
             database = root / "snapshot"
             fd = os.open(database, os.O_RDWR)
             try:
-                os.pwrite(fd, b"\x00\x00\x00\x04", 60)
+                os.pwrite(fd, b"\x00\x00\x00\x03", 60)
             finally:
                 os.close(fd)
             _rewrite_manifest_digest(root, "snapshot")

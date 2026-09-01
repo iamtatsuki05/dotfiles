@@ -141,4 +141,7 @@ research/read-only route、conflict、unknown/stale result、port failure、iden
 domain-separated digestです。raw route/reservation object、mutable observation、Task本文、provider
 outputは保持しません。`Run`、`Dispatch`、`Attempt`、terminal、review round、target、`claim_ref`は
 #49 review ownerのfieldです。このmoduleはそれらを補ったり、cross-checkしたりしません。full runtime
-correlationは[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)へ渡します。
+correlationをIssue #78へ渡す記述はhistoricalな計画です。現在の責務は、[Issue #80 schema-4
+foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)、[#81 task/review persistence](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82 verification transactionとadapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+[#83 non-empty image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。

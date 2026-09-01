@@ -64,12 +64,12 @@ SQLite spikeではPython SQLite 3.53.1、`WAL`、`synchronous=FULL`、`BEGIN IMM
 - SQLiteのbackup APIを使う。migrationとrestoreは、versionとrollbackを検証する明示操作にする
 - SQLiteが利用不能、timeout超過、破損、version不一致の場合、atomic fileや別backendへfallbackしない
 
-## workflow checkpoint store（Issue #72）
+## historical v3 workflow checkpoint store（Issue #72）
 
 Issue #72では、SQLite storeにdurableなworkflow checkpointと
-Compare-And-Swap（CAS）のcontractを追加する。ここでは現在のP0 headの
-contractを説明する。後続のWorkflowEngineや外部effect adapterが実装済みだと
-いう意味ではない。
+Compare-And-Swap（CAS）のcontractを追加した。この節はhistoricalなv3 P0
+contractを残すもので、現在のschema-4 foundationではない。後続のWorkflowEngineや
+外部effect adapterが実装済みだという意味でもない。
 
 ### version境界とmigration
 
@@ -171,7 +171,8 @@ nullに固定し、既存task sequenceを進められるのはauthority transiti
 checkpoint内のtask reference/digest/sequence projectionはworkflow rowとatomicに更新する。
 Issue #74はowner-issued ref、approval composition、deterministic fake contractを提供するが、
 policy/verification authority stateをこのv3 rowとatomicに更新する実装ではない。production joinは
-Issue #78のschema-4 ledgerが担当する。
+当時のIssue #78 schema-4 ledgerの計画に属していた。現在のschema-4 workは以下のIssue #80–#83に
+分かれている。
 
 `begin_operation()`はintent、checkpoint marker、最初のjournal eventを一緒にcommitする。
 `commit_effect()`はverified receipt、next checkpoint、operation status、2つ目のjournal
@@ -184,8 +185,8 @@ unknown/recoveryとして記録する。policy/verification transitionは、assi
 reply/read/release marker、非対象authority、sequenceを据え置くtask-policy referenceを
 完全に保持する。P0のgeneric transitionはworkflow stateも保持する。Issue #74はtypedなowner
 evidenceとcomposition contractを提供するが、このgeneric v3 transitionはreview/verificationの
-state edgeをまだ受理できない。full task/verification ledgerとatomic state transitionはIssue #78が
-追加する。
+state edgeをまだ受理できない。full task/verification ledgerとatomic state transitionをIssue #78が
+担当するのは当時の計画であり、現在のworkは後続のschema-4 childへ分かれている。
 
 `wait`が作るDeliveryは、必ず`PENDING`かつACK operationなしで始まる。
 `ACK_INTENT/<operation_id>`へ変更できるのは、対応するACK begin transactionだけである。
@@ -243,9 +244,10 @@ projectorは0回に保つ。WAIT/READ/RELEASE/STOPでは、digestに束縛した
 として残し、explicit stable-ID recoveryは#32が担当する。実Storeとdeterministic fake
 authority/backend/projectorによるtestが証明するのはadapterの検証とcall countであり、provider側
 exactly-onceや#31のcross-store atomic joinではない。WorkflowEngine reducerの配線は#33、owner-ref
-handoff contractは#74、schema-4 durable ledgerとrestart joinは#78が担当する。
+handoff contractは#74である。schema-4 durable ledgerとrestart joinを#78が担当するのは当時の
+計画であり、現在のschema-4 workはIssue #80–#83に分かれている。
 
-### backup、inspect、restore、Doctorの境界
+### historical v3 backup、inspect、restore、Doctorの境界（Issue #72）
 
 version-1 backup artifactは従来どおりdatabase/manifestの2-file pairであり、exactな
 field shape、candidate namespace、final identity/content readback、inspectのfail-closed
@@ -270,14 +272,85 @@ malformedなworkflow schema/checkpointはrecoveryまたはintegrity observation�
 unknown workflow operationはoperator reviewとして報告する。migration、seed/checkpointの
 合成、provider照会、effect retry、別backendの選択は行わない。
 
-### scopeと後続Issue
+### historical scopeと後続Issue
 
-Issue #72が所有するのは、v3 Store schema、strict codec、typed opaque value、CAS、workflow
-journal、上記のbackup/inspect/Doctor境界である。WorkflowEngine reducerの配線はIssue #33、
+Issue #72が所有するのは、historicalなv3 Store schema、strict codec、typed opaque value、CAS、
+workflow journal、上記のbackup/inspect/Doctor境界である。WorkflowEngine reducerの配線はIssue #33、
 durable backend/effect adapterはIssue #73が担当する。Issue #74は、このschemaを変えずにowner
-refとapproval compositionを実装する。Issue #78はschema-4のfull TaskPolicy/verification ledger、
-restart/recovery、最終migration matrixを所有する。#74のdeterministic fakeやこのv3 Storeを、
-#78の実装証拠として扱わない。
+refとapproval compositionを実装する。schema-4 workは、[Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)、
+[#81 task/review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82 verification transaction/adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+[#83 image、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれる。
+#74のdeterministic fakeやこのhistorical v3 Storeを、non-emptyなschema-4 lifecycleの証拠として扱わない。
+
+## 現行schema-4 foundation（Issue #80）
+
+[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)は、schema-4の物理object setと
+pureなpayload境界を固定するfoundation-onlyのchildである。verification ledgerをnon-emptyにしたり、
+後続のlifecycle、image、recovery semanticsを実装したりするものではない。
+
+### versionとobjectの境界
+
+現在のmarkerは、`PRAGMA user_version`、`store_meta`、exact schema validatorのすべてで
+`STORE_SCHEMA=4`を要求する。provider eventは`EVENT_SCHEMA_VERSION=2`、workflow eventは
+`WORKFLOW_EVENT_SCHEMA_VERSION=1`のままである。version-1 backup manifestのexact 10-field shapeも
+維持し、`store_schema=4`、`event_schema_version=2`、`sqlite_user_version=4`（`4/2/4`）を記録する。
+
+schema 4は既存9 tableに、`task_policy_states`、`verification_operations`、
+`verification_receipts`の3 tableだけを加えた正確な12 tableで構成する。
+`verification_events` tableは作らない。composite key、`RESTRICT` foreign key、deferred pointer、
+trigger、status/null matrixは物理contractの一部だが、#80のproduction pathは新しい3 tableへrowを書かない。
+
+### read-only pre-gateとempty-ledger境界
+
+established imageは、rootを変更する初期化処理の前に分類する。classifierはdatabaseと正確なsidecarを、
+boundedかつidentity-checkedなcopyとして扱う。structural WALはimageの一部としてcopyし、ephemeralな
+SHM cacheはSQLiteがprivateな一時copy上だけで再構成する。established source、lifetime gate、marker、
+root fileset、DB/WAL/SHM bytesは変更せず、checkpoint、truncate、delete、source sidecarの作成も行わない。
+
+established sourceを通常のwritable SQLiteとして開く前に、main/WALのpage size不一致、未対応の
+WAL format version、WAL modeではないcurrent schema-4 main headerを拒否する。non-empty WALは
+private copyを開く前に照合する。WALがない場合はprivate copyを先に分類し、legacyとmalformed imageの
+診断を保ったまま、current rollback-mode imageだけをsource open前に拒否する。SQLite標準headerだけでは、
+page sizeが同じWALの出所を認証できない。このためWALのsaltやchecksumをdatabase identityとは扱わず、
+より強いsource/pair provenanceは#83のimage evidenceで実装する。
+
+3つの新しいtableが空のexact schema-4 imageだけをstructural open baselineとする。いずれかにrowが
+あれば、non-empty semantic validatorがまだないため#80はfail-closedで停止する。non-empty verification
+imageのopen、inspect、backup、restore、lifecycle、three-layer image evidenceを成功とは報告しない。
+既存9 tableのprovider/workflow contractは別の境界として残し、verification evidenceへ暗黙に読み替えない。
+
+exact object、integrity、foreign keyを確認した後、schema-4のempty-ledger gateをworkflow transitionと
+high-waterの意味検証より先に実行する。workflow validatorは4 table全体をmaterializeせず、cursorで
+逐次検証する。保持するのは1つのcheckpointまたはoperation、最大1つのreceipt、operation event最大2件、
+root eventの直前と最後の状態だけである。任意のrow上限を導入せず、Python側のworking setを限定する。
+既存の`StoreImageObservation.operations` tupleはprovider observationの出力contractとして維持するため、
+#80はcallerが要求したこの結果やSQLite内部の一時workspaceまでprocess-wideに制限したとは主張しない。
+
+exact schema-2またはexact schema-3 imageは、source schemaとtarget `4`を持つ
+`StoreMigrationRequiredError`として報告する。malformed、mixed、missing、extra、future imageは別の
+schema/integrity errorである。#80はimageをmigrationせず、暗黙のv3 intermediate、default、alias、
+backend fallbackも導入しない。
+
+### taskとverificationのpure codec
+
+4つのpayload codecはすべてversion `1`である。対象は15-fieldの`TaskPolicyStateV4`、
+approval-binding snapshot、body-free verification request、full normalized receiptである。
+fixed field order、canonical compact UTF-8 JSON、末尾LF 1つ、explicit null、strict integer parsing、
+duplicate/missing/unknown/futureの拒否、decode/re-encode equality、domain-separated digest、
+bounded BLOB、byte-exact Unicodeを使う。requestにはargvのdigestとenvironment nameだけを保持し、
+argv/environment value、raw body、secretは保存しない。
+
+codecが検証するのはvalueの内部整合性だけである。live owner authorityのcapture、contextのresolve、
+Store adapterの発行、Gate valueのhydration、58-fieldのoperation-row digestは実装しない。
+SQLの`record_version=1`はrow discriminatorに限る。live capture、Store adapter、snapshot
+hydration、non-empty lifecycle transaction、semantic image validation、verification-aware Doctor、
+non-empty backup/restoreは、[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の後続範囲である。
+
+#80で確認するbackup/restore evidenceは、新しいledgerが空のexact schema-4 imageについての
+version-1 two-file manifest round tripだけである。non-empty verification imageをopen、inspect、backup、
+restoreしたり、成功したimageとして扱ったりしない。
 
 ## 追加の環境検証
 
@@ -502,7 +575,7 @@ canonicalなUTF-8 JSONと末尾のLF 1つで構成する。fieldは次の10個�
 - 取得時のrecovery epoch
 - 取得時のfencing-token floor
 
-Issue #72 headでは、3つのversion値は`store_schema=3`、
+Issue #72のthen-current headでは、3つのversion値は`store_schema=3`、
 `event_schema_version=2`、`sqlite_user_version=3`になる。PR #70のhistoryにある
 v2 imageは対応する値が`2`、`2`、`2`であり、v3 migrationの入力にはしない。
 duplicate、欠落、未知、非canonical、型不一致のfieldは拒否する。manifestの値を使って
@@ -571,8 +644,8 @@ observationであり、sourceとして受け付けない。
 
 restoreはproviderの実行・status照会、自動retry、backend fallback、terminal resourceのcloseを
 行わない。PR #70のrestore contractはhistory上のv2 imageを対象としており、DDL、
-`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`を変更しなかった。Issue #72
-headではv3 image（`STORE_SCHEMA=3`、providerの`EVENT_SCHEMA_VERSION=2`、workflow event
+`STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`を変更しなかった。Issue #72の
+then-current headではv3 image（`STORE_SCHEMA=3`、providerの`EVENT_SCHEMA_VERSION=2`、workflow event
 schema `1`、SQLite `user_version=3`）を検証するが、v2からv3へのmigrationは行わない。上記の
 専用workflow restore bindingができるまでは、workflow rowを含むsourceまたはcurrent primaryを
 restore preflightで拒否する。
@@ -730,7 +803,7 @@ committed historyの`candidate_digest`だけを書き換えるケースはversio
 
 PR #70のhistoryにあるbackup/restoreは、当時のprovider v2 imageを対象としており、DDL、
 `STORE_SCHEMA`、`EVENT_SCHEMA_VERSION`、SQLite `user_version`を変更しなかった。Issue #72は、
-そのhistoryに対する明示的なschema境界である。current headでは`STORE_SCHEMA`とSQLite
+そのhistoryに対する明示的なschema境界である。Issue #72のthen-current headでは`STORE_SCHEMA`とSQLite
 `user_version`を`3`へ変更し、providerの`EVENT_SCHEMA_VERSION=2`を維持し、4つのworkflow
 table用に`WORKFLOW_EVENT_SCHEMA_VERSION=1`を追加する。`BACKUP_MANIFEST_VERSION=1`のfield
 shape、9-fieldの`recovery.ledger` version 1、13-fieldの`recovery.tombstones` version 1は

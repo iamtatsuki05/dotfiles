@@ -191,7 +191,7 @@ class WorkflowStoreContractTest(unittest.TestCase):
             ("bom", b"\xef\xbb\xbf" + encoded),
             ("trailing-space", encoded[:-1] + b" \n"),
             ("trailing-data", encoded + b"{}"),
-            ("reordered", encoded.replace(b'"store_schema":3', b'"store_schema":3,')),
+            ("reordered", encoded.replace(b'"store_schema":4', b'"store_schema":4,')),
             ("unicode-escape", encoded.replace(b"root-1", b"root-\\u0031")),
             (
                 "duplicate",
@@ -231,6 +231,40 @@ class WorkflowStoreContractTest(unittest.TestCase):
             ):
                 module.decode_checkpoint(raw)
 
+    def test_wire_parser_firewalls_input_details_and_recursion_errors(self) -> None:
+        module = self._module()
+        canary = b"input-secret-canary"
+        malformed = b'{"input":"' + canary + b'"'
+        deeply_nested = b"[" * 10_000 + b"]" * 10_000
+        cases = (
+            (
+                "checkpoint malformed",
+                module.decode_checkpoint,
+                malformed,
+                module.CheckpointSchemaError,
+            ),
+            ("seed malformed", module.decode_seed, malformed, module.SeedSchemaError),
+            (
+                "checkpoint deeply nested",
+                module.decode_checkpoint,
+                deeply_nested,
+                module.CheckpointSchemaError,
+            ),
+            (
+                "seed deeply nested",
+                module.decode_seed,
+                deeply_nested,
+                module.SeedSchemaError,
+            ),
+        )
+        for name, decoder, raw, error_type in cases:
+            with self.subTest(name=name), self.assertRaises(error_type) as raised:
+                decoder(raw)
+            error = raised.exception
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            self.assertNotIn(canary.decode(), str(error))
+
     def test_seed_has_a_separate_strict_codec_and_digest(self) -> None:
         module = self._module()
         seed = module.WorkflowRootSeed(root=self._root())
@@ -259,6 +293,206 @@ class WorkflowStoreContractTest(unittest.TestCase):
             operation_status=module.OperationStatus.UNKNOWN_EFFECT,
         )
         self.assertEqual(module.decode_seed(module.encode_seed(unknown)), unknown)
+
+    def test_schema3_codec_is_explicit_and_isolated_from_current_encoder(self) -> None:
+        """A v3 observation may only cross the private migration boundary."""
+
+        module = self._module()
+        checkpoint = module._issue_checkpoint(
+            self._draft(), updated_ns=123, issuer=object()
+        )
+        checkpoint_mapping = module.checkpoint_mapping(checkpoint)
+        checkpoint_mapping["store_schema"] = 3
+        checkpoint_body = dict(checkpoint_mapping)
+        del checkpoint_body["checkpoint_digest"]
+        checkpoint_mapping["checkpoint_digest"] = module._domain_digest(
+            module.CHECKPOINT_DIGEST_DOMAIN,
+            module._canonical_json(checkpoint_body),
+        )
+        raw_checkpoint = module._canonical_json(checkpoint_mapping)
+
+        seed = module.WorkflowRootSeed(root=self._root())
+        seed_mapping = dict(json.loads(module.encode_seed(seed).decode("utf-8")))
+        seed_mapping["store_schema"] = 3
+        seed_body = dict(seed_mapping)
+        del seed_body["seed_digest"]
+        seed_mapping["seed_digest"] = module._domain_digest(
+            module.SEED_DIGEST_DOMAIN,
+            module._canonical_json(seed_body),
+        )
+        raw_seed = module._canonical_json(seed_mapping)
+
+        with self.assertRaises(module.CheckpointSchemaError):
+            module.decode_checkpoint(raw_checkpoint)
+        with self.assertRaises(module.SeedSchemaError):
+            module.decode_seed(raw_seed)
+
+        legacy_checkpoint = module.decode_checkpoint(
+            raw_checkpoint, expected_store_schema=3
+        )
+        legacy_seed = module.decode_seed(raw_seed, expected_store_schema=3)
+        self.assertEqual(3, legacy_checkpoint.store_schema)
+        self.assertEqual(3, legacy_seed.store_schema)
+        self.assertEqual(
+            raw_checkpoint, module._encode_checkpoint_v3(legacy_checkpoint)
+        )
+        self.assertEqual(raw_seed, module._encode_seed_v3(legacy_seed))
+        self.assertEqual(
+            raw_checkpoint,
+            module._encode_checkpoint_v3(module._decode_checkpoint_v3(raw_checkpoint)),
+        )
+        self.assertEqual(
+            raw_seed,
+            module._encode_seed_v3(module._decode_seed_v3(raw_seed)),
+        )
+
+        with self.assertRaises(module.CheckpointSchemaError):
+            module.encode_checkpoint(legacy_checkpoint)
+        with self.assertRaises(module.SeedSchemaError):
+            module.encode_seed(legacy_seed)
+        with self.assertRaises(module.CheckpointSchemaError):
+            module.checkpoint_mapping(legacy_checkpoint)
+        with self.assertRaises(module.CheckpointSchemaError):
+            module.checkpoint_to_draft(legacy_checkpoint)
+        with self.assertRaises(module.CheckpointSchemaError):
+            module.checkpoint_scalar_projection(legacy_checkpoint)
+        with self.assertRaises(module.SeedSchemaError):
+            module.seed_scalar_projection(legacy_seed)
+        with self.assertRaises(ValueError):
+            module._issue_checkpoint(
+                self._draft(), updated_ns=123, issuer=object(), store_schema=3
+            )
+
+    def test_schema3_decoder_uses_frozen_codec_values(self) -> None:
+        """Changing target-v4 globals cannot alter migration-only v3 decoding."""
+
+        module = self._module()
+        checkpoint = module._issue_checkpoint(
+            self._draft(), updated_ns=123, issuer=object()
+        )
+        checkpoint_mapping = module.checkpoint_mapping(checkpoint)
+        checkpoint_mapping["store_schema"] = 3
+        checkpoint_body = dict(checkpoint_mapping)
+        del checkpoint_body["checkpoint_digest"]
+        checkpoint_mapping["checkpoint_digest"] = module._domain_digest(
+            module.CHECKPOINT_DIGEST_DOMAIN,
+            module._canonical_json(checkpoint_body),
+        )
+        raw_checkpoint = module._canonical_json(checkpoint_mapping)
+
+        seed = module.WorkflowRootSeed(root=self._root())
+        seed_mapping = dict(json.loads(module.encode_seed(seed).decode("utf-8")))
+        seed_mapping["store_schema"] = 3
+        seed_body = dict(seed_mapping)
+        del seed_body["seed_digest"]
+        seed_mapping["seed_digest"] = module._domain_digest(
+            module.SEED_DIGEST_DOMAIN,
+            module._canonical_json(seed_body),
+        )
+        raw_seed = module._canonical_json(seed_mapping)
+
+        original_values = (
+            module.CHECKPOINT_VERSION,
+            module.SEED_VERSION,
+            module.CHECKPOINT_FIELDS,
+            module.SEED_FIELDS,
+            module.WORKFLOW_EVENT_SCHEMA_VERSION,
+        )
+        try:
+            module.CHECKPOINT_VERSION = 99
+            module.SEED_VERSION = 99
+            module.CHECKPOINT_FIELDS = ("future",)
+            module.SEED_FIELDS = ("future",)
+            module.WORKFLOW_EVENT_SCHEMA_VERSION = 99
+            decoded_checkpoint = module.decode_checkpoint(
+                raw_checkpoint, expected_store_schema=3
+            )
+            decoded_seed = module.decode_seed(raw_seed, expected_store_schema=3)
+        finally:
+            (
+                module.CHECKPOINT_VERSION,
+                module.SEED_VERSION,
+                module.CHECKPOINT_FIELDS,
+                module.SEED_FIELDS,
+                module.WORKFLOW_EVENT_SCHEMA_VERSION,
+            ) = original_values
+
+        self.assertEqual(3, decoded_checkpoint.store_schema)
+        self.assertEqual(3, decoded_seed.store_schema)
+
+    def test_legacy_seed_digest_and_projection_are_frozen(self) -> None:
+        """A legacy seed keeps its raw digest despite target-domain rebinding."""
+
+        module = self._module()
+        seed = module.WorkflowRootSeed(root=self._root())
+        seed_mapping = dict(json.loads(module.encode_seed(seed).decode("utf-8")))
+        seed_mapping["store_schema"] = 3
+        seed_body = dict(seed_mapping)
+        del seed_body["seed_digest"]
+        legacy_digest = module._domain_digest(
+            b"agent-team/workflow-seed/v1\0",
+            module._canonical_json(seed_body),
+        )
+        seed_mapping["seed_digest"] = legacy_digest
+        raw_seed = module._canonical_json(seed_mapping)
+        legacy_seed = module.decode_seed(raw_seed, expected_store_schema=3)
+
+        original_domain = module.SEED_DIGEST_DOMAIN
+        try:
+            module.SEED_DIGEST_DOMAIN = b"future-seed-domain\0"
+            self.assertEqual(legacy_digest, legacy_seed.seed_digest)
+            projection = module._legacy_seed_scalar_projection(legacy_seed)
+        finally:
+            module.SEED_DIGEST_DOMAIN = original_domain
+
+        self.assertEqual(legacy_digest, projection["checkpoint_digest"])
+        self.assertEqual(raw_seed, projection["checkpoint_bytes"])
+
+    def test_current_boundary_cannot_be_rebound_to_schema3(self) -> None:
+        """Rebinding the public marker cannot open a v3 path in current APIs."""
+
+        module = self._module()
+        checkpoint = module._issue_checkpoint(
+            self._draft(), updated_ns=123, issuer=object()
+        )
+        checkpoint_mapping = module.checkpoint_mapping(checkpoint)
+        checkpoint_mapping["store_schema"] = 3
+        checkpoint_body = dict(checkpoint_mapping)
+        del checkpoint_body["checkpoint_digest"]
+        checkpoint_mapping["checkpoint_digest"] = module._domain_digest(
+            module.CHECKPOINT_DIGEST_DOMAIN,
+            module._canonical_json(checkpoint_body),
+        )
+        legacy_checkpoint = module.decode_checkpoint(
+            module._canonical_json(checkpoint_mapping), expected_store_schema=3
+        )
+
+        seed = module.WorkflowRootSeed(root=self._root())
+        seed_mapping = dict(json.loads(module.encode_seed(seed).decode("utf-8")))
+        seed_mapping["store_schema"] = 3
+        seed_body = dict(seed_mapping)
+        del seed_body["seed_digest"]
+        seed_mapping["seed_digest"] = module._domain_digest(
+            module.SEED_DIGEST_DOMAIN,
+            module._canonical_json(seed_body),
+        )
+        legacy_seed = module.decode_seed(
+            module._canonical_json(seed_mapping), expected_store_schema=3
+        )
+
+        original_schema = module.STORE_SCHEMA
+        try:
+            module.STORE_SCHEMA = 3
+            with self.assertRaises(module.CheckpointSchemaError):
+                module.encode_checkpoint(legacy_checkpoint)
+            with self.assertRaises(module.SeedSchemaError):
+                module.encode_seed(legacy_seed)
+            with self.assertRaises(ValueError):
+                module._issue_checkpoint(
+                    self._draft(), updated_ns=123, issuer=object(), store_schema=3
+                )
+        finally:
+            module.STORE_SCHEMA = original_schema
 
     def test_nested_values_enforce_order_identity_and_nullability(self) -> None:
         module = self._module()

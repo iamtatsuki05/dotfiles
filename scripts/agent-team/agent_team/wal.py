@@ -65,10 +65,7 @@ CHECKPOINT_MODES: Final[tuple[CheckpointMode, ...]] = (
     "TRUNCATE",
 )
 MAX_COPY_BYTES: Final[int] = 256 * 1024 * 1024
-_WAL_MAGICS: Final[frozenset[int]] = frozenset({0x377F0682, 0x377F0683})
 _WAL_HEADER_BYTES: Final[int] = 32
-_WAL_FRAME_HEADER_BYTES: Final[int] = 24
-_SHM_PAGE_BYTES: Final[int] = 32 * 1024
 
 
 CleanupOutcome = Literal["CLEANED", "BLOCKED", "RECOVERY_REQUIRED"]
@@ -2349,6 +2346,12 @@ class WalSidecarController:
             raise WalSidecarBusyError("SQLite rollback journal is pending")
         wal = current.get(WAL_BASENAME)
         if wal is not None and wal[6] > 0:
+            try:
+                main_header = os.pread(resources.database_fd, 100, 0)
+            except OSError as exc:
+                raise WalSidecarRecoveryRequiredError(
+                    "SQLite main database header cannot be read during preflight"
+                ) from exc
             if wal[6] < _WAL_HEADER_BYTES:
                 raise WalSidecarUnsafeError("SQLite WAL header is incomplete")
             wal_fd: int | None = None
@@ -2396,23 +2399,18 @@ class WalSidecarController:
                             self._cleanup_callback_for_resources(resources),
                             "SQLite WAL preflight",
                         )
-            if len(header) != _WAL_HEADER_BYTES:
-                raise WalSidecarUnsafeError("SQLite WAL header is incomplete")
-            magic = int.from_bytes(header[0:4], "big")
-            page_size = int.from_bytes(header[8:12], "big")
-            frame_size = page_size + _WAL_FRAME_HEADER_BYTES
-            if (
-                magic not in _WAL_MAGICS
-                or page_size < 512
-                or page_size > 65_536
-                or page_size & (page_size - 1)
-                or (wal[6] - _WAL_HEADER_BYTES) % frame_size != 0
-            ):
-                raise WalSidecarUnsafeError("SQLite WAL structure is invalid")
+            try:
+                _store._validate_sqlite_wal_binding(main_header, header, wal[6])
+            except ValueError as exc:
+                raise WalSidecarUnsafeError(
+                    "SQLite WAL is incompatible with main database"
+                ) from exc
         shm = current.get(SHM_BASENAME)
         if shm is not None and shm[6] > 0:
-            if shm[6] < _SHM_PAGE_BYTES or shm[6] % _SHM_PAGE_BYTES != 0:
-                raise WalSidecarUnsafeError("SQLite SHM structure is invalid")
+            try:
+                _store._validate_sqlite_shm_shape(shm[6])
+            except ValueError as exc:
+                raise WalSidecarUnsafeError(str(exc)) from exc
             if (wal is None or wal[6] == 0) and (
                 SHM_BASENAME in resources.sidecar_signatures
                 if reader_hint is None

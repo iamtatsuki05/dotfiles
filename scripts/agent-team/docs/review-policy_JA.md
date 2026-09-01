@@ -117,6 +117,9 @@ malformed、foreign、stale、mutated、non-approvedな値はapproval compositio
 provider outputを保存せず、retryやfallbackも追加しません。
 
 このmoduleとhandoff adapterは、SQLite、schema-4 ledger record、process restart、`mark_unknown`、provider exactly-once proofを
-実装しません。handoffのdeterministic fakeはtest evidenceだけです。durable ledgerとrestart境界は
-[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)が所有します。reducerは引き続き`ReviewerAssignment`だけを返し、
-外部processやbackendは呼び出しません。
+実装しません。以前の[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)がdurable ledger、restart境界、full runtime
+correlationを一括で所有する計画はhistoricalなものです。現在の責務は、[Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)、
+[#81 task/review persistence](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82 verification transactionとadapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+[#83 non-empty image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。
+handoffのdeterministic fakeはtest evidenceだけです。reducerは引き続き`ReviewerAssignment`だけを返し、外部processやbackendは呼び出しません。

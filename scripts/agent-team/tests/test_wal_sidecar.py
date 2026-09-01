@@ -18,6 +18,7 @@ from typing import ClassVar, cast
 from unittest import mock
 
 from agent_team import recovery, wal
+from agent_team import store as store_module
 from agent_team.doctor import ReadOnlyDoctor, StateFilesystem, StateFilesystemError
 from agent_team.lease import RecoveryFloor
 from agent_team.recovery import RecoveryCoordinator, RestoreIdentity, RestoreLedger
@@ -101,6 +102,63 @@ class WalSidecarControllerTest(unittest.TestCase):
                     )
                 self.assertEqual(metadata.st_ino, marker.stat().st_ino)
             self.assertEqual(metadata.st_ino, marker.stat().st_ino)
+
+    def test_wal_preflight_rejects_main_page_mismatch_before_sqlite_connect(
+        self,
+    ) -> None:
+        """WAL binding fails before the controller opens SQLite."""
+
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-wal-main-binding-"
+        ) as temporary:
+            root = _make_root(temporary)
+            with CoordinationStore(root):
+                pass
+            database = root / store_module.DATABASE_FILENAME
+            main_header = database.read_bytes()[:100]
+            main_page_size = int.from_bytes(main_header[16:18], "big")
+            if main_page_size == 1:
+                main_page_size = 65_536
+            wal_page_size = 8_192 if main_page_size != 8_192 else 4_096
+            header = bytearray(32)
+            struct.pack_into(">I", header, 0, 0x377F0682)
+            struct.pack_into(">I", header, 4, 3_007_000)
+            struct.pack_into(">I", header, 8, wal_page_size)
+            sidecar = root / WAL_BASENAME
+            sidecar.write_bytes(header)
+            sidecar.chmod(0o600)
+            before = tuple(
+                (path.name, path.stat().st_mode, path.read_bytes())
+                for path in sorted(root.iterdir(), key=lambda item: item.name)
+            )
+            gate = root.parent / store_module.LIFETIME_GATE_FILENAME
+            gate_before = (gate.stat().st_mode, gate.read_bytes())
+            connect_calls: list[object] = []
+
+            def unexpected_connect(*args: object, **kwargs: object) -> object:
+                connect_calls.append((args, kwargs))
+                raise AssertionError("WAL binding opened SQLite too early")
+
+            with (
+                mock.patch.object(
+                    sqlite3,
+                    "connect",
+                    side_effect=unexpected_connect,
+                ),
+                self.assertRaises(WalSidecarUnsafeError),
+            ):
+                WalSidecarController(root, busy_timeout_ms=20).checkpoint(
+                    CheckpointRequest("PASSIVE")
+                )
+            self.assertEqual([], connect_calls)
+            self.assertEqual(
+                before,
+                tuple(
+                    (path.name, path.stat().st_mode, path.read_bytes())
+                    for path in sorted(root.iterdir(), key=lambda item: item.name)
+                ),
+            )
+            self.assertEqual(gate_before, (gate.stat().st_mode, gate.read_bytes()))
 
     def test_store_marker_creation_sigkill_barriers_are_fail_closed(self) -> None:
         barriers = (

@@ -82,7 +82,12 @@ The `VerificationStatePort` is required at gate construction. Its production
 implementation owns CAS, persistence, idempotence, effect fencing, and restart
 recovery. Issue #74 freezes the existing six-method shape and checks it with a
 deterministic fake; #74 does not provide a SQLite implementation or a fresh-
-process recovery proof. Those durable responsibilities belong to [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78).
+process recovery proof. [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)
+provides only the schema-4 physical foundation and pure codecs: it does not
+provide the production adapter, non-empty lifecycle, or restart proof. Those
+durable responsibilities continue in [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 ```python
 class VerificationStatePort(Protocol):
@@ -156,6 +161,12 @@ snapshots, result metadata, and cleanup. Terminal validation reruns the same
 receipt/result validator. Same-reference different-digest receipts are not
 replays.
 
+This `VerificationReceipt` is the #51 Gate-level runtime value, not a
+schema-4 persisted operation record. #80 defines only the SQL
+`record_version=1` discriminator and pure request/receipt projections; the
+58-field operation-row digest and Store-issued hydration remain downstream
+work.
+
 Resume/replay always re-resolves the profile, captures a fresh current
 snapshot, compares it to the durable receipt's after snapshot, and retains the
 recorded executable-after identity. A stale saved-after observation cannot
@@ -166,9 +177,15 @@ complete a task.
 #49 owns review transitions and approval provenance. #50 owns path/resource
 admission and reservation identity. #74 owns the typed owner-ref composition
 and the deterministic fake boundary. #11/#31/#33 own the production durable
-state/effect/receipt port and terminal CAS. [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
-owns the schema-4 full ledger, restart/replay, and durable `mark_unknown`
-boundary; #32 consumes the resulting recovery handoff. This module defines
-only the verification contract and pure port orchestration. Focused tests use
-fake ports and no provider, user workspace, or process, so they do not prove
-SQLite durability or provider exactly-once execution.
+state/effect/receipt port and terminal CAS. Schema-4 work is split across
+[Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80),
+[#81 task/review transitions](https://github.com/iamtatsuki05/dotfiles/issues/81),
+[#82 verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
+and [#83 image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83).
+#80's production path keeps the three new tables empty and does not claim
+non-empty image semantics, lifecycle, capture, adapter, hydration, logical
+record digest, or verification-aware Doctor/restore. #32 consumes the
+resulting recovery handoff. This module defines only the verification contract
+and pure port orchestration. Focused tests use fake ports and no provider, user
+workspace, or process, so they do not prove SQLite durability or provider
+exactly-once execution.

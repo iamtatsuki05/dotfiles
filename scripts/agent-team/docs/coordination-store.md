@@ -66,11 +66,12 @@ The SQLite spike used Python SQLite 3.53.1, `WAL`, `synchronous=FULL`, `BEGIN IM
 - Back up through SQLite's backup API. Migration and restore must be explicit operations with their own version and rollback checks.
 - Do not fall back to atomic files or another backend when SQLite is unavailable, locked beyond the allowed timeout, corrupt, or version-incompatible.
 
-## Workflow checkpoint store (Issue #72)
+## Historical v3 workflow checkpoint store (Issue #72)
 
-Issue #72 adds the durable workflow checkpoint and compare-and-swap (CAS) contract
-to the SQLite store. This section describes the current P0 head; it is not a
-claim that the later WorkflowEngine or external-effect adapters are complete.
+Issue #72 added the durable workflow checkpoint and compare-and-swap (CAS)
+contract to the SQLite store. This section preserves the historical v3 P0
+contract; it is not the current schema-4 foundation and is not a claim that the
+later WorkflowEngine or external-effect adapters are complete.
 
 ### Version boundary and migration
 
@@ -187,8 +188,9 @@ advance an existing task sequence. The checkpoint's task
 reference/digest/sequence projection is atomic with the workflow row.
 Issue #74 now provides owner-issued refs, approval composition, and a
 deterministic fake contract. It does not make policy/verification authority
-state atomic with this v3 row. That production join belongs to Issue #78's
-schema-4 ledger.
+state atomic with this v3 row. That production join was part of the then-planned
+Issue #78 schema-4 ledger; current schema-4 work is split across Issues #80–#83
+below.
 
 `begin_operation()` commits the intent, checkpoint marker, and first journal
 event together. `commit_effect()` commits the verified receipt, next
@@ -204,8 +206,9 @@ Delivery, reply/read/release markers, the non-target authority, and an
 unchanged task-policy reference exactly. The generic P0 transition also
 preserves workflow state. Issue #74 provides the typed owner evidence and
 composition contract, but this generic v3 transition still cannot accept a
-review/verification state edge. Issue #78 must add the full task/verification
-ledger and atomic state transition.
+review/verification state edge. The historical plan assigned the full
+task/verification ledger and atomic state transition to Issue #78; current work
+is split across the downstream schema-4 children below.
 
 A Delivery produced by `wait` always begins as `PENDING` with no ACK operation.
 Only the matching ACK begin transaction may change it to
@@ -275,9 +278,10 @@ WAIT/READ/RELEASE/STOP may make one digest-bound pure backend lookup. `INTENT`,
 fake authority/backend/projector tests with the real Store prove adapter
 validation and call counts, not provider-side exactly-once or a #31 cross-store
 atomic join. WorkflowEngine reducer wiring remains #33. The owner-ref handoff
-contract is #74; its schema-4 durable ledger and restart join are #78.
+contract is #74. The historical #78 plan covered the schema-4 durable ledger
+and restart join; current schema-4 work is split across Issues #80–#83.
 
-### Backup, inspect, restore, and Doctor boundary
+### Historical v3 backup, inspect, restore, and Doctor boundary (Issue #72)
 
 The version-1 backup artifact remains the same two-file database/manifest pair
 and keeps its exact field shape, candidate namespace, final identity/content
@@ -306,15 +310,112 @@ or integrity observation; and pending or unknown workflow operations as
 operator review. It does not migrate, synthesize a seed/checkpoint, query a
 provider, retry an effect, or choose another backend.
 
-### Scope and next issues
+### Historical scope and next issues
 
-Issue #72 owns the v3 Store schema, strict codecs, typed opaque values, CAS,
-workflow journal, and the backup/inspect/Doctor boundary above. WorkflowEngine
-reducer wiring is Issue #33. The durable backend/effect adapter is Issue #73.
-Issue #74 implements owner refs and approval composition without changing this
-schema. Issue #78 owns the schema-4 full TaskPolicy/verification ledger,
-restart/recovery, and final migration matrix. Neither #74's deterministic fake
-nor this v3 Store is evidence that #78 is implemented.
+Issue #72 owns the historical v3 Store schema, strict codecs, typed opaque
+values, CAS, workflow journal, and the backup/inspect/Doctor boundary above.
+WorkflowEngine reducer wiring is Issue #33. The durable backend/effect adapter
+is Issue #73. Issue #74 implements owner refs and approval composition without
+changing this schema. Schema-4 work is now split between the [Issue #80
+foundation](https://github.com/iamtatsuki05/dotfiles/issues/80), [#81 task and
+review transitions](https://github.com/iamtatsuki05/dotfiles/issues/81), [#82
+verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
+and [#83 image, backup/restore, and Doctor work](https://github.com/iamtatsuki05/dotfiles/issues/83).
+The #74 deterministic fake and this historical v3 Store are not evidence for
+the non-empty schema-4 lifecycle.
+
+## Current schema-4 foundation (Issue #80)
+
+[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80) fixes the
+schema-4 physical object set and the pure payload boundary. It is a
+foundation-only child: it does not make the verification ledger non-empty or
+claim the later lifecycle, image, or recovery semantics.
+
+### Version and object boundary
+
+The current marker is `STORE_SCHEMA=4` in `PRAGMA user_version`,
+`store_meta`, and the exact schema validator. Provider events remain
+`EVENT_SCHEMA_VERSION=2`; workflow events remain
+`WORKFLOW_EVENT_SCHEMA_VERSION=1`. The version-1 backup manifest keeps its
+exact ten fields and records `store_schema=4`, `event_schema_version=2`, and
+`sqlite_user_version=4` (`4/2/4`).
+
+Schema 4 consists of the existing nine tables plus exactly these three tables:
+`task_policy_states`, `verification_operations`, and `verification_receipts`.
+The total is twelve tables. There is no `verification_events` table. The
+composite keys, `RESTRICT` foreign keys, deferred pointers, triggers, and
+status/null matrix are part of the physical contract, but #80's production
+path writes no row to the three new tables.
+
+### Read-only pre-gate and empty-ledger boundary
+
+An established image is classified before the root-mutating initialization
+path. The classifier uses bounded, identity-checked copies of the database
+and its exact sidecars. Structural WAL is copied as part of the image, while
+the ephemeral SHM cache is reconstructed by SQLite only in a private
+temporary copy. The established source, lifetime gate, marker, root fileset,
+and DB/WAL/SHM bytes remain unchanged; the classifier does not checkpoint,
+truncate, delete, or create source sidecars.
+
+Before any normal writable open of the established source, the classifier
+rejects a main/WAL page-size mismatch, an unsupported WAL format, and a current
+schema-4 main header that is not in WAL mode. A non-empty WAL is checked before
+the private copy is opened. With no WAL, the private copy is classified first
+so legacy and malformed-image diagnostics retain their meaning; a current
+rollback-mode image is then rejected before the source is opened. SQLite's
+standard headers do not authenticate the origin of a same-page-size WAL, so
+WAL salt and checksum fields are not treated as database identity. The later
+image-evidence work in #83 owns the stronger source/pair provenance boundary.
+
+An exact schema-4 image whose three new tables are empty is the structural
+open baseline. If any of those tables has a row, #80 fails closed because its
+non-empty semantic validator is not provided. It does not report successful
+non-empty verification open, inspection, backup, restore, lifecycle, or
+three-layer image evidence. The historical nine-table provider/workflow
+contract remains separate and is not silently reinterpreted as verification
+evidence.
+
+After the exact object, integrity, and foreign-key checks, the schema-4
+empty-ledger gate runs before workflow transition and high-water semantics.
+The workflow validator reads cursor frames instead of materializing all four
+workflow tables: it retains one checkpoint or operation, at most one receipt,
+at most two operation events, and the previous/last root event state. This
+bounds its Python working set without introducing an arbitrary row limit.
+The existing `StoreImageObservation.operations` tuple remains an intentional
+provider-observation output contract; #80 does not claim a process-wide bound
+for that caller-requested result or for SQLite's internal temporary workspace.
+
+An exact schema-2 or exact schema-3 image is reported as
+`StoreMigrationRequiredError` with its source schema and target `4`.
+Malformed, mixed, missing, extra, and future images remain distinct
+schema/integrity errors. #80 does not migrate an image or introduce an
+implicit v3 intermediate, default, alias, or backend fallback.
+
+### Pure task and verification codecs
+
+The four payload codecs are version `1`: the 15-field `TaskPolicyStateV4`, an
+approval-binding snapshot, a body-free verification request, and a full
+normalized receipt. They use fixed field order, canonical compact UTF-8 JSON,
+one trailing LF, explicit null, strict integer parsing, duplicate/missing/
+unknown/future rejection, decode/re-encode equality, domain-separated
+digests, bounded BLOBs, and byte-exact Unicode. Request data keeps argv
+digests and environment names, not argv or environment values; raw bodies and
+secrets are not stored.
+
+The codecs validate internal value consistency only. They do not capture live
+owner authority, resolve a context, issue a Store adapter, hydrate a Gate
+value, or implement the 58-field operation-row digest. SQL
+`record_version=1` is only a row discriminator. Live capture, Store adapter,
+snapshot hydration, non-empty lifecycle transactions, semantic image
+validation, verification-aware Doctor, and non-empty backup/restore
+belong to [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
+
+For #80, backup and restore evidence is limited to the version-1
+two-file-manifest round trip for an exact schema-4 image with an empty new
+ledger. Non-empty verification images are not opened, inspected, backed up,
+restored, or treated as successful by this foundation.
 
 ## Additional environment validation
 
@@ -553,7 +654,7 @@ the Store-owned image reader. The manifest is canonical UTF-8 JSON followed by
 one LF and has ten fixed fields: its version and database basename, the Store
 and event schema versions, SQLite `user_version`, integrity result, database
 size and SHA-256 digest, and the captured recovery epoch and fencing-token
-floor. On the Issue #72 head, the three version values are
+floor. On the then-current Issue #72 head, the three version values are
 `store_schema=3`, `event_schema_version=2`, and `sqlite_user_version=3`.
 The historical PR #70 v2 image used the corresponding values `2`, `2`, and
 `2`; that old pair is not a v3 migration input. Duplicate, missing, unknown,
@@ -636,8 +737,8 @@ is outside this ten-status policy.
 Restore performs no provider execution or status query, automatic retry,
 backend fallback, or terminal-resource close. The PR #70 restore contract was
 defined against its historical v2 image and did not change the DDL,
-`STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`. On the Issue
-#72 head, restore preflight validates the v3 image (`STORE_SCHEMA=3`, provider
+`STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`. On the
+then-current Issue #72 head, restore preflight validates the v3 image (`STORE_SCHEMA=3`, provider
 `EVENT_SCHEMA_VERSION=2`, workflow event schema `1`, and SQLite
 `user_version=3`) and still does not perform a v2-to-v3 migration. A source or
 current primary containing workflow rows is rejected until the dedicated
@@ -818,7 +919,7 @@ tombstone fence.
 The historical PR #70 backup/restore work did not change the DDL,
 `STORE_SCHEMA`, `EVENT_SCHEMA_VERSION`, or SQLite `user_version`: it targeted
 the then-current v2 provider image. Issue #72 is the explicit schema boundary
-after that history. Its current head changes `STORE_SCHEMA` and SQLite
+after that history. Its then-current head changes `STORE_SCHEMA` and SQLite
 `user_version` to `3`, keeps provider `EVENT_SCHEMA_VERSION=2`, and introduces
 `WORKFLOW_EVENT_SCHEMA_VERSION=1` for the four workflow tables. The
 `BACKUP_MANIFEST_VERSION=1` field shape, the nine-field `recovery.ledger` v1,

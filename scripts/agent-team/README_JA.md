@@ -25,8 +25,11 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
   adapter実装、snapshot境界、復旧方法を説明します。
 - [Coordination store、recovery、backup、restore](docs/coordination-store_JA.md)は
   SQLiteのschema境界、stable writer marker、WAL sidecar controller、backup artifact、
-  candidate-first restoreを説明します。Issue #72のcurrent headでは、v3 workflow
-  checkpoint/CAS contractを追加し、Storeの外部effectを呼び出さない境界も定めています。
+  candidate-first restoreを説明します。Issue #72のhistorical sectionには、v3 workflow
+  checkpoint/CAS contractと、Storeが外部effectを呼び出さない境界を残しています。現在の
+  [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)では、
+  12 tableのobject set、read-only image classifier、pure codec、およびledgerが空でない場合の
+  fail-closed境界を定めています。
 - [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
   保存やworkflow実行を含まないstate観測契約を説明します。
 - [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
@@ -38,8 +41,11 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
   する前提となる typed approval、固定 verification request、before/after snapshot の束縛、
   normalized receipt を説明します。
 - [Policy/verification handoff](docs/policy-verification-handoff_JA.md)は、#49のreview ref、
-  #50のcompletion ref、approved-only composition、Storeのexact readback、durableな#78 ledgerとの
-  境界を説明します。
+  #50のcompletion ref、approved-only composition、Storeのexact readback、schema-4 workを分ける
+  [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、
+  [#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+  [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+  [#83](https://github.com/iamtatsuki05/dotfiles/issues/83)との境界を説明します。
 
 現在の設定は次のとおりです。
 
@@ -195,23 +201,34 @@ agent-team status \
   identityが一致したときだけlifecycleを進めます。
 - Claude ACPはambientな`claude.ai` loginを使い、API keyをchild processへ
   渡しません。ただしsubscription billing ledgerそのものは未確認です。
-- 現在のStoreは`STORE_SCHEMA=3`とSQLite `user_version=3`を要求します。
+- 現在のStoreは`STORE_SCHEMA=4`とSQLite `user_version=4`を要求します。
   provider eventは`EVENT_SCHEMA_VERSION=2`のまま、workflow eventは別namespaceの
-  `WORKFLOW_EVENT_SCHEMA_VERSION=1`を使います。
-- 正常なv2 Storeは`StoreMigrationRequiredError`として停止し、Doctorは
-  `MIGRATION_REQUIRED`を報告します。malformedやfuture schemaは別のerrorです。
-  v2からv3へ変換できるのはIssue #48の明示的なmigration gateだけであり、Storeは
-  default補完や別backendへのfallbackを行いません。
+  `WORKFLOW_EVENT_SCHEMA_VERSION=1`を使います。schema-4 imageは既存9 tableに
+  `task_policy_states`、`verification_operations`、`verification_receipts`を加えた正確な12 tableです。
+- exactなschema-2とschema-3のStoreは、どちらもsource schemaとtarget `4`を持つ
+  `StoreMigrationRequiredError`として停止し、read-only Doctorは`MIGRATION_REQUIRED`を報告します。
+  malformed、mixed、missing、extra、future imageは別のschema/integrity errorです。Issue #48が
+  明示的なmigration pathを所有し、Storeは暗黙のmigration、default補完、別backendへのfallbackを行いません。
 - backupのdestinationは1つのexactなbasenameに限ります。database/manifest pairのidentityと
   contentをfinal readbackで確認できた場合だけ成功し、partialやmixedなpairは拒否します。
   restore candidate namespaceの`.coordination.sqlite3.restore-`は予約済みで、destinationには使えません。
-- version-1 backup/inspectは従来の2-file manifest shapeを維持し、version値は
-  `3/2/3`（Store/provider event/SQLite user version）を記録します。workflow rowも
-  imageの一部として保持・検証します。
-- restoreはcandidate-firstで、providerを呼びません。resumeはtombstone、次にledgerの順で
-  durability barrierを通し、logを暗黙に修復したり外部effectをretryしたりしません。
-- 専用のworkflow restore bindingができるまでは、workflow rowを含むsourceまたはcurrent
-  imageをpromotion/replacementより前に拒否します。
+- version-1 backup/inspectは従来の2-file、exact 10-field manifest shapeを維持します。
+  schema-4 foundationの値は`store_schema=4`、`event_schema_version=2`、
+  `sqlite_user_version=4`（`4/2/4`）です。production pathは新しい3 tableへrowを書かず、
+  その3 tableが空のimageだけをstructural baselineにします。新しいtableが非空ならfail-closedであり、
+  #80はnon-empty verification imageのinspectやbackup/restore成功を主張しません。
+- established imageはrootを変更する前に、read-onlyでWAL/SHM-awareなpre-gateで分類します。
+  structural WALはimageの一部としてcopyし、ephemeralなSHM cacheはSQLiteがprivateな一時copy上だけで
+  再構成します。source、gate、marker、fileset、DB/WAL/SHM bytesは変わらず、checkpoint、truncate、
+  delete、source sidecarの作成も行いません。
+- #80のcodecは、15-fieldの`TaskPolicyStateV4`、approval-binding snapshot、body-free verification
+  request、normalized receipt向けのpure version-1 codecです。argv/environmentのraw valueやraw bodyを
+  保存せず、valueの内部整合性だけを検証します。owner authorityのcaptureやGate valueのhydrationは行いません。
+  live capture/context、Store adapter、lifecycle transaction、logical record digest、non-empty imageの
+  semantic validation、verification-aware Doctor/restoreは後続作業です。
+- provider-only restoreは、history上のcontractどおりcandidate-firstかつprovider-freeです。#80が確認するのは
+  新しいledgerが空のschema-4 backup/restore round tripだけであり、logの暗黙修復、external effectのretry、
+  non-empty verification imageの認可は行いません。
 - P0 StoreはWorkflowEngine reducerや外部effect adapterを配線せず、外部effectの
   exactly-onceも主張しません。
 
@@ -240,6 +257,10 @@ lookupを1回実行する場合があります。`INTENT`、`UNKNOWN_EFFECT`、r
 deterministic fake authority/backend/projectorと実Storeが証明するのはadapter contractだけで、
 provider側のexactly-onceや#31のcross-store atomic joinは証明しません。WorkflowEngineの
 reducer wiringは#33、policy/verification handoffは#74の担当です。
+schema-4 foundationは[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、
+task/reviewのproduction transitionは[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+verification transactionとadapter wiringは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+image evidence、backup/restore、Doctorは[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)が担当します。
 
 Issue #74のhandoffは、実際の#49 `ReviewPolicyUpdate`とpolicy、および実際の#50 `route_task()`と
 matchingなreservation resultを受け取ります。各owner refは、owner validationと`save_*`/exact
@@ -249,8 +270,13 @@ matchingなreservation resultを受け取ります。各owner refは、owner val
 target、`claim_ref`は#49 provenanceとして残し、#50と比較済みとは主張しません。Gateの
 `start(ApprovalRef)`、`resume(VerificationHandle)`とstate portの6操作は維持します。handoff testの
 deterministic fakeは、SQLite、restart、provider exactly-onceの証拠ではありません。
-[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)がschema-4 full ledger、restart/replay、
-`mark_unknown`の境界を所有します。raw body/action alias/payloadの経路やretry/fallbackはありません。
+[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)のschema-4 workは、
+[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)のfoundationと
+[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の後続実装に分かれます。full ledger、
+restart/replay、`mark_unknown`、non-empty imageの主張は#80の範囲外です。raw body/action alias/payloadの
+経路やretry/fallbackはありません。
 
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 

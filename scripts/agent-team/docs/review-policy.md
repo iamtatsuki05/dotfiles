@@ -162,6 +162,13 @@ provider output, and it does not add retry or fallback behavior.
 
 This module and the handoff adapter do not implement SQLite, schema-4 ledger
 records, process restart, `mark_unknown`, or provider exactly-once proof. The
-handoff's deterministic fake is test evidence only; [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
-owns the durable ledger and restart boundary. The reducer still returns
-`ReviewerAssignment` only and never invokes an external process or backend.
+earlier [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78) plan to
+own the durable ledger, restart boundary, and full runtime correlation is
+historical. Current ownership is split across the [Issue #80 schema-4
+foundation](https://github.com/iamtatsuki05/dotfiles/issues/80), [#81 task/review
+persistence](https://github.com/iamtatsuki05/dotfiles/issues/81), [#82
+verification transaction and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
+and [#83 non-empty image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83).
+The handoff's deterministic fake is test evidence only. The reducer still
+returns `ReviewerAssignment` only and never invokes an external process or
+backend.

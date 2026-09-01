@@ -27,8 +27,11 @@ linked reference documents when changing the implementation or configuration.
 - [Coordination store, recovery, backup, and restore](docs/coordination-store.md)
   documents the SQLite schema boundary, stable writer marker, WAL sidecar
   controller, backup artifact, and candidate-first restore protocol. The
-  current Issue #72 head adds the v3 workflow checkpoint/CAS contract and
-  keeps provider effects outside the Store.
+  historical Issue #72 section retains the v3 workflow checkpoint/CAS contract
+  and keeps provider effects outside the Store. The current [Issue #80 schema-4
+  foundation](https://github.com/iamtatsuki05/dotfiles/issues/80) fixes the
+  twelve-table object set, read-only image classifier, and pure codecs; its
+  empty-ledger and non-empty fail-closed boundary is explicit there.
 - [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
   `TaskSpec`, dependency order, and state observation contract without storage
   or workflow execution.
@@ -42,7 +45,11 @@ linked reference documents when changing the implementation or configuration.
   normalized receipt required before a write task can be completed.
 - [Policy/verification handoff](docs/policy-verification-handoff.md) defines
   the #49 review ref, #50 completion ref, approved-only composition, exact
-  Store readback, and the boundary before the durable #78 ledger.
+  Store readback, and the boundary around the schema-4 work split across
+  [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80),
+  [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
+  [#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
+  [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 The current configuration uses this team:
 
@@ -209,25 +216,45 @@ agent-team status \
 - Claude ACP reuses the ambient `claude.ai` login and receives no API-key
   environment variables. The subscription billing ledger itself has not been
   verified.
-- The current Store requires `STORE_SCHEMA=3` and SQLite `user_version=3`.
+- The current Store requires `STORE_SCHEMA=4` and SQLite `user_version=4`.
   Provider events remain `EVENT_SCHEMA_VERSION=2`; workflow events use the
-  separate `WORKFLOW_EVENT_SCHEMA_VERSION=1`.
-- A valid v2 Store is reported as `StoreMigrationRequiredError` and Doctor
-  `MIGRATION_REQUIRED`. Malformed or future schema is a different error. Only
-  Issue #48's explicit migration gate may convert v2 to v3; the Store never
-  fills defaults or falls back to another backend.
+  separate `WORKFLOW_EVENT_SCHEMA_VERSION=1`. Its schema-4 image is the
+  existing nine tables plus `task_policy_states`, `verification_operations`,
+  and `verification_receipts`, for exactly twelve tables.
+- Exact schema-2 and schema-3 Stores are each reported as
+  `StoreMigrationRequiredError` with their source schema and target `4`; the
+  read-only Doctor reports `MIGRATION_REQUIRED`. Malformed, mixed, missing,
+  extra, or future images are different fail-closed schema/integrity errors.
+  Issue #48 owns the explicit migration path; this Store does not silently
+  migrate, fill defaults, or fall back to another backend.
 - Backup destinations are exact single basenames. A backup is successful only
   after its database/manifest pair passes final identity and content readback;
   partial or mixed pairs are rejected. The restore-candidate namespace
   `.coordination.sqlite3.restore-` is reserved and rejected as a destination.
-- Version-1 backup/inspect keeps its two-file manifest shape and now records
-  version values `3/2/3` (Store/provider events/SQLite user version). It
-  preserves and validates workflow rows as part of the image.
-- Restore is candidate-first and provider-free. Resume begins with a
-  tombstone-then-ledger durability barrier and never silently repairs logs or
-  retries an external effect.
-- Until a dedicated workflow restore binding exists, source or current images
-  containing workflow rows are rejected before promotion/replacement.
+- Version-1 backup/inspect keeps its exact ten-field, two-file manifest shape.
+  The schema-4 foundation records `store_schema=4`,
+  `event_schema_version=2`, and `sqlite_user_version=4` (`4/2/4`). Its
+  production path writes no row to the three new tables: only an image with
+  those tables empty is a structural baseline. A non-empty new table fails
+  closed; #80 does not claim non-empty verification image inspection or
+  backup/restore success.
+- The established image is classified before root mutation through a
+  read-only, WAL/SHM-aware pre-gate. Structural WAL is copied with the image;
+  SQLite reconstructs the ephemeral SHM cache only in a private temporary
+  copy. The source, gate, marker, fileset, and DB/WAL/SHM bytes are unchanged;
+  the classifier does not checkpoint, truncate, delete, or create source
+  sidecars.
+- The #80 codecs are pure version-1 codecs for the 15-field `TaskPolicyStateV4`,
+  approval-binding snapshot, body-free verification request, and normalized
+  receipt. They exclude raw argv/environment values and raw bodies, and check
+  value consistency only; they do not capture owner authority or hydrate a
+  Gate value. Live capture/context, Store adapter, lifecycle transactions,
+  logical record digest, non-empty image semantics, and verification-aware
+  Doctor/restore remain downstream work.
+- Provider-only restore remains candidate-first and provider-free under its
+  historical contract. The #80 foundation proves only the empty-new-ledger
+  schema-4 backup/restore round trip; it does not silently repair logs,
+  retry an external effect, or authorize a non-empty verification image.
 - The P0 Store does not wire the WorkflowEngine reducer or external effect
   adapters, and it makes no external-effect exactly-once claim.
 
@@ -260,6 +287,10 @@ not hide equality for low-entropy input. The deterministic fake authority,
 backend, projector, and real Store prove this adapter contract only. They do
 not prove provider-side exactly-once or a #31 cross-store atomic join. Workflow
 reducer wiring remains #33, and policy/verification handoff remains #74.
+The schema-4 foundation is [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80);
+task/review production transitions are [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
+verification transactions and adapter wiring are [#82](https://github.com/iamtatsuki05/dotfiles/issues/82),
+and image evidence, backup/restore, and Doctor work are [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 Issue #74's handoff takes the actual #49 `ReviewPolicyUpdate` plus policy and
 the actual #50 `route_task()` plus matching reservation result. Each owner ref
@@ -272,7 +303,11 @@ as #50 comparisons. The Gate keeps `start(ApprovalRef)` and
 `resume(VerificationHandle)` and its six state-port operations. Handoff tests
 use a deterministic fake, which is not evidence of SQLite, restart, or
 provider exactly-once behavior. [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
-owns the schema-4 full ledger, restart/replay, and `mark_unknown` boundary.
+is split into the [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)
+and the downstream [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83) work. The full ledger,
+restart/replay, `mark_unknown`, and non-empty image claims are outside #80.
 There is no raw-body/action alias/payload path or retry/fallback.
 
 See [Architecture](docs/architecture.md) for the complete boundary and failure
