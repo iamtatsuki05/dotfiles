@@ -7,6 +7,7 @@ turn-scoped read snapshot with a bounded process runner.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
@@ -35,6 +36,8 @@ SNAPSHOT_PATH_INSTRUCTION = (
     "Resolve every repository path relative to the current working directory; "
     "do not use an absolute path from the original workspace.\n\n"
 )
+
+_STDIN_EAGAIN_RETRY_SECONDS = 0.01
 
 SAFE_ENV_KEYS = frozenset(
     {"PATH", "HOME", "TMPDIR", "SHELL", "USER", "LOGNAME", "LANG", "TERM"}
@@ -250,6 +253,9 @@ def _bounded_communicate(
     stderr_data = bytearray()
     input_offset = 0
     selector: selectors.BaseSelector | None = None
+    stdin_fd: int | None = None
+    stdin_payload: bytes | None = None
+    stdin_retry_deadline: float | None = None
     try:
         # Poll reports pipe EOF reliably on macOS; kqueue can leave a completed
         # child with an empty readiness set while its descriptors remain mapped.
@@ -265,7 +271,8 @@ def _bounded_communicate(
             stdin_fd = process.stdin.fileno()
             os.set_blocking(stdin_fd, False)
             if input_bytes:
-                selector.register(stdin_fd, selectors.EVENT_WRITE, input_bytes)
+                stdin_payload = input_bytes
+                selector.register(stdin_fd, selectors.EVENT_WRITE, stdin_payload)
             else:
                 process.stdin.close()
         deadline = time.monotonic() + timeout_seconds
@@ -289,7 +296,13 @@ def _bounded_communicate(
             if remaining <= 0:
                 raise _ProcessTimeout()
             parent_exited = process.poll() is not None
-            events_ready = selector.select(0 if parent_exited else min(remaining, 0.25))
+            select_timeout = 0 if parent_exited else min(remaining, 0.25)
+            if stdin_retry_deadline is not None and not parent_exited:
+                select_timeout = min(
+                    select_timeout,
+                    max(0.0, stdin_retry_deadline - time.monotonic()),
+                )
+            events_ready = selector.select(select_timeout)
             if parent_exited:
                 # The parent is the only process whose output belongs to this
                 # result.  A descendant may retain inherited pipes forever;
@@ -303,6 +316,13 @@ def _bounded_communicate(
                         if process.stdin is not None and not process.stdin.closed:
                             process.stdin.close()
                 break
+            if (
+                stdin_retry_deadline is not None
+                and time.monotonic() >= stdin_retry_deadline
+            ):
+                assert stdin_fd is not None and stdin_payload is not None
+                selector.register(stdin_fd, selectors.EVENT_WRITE, stdin_payload)
+                stdin_retry_deadline = None
             for key, events in events_ready:
                 if key.data in {"stdout", "stderr"}:
                     drain_output(key)
@@ -312,6 +332,15 @@ def _bounded_communicate(
                     assert isinstance(payload, bytes)
                     try:
                         written = os.write(key.fd, payload[input_offset:])
+                    except BlockingIOError as exc:
+                        if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                            raise
+                        selector.unregister(key.fd)
+                        stdin_retry_deadline = min(
+                            deadline,
+                            time.monotonic() + _STDIN_EAGAIN_RETRY_SECONDS,
+                        )
+                        continue
                     except BrokenPipeError:
                         selector.unregister(key.fd)
                         if process.stdin is not None and not process.stdin.closed:
@@ -363,7 +392,7 @@ def _terminate_process_group(
     except PermissionError:
         if process.poll() is None:
             process.terminate()
-    if _wait_for_process_group_exit(group_id, timeout_seconds=2.0):
+    if _wait_for_process_group_exit(group_id, timeout_seconds=2.0, process=process):
         try:
             process.wait(timeout=2.0)
         except subprocess.TimeoutExpired as exc:
@@ -380,13 +409,23 @@ def _terminate_process_group(
         process.wait(timeout=2.0)
     except subprocess.TimeoutExpired as exc:
         raise ExecutionError("provider process group could not be reaped") from exc
-    if not _wait_for_process_group_exit(group_id, timeout_seconds=2.0):
+    if not _wait_for_process_group_exit(group_id, timeout_seconds=2.0, process=process):
         raise ExecutionError("provider process group could not be reaped")
 
 
-def _wait_for_process_group_exit(group_id: int, *, timeout_seconds: float) -> bool:
+def _wait_for_process_group_exit(
+    group_id: int,
+    *,
+    timeout_seconds: float,
+    process: subprocess.Popen[bytes] | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while _process_group_exited(group_id) is False:
+        if process is not None and process.poll() is not None:
+            try:
+                process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                pass
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False

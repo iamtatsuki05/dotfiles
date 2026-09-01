@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
 import multiprocessing
 import os
 import selectors
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -3364,6 +3366,96 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
         self.assertEqual(result.returncode, 7)
         self.assertEqual(result.stderr, "child stderr\n")
 
+    @unittest.skipIf(os.name == "nt", "POSIX nonblocking stdin contract")
+    def test_eagain_retries_same_input_without_closing_stdin(self) -> None:
+        real_popen = subprocess.Popen
+        real_write = os.write
+        process: subprocess.Popen[bytes] | None = None
+        eagain_injected = False
+        stdin_open_at_eagain = False
+        attempted_lengths: list[int] = []
+
+        def capture_popen(
+            args: Sequence[str],
+            *,
+            cwd: Path,
+            env: Mapping[str, str],
+            stdin: int | None,
+            stdout: int | None,
+            stderr: int | None,
+            shell: bool,
+            start_new_session: bool,
+        ) -> subprocess.Popen[bytes]:
+            nonlocal process
+            process = real_popen(
+                args,
+                cwd=cwd,
+                env=env,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                shell=shell,
+                start_new_session=start_new_session,
+            )
+            return process
+
+        def write_with_single_eagain(fd: int, payload: bytes) -> int:
+            nonlocal eagain_injected, stdin_open_at_eagain
+            self.assertIsNotNone(process)
+            assert process is not None and process.stdin is not None
+            if fd == process.stdin.fileno():
+                attempted_lengths.append(len(payload))
+                if not eagain_injected:
+                    eagain_injected = True
+                    stdin_open_at_eagain = not process.stdin.closed
+                    raise BlockingIOError(errno.EAGAIN, "simulated EAGAIN")
+            return real_write(fd, payload)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            child = (
+                "import os; os.close(0); os.write(2, b'child stderr\\n'); os._exit(7)"
+            )
+            runner = ProcessRunner()
+            with (
+                mock.patch.object(subprocess, "Popen", side_effect=capture_popen),
+                mock.patch.object(os, "write", side_effect=write_with_single_eagain),
+            ):
+                result = runner.run(
+                    (sys.executable, "-c", child),
+                    cwd=Path(temp_dir),
+                    env=os.environ.copy(),
+                    input_text="x" * 1_000_000,
+                    timeout_seconds=2,
+                )
+
+        self.assertTrue(eagain_injected)
+        self.assertTrue(stdin_open_at_eagain)
+        self.assertGreaterEqual(len(attempted_lengths), 2)
+        self.assertEqual(attempted_lengths[0], attempted_lengths[1])
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stderr, "child stderr\n")
+
+    @unittest.skipIf(os.name == "nt", "POSIX nonblocking stdin contract")
+    def test_non_reader_input_honors_short_timeout(self) -> None:
+        runner = ProcessRunner()
+        started = time.monotonic()
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            self.assertRaisesRegex(ExecutionError, "timed out"),
+        ):
+            runner.run(
+                (
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(0.3)",
+                ),
+                cwd=Path(temp_dir),
+                env=os.environ.copy(),
+                input_text="x" * 1_000_000,
+                timeout_seconds=0.05,
+            )
+        self.assertLess(time.monotonic() - started, 1.0)
+
     def test_selector_setup_failure_closes_all_captured_streams(self) -> None:
         class FailingSelector:
             instances: ClassVar[list[FailingSelector]] = []
@@ -3429,6 +3521,73 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
                 )
             time.sleep(1)
             self.assertFalse(marker.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX process-group contract")
+    def test_timeout_does_not_add_second_term_grace_for_ignoring_parent(
+        self,
+    ) -> None:
+        real_popen = subprocess.Popen
+        process: subprocess.Popen[bytes] | None = None
+
+        def capture_popen(
+            args: Sequence[str],
+            *,
+            cwd: Path,
+            env: Mapping[str, str],
+            stdin: int | None,
+            stdout: int | None,
+            stderr: int | None,
+            shell: bool,
+            start_new_session: bool,
+        ) -> subprocess.Popen[bytes]:
+            nonlocal process
+            process = real_popen(
+                args,
+                cwd=cwd,
+                env=env,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                shell=shell,
+                start_new_session=start_new_session,
+            )
+            return process
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            marker = Path(temp_dir) / "child-marker"
+            child = (
+                "import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(5); "
+                f"pathlib.Path({str(marker)!r}).write_text('residual')"
+            )
+            parent = (
+                "import signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                "time.sleep(10)"
+            )
+            runner = ProcessRunner()
+            started = time.monotonic()
+            with (
+                mock.patch.object(subprocess, "Popen", side_effect=capture_popen),
+                self.assertRaisesRegex(Exception, "timed out"),
+            ):
+                runner.run(
+                    (sys.executable, "-c", parent),
+                    cwd=Path(temp_dir),
+                    env=os.environ.copy(),
+                    timeout_seconds=0.2,
+                )
+            elapsed = time.monotonic() - started
+            time.sleep(0.2)
+            marker_exists = marker.exists()
+
+        self.assertIsNotNone(process)
+        assert process is not None
+        self.assertIsNotNone(process.returncode)
+        self.assertTrue(adapters_module._process_group_exited(process.pid))
+        self.assertLess(elapsed, 3.0)
+        self.assertFalse(marker_exists)
 
     @unittest.skipIf(os.name == "nt", "POSIX process-group contract")
     def test_timeout_kills_sigterm_ignoring_descendant_after_parent_exits(self) -> None:
