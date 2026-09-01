@@ -15,16 +15,20 @@ The caller supplies only an opaque approval reference and the returned opaque
 handle. It cannot supply a review update, routing object, request, runner
 result, receipt, evidence, or state. The gate has no subprocess, shell,
 filesystem, registry, database, receipt file, lease, or persistence code.
+The owner-issued composition that supplies its approval is documented in
+[Policy/verification handoff](policy-verification-handoff.md).
 
 ## Authority admission
 
 `ApprovalAdmissionPort` is a trusted composition-root adapter from an opaque
-`ApprovalRef` to a private bound #49/#50 authority. The adapter validates the
-complete #49 `ReviewPolicyUpdate` and policy-bound authority projection, and
-the complete #50 `LaneRoutingDecision`, including candidate/lane, serial review
-and completion-gate flags, workspace-write permission, Task claim, and
-reservation owner/epoch/fencing identity. The verification gate never accepts
-those raw values or reimplements their validators.
+`ApprovalRef` to a private bound #49/#50 authority. In the #74 composition,
+`PolicyVerificationHandoff` is that adapter: it receives the actual #49 update
+and #50 route/reservation through their owner seams, then resolves only the
+stored, bound approval for the gate. The composer compares only fields both
+owner records possess; #49-only runtime fields remain #49 provenance and are
+not claimed as cross-checked with #50. The verification gate never accepts raw
+updates, projections, routes, reservations, or caller-provided digests, and it
+does not reimplement their validators.
 
 `ApprovedReview` is return-only and binds Run, Team, workspace, Task, Dispatch,
 Attempt, Worker/Reviewer nodes and terminals, review round, target `HEAD`,
@@ -72,10 +76,13 @@ provenance. The trusted `ApprovalAdmissionPort` and durable
 belong upstream if the threat model includes arbitrary code executing inside
 the same Python process. Provider/task text is outside that authority boundary.
 
-## Mandatory durable state port
+## The six-method state port keeps the Gate surface unchanged
 
-The `VerificationStatePort` is required at gate construction. It is the owner
-of CAS, persistence, idempotence, effect fencing, and restart recovery:
+The `VerificationStatePort` is required at gate construction. Its production
+implementation owns CAS, persistence, idempotence, effect fencing, and restart
+recovery. Issue #74 freezes the existing six-method shape and checks it with a
+deterministic fake; #74 does not provide a SQLite implementation or a fresh-
+process recovery proof. Those durable responsibilities belong to [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78).
 
 ```python
 class VerificationStatePort(Protocol):
@@ -93,10 +100,12 @@ calls `prepare_once`. It returns a handle only after a matching store-issued
 prepared result and approved-to-verifying CAS. No in-memory state is an
 authority.
 
-`resume(handle)` reads and cross-checks the durable record and status. It works
-after process restart because the handle contains only the durable reference,
-approval reference, and request digest. `begin_effect_once` issues an opaque
-effect nonce, lease epoch, and fencing token with one of:
+`resume(handle)` reads and cross-checks the record and status. With a durable
+state implementation, a handle containing only the durable reference, approval
+reference, and request digest can support process-restart replay. The #74 fake
+only demonstrates the in-process call order and replay contract; it is not
+evidence of SQLite reopen or fresh-process recovery. `begin_effect_once` issues
+an opaque effect nonce, lease epoch, and fencing token with one of:
 
 | Effect status | Gate action |
 | --- | --- |
@@ -155,7 +164,11 @@ complete a task.
 ## Ownership and limitations
 
 #49 owns review transitions and approval provenance. #50 owns path/resource
-admission and reservation identity. #11/#31/#33 own the mandatory durable
-state/effect/receipt port and terminal CAS. #32 owns unknown-effect recovery.
-This module defines only the verification contract and pure port orchestration;
-focused tests use fake ports and no provider, user workspace, or process.
+admission and reservation identity. #74 owns the typed owner-ref composition
+and the deterministic fake boundary. #11/#31/#33 own the production durable
+state/effect/receipt port and terminal CAS. [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
+owns the schema-4 full ledger, restart/replay, and durable `mark_unknown`
+boundary; #32 consumes the resulting recovery handoff. This module defines
+only the verification contract and pure port orchestration. Focused tests use
+fake ports and no provider, user workspace, or process, so they do not prove
+SQLite durability or provider exactly-once execution.

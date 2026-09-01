@@ -14,7 +14,9 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Final, NewType, Protocol, cast
+from threading import RLock
+from typing import Final, NewType, NoReturn, Protocol, SupportsIndex, cast
+from weakref import WeakKeyDictionary
 
 from .review_policy import (
     DependencyState,
@@ -49,6 +51,10 @@ MAX_RESOURCE_KEY_CHARS: Final = 256
 _UNSAFE_RANGES: Final = ((0x00, 0x1F), (0x7F, 0x9F), (0xD800, 0xDFFF))
 _UNSUPPORTED_GLOB: Final = frozenset("*?[]{}")
 _WINDOWS_ABSOLUTE: Final = re.compile(r"^[A-Za-z]:")
+_SHA256_DIGEST: Final = re.compile(r"[0-9a-f]{64}\Z")
+_OPAQUE_IDENTIFIER: Final = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._:/-]{{0,{MAX_RESERVATION_ID_CHARS - 1}}}\Z"
+)
 _DIAGNOSTIC_PRIORITY: Final = {
     "invalid-type": 0,
     "invalid-task": 1,
@@ -1326,6 +1332,58 @@ def _revalidate_lane_profile_binding(
     return profile
 
 
+def _canonical_lane_profile_projection(
+    value: LaneProfileBinding,
+) -> tuple[object, ...]:
+    """Return the immutable #50 profile input read by one routing decision."""
+
+    profile = _revalidate_lane_profile_binding(value)
+    team_projection = _canonical_team_definition(
+        profile.team_definition, "profile.team_definition"
+    )
+    pair = profile.reviewer_pair
+    pair_projection: tuple[str, str] | None
+    if pair is None:
+        pair_projection = None
+    else:
+        validated_pair = _revalidate_review_pair(pair, "profile.reviewer_pair")
+        pair_projection = (
+            str(validated_pair.worker_node),
+            str(validated_pair.reviewer_node),
+        )
+    policy = profile.serial_review_policy
+    policy_projection: tuple[object, ...] | None
+    if policy is None:
+        policy_projection = None
+    else:
+        canonical_policy = _canonical_serial_policy_projection(policy)
+        active_assignments = tuple(
+            (
+                str(assignment.run_id),
+                str(assignment.task_id),
+                str(assignment.dispatch_id),
+                str(assignment.attempt_id),
+                str(assignment.worker_node),
+                str(assignment.reviewer_node),
+                str(assignment.worker_terminal_id),
+                str(assignment.reviewer_terminal_id),
+                str(assignment.review_round),
+                "" if assignment.target_head is None else str(assignment.target_head),
+                ""
+                if assignment.target_tree_digest is None
+                else str(assignment.target_tree_digest),
+            )
+            for assignment in policy.active_assignments
+        )
+        policy_projection = (*canonical_policy, active_assignments)
+    return (
+        team_projection,
+        str(profile.worker_node),
+        pair_projection,
+        policy_projection,
+    )
+
+
 def _check_one_to_one_paths(
     task_paths: tuple[str, ...],
     claims: tuple[PathClaim, ...],
@@ -1465,6 +1523,141 @@ def _path_rejection(reason_code: str) -> PathAdmission:
 
 ResourceKey = NewType("ResourceKey", str)
 ReservationDigest = NewType("ReservationDigest", str)
+
+_COMPLETION_ADMISSION_REF_ISSUER: Final[object] = object()
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    weakref_slot=True,
+    init=False,
+    repr=False,
+    eq=False,
+)
+class CompletionAdmissionRef:
+    """#50-issued completion admission reference.
+
+    The reference is intentionally return-only. Its issuer marker and
+    object-identity binding guard the in-process handoff boundary; persistence
+    and record readback remain the authority across process boundaries.
+    """
+
+    reference: str
+    digest: str
+    _issuer: object = field(init=False, repr=False, compare=False)
+
+    def __new__(cls, *args: object, **kwargs: object) -> NoReturn:
+        del cls, args, kwargs
+        raise TypeError("CompletionAdmissionRef is return-only")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("CompletionAdmissionRef is return-only")
+
+    def __repr__(self) -> str:
+        return "<CompletionAdmissionRef opaque>"
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("CompletionAdmissionRef cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("CompletionAdmissionRef cannot be deep-copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("CompletionAdmissionRef cannot be pickled")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        del protocol
+        raise TypeError("CompletionAdmissionRef cannot be pickled")
+
+
+_COMPLETION_ADMISSION_BINDINGS: WeakKeyDictionary[
+    CompletionAdmissionRef, tuple[str, str]
+] = WeakKeyDictionary()
+_COMPLETION_ADMISSION_BINDINGS_LOCK: Final = RLock()
+
+
+def _completion_admission_reference(value: object, context: str) -> str:
+    candidate = _text(
+        value,
+        context,
+        maximum=MAX_RESERVATION_ID_CHARS,
+    )
+    if _OPAQUE_IDENTIFIER.fullmatch(candidate) is None:
+        raise _error("invalid-reference", f"{context} is not a safe identifier")
+    return candidate
+
+
+def _completion_admission_digest(value: object, context: str) -> str:
+    candidate = _text(value, context, maximum=64)
+    if _SHA256_DIGEST.fullmatch(candidate) is None:
+        raise _error("invalid-digest", f"{context} must be a lowercase SHA-256 digest")
+    return candidate
+
+
+def _issue_completion_admission_ref(
+    reference: str, digest: str
+) -> CompletionAdmissionRef:
+    """Issue one validated in-process completion admission reference."""
+
+    validated_reference = _completion_admission_reference(
+        reference,
+        "completion_admission_ref.reference",
+    )
+    validated_digest = _completion_admission_digest(
+        digest,
+        "completion_admission_ref.digest",
+    )
+    result = object.__new__(CompletionAdmissionRef)
+    object.__setattr__(result, "reference", validated_reference)
+    object.__setattr__(result, "digest", validated_digest)
+    object.__setattr__(
+        result,
+        "_issuer",
+        _COMPLETION_ADMISSION_REF_ISSUER,
+    )
+    with _COMPLETION_ADMISSION_BINDINGS_LOCK:
+        _COMPLETION_ADMISSION_BINDINGS[result] = (
+            validated_reference,
+            validated_digest,
+        )
+    _validate_completion_admission_ref(result)
+    return result
+
+
+def _validate_completion_admission_ref(value: object) -> None:
+    """Validate a #50-issued completion admission reference."""
+
+    if type(value) is not CompletionAdmissionRef:
+        raise _error(
+            "invalid-completion-admission-ref",
+            "completion admission reference type is not exact",
+        )
+    try:
+        reference = object.__getattribute__(value, "reference")
+        digest = object.__getattribute__(value, "digest")
+        issuer = object.__getattribute__(value, "_issuer")
+    except AttributeError as exc:
+        raise _error(
+            "invalid-completion-admission-ref",
+            "completion admission reference is malformed",
+        ) from exc
+    _completion_admission_reference(reference, "completion_admission_ref.reference")
+    _completion_admission_digest(digest, "completion_admission_ref.digest")
+    if issuer is not _COMPLETION_ADMISSION_REF_ISSUER:
+        raise _error(
+            "invalid-completion-admission-ref",
+            "completion admission reference issuer is invalid",
+        )
+    with _COMPLETION_ADMISSION_BINDINGS_LOCK:
+        binding = _COMPLETION_ADMISSION_BINDINGS.get(value)
+    if binding != (reference, digest):
+        raise _error(
+            "invalid-completion-admission-ref",
+            "completion admission reference binding is invalid",
+        )
 
 
 class ResourceMode(str, Enum):
@@ -2598,6 +2791,7 @@ def path_claims_overlap(left: PathClaimPolicy, right: PathClaimPolicy) -> bool:
 
 
 __all__ = [
+    "CompletionAdmissionRef",
     "DispatchMode",
     "LaneProfileBinding",
     "LaneRoutingDecision",

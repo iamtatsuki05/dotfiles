@@ -40,6 +40,9 @@ linked reference documents when changing the implementation or configuration.
 - [Fixed-argv verification gate](docs/verification-gate.md) defines the typed
   approval, pinned verification request, before/after snapshot binding, and
   normalized receipt required before a write task can be completed.
+- [Policy/verification handoff](docs/policy-verification-handoff.md) defines
+  the #49 review ref, #50 completion ref, approved-only composition, exact
+  Store readback, and the boundary before the durable #78 ledger.
 
 The current configuration uses this team:
 
@@ -257,6 +260,20 @@ not hide equality for low-entropy input. The deterministic fake authority,
 backend, projector, and real Store prove this adapter contract only. They do
 not prove provider-side exactly-once or a #31 cross-store atomic join. Workflow
 reducer wiring remains #33, and policy/verification handoff remains #74.
+
+Issue #74's handoff takes the actual #49 `ReviewPolicyUpdate` plus policy and
+the actual #50 `route_task()` plus matching reservation result. Each owner ref
+is issued after its owner validation and `save_*`/exact `read_*` readback. The
+composer creates an `ApprovalRef` only for canonical `REVIEW_DECISION +
+APPROVED` review authority. It compares only overlap fields; #49-only
+`Run`/`Dispatch`/`Attempt`, terminal,
+review-round, target, and `claim_ref` remain #49 provenance and are not claimed
+as #50 comparisons. The Gate keeps `start(ApprovalRef)` and
+`resume(VerificationHandle)` and its six state-port operations. Handoff tests
+use a deterministic fake, which is not evidence of SQLite, restart, or
+provider exactly-once behavior. [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
+owns the schema-4 full ledger, restart/replay, and `mark_unknown` boundary.
+There is no raw-body/action alias/payload path or retry/fallback.
 
 See [Architecture](docs/architecture.md) for the complete boundary and failure
 flow.

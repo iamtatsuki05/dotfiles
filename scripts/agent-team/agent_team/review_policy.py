@@ -13,7 +13,9 @@ import hashlib
 import re
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum
-from typing import Final, NewType, Protocol, TypeAlias
+from threading import RLock
+from typing import Final, NewType, NoReturn, Protocol, SupportsIndex, TypeAlias
+from weakref import WeakKeyDictionary
 
 from .task_policy import (
     STATE_POLICY_VERSION,
@@ -49,7 +51,11 @@ MAX_REVIEW_ROUNDS: Final = 2**63 - 1
 _GIT_OBJECT_ID: Final = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _TREE_DIGEST: Final = re.compile(r"[0-9a-f]{64}\Z")
 _POLICY_FINGERPRINT: Final = re.compile(r"[0-9a-f]{64}\Z")
+_REVIEW_AUTHORITY_REFERENCE: Final = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_POLICY_IDENTIFIER_CHARS - 1}}}\Z"
+)
 _REVIEW_LANES: Final = frozenset((TaskLane.NORMAL, TaskLane.EXPRESS))
+_REVIEW_AUTHORITY_ISSUER: Final[object] = object()
 
 
 class ReviewPolicyError(ValueError):
@@ -105,6 +111,123 @@ def _text(
     ):
         raise _error("unsafe-text", f"{context} contains unsafe text")
     return value
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    weakref_slot=True,
+    init=False,
+    repr=False,
+    eq=False,
+)
+class ReviewAuthorityRef:
+    """Opaque, owner-issued reference for a review-policy authority.
+
+    The issuer marker and object-identity binding are in-process misuse guards,
+    not a cryptographic provenance claim. Durable authority remains the exact
+    owner record.
+    """
+
+    reference: str
+    digest: str
+    _issuer: object = field(init=False, repr=False, compare=False)
+
+    def __new__(cls, *args: object, **kwargs: object) -> NoReturn:
+        del cls, args, kwargs
+        raise TypeError("ReviewAuthorityRef is return-only")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("ReviewAuthorityRef is return-only")
+
+    def __repr__(self) -> str:
+        return "<ReviewAuthorityRef opaque>"
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("ReviewAuthorityRef cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("ReviewAuthorityRef cannot be deep-copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("ReviewAuthorityRef cannot be pickled")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        del protocol
+        raise TypeError("ReviewAuthorityRef cannot be pickled")
+
+
+_REVIEW_AUTHORITY_BINDINGS: WeakKeyDictionary[ReviewAuthorityRef, tuple[str, str]] = (
+    WeakKeyDictionary()
+)
+_REVIEW_AUTHORITY_BINDINGS_LOCK: Final = RLock()
+
+
+def _validate_review_authority_ref(value: object) -> None:
+    """Validate an exact, locally issued review authority reference."""
+
+    if type(value) is not ReviewAuthorityRef:
+        raise _error("invalid-authority-ref", "review authority ref type is not exact")
+    try:
+        reference = object.__getattribute__(value, "reference")
+        digest = object.__getattribute__(value, "digest")
+        issuer = object.__getattribute__(value, "_issuer")
+    except AttributeError as exc:
+        raise _error(
+            "invalid-authority-ref",
+            "review authority ref is malformed",
+        ) from exc
+    if issuer is not _REVIEW_AUTHORITY_ISSUER:
+        raise _error(
+            "invalid-authority-ref",
+            "review authority ref was not issued by review policy",
+        )
+    with _REVIEW_AUTHORITY_BINDINGS_LOCK:
+        binding = _REVIEW_AUTHORITY_BINDINGS.get(value)
+    if binding != (reference, digest):
+        raise _error(
+            "invalid-authority-ref",
+            "review authority ref binding is invalid",
+        )
+    reference_value = _text(reference, "review_authority.reference")
+    if _REVIEW_AUTHORITY_REFERENCE.fullmatch(reference_value) is None:
+        raise _error(
+            "invalid-reference",
+            "review_authority.reference must be a bounded safe identifier",
+        )
+    digest_value = _text(digest, "review_authority.digest")
+    if _POLICY_FINGERPRINT.fullmatch(digest_value) is None:
+        raise _error(
+            "authority-digest",
+            "review_authority.digest must be a lowercase SHA-256 digest",
+        )
+
+
+def _issue_review_authority_ref(reference: str, digest: str) -> ReviewAuthorityRef:
+    """Issue one validated opaque reference from the review-policy owner."""
+
+    reference_value = _text(reference, "review_authority.reference")
+    if _REVIEW_AUTHORITY_REFERENCE.fullmatch(reference_value) is None:
+        raise _error(
+            "invalid-reference",
+            "review_authority.reference must be a bounded safe identifier",
+        )
+    digest_value = _text(digest, "review_authority.digest")
+    if _POLICY_FINGERPRINT.fullmatch(digest_value) is None:
+        raise _error(
+            "authority-digest",
+            "review_authority.digest must be a lowercase SHA-256 digest",
+        )
+    result = object.__new__(ReviewAuthorityRef)
+    object.__setattr__(result, "reference", reference_value)
+    object.__setattr__(result, "digest", digest_value)
+    object.__setattr__(result, "_issuer", _REVIEW_AUTHORITY_ISSUER)
+    with _REVIEW_AUTHORITY_BINDINGS_LOCK:
+        _REVIEW_AUTHORITY_BINDINGS[result] = (reference_value, digest_value)
+    _validate_review_authority_ref(result)
+    return result
 
 
 def _sequence(value: object, context: str) -> int:
@@ -1549,7 +1672,7 @@ class ReviewPolicyHandoffPort(Protocol):
 
     def save_authority(
         self, update: ReviewPolicyUpdate, policy: SerialReviewPolicy
-    ) -> None: ...
+    ) -> ReviewAuthorityRef: ...
 
 
 def initial_review_policy_state(

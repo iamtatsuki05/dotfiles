@@ -5,7 +5,8 @@
 `agent_team.path_resource_policy` は Issue #50 の pure な admission 境界です。
 v4 `TaskSpec` が明示した path/resource 宣言と、trusted snapshot が渡す workspace 観測を
 検査し、決定的な routing 結果を返します。`TaskSpec`、topology、review state、config、
-store は変更しません。
+store は変更しません。このseamを使うowner-issued completion handoffは
+[Policy/verification handoff](policy-verification-handoff_JA.md)にまとめています。
 
 ## Path claim
 
@@ -120,3 +121,24 @@ bindingとtrusted observationを渡します。Worker → Reviewer のtransition
 atomic ownership/fencingは将来のreservation/store、durable completionはworkflow engineの
 責務です。provider process、terminal、filesystem scan、database、lock file、workspace-write
 completionはここでは作りません。
+
+## completion admissionへのhandoff
+
+Issue #74の`PolicyVerificationHandoff.issue_completion_admission(...)`は、実際のtyped task、
+path、resource、profile、reservation入力で`route_task()`を1回呼びます。routeのpostconditionと、
+必要なreservation portのresultを検証した後だけ、#50 ownerの`CompletionAdmissionRef`を発行します。
+callerが`LaneRoutingDecision`、`PathAdmission`、`ResourceReservationResult`、routing digest、
+reservation digestをauthorityとして渡す経路はありません。
+
+handoffが受け付けるのは、normalまたはexpressのserial write candidateで、review/completion gate、
+workspace-write permissionが有効、parallel flagがなく、rejection reasonもない場合だけです。
+resourceを持つtaskには、同じrequest identityを持つmatchingな`RESERVED` resultも必要です。
+claimなしのtaskではreservation authorityを持たせず、reservation portも未実行のままにします。
+research/read-only route、conflict、unknown/stale result、port failure、identity mismatchではrefを
+発行しません。handoffはretryせず、別lane、provider、backendへのfallbackも選びません。
+
+返すrecordに残すのは、path/resource observationとroutingのcanonical primitive identityおよび
+domain-separated digestです。raw route/reservation object、mutable observation、Task本文、provider
+outputは保持しません。`Run`、`Dispatch`、`Attempt`、terminal、review round、target、`claim_ref`は
+#49 review ownerのfieldです。このmoduleはそれらを補ったり、cross-checkしたりしません。full runtime
+correlationは[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)へ渡します。

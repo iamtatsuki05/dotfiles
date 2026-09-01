@@ -14,16 +14,18 @@ terminal = gate.resume(handle)
 caller が渡すのは opaque な approval reference と、返された opaque handle だけです。
 review update、routing object、request、runner result、receipt、evidence、state は渡せません。
 この module は subprocess、shell、filesystem、registry、database、receipt file、lease、
-persistence を実装しません。
+persistence を実装しません。Gateへapprovalを渡すowner-issued compositionは
+[Policy/verification handoff](policy-verification-handoff_JA.md)にまとめています。
 
 ## authority の admission
 
 `ApprovalAdmissionPort` は opaque な `ApprovalRef` を、#49/#50 の private な bound authority
-へ変換する trusted composition-root adapter です。adapter は #49 の完全な
-`ReviewPolicyUpdate` と policy-bound authority projection、#50 の完全な
-`LaneRoutingDecision` を検証します。candidate/lane、serial review と completion-gate の
-flag、workspace-write permission、Task claim、reservation の owner/epoch/fencing identity
-も対象です。verification gate は raw value を受け取らず、validator を再実装しません。
+へ変換する trusted composition-root adapter です。#74のcompositionでは
+`PolicyVerificationHandoff`がこのadapterを担当します。#49の実際のupdateと、#50のowner seamを
+通ったroute/reservationを受け取り、保存済みでbindingされたapprovalだけをGateへ解決します。
+composerが比較するのは、両方のowner recordに存在するfieldだけです。#49専有のruntime fieldは
+#49 provenanceとして残し、#50と照合済みとは主張しません。verification gateはraw update、
+projection、route、reservation、caller-provided digestを受け取らず、validatorも再実装しません。
 
 `ApprovedReview` は return-only で、Run、Team、workspace、Task、Dispatch、Attempt、
 Worker/Reviewer node と terminal、review round、target `HEAD`、allowed claim の
@@ -65,10 +67,12 @@ provenance ではありません。authority は trusted `ApprovalAdmissionPort`
 含める場合の署名/HMAC envelope は上流の責務です。provider や Task 本文はこの authority 境界の
 外にあります。
 
-## 必須の durable state port
+## 6操作のstate portでGateのsurfaceを変えない
 
-`VerificationStatePort` は gate の生成時に必須です。CAS、persistence、idempotence、effect
-fencing、restart recovery はこの port の責務です。
+`VerificationStatePort` は gate の生成時に必須です。production implementationがCAS、
+persistence、idempotence、effect fencing、restart recoveryを担当します。Issue #74は既存6操作の
+shapeを凍結し、deterministic fakeで確認しますが、SQLite implementationやfresh processでの
+recovery proofは提供しません。durableな責務は[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)へ渡します。
 
 ```python
 class VerificationStatePort(Protocol):
@@ -85,9 +89,11 @@ before snapshot を取得して fixed request を構成し、`prepare_once` を�
 する prepared result と approved→verifying CAS が成功した後だけ handle を返します。in-memory
 state は authority ではありません。
 
-`resume(handle)` は durable record と status を読み、process restart 後も同じ operation を
-再構成します。`begin_effect_once` は opaque な effect nonce、lease epoch、fencing token と
-次の status のいずれかを返します。
+`resume(handle)` は record と status を読みます。durable state implementationがあれば、durable
+reference、approval reference、request digestだけを持つhandleでprocess restart後のreplayを
+支えられます。ただし#74のfakeが示すのはprocess内のcall orderとreplay contractだけで、SQLite
+reopenやfresh process recoveryの証拠ではありません。`begin_effect_once` はopaqueなeffect nonce、
+lease epoch、fencing tokenと、次のstatusのいずれかを返します。
 
 | Effect status | gate の動作 |
 | --- | --- |
@@ -137,8 +143,11 @@ completed にできません。
 
 ## 責務と制約
 
-#49 は review transition と approval provenance、#50 は path/resource admission と
-reservation identity、#11/#31/#33 は必須 durable state/effect/receipt port と terminal CAS、
-#32 は unknown-effect recovery を所有します。この module は verification contract と pure な
-port orchestration だけを定義し、focused test は fake port・providerなし・実 workspaceなしで
-検証します。
+#49はreview transitionとapproval provenance、#50はpath/resource admissionとreservation identity、
+#74はtyped owner-ref compositionとdeterministic fakeの境界をそれぞれ所有します。productionの
+durable state/effect/receipt portとterminal CASは#11/#31/#33の責務です。
+[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)はschema-4 full ledger、restart/replay、
+durable `mark_unknown`の境界を担当し、#32がそのrecovery handoffを受け取ります。このmoduleが
+定義するのはverification contractとpureなport orchestrationだけです。
+focused testはfake port・providerなし・実workspaceなしで行うため、SQLite durabilityやprovider
+exactly-once executionは証明しません。

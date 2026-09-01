@@ -185,8 +185,10 @@ existing task preserves the complete task-policy reference, and every other
 effect action has a null next-task sequence. Only an authority transition may
 advance an existing task sequence. The checkpoint's task
 reference/digest/sequence projection is atomic with the workflow row.
-Policy/verification authority state held in another Store is not claimed to
-be atomic with this row until the handoff owned by Issue #74 exists.
+Issue #74 now provides owner-issued refs, approval composition, and a
+deterministic fake contract. It does not make policy/verification authority
+state atomic with this v3 row. That production join belongs to Issue #78's
+schema-4 ledger.
 
 `begin_operation()` commits the intent, checkpoint marker, and first journal
 event together. `commit_effect()` commits the verified receipt, next
@@ -200,9 +202,10 @@ advanced after begin is recorded as unknown/recovery, never as a committed
 stale effect. Policy and verification transitions preserve assignment,
 Delivery, reply/read/release markers, the non-target authority, and an
 unchanged task-policy reference exactly. The generic P0 transition also
-preserves workflow state; Issue #74 must provide typed decision evidence and a
-separate validated contract before any review/verification state edge is
-accepted.
+preserves workflow state. Issue #74 provides the typed owner evidence and
+composition contract, but this generic v3 transition still cannot accept a
+review/verification state edge. Issue #78 must add the full task/verification
+ledger and atomic state transition.
 
 A Delivery produced by `wait` always begins as `PENDING` with no ACK operation.
 Only the matching ACK begin transaction may change it to
@@ -271,8 +274,8 @@ WAIT/READ/RELEASE/STOP may make one digest-bound pure backend lookup. `INTENT`,
 `RecoveryRequired`; explicit stable-ID recovery belongs to #32. Deterministic
 fake authority/backend/projector tests with the real Store prove adapter
 validation and call counts, not provider-side exactly-once or a #31 cross-store
-atomic join. WorkflowEngine reducer wiring remains #33, and policy/verification
-handoff remains #74.
+atomic join. WorkflowEngine reducer wiring remains #33. The owner-ref handoff
+contract is #74; its schema-4 durable ledger and restart join are #78.
 
 ### Backup, inspect, restore, and Doctor boundary
 
@@ -307,9 +310,11 @@ provider, retry an effect, or choose another backend.
 
 Issue #72 owns the v3 Store schema, strict codecs, typed opaque values, CAS,
 workflow journal, and the backup/inspect/Doctor boundary above. WorkflowEngine
-reducer wiring is Issue #33. The durable backend/effect adapter is Issue #73;
-policy and verification handoff is Issue #74. Those follow-up issues must not
-be described as implemented by this Store contract.
+reducer wiring is Issue #33. The durable backend/effect adapter is Issue #73.
+Issue #74 implements owner refs and approval composition without changing this
+schema. Issue #78 owns the schema-4 full TaskPolicy/verification ledger,
+restart/recovery, and final migration matrix. Neither #74's deterministic fake
+nor this v3 Store is evidence that #78 is implemented.
 
 ## Additional environment validation
 

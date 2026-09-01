@@ -7,7 +7,8 @@ task and for an express-lane write task already admitted by Issue #50. It
 consumes a validated `TeamDefinition`, a v4 `TaskSpec`, and a v4
 `TaskPolicyStateV4` observation. It returns immutable typed update/effect
 intents; it does not start a provider, inspect a terminal or process, read a
-prompt, open a workspace, or persist data.
+prompt, open a workspace, or persist data. The owner-issued handoff built on
+this seam is documented in [Policy/verification handoff](policy-verification-handoff.md).
 
 ## Fixed pair
 
@@ -145,12 +146,22 @@ must call `validate_reviewer_assignment(assignment, policy, expected_state)`
 before dispatch; the expected state must be the matching `worker_done` state.
 `ReviewPolicyHandoffPort.save_authority(update, policy)` receives the
 policy-bound `ReviewPolicyUpdate` and actual `SerialReviewPolicy`, not a raw
-projection. Before any durable write, an implementation must call
-`policy_authority_projection(update, policy)` and persist only that canonical
-return value. There is no public raw-projection save port.
-This module does not implement SQLite, JSON state, locks, journals, or Orca.
-The reducer only returns `ReviewerAssignment`; it never invokes an external
-process or backend. A durable workflow engine can therefore persist the
-policy-bound authority projection without copying this policy's transition
-table or retaining explanatory/raw provider text. A caller cannot make
-synthetic approval authority by constructing or replacing a projection.
+projection. The #74 `PolicyVerificationHandoff` implementation revalidates
+those inputs, calls `policy_authority_projection(update, policy)` internally,
+converts only bounded primitive fields into its private record, and performs
+`save_review_authority` followed by exact `read_review_authority` readback
+before issuing the return-only `ReviewAuthorityRef`. There is no public
+raw-projection save port.
+
+The handoff may issue a ref for an accepted update, but its composer admits
+only canonical `REVIEW_DECISION` + `APPROVED`. The four projection event kinds
+remain unchanged, and review transitions stay owned by this module. A
+malformed, foreign, stale, mutated, or non-approved value is rejected before
+approval composition. The handoff stores no explanation, prompt, raw body, or
+provider output, and it does not add retry or fallback behavior.
+
+This module and the handoff adapter do not implement SQLite, schema-4 ledger
+records, process restart, `mark_unknown`, or provider exactly-once proof. The
+handoff's deterministic fake is test evidence only; [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
+owns the durable ledger and restart boundary. The reducer still returns
+`ReviewerAssignment` only and never invokes an external process or backend.

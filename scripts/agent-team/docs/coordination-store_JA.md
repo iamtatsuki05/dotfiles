@@ -169,8 +169,9 @@ task-policy sequenceはauthorityが発行したexpected/next pairであり、P0�
 task-policy reference全体を保持する。それ以外のeffect actionではnext task sequenceを
 nullに固定し、既存task sequenceを進められるのはauthority transitionだけである。
 checkpoint内のtask reference/digest/sequence projectionはworkflow rowとatomicに更新する。
-別Storeにあるpolicy/verification authority stateまでこのrowとatomicに更新したとは、Issue #74が
-担当するhandoffができるまで主張しない。
+Issue #74はowner-issued ref、approval composition、deterministic fake contractを提供するが、
+policy/verification authority stateをこのv3 rowとatomicに更新する実装ではない。production joinは
+Issue #78のschema-4 ledgerが担当する。
 
 `begin_operation()`はintent、checkpoint marker、最初のjournal eventを一緒にcommitする。
 `commit_effect()`はverified receipt、next checkpoint、operation status、2つ目のjournal
@@ -181,9 +182,10 @@ Run/Task/Dispatch/terminal、old attempt、wrong generation、wrong fenceは、�
 fencing-token floorを再確認する。begin後にfenceが進んだeffectをstaleなままcommitせず、
 unknown/recoveryとして記録する。policy/verification transitionは、assignment、Delivery、
 reply/read/release marker、非対象authority、sequenceを据え置くtask-policy referenceを
-完全に保持する。P0のgeneric transitionはworkflow stateも保持する。review/verificationの
-state edgeは、Issue #74がtyped decision evidenceと別の検証済みcontractを提供してから
-受理する。
+完全に保持する。P0のgeneric transitionはworkflow stateも保持する。Issue #74はtypedなowner
+evidenceとcomposition contractを提供するが、このgeneric v3 transitionはreview/verificationの
+state edgeをまだ受理できない。full task/verification ledgerとatomic state transitionはIssue #78が
+追加する。
 
 `wait`が作るDeliveryは、必ず`PENDING`かつACK operationなしで始まる。
 `ACK_INTENT/<operation_id>`へ変更できるのは、対応するACK begin transactionだけである。
@@ -240,8 +242,8 @@ projectorは0回に保つ。WAIT/READ/RELEASE/STOPでは、digestに束縛した
 1回実行する場合がある。`INTENT`、`UNKNOWN_EFFECT`、response loss、restart時の曖昧さは`RecoveryRequired`
 として残し、explicit stable-ID recoveryは#32が担当する。実Storeとdeterministic fake
 authority/backend/projectorによるtestが証明するのはadapterの検証とcall countであり、provider側
-exactly-onceや#31のcross-store atomic joinではない。WorkflowEngine reducerの配線は#33、
-policy/verification handoffは#74が担当する。
+exactly-onceや#31のcross-store atomic joinではない。WorkflowEngine reducerの配線は#33、owner-ref
+handoff contractは#74、schema-4 durable ledgerとrestart joinは#78が担当する。
 
 ### backup、inspect、restore、Doctorの境界
 
@@ -272,8 +274,10 @@ unknown workflow operationはoperator reviewとして報告する。migration、
 
 Issue #72が所有するのは、v3 Store schema、strict codec、typed opaque value、CAS、workflow
 journal、上記のbackup/inspect/Doctor境界である。WorkflowEngine reducerの配線はIssue #33、
-durable backend/effect adapterはIssue #73、policyとverificationのhandoffはIssue #74が
-担当する。これらの後続Issueを、このStore contractの実装済み範囲として記述しない。
+durable backend/effect adapterはIssue #73が担当する。Issue #74は、このschemaを変えずにowner
+refとapproval compositionを実装する。Issue #78はschema-4のfull TaskPolicy/verification ledger、
+restart/recovery、最終migration matrixを所有する。#74のdeterministic fakeやこのv3 Storeを、
+#78の実装証拠として扱わない。
 
 ## 追加の環境検証
 

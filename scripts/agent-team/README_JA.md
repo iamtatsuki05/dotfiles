@@ -37,6 +37,9 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
 - [Fixed-argv verification gate](docs/verification-gate_JA.md)は、write task を completed に
   する前提となる typed approval、固定 verification request、before/after snapshot の束縛、
   normalized receipt を説明します。
+- [Policy/verification handoff](docs/policy-verification-handoff_JA.md)は、#49のreview ref、
+  #50のcompletion ref、approved-only composition、Storeのexact readback、durableな#78 ledgerとの
+  境界を説明します。
 
 現在の設定は次のとおりです。
 
@@ -237,6 +240,17 @@ lookupを1回実行する場合があります。`INTENT`、`UNKNOWN_EFFECT`、r
 deterministic fake authority/backend/projectorと実Storeが証明するのはadapter contractだけで、
 provider側のexactly-onceや#31のcross-store atomic joinは証明しません。WorkflowEngineの
 reducer wiringは#33、policy/verification handoffは#74の担当です。
+
+Issue #74のhandoffは、実際の#49 `ReviewPolicyUpdate`とpolicy、および実際の#50 `route_task()`と
+matchingなreservation resultを受け取ります。各owner refは、owner validationと`save_*`/exact
+`read_*` readbackを通った後に発行します。composerが`ApprovalRef`を作るのは、canonicalな
+`REVIEW_DECISION + APPROVED`のreview authorityだけです。比較するのはoverlap fieldに限ります。
+#49専有の`Run`/`Dispatch`/`Attempt`、terminal、review round、
+target、`claim_ref`は#49 provenanceとして残し、#50と比較済みとは主張しません。Gateの
+`start(ApprovalRef)`、`resume(VerificationHandle)`とstate portの6操作は維持します。handoff testの
+deterministic fakeは、SQLite、restart、provider exactly-onceの証拠ではありません。
+[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)がschema-4 full ledger、restart/replay、
+`mark_unknown`の境界を所有します。raw body/action alias/payloadの経路やretry/fallbackはありません。
 
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 

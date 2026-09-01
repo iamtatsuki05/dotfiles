@@ -6,7 +6,8 @@
 It adapts the explicit path and resource declarations in a v4 `TaskSpec`,
 checks one trusted workspace snapshot, and returns a deterministic routing
 decision. It does not change `TaskSpec`, topology, review state, config, or
-the store.
+the store. The owner-issued completion handoff built on this seam is described
+in [Policy/verification handoff](policy-verification-handoff.md).
 
 ## Path claims
 
@@ -140,3 +141,28 @@ owns Worker → Reviewer transitions, a future reservation/store owns atomic
 ownership and fencing, and a future workflow engine owns durable completion.
 No provider process, terminal, filesystem scan, database, lock file, or
 workspace-write completion is created here.
+
+## Completion admission handoff
+
+Issue #74's `PolicyVerificationHandoff.issue_completion_admission(...)` calls
+`route_task()` once with the actual typed task, path, resource, profile, and
+reservation inputs. It issues the #50-owned `CompletionAdmissionRef` only after
+the route's postconditions and any reservation-port result have been validated.
+The caller cannot pass a `LaneRoutingDecision`, `PathAdmission`,
+`ResourceReservationResult`, routing digest, or reservation digest as authority.
+
+The handoff accepts only a normal or express serial write candidate with
+review and completion gates, workspace-write permission, no parallel flag, and
+no rejection reason. A resource-bearing task also needs the same request
+identity and a matching `RESERVED` result. A claim-free task carries no
+reservation authority and does not call the reservation port. Research/read-
+only routes, conflicts, unknown or stale results, port failures, and identity
+mismatches issue no ref; the handoff does not retry or select a fallback lane,
+provider, or backend.
+
+The returned record contains canonical primitive identity and domain-separated
+digests for path/resource observations and routing. It does not retain raw
+route or reservation objects, mutable observations, task text, or provider
+output. `Run`, `Dispatch`, `Attempt`, terminal, review-round, target, and
+`claim_ref` belong to the #49 review owner; this module does not invent or
+cross-check those fields. Full runtime correlation is deferred to [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78).

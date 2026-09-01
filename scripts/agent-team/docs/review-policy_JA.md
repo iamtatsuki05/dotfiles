@@ -5,7 +5,8 @@
 `agent_team.review_policy`は、normal laneのwrite taskと、Issue #50でadmit済みのexpress laneのwrite taskに対する
 純粋なpolicy seamです。検証済みの`TeamDefinition`、v4の`TaskSpec`、v4の`TaskPolicyStateV4`を受け取り、
 不変なtyped update/effect intentを返します。provider、terminal、process、prompt、
-workspaceを調べたり、データを保存したりしません。
+workspaceを調べたり、データを保存したりしません。このseamを使うowner-issued handoffは
+[Policy/verification handoff](policy-verification-handoff_JA.md)にまとめています。
 
 ## 固定pair
 
@@ -100,13 +101,22 @@ event typeでもapproval authorityでもありません。
 
 ## 後続adapter
 
-`ReviewPolicyStorePort.update(update, policy)`が最小の保存seamです。将来の実装がcompare-and-swap、
-transaction、保存形式を担当し、受け入れ前に`validate_policy_update(update, policy)`を呼ぶ契約です。
-`ReviewPolicyEffectPort.assign_reviewer(assignment, policy, expected_state)`も、dispatch前に
-`validate_reviewer_assignment(assignment, policy, expected_state)`を呼びます。
+`ReviewPolicyStorePort.update(update, policy)`が最小の保存seamです。将来の実装はcompare-and-swap、
+transaction、保存形式を担当し、受け入れ前の`validate_policy_update(update, policy)`呼び出しを
+契約に含めます。`ReviewPolicyEffectPort.assign_reviewer(assignment, policy, expected_state)`も、
+dispatch前の`validate_reviewer_assignment(assignment, policy, expected_state)`呼び出しが前提です。
 `ReviewPolicyHandoffPort.save_authority(update, policy)`はraw projectionを受け取らず、policy-boundな
-`ReviewPolicyUpdate`と実際の`SerialReviewPolicy`を受け取ります。durable writeの前に
-`policy_authority_projection(update, policy)`を呼び、そのcanonicalなreturn valueだけを保存する契約です。
-raw projectionだけを保存するpublic portはありません。このmoduleの実装対象はSQLite、JSON state、lock、journal、Orcaの外側です。
-reducerは`ReviewerAssignment`を返すだけで、外部processやbackendを呼び出しません。durable workflow engineが保存するのはbounded authority
-projectionに限られ、explanation/raw provider outputは保存対象外です。callerがprojectionを構築・差し替えてsyntheticなapproval authorityを作る経路もありません。
+`ReviewPolicyUpdate`と実際の`SerialReviewPolicy`だけが入力です。#74の`PolicyVerificationHandoff`は
+この入力を再検証し、内部で`policy_authority_projection(update, policy)`を呼び、boundedなprimitive fieldだけの
+private recordへ変換して`save_review_authority`で保存します。続いて`read_review_authority`のexact readbackを
+確認した場合だけ、return-onlyの`ReviewAuthorityRef`を発行します。raw projectionだけを保存するpublic portはありません。
+
+handoffは受理済みupdateからrefを発行できますが、composerがadmitするのはcanonicalな
+`REVIEW_DECISION` + `APPROVED`だけです。projection event kind 4種類は変えず、review transitionのauthorityもこのmoduleに残します。
+malformed、foreign、stale、mutated、non-approvedな値はapproval compositionの前に拒否します。explanation、prompt、raw body、
+provider outputを保存せず、retryやfallbackも追加しません。
+
+このmoduleとhandoff adapterは、SQLite、schema-4 ledger record、process restart、`mark_unknown`、provider exactly-once proofを
+実装しません。handoffのdeterministic fakeはtest evidenceだけです。durable ledgerとrestart境界は
+[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)が所有します。reducerは引き続き`ReviewerAssignment`だけを返し、
+外部processやbackendは呼び出しません。
