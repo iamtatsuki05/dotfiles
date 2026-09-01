@@ -337,6 +337,10 @@ def _action_intent(
     needs_assignment = action is not workflow.OperationAction.STOP
     if needs_assignment and assignment is None:
         raise TypeError("action fixture requires an assignment")
+    task_id: str | None
+    dispatch_id: str | None
+    attempt: int | None
+    terminal_id: str | None
     if assignment is not None:
         task_id = assignment.task_id
         dispatch_id = assignment.dispatch_id
@@ -411,6 +415,7 @@ def _receipt(
         receipt_id=receipt_id,
         run_id=run_id,
         main_terminal_id=main_terminal_id,
+        consumer_generation=0 if current is None else current.run.consumer_generation,
         task_id=None if assignment is None else assignment.task_id,
         dispatch_id=None if assignment is None else assignment.dispatch_id,
         attempt=None if assignment is None else assignment.attempt,

@@ -248,6 +248,7 @@ class WorkflowStoreReplayTests(unittest.TestCase):
             receipt_id="receipt-start",
             run_id="run-1",
             main_terminal_id="terminal-main",
+            consumer_generation=0,
             task_id=None,
             dispatch_id=None,
             attempt=None,

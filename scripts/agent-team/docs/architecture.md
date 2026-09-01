@@ -41,6 +41,7 @@ make completion and cleanup ambiguous.
 | `agent_team/runtime.py` | Shares identity, private-file, state-v3, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |
 | `agent_team/adapters.py` | Provides the provider-independent background seam, bounded process runner, exact identity checks, and Copilot/OpenCode read-only adapters. It has no Orca lifecycle authority. |
+| `agent_team/workflow_effect_adapter.py` | Provides the private durable-effect seam between the Workflow Store and an injected backend; it does not widen public runtime ports or wire CLI/MCP. |
 | `agent_team/defaults/` | Bundled config and Japanese prompts used when no user config is selected. |
 | `prompts/*.md` | Defines the Japanese role contracts. |
 | Orca | Stores the Run/Task/Dispatch lifecycle and owns managed terminals. |
@@ -53,6 +54,48 @@ lifecycle are verified live. A background profile runs one fixed provider
 invocation against a fresh read snapshot rather than a TUI terminal or ACP
 session. The snapshot excludes `.git`, symlinks, special files, ignored files,
 secret-like paths, provider configuration, and agent instructions.
+
+## Durable effects stay behind a private adapter seam
+
+Issue #73 adds `workflow_effect_adapter.py` between the v3 Workflow Store and
+an injected durable effect backend. The public `TeamRuntime` and `BackendPort`
+remain the same three-method surface (`start`, `request`, `stop`), as do the
+existing request/result types and CLI/MCP envelopes. The adapter is not wired
+into the CLI or MCP path. The current public `BackendPort` and Orca backend
+fail before an effect with `DurabilityUnsupported`: they lack role-effect
+metadata, consumer generation, exact Delivery/read lookup, and provider proof.
+Current Orca STOP is also unsupported because it cannot provide an ordered
+composite-stop proof and pure lookup. Durable `StartSpec.attach=True` is
+unsupported for the same reason: its focus stage has no composite proof.
+
+The private execution sequence is:
+
+```text
+load -> authority -> begin -> backend once -> validate post-effect authority/observation
+     -> Store receipt -> projector -> commit
+```
+
+The common backend capability is effect-key idempotency or pure lookup,
+attempt/fence enforcement, and consumer generation. The requested action then
+adds its own proof: WAIT requires exact Delivery lookup, READ requires exact
+read lookup, and STOP requires composite-stop proof plus pure lookup. START and
+PROMPT bind the effect-allocated post-effect identity, including generation.
+Receipt and observation fields are snapshotted and checked across the
+projector boundary; raw prompt/reply/output bodies are bounded to 1 MiB of
+UTF-8 and represented durably only by digests and opaque references. This
+prevents raw persistence, not equality inference for low-entropy inputs.
+
+Only committed effects replay. Replay calls neither backend execute nor the
+projector; WAIT/READ/RELEASE/STOP may make one digest-bound pure backend lookup.
+`INTENT`, `UNKNOWN_EFFECT`, response loss, and restart ambiguity remain
+`RecoveryRequired` for explicit stable-ID recovery owned by #32. The
+origin-only `DurableDeliveryLookup` does not reconstruct a Delivery's
+ACK/reply lifecycle; `DurableReadLookup` obtains read output through the
+backend's pure lookup. Deterministic fake authority/backend/projector tests
+with the real Store establish adapter call counts and validation boundaries,
+not provider-side exactly-once or a #31 cross-store atomic join. WorkflowEngine
+reducer wiring belongs to #33, while review/verification policy handoff
+belongs to #74.
 
 ## Canonical Main is direct Claude and the only user-facing agent
 

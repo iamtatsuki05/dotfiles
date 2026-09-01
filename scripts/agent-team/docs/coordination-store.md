@@ -184,9 +184,9 @@ policy sequence. The first prompt accepts only `None -> 1`; a prompt for an
 existing task preserves the complete task-policy reference, and every other
 effect action has a null next-task sequence. Only an authority transition may
 advance an existing task sequence. The checkpoint's task
-reference/digest/sequence projection is atomic with the workflow row. A full
-state in another Store is not claimed to be atomic until the private adapter
-owned by Issue #74 exists.
+reference/digest/sequence projection is atomic with the workflow row.
+Policy/verification authority state held in another Store is not claimed to
+be atomic with this row until the handoff owned by Issue #74 exists.
 
 `begin_operation()` commits the intent, checkpoint marker, and first journal
 event together. `commit_effect()` commits the verified receipt, next
@@ -236,6 +236,43 @@ the operation, receipt, checkpoint marker, and event in one read snapshot.
 Intent, unknown, absent, or mismatched evidence returns `RecoveryRequired` and
 does not authorize retry, status query, release, acknowledgement, cleanup, or
 backend fallback. P0 makes no external-effect exactly-once claim.
+
+### Private durable effect adapter (Issue #73)
+
+The private `workflow_effect_adapter.py` seam consumes only the typed Store
+port; it does not access SQLite rows, connections, or locks. It preserves the
+public `TeamRuntime`/`BackendPort` three-method surface and CLI/MCP envelopes.
+The current public backend and Orca implementation fail before an effect with
+`DurabilityUnsupported`, because they lack role-effect metadata, consumer
+generation, exact Delivery/read lookup, and provider proof. Current Orca STOP
+also lacks the ordered composite-stop proof and pure lookup required by the
+private contract. This adapter is not wired into CLI or MCP.
+Durable `StartSpec.attach=True` is rejected because its focus stage lacks the
+same composite proof.
+
+The common backend capability is effect-key idempotency or pure lookup,
+attempt/fence enforcement, and consumer generation. Capability is action
+scoped after that common gate: WAIT requires exact Delivery lookup, READ exact
+read lookup, and STOP ordered composite-stop proof plus pure lookup. The
+adapter executes `load -> authority -> begin -> backend once -> validate
+post-effect authority/observation -> Store receipt -> projector -> commit`.
+START/PROMPT bind effect-allocated post-effect identities, including
+generation. Receipt and observation fields are snapshotted and rechecked;
+raw prompt/reply/output is bounded to 1 MiB of UTF-8 and durable state keeps
+only digests and opaque references. This prevents raw-body persistence but
+does not conceal equality for low-entropy inputs.
+
+The adapter's origin-only `DurableDeliveryLookup` is a committed WAIT origin;
+it does not reconstruct later ACK/reply lifecycle. `DurableReadLookup` obtains
+read output only through the backend's digest-bound pure lookup. Only a
+committed effect is replayed with zero backend execute/projector calls;
+WAIT/READ/RELEASE/STOP may make one digest-bound pure backend lookup. `INTENT`,
+`UNKNOWN_EFFECT`, response loss, and restart ambiguity remain
+`RecoveryRequired`; explicit stable-ID recovery belongs to #32. Deterministic
+fake authority/backend/projector tests with the real Store prove adapter
+validation and call counts, not provider-side exactly-once or a #31 cross-store
+atomic join. WorkflowEngine reducer wiring remains #33, and policy/verification
+handoff remains #74.
 
 ### Backup, inspect, restore, and Doctor boundary
 

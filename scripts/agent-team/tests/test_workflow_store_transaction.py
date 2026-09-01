@@ -259,6 +259,7 @@ def _receipt(
         receipt_id=receipt_id,
         run_id=run_id,
         main_terminal_id=main_terminal_id,
+        consumer_generation=0,
         task_id=None if assignment_value is None else assignment_value.task_id,
         dispatch_id=(
             None if assignment_value is None else assignment_value.dispatch_id
@@ -663,6 +664,7 @@ def _wait_receipt(
         receipt_id="receipt-wait",
         run_id=current.run.run_id,
         main_terminal_id=current.run.main_terminal_id,
+        consumer_generation=current.run.consumer_generation,
         task_id=assignment.task_id,
         dispatch_id=assignment.dispatch_id,
         attempt=assignment.attempt,
@@ -1741,6 +1743,7 @@ class WorkflowStoreTransactionTests(unittest.TestCase):
                             receipt_id="receipt-wait-timeout",
                             run_id=current.run.run_id,
                             main_terminal_id=current.run.main_terminal_id,
+                            consumer_generation=current.run.consumer_generation,
                             task_id=assignment.task_id,
                             dispatch_id=assignment.dispatch_id,
                             attempt=assignment.attempt,

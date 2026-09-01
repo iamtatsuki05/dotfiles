@@ -169,8 +169,8 @@ task-policy sequenceはauthorityが発行したexpected/next pairであり、P0�
 task-policy reference全体を保持する。それ以外のeffect actionではnext task sequenceを
 nullに固定し、既存task sequenceを進められるのはauthority transitionだけである。
 checkpoint内のtask reference/digest/sequence projectionはworkflow rowとatomicに更新する。
-別Storeのfull stateまでatomicに更新したとは、Issue #74のprivate adapterができるまで
-主張しない。
+別Storeにあるpolicy/verification authority stateまでこのrowとatomicに更新したとは、Issue #74が
+担当するhandoffができるまで主張しない。
 
 `begin_operation()`はintent、checkpoint marker、最初のjournal eventを一緒にcommitする。
 `commit_effect()`はverified receipt、next checkpoint、operation status、2つ目のjournal
@@ -212,6 +212,36 @@ idempotentにする。committed operationをdowngradeせず、存在しないope
 検証する。intent、unknown、欠落、不一致のevidenceは`RecoveryRequired`となり、retry、
 status query、release、acknowledgement、cleanup、backend fallbackの許可にはならない。
 P0は外部effectのexactly-onceを主張しない。
+
+### privateなdurable effect adapter（Issue #73）
+
+privateな`workflow_effect_adapter.py` seamはtyped Store portだけを使い、SQLiteのrow、
+connection、lockへ直接アクセスしません。publicな`TeamRuntime`/`BackendPort`の3 methodと
+CLI/MCP envelopeを維持します。現行のpublic backendとOrca implementationは、role effectの
+metadata、consumer generation、exactなDelivery/read lookup、provider proofが不足するため、
+effect前に`DurabilityUnsupported`でfail-fastする。現行OrcaのSTOPも、private contractが
+要求する順序付きcomposite-stop proofとpure lookupを持たない。adapterはCLI/MCPへ配線して
+いない。durableな`StartSpec.attach=True`も、focus stageのcomposite proofがないため拒否する。
+
+backendの共通capabilityは、effect-key idempotencyまたはpure lookup、attempt/fence
+enforcement、consumer generationである。その後、actionごとにcapabilityを要求する。WAITは
+exact Delivery lookup、READはexact read lookup、STOPは順序付きcomposite-stop proofとpure
+lookupが必要となる。adapterは、`load → authority → begin → backendを1回だけ呼ぶ → post-effect
+authority/observationを検証 → Store receipt → projector → commit`の順で実行する。
+START/PROMPTはgenerationを含むeffect割当てのpost-effect identityを束縛する。receiptと
+observationのfieldはsnapshotを取得して再検証する。prompt/reply/outputのraw bodyは1 MiBの
+UTF-8までに制限し、durable stateにはdigestとopaque referenceだけを保存する。raw body保存は
+防ぐが、低entropy inputの同値性までは隠さない。
+
+adapterのorigin-only `DurableDeliveryLookup`はcommittedなWAIT originだけを表し、後続の
+ACK/reply lifecycleを再構成しない。`DurableReadLookup`のread outputはdigestに束縛された
+backendのpure lookupだけから取得する。committed effectだけをreplayし、backend executeと
+projectorは0回に保つ。WAIT/READ/RELEASE/STOPでは、digestに束縛したpure backend lookupを
+1回実行する場合がある。`INTENT`、`UNKNOWN_EFFECT`、response loss、restart時の曖昧さは`RecoveryRequired`
+として残し、explicit stable-ID recoveryは#32が担当する。実Storeとdeterministic fake
+authority/backend/projectorによるtestが証明するのはadapterの検証とcall countであり、provider側
+exactly-onceや#31のcross-store atomic joinではない。WorkflowEngine reducerの配線は#33、
+policy/verification handoffは#74が担当する。
 
 ### backup、inspect、restore、Doctorの境界
 

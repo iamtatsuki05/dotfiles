@@ -228,6 +228,36 @@ agent-team status \
 - The P0 Store does not wire the WorkflowEngine reducer or external effect
   adapters, and it makes no external-effect exactly-once claim.
 
+Issue #73 adds a private `workflow_effect_adapter.py` seam between that Store
+and an injected durable effect backend. It preserves the public `TeamRuntime`
+and `BackendPort` `start`/`request`/`stop` methods, existing request/result
+types, and CLI/MCP envelopes. The current public `BackendPort` and Orca backend
+fail fast with `DurabilityUnsupported` before any effect: they do not provide
+the required role-effect metadata, generation, exact Delivery/read lookup, or
+provider proof, and current Orca STOP has no composite-stop proof. The adapter
+is not wired into the CLI or MCP path. Durable `StartSpec.attach=True` is also
+rejected because its focus stage has no composite proof.
+
+The private path is `load → authority → begin → backend once → validate the
+post-effect authority and observation → Store receipt → projector → commit`.
+Common capability requires effect-key idempotency or pure lookup, attempt/fence
+enforcement, and consumer generation. WAIT additionally requires exact
+Delivery lookup, READ exact read lookup, and STOP an ordered composite proof
+and pure lookup. START/PROMPT bind effect-allocated post-effect identities,
+including generation; receipts and observations retain an immutable field
+snapshot. Lookup returns only committed, digest-verified evidence: a
+`DurableDeliveryLookup` is the WAIT origin and does not reconstruct ACK/reply
+lifecycle, while `DurableReadLookup` obtains output through the backend's pure
+lookup. A committed effect replays with zero backend execute and projector
+calls; WAIT/READ/RELEASE/STOP may perform one digest-bound pure lookup.
+`INTENT`, `UNKNOWN_EFFECT`, response loss, and restart ambiguity remain
+`RecoveryRequired` for explicit #32 recovery. Raw bodies are bounded to 1 MiB
+of UTF-8 and contribute only digests; this prevents raw persistence but does
+not hide equality for low-entropy input. The deterministic fake authority,
+backend, projector, and real Store prove this adapter contract only. They do
+not prove provider-side exactly-once or a #31 cross-store atomic join. Workflow
+reducer wiring remains #33, and policy/verification handoff remains #74.
+
 See [Architecture](docs/architecture.md) for the complete boundary and failure
 flow.
 

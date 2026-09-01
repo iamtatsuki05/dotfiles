@@ -40,6 +40,7 @@ HerdrやZellijは外側のterminalとして使えます。ただし、agent-team
 | `agent_team/runtime.py` | identity、private file、state v3、command、environment、cleanupの安全helperを共有する。state writeは、callerがreservationを保持していない限り共有lockを取得する。 |
 | `agent_team/registry.py` | 認識済みharnessと検証済みrole profileを記録し、別providerへのfallthroughを行わない。 |
 | `agent_team/adapters.py` | provider非依存のbackground seam、出力制限付きprocess runner、exact identity検証、Copilot/OpenCode read-only adapterを提供する。Orca lifecycleの権限は持たない。 |
+| `agent_team/workflow_effect_adapter.py` | Workflow Storeと注入されたbackendの間のprivateなdurable-effect seamを提供する。public runtime portを広げず、CLI/MCPにも配線しない。 |
 | `agent_team/defaults/` | user configが選ばれていない場合に使うbundled configと日本語prompt。 |
 | `prompts/*.md` | 日本語のrole contractを定義する。 |
 | Orca | Run、Task、Dispatch、terminalのlifecycleを保存・管理する。 |
@@ -50,6 +51,42 @@ OpenCodeのprovider adapterも実装済みですが、profile固有の境界とl
 background profileはTUI terminalやACP sessionではなく、各turnで新しいread snapshotに固定provider commandを
 実行します。snapshotからは`.git`、symlink、special file、gitignore対象、secret-like path、provider設定、
 Agent instructionを除外します。
+
+## durable effectはprivate adapter seamの内側に置く
+
+Issue #73では、v3 Workflow Storeと注入されたdurable effect backendの間に
+`workflow_effect_adapter.py`を置きます。publicな`TeamRuntime`と`BackendPort`は、
+`start`、`request`、`stop`の3 method、既存のrequest/result type、CLI/MCP envelopeを
+維持します。adapterはCLI/MCP pathへ配線しません。現行のpublic `BackendPort`とOrca
+backendは、role effectのmetadata、consumer generation、exactなDelivery/read lookup、
+provider proofを提供できないため、effect前に`DurabilityUnsupported`で拒否します。
+現行OrcaのSTOPも、順序付きcomposite-stop proofとpure lookupを作れないためunsupportedです。
+durableな`StartSpec.attach=True`も、focus stageのcomposite proofがないため拒否します。
+
+privateな実行順序は次のとおりです。
+
+```text
+load -> authority -> begin -> backendを1回だけ呼ぶ -> post-effect authority/observationを検証
+     -> Store receipt -> projector -> commit
+```
+
+backendの共通capabilityは、effect-key idempotencyまたはpure lookup、attempt/fence
+enforcement、consumer generationです。actionごとに追加のproofを要求し、WAITはexact
+Delivery lookup、READはexact read lookup、STOPはcomposite-stop proofとpure lookupを必要と
+します。START/PROMPTはgenerationを含むeffect割当てのpost-effect identityを束縛します。
+receiptとobservationのfieldはsnapshotを取得してprojector境界の前後で検証します。
+prompt/reply/outputのraw bodyは1 MiBのUTF-8までに制限し、durableにはdigestとopaque reference
+だけを保存します。raw保存は防ぎますが、低entropy inputの同値性までは隠しません。
+
+replayできるのはcommitted effectだけです。backend executeとprojectorは0回に保ち、
+WAIT/READ/RELEASE/STOPではdigestに束縛したpure backend lookupを1回実行する場合があります。`INTENT`、
+`UNKNOWN_EFFECT`、response loss、restart時の曖昧な状態は、#32が担当するexplicit stable-ID
+recoveryのため`RecoveryRequired`として残ります。origin-onlyの`DurableDeliveryLookup`は
+DeliveryのACK/reply lifecycleを再構成せず、`DurableReadLookup`のread outputはbackendの
+pure lookupで取得します。実Storeとdeterministic fake authority/backend/projectorによるtestが
+示すのはadapterのcall countと検証境界であり、provider側exactly-onceや#31のcross-store atomic
+joinではありません。WorkflowEngine reducerの配線は#33、review/verification policyのhandoffは#74が
+担当です。
 
 ## canonical Mainはdirect Claudeで、ユーザーと対話するroleは1つだけ
 

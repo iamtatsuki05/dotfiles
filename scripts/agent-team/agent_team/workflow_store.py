@@ -1365,6 +1365,39 @@ class WorkflowCommit:
             raise TypeError("workflow commit receipt is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowEffectSnapshot:
+    """Validated historical projection for one committed external effect."""
+
+    operation_id: str
+    receipt: DurableReceipt
+    checkpoint: WorkflowCheckpointV4
+    event_digest: str
+
+    def __post_init__(self) -> None:
+        _require_identifier(self.operation_id, "effect snapshot operation_id")
+        if type(self.receipt) is not DurableReceipt:
+            raise TypeError("effect snapshot receipt is invalid")
+        if type(self.checkpoint) is not WorkflowCheckpointV4:
+            raise TypeError("effect snapshot checkpoint is invalid")
+        _require_digest(self.event_digest, "effect snapshot event_digest")
+        last = self.checkpoint.last_operation
+        if (
+            self.receipt.operation_id != self.operation_id
+            or last is None
+            or last.operation_id != self.operation_id
+            or last.effect_key != self.receipt.effect_key
+            or last.action is not self.receipt.action
+            or last.request_digest != self.receipt.request_digest
+            or last.status is not OperationStatus.COMMITTED
+            or last.receipt_id != self.receipt.receipt_id
+            or last.receipt_digest != durable_receipt_digest(self.receipt)
+        ):
+            raise OperationIdentityConflict(
+                "effect snapshot operation projection differs"
+            )
+
+
 WorkflowCheckpointObservation: TypeAlias = WorkflowCheckpointV4 | WorkflowRootSeed
 
 
@@ -2530,6 +2563,7 @@ __all__ = [
     "WorkflowCheckpointDraft",
     "WorkflowCheckpointObservation",
     "WorkflowCheckpointV4",
+    "WorkflowEffectSnapshot",
     "WorkflowOperationId",
     "WorkflowRootKey",
     "WorkflowRootSeed",

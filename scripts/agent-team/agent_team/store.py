@@ -3150,13 +3150,17 @@ def _validate_workflow_rows_for_connection(
                 (receipt.terminal_id, operation["terminal_id"]),
                 (receipt.delivery_id, operation["delivery_id"]),
                 (receipt.message_id, operation["message_id"]),
-                (receipt.consumer_generation, operation["consumer_generation"]),
                 (receipt.owner, operation["owner"]),
                 (receipt.lease_epoch, operation["lease_epoch"]),
                 (receipt.fencing_token, operation["fencing_token"]),
             ):
                 if receipt_value != operation_value:
                     raise ValueError("receipt operation identity differs")
+            if (
+                receipt.action is not _workflow.OperationAction.START
+                and receipt.consumer_generation != operation["consumer_generation"]
+            ):
+                raise ValueError("receipt operation generation differs")
             if _workflow.durable_receipt_digest(receipt) != operation["receipt_digest"]:
                 raise ValueError("receipt digest differs")
             if receipt.receipt_id != operation["receipt_id"]:
@@ -4449,7 +4453,11 @@ class CoordinationStore:
             _workflow.OperationHandle, _workflow.OperationIntent
         ] = {}
         self._workflow_receipts: dict[
-            _workflow.DurableReceipt, _workflow.OperationHandle
+            _workflow.DurableReceipt,
+            tuple[
+                _workflow.OperationHandle,
+                tuple[tuple[str, object], ...],
+            ],
         ] = {}
         fresh_bootstrap_started = False
         try:
@@ -8458,6 +8466,12 @@ class CoordinationStore:
             "fencing_token": receipt.fencing_token,
         }
 
+    @staticmethod
+    def _workflow_receipt_snapshot(
+        receipt: _workflow.DurableReceipt,
+    ) -> tuple[tuple[str, object], ...]:
+        return tuple(CoordinationStore._workflow_receipt_values(receipt).items())
+
     def _workflow_receipt_from_row(
         self,
         row: sqlite3.Row,
@@ -8583,6 +8597,7 @@ class CoordinationStore:
             )
         if (
             intent is not None
+            and intent.action is not _workflow.OperationAction.START
             and receipt.consumer_generation != intent.consumer_generation
         ):
             raise WorkflowOperationIdentityError("workflow receipt generation differs")
@@ -8786,6 +8801,143 @@ class CoordinationStore:
             receipt=receipt,
             checkpoint=checkpoint,
         )
+
+    def _workflow_effect_snapshot_tx(
+        self,
+        connection: sqlite3.Connection,
+        operation_id: str,
+    ) -> _workflow.WorkflowEffectSnapshot:
+        """Return the validated terminal projection for one committed effect."""
+
+        snapshot = self._workflow_operation_snapshot_tx(connection, operation_id)
+        if snapshot is None:
+            raise WorkflowRecoveryRequiredError(
+                "workflow effect is not durably present"
+            )
+        operation_row, _, receipt, lookup = snapshot
+        if lookup.status is not _workflow.OperationStatus.COMMITTED:
+            raise WorkflowRecoveryRequiredError(
+                "workflow effect requires recovery",
+                observation=lookup,
+            )
+        if receipt is None:
+            raise StoreIntegrityError("committed workflow effect lacks a receipt")
+        try:
+            self._workflow_validate_receipt_identity(receipt, operation_row)
+        except WorkflowOperationIdentityError as exc:
+            raise StoreIntegrityError(
+                "committed workflow receipt identity differs"
+            ) from exc
+        event_rows = connection.execute(
+            "SELECT * FROM workflow_events WHERE operation_id = ? "
+            "ORDER BY workflow_sequence",
+            (operation_id,),
+        ).fetchall()
+        if len(event_rows) != 2:
+            raise StoreIntegrityError("committed workflow effect history differs")
+        event = event_rows[-1]
+        event_digest = self._workflow_validate_event_row(event)
+        decoded = self._workflow_decode_event_checkpoint(event)
+        if type(decoded) is not _workflow.WorkflowCheckpointV4:
+            raise StoreIntegrityError(
+                "committed workflow effect checkpoint is incomplete"
+            )
+        checkpoint = self._workflow_issue_checkpoint(
+            _workflow.checkpoint_to_draft(decoded),
+            updated_ns=decoded.updated_ns,
+        )
+        self._workflow_validate_root(checkpoint.root)
+        last = checkpoint.last_operation
+        assignment = checkpoint.active_assignment
+        receipt_assignment = (
+            receipt.task_id,
+            receipt.dispatch_id,
+            receipt.attempt,
+            receipt.terminal_id,
+        )
+        checkpoint_assignment = (
+            None
+            if assignment is None
+            else (
+                assignment.task_id,
+                assignment.dispatch_id,
+                assignment.attempt,
+                assignment.terminal_id,
+            )
+        )
+        action = receipt.action
+        if (
+            action
+            in {
+                _workflow.OperationAction.PROMPT,
+                _workflow.OperationAction.WAIT,
+                _workflow.OperationAction.REPLY,
+                _workflow.OperationAction.READ,
+                _workflow.OperationAction.RELEASE,
+            }
+            and checkpoint_assignment != receipt_assignment
+        ):
+            raise StoreIntegrityError("committed workflow effect assignment differs")
+        if (
+            action
+            in {
+                _workflow.OperationAction.START,
+                _workflow.OperationAction.STOP,
+            }
+            and assignment is not None
+        ):
+            raise StoreIntegrityError(
+                "committed workflow effect assignment is unexpected"
+            )
+        if (
+            action is _workflow.OperationAction.ACK
+            and assignment is not None
+            and checkpoint_assignment != receipt_assignment
+        ):
+            raise StoreIntegrityError(
+                "committed workflow acknowledgement assignment differs"
+            )
+        if action in {
+            _workflow.OperationAction.REPLY,
+            _workflow.OperationAction.READ,
+            _workflow.OperationAction.RELEASE,
+        }:
+            pending = checkpoint.pending_delivery
+            if (
+                pending is None
+                or pending.delivery_id != receipt.delivery_id
+                or pending.consumer_generation != receipt.consumer_generation
+            ):
+                raise StoreIntegrityError("committed workflow effect Delivery differs")
+        if (
+            event["root_key"] != operation_row["root_key"]
+            or event["operation_id"] != operation_row["operation_id"]
+            or event["kind"] != operation_row["action"]
+            or event["request_digest"] != operation_row["request_digest"]
+            or event["receipt_id"] != receipt.receipt_id
+            or event["workflow_sequence"] != operation_row["intent_sequence"] + 1
+            or event["checkpoint_digest"] != checkpoint.checkpoint_digest
+            or receipt.root_key != checkpoint.root.root_key
+            or receipt.run_id != checkpoint.run.run_id
+            or receipt.main_terminal_id != checkpoint.run.main_terminal_id
+            or receipt.consumer_generation != checkpoint.run.consumer_generation
+            or last is None
+            or last.expected_workflow_sequence
+            != operation_row["expected_workflow_sequence"]
+            or last.expected_task_sequence != operation_row["expected_task_sequence"]
+        ):
+            raise StoreIntegrityError("committed workflow effect projection differs")
+        try:
+            return _workflow.WorkflowEffectSnapshot(
+                operation_id=operation_id,
+                receipt=receipt,
+                checkpoint=checkpoint,
+                event_digest=event_digest,
+            )
+        except (TypeError, ValueError, _workflow.WorkflowStoreError) as exc:
+            raise StoreIntegrityError(
+                "committed workflow effect snapshot is invalid"
+            ) from exc
 
     def _workflow_require_intent(
         self,
@@ -9047,6 +9199,7 @@ class CoordinationStore:
         receipt_id: str,
         run_id: str,
         main_terminal_id: str,
+        consumer_generation: int,
         task_id: str | None,
         dispatch_id: str | None,
         attempt: int | None,
@@ -9079,7 +9232,7 @@ class CoordinationStore:
                 terminal_id=terminal_id,
                 delivery_id=delivery_id,
                 message_id=message_id,
-                consumer_generation=intent.consumer_generation,
+                consumer_generation=consumer_generation,
                 owner=intent.owner,
                 lease_epoch=intent.lease_epoch,
                 fencing_token=intent.fencing_token,
@@ -9093,7 +9246,10 @@ class CoordinationStore:
             raise WorkflowOperationIdentityError(
                 "workflow receipt values are invalid"
             ) from exc
-        self._workflow_receipts[receipt] = operation
+        self._workflow_receipts[receipt] = (
+            operation,
+            self._workflow_receipt_snapshot(receipt),
+        )
         return receipt
 
     def begin_operation(
@@ -9756,9 +9912,14 @@ class CoordinationStore:
                 receipt,
                 issuer=self._workflow_issuer,
             )
-            if self._workflow_receipts.get(receipt) is not operation:
+            registered = self._workflow_receipts.get(receipt)
+            if (
+                registered is None
+                or registered[0] is not operation
+                or registered[1] != self._workflow_receipt_snapshot(receipt)
+            ):
                 raise _workflow.OperationIdentityConflict(
-                    "workflow durable receipt is not registered"
+                    "workflow durable receipt registration differs"
                 )
             next_checkpoint.__post_init__()
         except _workflow.OperationIdentityConflict as exc:
@@ -9956,7 +10117,10 @@ class CoordinationStore:
                     "workflow effect commit result is unavailable"
                 )
             if isinstance(result, _workflow.WorkflowCommit):
-                self._workflow_receipts[receipt] = operation
+                self._workflow_receipts[receipt] = (
+                    operation,
+                    self._workflow_receipt_snapshot(receipt),
+                )
             return result
         except WorkflowRecoveryRequiredError:
             raise
@@ -10420,6 +10584,120 @@ class CoordinationStore:
         ) as exc:
             raise StoreIntegrityError("SQLite workflow lookup is invalid") from exc
         raise StoreIntegrityError("SQLite workflow lookup failed")
+
+    def _lookup_workflow_effect(
+        self,
+        operation_id: _workflow.WorkflowOperationId,
+    ) -> _workflow.WorkflowEffectSnapshot:
+        operation_key = _require_opaque_identifier(
+            operation_id, "workflow operation_id"
+        )
+        try:
+            with self._workflow_read_snapshot() as connection:
+                return self._workflow_effect_snapshot_tx(connection, operation_key)
+        except (
+            WorkflowRecoveryRequiredError,
+            WorkflowOperationIdentityError,
+            WorkflowStateConflictError,
+        ):
+            raise
+        except StoreError:
+            raise
+        except sqlite3.OperationalError as exc:
+            self._raise_read_error(exc)
+        except sqlite3.DatabaseError as exc:
+            raise StoreIntegrityError("SQLite workflow effect lookup failed") from exc
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _workflow.WorkflowStoreError,
+        ) as exc:
+            raise StoreIntegrityError(
+                "SQLite workflow effect lookup is invalid"
+            ) from exc
+        raise StoreIntegrityError("SQLite workflow effect lookup failed")
+
+    def _lookup_workflow_delivery_effect(
+        self,
+        root_key: _workflow.WorkflowRootKey,
+        delivery_id: str,
+        consumer_generation: int,
+    ) -> _workflow.WorkflowEffectSnapshot:
+        root = _require_opaque_identifier(root_key, "workflow root_key")
+        delivery = _require_opaque_identifier(delivery_id, "workflow delivery_id")
+        generation = _workflow._require_int(
+            consumer_generation,
+            "workflow consumer_generation",
+        )
+        try:
+            with self._workflow_read_snapshot() as connection:
+                rows = connection.execute(
+                    "SELECT o.operation_id FROM workflow_operations AS o "
+                    "JOIN workflow_receipts AS r "
+                    "ON r.operation_id = o.operation_id "
+                    "WHERE o.root_key = ? AND o.action = 'wait' "
+                    "AND o.status = 'COMMITTED' AND r.delivery_id = ? "
+                    "AND r.consumer_generation = ? ORDER BY o.operation_id",
+                    (root, delivery, generation),
+                ).fetchall()
+                if not rows:
+                    raise WorkflowRecoveryRequiredError(
+                        "workflow Delivery effect is not durably present"
+                    )
+                if len(rows) != 1:
+                    raise WorkflowOperationIdentityError(
+                        "workflow Delivery effect identity is ambiguous"
+                    )
+                snapshot = self._workflow_effect_snapshot_tx(
+                    connection,
+                    rows[0]["operation_id"],
+                )
+                receipt = snapshot.receipt
+                pending = snapshot.checkpoint.pending_delivery
+                if (
+                    receipt.action is not _workflow.OperationAction.WAIT
+                    or receipt.root_key != root
+                    or receipt.delivery_id != delivery
+                    or receipt.consumer_generation != generation
+                    or receipt.result_kind != "delivery"
+                    or pending is None
+                    or pending.delivery_id != delivery
+                    or pending.consumer_generation != generation
+                    or pending.delivery_digest != receipt.result_digest
+                    or pending.ack_status is not _workflow.AckStatus.PENDING
+                    or pending.ack_operation_id is not None
+                    or (
+                        receipt.message_id is not None
+                        and receipt.message_id not in pending.ordered_message_ids
+                    )
+                ):
+                    raise StoreIntegrityError(
+                        "workflow Delivery effect projection differs"
+                    )
+                return snapshot
+        except (
+            WorkflowRecoveryRequiredError,
+            WorkflowOperationIdentityError,
+            WorkflowStateConflictError,
+        ):
+            raise
+        except StoreError:
+            raise
+        except sqlite3.OperationalError as exc:
+            self._raise_read_error(exc)
+        except sqlite3.DatabaseError as exc:
+            raise StoreIntegrityError("SQLite workflow Delivery lookup failed") from exc
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _workflow.WorkflowStoreError,
+        ) as exc:
+            raise StoreIntegrityError(
+                "SQLite workflow Delivery lookup is invalid"
+            ) from exc
+        raise StoreIntegrityError("SQLite workflow Delivery lookup failed")
 
     def _timestamp(self, value: int | None) -> int:
         timestamp = self._clock() if value is None else value

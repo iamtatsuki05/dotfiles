@@ -212,6 +212,32 @@ agent-team status \
 - P0 StoreはWorkflowEngine reducerや外部effect adapterを配線せず、外部effectの
   exactly-onceも主張しません。
 
+Issue #73では、このStoreと注入されたdurable effect backendの間にprivateな
+`workflow_effect_adapter.py` seamを追加します。publicな`TeamRuntime`と`BackendPort`の
+`start`/`request`/`stop` 3 method、既存のrequest/result type、CLI/MCP envelopeは変えません。
+現行のpublic `BackendPort`とOrca backendは、role effectのmetadata、generation、exactな
+Delivery/read lookup、provider proofを持たないため、effect実行前に
+`DurabilityUnsupported`でfail-fastする。現行OrcaのSTOPもcomposite-stop proofを持たず、
+adapterはCLIやMCPへまだ配線していない。durableな`StartSpec.attach=True`も、focus stageの
+composite proofがないため拒否する。
+
+private pathは、`load → authority → begin → backendを1回だけ呼ぶ → post-effect authorityと
+observationを検証 → Store receipt → projector → commit`です。共通capabilityには、
+effect-key idempotencyまたはpure lookup、attempt/fence enforcement、consumer generationを
+要求する仕様です。WAITにはexact Delivery lookup、READにはexact read lookup、STOPには順序付き
+composite proofとpure lookupをaction-specificに要求します。START/PROMPTはgenerationを含む
+effect割当てのpost-effect identityを束縛し、receiptとobservationはimmutableなfield snapshotを
+保持する設計です。lookupが返すのはcommittedかつdigest検証済みのevidenceだけです。
+`DurableDeliveryLookup`はWAIT originだけを扱い、ACK/reply lifecycleを再構成しません。
+`DurableReadLookup`のoutputはbackendのpure lookupで取得します。committed effectのreplayでは
+backend executeとprojectorは0回です。WAIT/READ/RELEASE/STOPでは、digestに束縛したpure
+lookupを1回実行する場合があります。`INTENT`、`UNKNOWN_EFFECT`、response loss、restart時の曖昧さは
+明示的な#32 recoveryのため`RecoveryRequired`として残ります。raw bodyは1 MiBのUTF-8までに
+制限し、保存せずdigestだけにしますが、低entropy inputの同値性までは隠しません。
+deterministic fake authority/backend/projectorと実Storeが証明するのはadapter contractだけで、
+provider側のexactly-onceや#31のcross-store atomic joinは証明しません。WorkflowEngineの
+reducer wiringは#33、policy/verification handoffは#74の担当です。
+
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 
 ## よくある失敗を調べる
