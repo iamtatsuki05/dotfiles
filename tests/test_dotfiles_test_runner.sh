@@ -5,9 +5,7 @@ set -euo pipefail
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly TEST_RUNNER="$REPO_ROOT/tests/run.sh"
-readonly LEGACY_TEST_RUNNER="$REPO_ROOT/scripts/test_dotfiles.sh"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
-readonly KIMI_WEBBRIDGE_SETUP_SCRIPT="$REPO_ROOT/scripts/setup_kimi_webbridge.sh"
 readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
@@ -45,6 +43,7 @@ create_runner_fixture() {
     print -r -- '  def test_fixture(self):'
     print -r -- '    pass'
   } > "$repo/scripts/agent-team/tests/test_project.py"
+  print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
   write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"
   write_fixture_zsh_script "$repo/tests/test_agent_skill_upstreams.sh" "unit:skill-upstreams"
@@ -64,7 +63,6 @@ test_test_runner_exists_and_lists_checks() {
   output="$(mktemp)"
 
   assert_file "$TEST_RUNNER"
-  assert_file "$LEGACY_TEST_RUNNER"
   assert_contains "$TEST_RUNNER" "run_syntax_checks"
   assert_contains "$TEST_RUNNER" "run_unit_tests"
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
@@ -74,13 +72,13 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "tests/test_agent_team_mcp.py"
   assert_contains "$TEST_RUNNER" "scripts/agent-team/tests"
   assert_contains "$TEST_RUNNER" 'PYTHONPATH="$REPO_ROOT/scripts/agent-team'
+  assert_contains "$TEST_RUNNER" "tests/test_agent_run_compact.py"
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_support_matrix.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_skill_upstreams.sh"
   assert_contains "$TEST_RUNNER" "tests/test_claude_account.sh"
   assert_contains "$TEST_RUNNER" "tests/test_hermes_agent_setup.sh"
   assert_contains "$TEST_RUNNER" "tests/test_japanese_prose_lint.sh"
-  assert_contains "$LEGACY_TEST_RUNNER" "tests/run.sh"
   assert_not_contains "$TEST_RUNNER" "tests/test_setup_config.sh"
 
   "$TEST_ZSH_BIN" "$TEST_RUNNER" --list > "$output"
@@ -88,10 +86,6 @@ test_test_runner_exists_and_lists_checks() {
   assert_output_contains "$output" "unit"
   assert_output_contains "$output" "source-state"
   assert_output_contains "$output" "chezmoi-render"
-  assert_output_contains "$output" "nix-static"
-
-  "$TEST_ZSH_BIN" "$LEGACY_TEST_RUNNER" --list > "$output"
-  assert_output_contains "$output" "syntax"
   assert_output_contains "$output" "nix-static"
 
   rm -f "$output"
@@ -155,6 +149,7 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:html-preview-review"
   assert_output_contains "$output" "unit:agent-team"
   assert_output_contains "$output" "unit:agent-team-mcp"
+  assert_output_contains "$output" "unit:agent-run-compact"
   assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"
   assert_output_contains "$output" "unit:claude-account"
@@ -175,12 +170,6 @@ test_mise_task_runs_test_runner_from_repo_root() {
   assert_contains "$MISE_CONFIG" 'dir = "__DOTFILES_REPO_ROOT__"'
   assert_contains "$MISE_CONFIG" "[tasks.agent-sync]"
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/setup_agent_files.sh"'
-  assert_contains "$MISE_CONFIG" "[tasks.kimi-webbridge-setup]"
-  assert_contains "$MISE_CONFIG" 'run = "zsh scripts/setup_kimi_webbridge.sh"'
-  assert_contains "$MISE_CONFIG" 'description = "Kimi WebBridgeのlocal serviceとagent skillを設定"'
-  assert_file "$KIMI_WEBBRIDGE_SETUP_SCRIPT"
-  assert_contains "$KIMI_WEBBRIDGE_SETUP_SCRIPT" "https://cdn.kimi.com/webbridge"
-  assert_contains "$KIMI_WEBBRIDGE_SETUP_SCRIPT" "install-skill -y"
 }
 
 test_mise_tasks_include_nix_migration_flow() {

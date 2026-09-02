@@ -121,6 +121,7 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
+| `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -144,7 +145,7 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 | `apps/grok/config.toml` | `~/.grok/config.toml` |
 
-`skills/` は各対応 agent の home に symlink します。Antigravity CLI では `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills` に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/antigravity-cli/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
+`skills/` は各対応 agent の home に symlink します。Antigravity CLI では `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills` に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。Hermes だけは例外で、`~/.hermes/skills` は Hermes が所有する実ディレクトリのまま残し、bundled skill の同期、`.bundled_manifest`、hub、curator の書き込みをそこに集めます。共有 tree は `~/.hermes/dotfiles-skills` に symlink し、managed `config.yaml` の `skills.external_dirs` から読み込みます。Hermes はこの external tree を外部所有として扱いますが、ユーザー指示による `skill_manage` の編集は repository に書き込まれます。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/antigravity-cli/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
 
 Hermes では `apps/hermes-agent/agent-hooks/` のファイルも `~/.hermes/agent-hooks/` に symlink します。
 

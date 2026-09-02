@@ -48,6 +48,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/pets"
 
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
+  cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   cp -R "$REPO_ROOT/scripts/agent-team/." "$repo/scripts/agent-team/"
   cp "$REPO_ROOT/dotfiles/.agent/apps/agent-team/config.toml" "$repo/dotfiles/.agent/apps/agent-team/config.toml"
@@ -66,6 +67,8 @@ create_agent_fixture_repo() {
   chmod +x \
     "$repo/scripts/setup_agent_files.sh" \
     "$repo/scripts/agent-team/agent-team" \
+    "$repo/scripts/agent-run-compact" \
+    "$repo/scripts/setup_agent_files.sh" \
     "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'
@@ -215,6 +218,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
+  assert_symlink_target "$home_dir/.local/bin/agent-run-compact" "$repo/scripts/agent-run-compact"
+  assert_not_exists "$home_dir/.local/bin/pytest"
+  assert_not_exists "$home_dir/.local/bin/npm"
   assert_symlink_target "$home_dir/.claude/settings.json" "$repo/dotfiles/.agent/apps/claude/settings.json"
   assert_not_exists "$repo/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
@@ -306,7 +312,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$xdg_config_home/opencode/opencode.json" '"mcp"'
   assert_contains "$xdg_config_home/opencode/opencode.json" '"permission"'
   assert_symlink_target "$home_dir/.hermes/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
-  assert_symlink_target "$home_dir/.hermes/skills" "$repo/dotfiles/.agent/skills"
+  [[ -d "$home_dir/.hermes/skills" && ! -L "$home_dir/.hermes/skills" ]] || fail "expected ~/.hermes/skills to be a real directory owned by Hermes"
+  assert_symlink_target "$home_dir/.hermes/dotfiles-skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.hermes/config.yaml" "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
@@ -380,6 +387,59 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.openclaw/.env" 'OPENCODE_API_KEY=opencode-test-key'
 
   rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_replaces_hermes_skill_symlink_with_local_directory() {
+  local repo
+  local home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.hermes"
+  ln -s "$repo/dotfiles/.agent/skills" "$home_dir/.hermes/skills"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null 2>&1
+
+  [[ -d "$home_dir/.hermes/skills" && ! -L "$home_dir/.hermes/skills" ]] || fail "expected the managed ~/.hermes/skills symlink to become a real directory"
+  assert_symlink_target "$home_dir/.hermes/dotfiles-skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.codex/skills" "$repo/dotfiles/.agent/skills"
+
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_fails_when_hermes_skill_symlink_points_at_a_foreign_target() {
+  local repo
+  local home_dir
+  local foreign_dir
+  local output
+  local exit_status
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  make_temp_dir
+  foreign_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.hermes"
+  ln -s "$foreign_dir" "$home_dir/.hermes/skills"
+
+  set +e
+  output="$(HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" 2>&1)"
+  exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected a foreign ~/.hermes/skills symlink to fail"
+  assert_contains_text "$output" "must be a real directory owned by Hermes"
+  [[ -L "$home_dir/.hermes/skills" && "$home_dir/.hermes/skills" -ef "$foreign_dir" ]] || fail "expected the foreign ~/.hermes/skills symlink to be left in place"
+  assert_not_exists "$home_dir/.hermes/dotfiles-skills"
+
+  rm -rf "$repo" "$home_dir" "$foreign_dir"
 }
 
 test_agent_sync_fails_when_required_claude_skill_link_conflicts() {
@@ -883,6 +943,8 @@ test_colab_mcp_is_absent_from_managed_agent_assets() {
 main() {
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_colab_mcp_is_absent_from_managed_agent_assets
+  test_agent_sync_replaces_hermes_skill_symlink_with_local_directory
+  test_agent_sync_fails_when_hermes_skill_symlink_points_at_a_foreign_target
   test_agent_sync_fails_when_required_claude_skill_link_conflicts
   test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts
   test_agent_sync_fails_when_agent_team_command_link_conflicts

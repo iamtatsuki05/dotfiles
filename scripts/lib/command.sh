@@ -10,8 +10,8 @@ dotfiles_print_raw_command_block() {
   local title="$1"
   local command_line="$2"
 
-  print -r -- "$title"
-  print -r -- "  $command_line"
+  printf '%s\n' "$title"
+  printf '  %s\n' "$command_line"
 }
 
 dotfiles_run_or_print() {
