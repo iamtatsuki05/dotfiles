@@ -125,9 +125,7 @@ class BackgroundContractTest(unittest.TestCase):
             state = state_fixture(root)
             state["workspace"] = str(workspace)
             events: list[str] = []
-            snapshot_root = Path(
-                tempfile.mkdtemp(prefix="agent-team-snapshot-")
-            )
+            snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
             snapshot = ReadSnapshot(snapshot_root, ())
             adapter_snapshot = AdapterSnapshot(
                 "github-copilot-direct-readonly-1.0.81",
@@ -149,14 +147,18 @@ class BackgroundContractTest(unittest.TestCase):
                 return "task_1"
 
             with (
-                mock.patch.object(mcp_server, "background_adapter", return_value=FakeAdapter()),
+                mock.patch.object(
+                    mcp_server, "background_adapter", return_value=FakeAdapter()
+                ),
                 mock.patch.object(
                     mcp_server,
                     "create_read_snapshot",
                     return_value=snapshot,
                 ) as snapshot_create,
                 mock.patch.object(mcp_server, "_create_task", side_effect=create_task),
-                mock.patch.object(mcp_server, "create_prompt_file", return_value=root / "prompt"),
+                mock.patch.object(
+                    mcp_server, "create_prompt_file", return_value=root / "prompt"
+                ),
                 mock.patch.object(mcp_server, "save_state"),
                 mock.patch.object(
                     mcp_server,
@@ -184,7 +186,9 @@ class BackgroundContractTest(unittest.TestCase):
             snapshot_create.assert_called_once_with(workspace, state_root=root)
             self.assertEqual(assignment["execution"], "background")
             self.assertEqual(assignment["adapter_id"], adapter_snapshot.adapter_id)
-            mcp_server.cleanup_background_resources(assignment, root / "state.json", role="planner")
+            mcp_server.cleanup_background_resources(
+                assignment, root / "state.json", role="planner"
+            )
 
     def test_background_runner_command_does_not_include_prompt_text(self) -> None:
         command = build_background_runner_command(
@@ -202,18 +206,16 @@ class BackgroundContractTest(unittest.TestCase):
         self.assertIn("_background-run planner", command)
         self.assertNotIn("user prompt", command)
 
-    def test_background_runner_executes_on_snapshot_and_sends_matching_done(self) -> None:
+    def test_background_runner_executes_on_snapshot_and_sends_matching_done(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "team"
             root.mkdir(mode=0o700)
             workspace = root / "workspace"
             workspace.mkdir()
-            private = Path(
-                tempfile.mkdtemp(prefix="agent-team-provider-")
-            )
-            snapshot = Path(
-                tempfile.mkdtemp(prefix="agent-team-snapshot-")
-            )
+            private = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
+            snapshot = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
             state = state_fixture(root)
             state["workspace"] = str(workspace)
             prompt = mcp_server.create_prompt_file(
@@ -268,11 +270,16 @@ class BackgroundContractTest(unittest.TestCase):
 
             from agent_team import cli
 
-            with mock.patch.object(cli, "background_adapter", return_value=FakeAdapter()), mock.patch.object(
-                cli,
-                "_send_worker_done",
-                side_effect=lambda state, assignment, *, outcome, body: done.append(
-                    (outcome, assignment, body)
+            with (
+                mock.patch.object(
+                    cli, "background_adapter", return_value=FakeAdapter()
+                ),
+                mock.patch.object(
+                    cli,
+                    "_send_worker_done",
+                    side_effect=lambda state, assignment, *, outcome, body: done.append(
+                        (outcome, assignment, body)
+                    ),
                 ),
             ):
                 exit_code = cli.background_run(

@@ -65,10 +65,9 @@ create_agent_fixture_repo() {
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
   chmod +x \
-    "$repo/scripts/setup_agent_files.sh" \
-    "$repo/scripts/agent-team/agent-team" \
     "$repo/scripts/agent-run-compact" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/agent-team/agent-team" \
     "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'

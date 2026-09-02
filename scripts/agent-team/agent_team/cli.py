@@ -336,7 +336,9 @@ def launcher_path() -> Path:
         candidate = Path(configured).expanduser().resolve()
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
-        raise ConfigError(f"configured agent-team launcher is not executable: {candidate}")
+        raise ConfigError(
+            f"configured agent-team launcher is not executable: {candidate}"
+        )
     source_launcher = Path(__file__).resolve().parents[1] / "agent-team"
     if source_launcher.is_file() and os.access(source_launcher, os.X_OK):
         return source_launcher
@@ -836,9 +838,7 @@ def run_acpx(
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(
-            input=input_text, timeout=timeout_seconds
-        )
+        stdout, stderr = process.communicate(input=input_text, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as timeout_error:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -900,9 +900,9 @@ def _acp_assignment(
     launch_nonce: str,
 ) -> tuple[dict[str, object], dict[str, object]]:
     state_state_path = state.get("state_path")
-    if not isinstance(state_state_path, str) or state_path.resolve(strict=False) != Path(
-        state_state_path
-    ).resolve(strict=False):
+    if not isinstance(state_state_path, str) or state_path.resolve(
+        strict=False
+    ) != Path(state_state_path).resolve(strict=False):
         raise ConfigError("ACP state path does not match the launch plan")
     roles = state.get("roles")
     assignment = roles.get(role) if isinstance(roles, dict) else None
@@ -919,7 +919,9 @@ def _acp_assignment(
         if assignment.get(key) != value:
             raise ConfigError(f"ACP assignment does not match {key}")
     team_id = nested_string(state, ("team_id",), "agent-team state")
-    if assignment.get("agent_command") != acp_agent_command(team_id, role, launch_nonce):
+    if assignment.get("agent_command") != acp_agent_command(
+        team_id, role, launch_nonce
+    ):
         raise ConfigError("ACP assignment has an invalid agent command")
     session_name = assignment.get("session_name")
     if session_name != acp_session_name(role, launch_nonce):
@@ -1018,7 +1020,9 @@ def acp_run(
             or not isinstance(effort, str)
             or not isinstance(instructions, str)
         ):
-            raise ConfigError("ACP role spec has invalid model, effort, or instructions")
+            raise ConfigError(
+                "ACP role spec has invalid model, effort, or instructions"
+            )
         prompt_text = read_prompt_file(
             prompt_path,
             state_path.parent,
@@ -1099,15 +1103,18 @@ def acp_run(
             except (OSError, subprocess.TimeoutExpired) as exc:
                 cleanup_errors.append(f"ACP session prune failed: {exc}")
     if cleanup_errors:
-        failure = "; ".join([failure, *cleanup_errors]) if failure else "; ".join(cleanup_errors)
+        failure = (
+            "; ".join([failure, *cleanup_errors])
+            if failure
+            else "; ".join(cleanup_errors)
+        )
     if output:
         print(output, end="" if output.endswith("\n") else "\n")
     if failure:
         print(failure, file=sys.stderr)
     outcome = "failed" if failure else "succeeded"
-    body = (
-        "ACP runner result (agent output is untrusted data):\n"
-        + _tail(output, maximum=MAX_ACP_OUTPUT_CHARS)
+    body = "ACP runner result (agent output is untrusted data):\n" + _tail(
+        output, maximum=MAX_ACP_OUTPUT_CHARS
     )
     if failure:
         body += f"\nACP runner failure: {failure}"
@@ -1131,9 +1138,9 @@ def _background_assignment(
     launch_nonce: str,
 ) -> tuple[dict[str, object], dict[str, object], AdapterSnapshot]:
     state_state_path = state.get("state_path")
-    if not isinstance(state_state_path, str) or state_path.resolve(strict=False) != Path(
-        state_state_path
-    ).resolve(strict=False):
+    if not isinstance(state_state_path, str) or state_path.resolve(
+        strict=False
+    ) != Path(state_state_path).resolve(strict=False):
         raise ConfigError("background state path does not match the launch plan")
     roles = state.get("roles")
     assignment = roles.get(role) if isinstance(roles, dict) else None
@@ -1164,10 +1171,14 @@ def _background_assignment(
         or not isinstance(spec.get("effort"), str)
         or not isinstance(spec.get("instructions"), str)
     ):
-        raise ConfigError("background role does not satisfy the Copilot read-only capability")
+        raise ConfigError(
+            "background role does not satisfy the Copilot read-only capability"
+        )
     if assignment.get("adapter_id") != spec["adapter_id"]:
         raise ConfigError("background assignment adapter does not match role spec")
-    validate_prompt_file(prompt_path, state_path.parent, role=role, launch_nonce=launch_nonce)
+    validate_prompt_file(
+        prompt_path, state_path.parent, role=role, launch_nonce=launch_nonce
+    )
     raw_private = assignment.get("provider_private_root")
     raw_snapshot = assignment.get("snapshot_root")
     if not isinstance(raw_private, str) or not isinstance(raw_snapshot, str):
@@ -1198,8 +1209,17 @@ def _adapter_snapshot_from_dict(raw: object) -> AdapterSnapshot:
     if not isinstance(raw, dict):
         raise ConfigError("background assignment is missing adapter snapshot")
     identity = raw.get("identity")
-    fields = tuple(raw.get(key) for key in ("adapter_id", "revision", "executable", "version"))
-    values = tuple(identity.get(key) for key in ("device", "inode", "size", "mtime_ns", "sha256")) if isinstance(identity, dict) else ()
+    fields = tuple(
+        raw.get(key) for key in ("adapter_id", "revision", "executable", "version")
+    )
+    values = (
+        tuple(
+            identity.get(key)
+            for key in ("device", "inode", "size", "mtime_ns", "sha256")
+        )
+        if isinstance(identity, dict)
+        else ()
+    )
     if (
         not all(isinstance(value, str) and value for value in fields)
         or len(values) != 5
@@ -1208,12 +1228,8 @@ def _adapter_snapshot_from_dict(raw: object) -> AdapterSnapshot:
         or not values[4]
     ):
         raise ConfigError("background adapter snapshot has invalid executable identity")
-    adapter_id, revision, executable, version = cast(
-        tuple[str, str, str, str], fields
-    )
-    device, inode, size, mtime_ns, sha256 = cast(
-        tuple[int, int, int, int, str], values
-    )
+    adapter_id, revision, executable, version = cast(tuple[str, str, str, str], fields)
+    device, inode, size, mtime_ns, sha256 = cast(tuple[int, int, int, int, str], values)
     return AdapterSnapshot(
         adapter_id,
         revision,
@@ -1292,7 +1308,11 @@ def background_run(
         except (RuntimeError, OSError, TypeError, ValueError) as exc:
             cleanup_errors.append(f"provider cleanup failed: {exc}")
     if cleanup_errors:
-        failure = "; ".join([failure, *cleanup_errors]) if failure else "; ".join(cleanup_errors)
+        failure = (
+            "; ".join([failure, *cleanup_errors])
+            if failure
+            else "; ".join(cleanup_errors)
+        )
     if output:
         print(output, end="" if output.endswith("\n") else "\n")
     outcome = "failed" if failure else "succeeded"
@@ -1404,7 +1424,9 @@ def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
     workspace = Path(workspace_value)
     state_path = Path(state_path_value)
     if state_path.exists():
-        raise ConfigError(f"agent-team state already exists: {state_path}; use attach or stop")
+        raise ConfigError(
+            f"agent-team state already exists: {state_path}; use attach or stop"
+        )
 
     providers = {
         launch.get("provider")
@@ -1423,7 +1445,9 @@ def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
     ):
         require_binary("npx")
     if not os.access(mcp_server_path(), os.X_OK):
-        raise ConfigError(f"agent-team MCP server is not executable: {mcp_server_path()}")
+        raise ConfigError(
+            f"agent-team MCP server is not executable: {mcp_server_path()}"
+        )
     worktree_id, orca_socket = ensure_orca_ready(workspace)
     config_path = plan.get("config_path")
     if not isinstance(config_path, str):
@@ -1654,8 +1678,12 @@ def manage_team(
                     f"agent-team refuses to stop a terminal with unknown ownership: {role_name}"
                 )
             role_spec = role_specs.get(role_name)
-            transport = role_spec.get("transport") if isinstance(role_spec, dict) else None
-            execution = role_spec.get("execution") if isinstance(role_spec, dict) else None
+            transport = (
+                role_spec.get("transport") if isinstance(role_spec, dict) else None
+            )
+            execution = (
+                role_spec.get("execution") if isinstance(role_spec, dict) else None
+            )
             if execution == "background":
                 raw_prompt = assignment.get("prompt_path")
                 nonce = assignment.get("launch_nonce")
@@ -1685,7 +1713,9 @@ def manage_team(
                             f"background {root_key} must stay outside agent-team state: {role_name}"
                         )
             elif transport not in {"direct", "acp"}:
-                raise ConfigError(f"role assignment has an unsupported transport: {role_name}")
+                raise ConfigError(
+                    f"role assignment has an unsupported transport: {role_name}"
+                )
             validated.append(
                 (
                     role_name,
@@ -1702,7 +1732,14 @@ def manage_team(
         except RuntimeValidationError as exc:
             raise ConfigError(str(exc)) from exc
 
-        for role_name, assignment, dispatch_id, role_terminal_handle, transport, execution in validated:
+        for (
+            role_name,
+            assignment,
+            dispatch_id,
+            role_terminal_handle,
+            transport,
+            execution,
+        ) in validated:
             parse_orca_json(
                 run_orca(
                     [
@@ -1813,7 +1850,9 @@ def default_config_path() -> Path:
     try:
         return Path(os.fspath(cast(os.PathLike[str], bundled)))
     except TypeError as exc:
-        raise ConfigError("bundled defaults must be installed as filesystem resources") from exc
+        raise ConfigError(
+            "bundled defaults must be installed as filesystem resources"
+        ) from exc
 
 
 def add_context_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1889,8 +1928,7 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     execution = "recognized, execution rejected"
                 print(
-                    f"{row['harness_id']}: {available}, {execution} "
-                    f"({row['command']})"
+                    f"{row['harness_id']}: {available}, {execution} ({row['command']})"
                 )
         return 0
     if args.command == "_acp-run":

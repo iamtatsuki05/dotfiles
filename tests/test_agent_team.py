@@ -182,9 +182,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
         )
 
         self.assertEqual(argv[:3], ["npx", "-y", "acpx@0.13.2"])
-        self.assertIn(
-            "@agentclientprotocol/claude-agent-acp@0.70.0", " ".join(argv)
-        )
+        self.assertIn("@agentclientprotocol/claude-agent-acp@0.70.0", " ".join(argv))
         self.assertIn("--auth-policy", argv)
         self.assertIn("fail", argv)
         self.assertIn("--approve-reads", argv)
@@ -258,7 +256,9 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             },
         )
 
-    def test_state_requires_private_regular_file_and_complete_runtime_fields(self) -> None:
+    def test_state_requires_private_regular_file_and_complete_runtime_fields(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             path = root / "state.json"
@@ -402,7 +402,13 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                     "revision": "acpx@0.13.2",
                     "executable": "npx",
                     "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
-                    "identity": {"device": 0, "inode": 0, "size": 0, "mtime_ns": 0, "sha256": "acpx-managed"},
+                    "identity": {
+                        "device": 0,
+                        "inode": 0,
+                        "size": 0,
+                        "mtime_ns": 0,
+                        "sha256": "acpx-managed",
+                    },
                 },
             }
             state = {
@@ -492,7 +498,9 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             self.assertTrue(stat.S_ISREG(prompt.stat().st_mode))
             self.assertEqual(stat.S_IMODE(prompt.stat().st_mode), 0o600)
             self.assertEqual(prompt.read_text(encoding="utf-8"), "内容")
-            agent_team.validate_prompt_file(prompt, root, role="planner", launch_nonce="nonce123")
+            agent_team.validate_prompt_file(
+                prompt, root, role="planner", launch_nonce="nonce123"
+            )
 
             link = root / "prompt-planner-link.md"
             link.symlink_to(prompt)
@@ -520,15 +528,15 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             with self.assertRaisesRegex(agent_team.ConfigError, "version 3"):
                 agent_team.read_state(path)
 
-    def test_acp_runner_sets_effort_before_prompt_and_sends_one_worker_done(self) -> None:
+    def test_acp_runner_sets_effort_before_prompt_and_sends_one_worker_done(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "project"
             workspace.mkdir()
             config_path = self.make_config(root)
-            with mock.patch.dict(
-                os.environ, {"XDG_STATE_HOME": str(root / "state")}
-            ):
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(root / "state")}):
                 config = agent_team.load_config(config_path)
                 plan = agent_team.build_plan(config, workspace)
                 state_path = Path(plan["state_path"])
@@ -560,7 +568,13 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                         "revision": "acpx@0.13.2",
                         "executable": "npx",
                         "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
-                        "identity": {"device": 0, "inode": 0, "size": 0, "mtime_ns": 0, "sha256": "acpx-managed"},
+                        "identity": {
+                            "device": 0,
+                            "inode": 0,
+                            "size": 0,
+                            "mtime_ns": 0,
+                            "sha256": "acpx-managed",
+                        },
                     },
                 }
                 state = {
@@ -619,7 +633,9 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                     mock.patch.object(
                         agent_team,
                         "load_config",
-                        side_effect=AssertionError("ACP runner must use state snapshot"),
+                        side_effect=AssertionError(
+                            "ACP runner must use state snapshot"
+                        ),
                     ),
                 ):
                     result = agent_team.acp_run(
@@ -653,7 +669,8 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                 "read the repository",
             )
             self.assertEqual(
-                acpx.call_args_list[2].args[0][-2:], ["--file", "-"],
+                acpx.call_args_list[2].args[0][-2:],
+                ["--file", "-"],
             )
             self.assertEqual(
                 [args[:2] for args in orca_calls], [["orchestration", "send"]]
@@ -701,9 +718,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                     mock.patch.object(
                         agent_team, "read_prompt_file", return_value="prompt"
                     ),
-                    mock.patch.object(
-                        agent_team, "run_acpx", side_effect=acpx_results
-                    ),
+                    mock.patch.object(agent_team, "run_acpx", side_effect=acpx_results),
                     mock.patch.object(agent_team, "_send_worker_done") as send,
                 ):
                     result = agent_team.acp_run(
@@ -815,9 +830,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             normal_home = root / "normal-codex"
             normal_home.mkdir()
             (normal_home / "auth.json").write_text("{}\n", encoding="utf-8")
-            (normal_home / "AGENTS.md").write_text(
-                "# global rules\n", encoding="utf-8"
-            )
+            (normal_home / "AGENTS.md").write_text("# global rules\n", encoding="utf-8")
             (normal_home / "skills").mkdir()
             (normal_home / "config.toml").write_text(
                 "web_search = 'live'\n", encoding="utf-8"
@@ -830,9 +843,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                     "XDG_STATE_HOME": str(root / "state"),
                 },
             ):
-                plan = agent_team.build_plan(
-                    agent_team.load_config(config), workspace
-                )
+                plan = agent_team.build_plan(agent_team.load_config(config), workspace)
                 agent_team.prepare_codex_homes(plan)
 
             runtime_homes = [
@@ -846,7 +857,9 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                 self.assertTrue((runtime_home / "skills").is_symlink())
                 self.assertFalse((runtime_home / "config.toml").exists())
 
-    def test_runtime_socket_profile_keeps_base_permission_and_only_allows_orca_socket(self) -> None:
+    def test_runtime_socket_profile_keeps_base_permission_and_only_allows_orca_socket(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "project"
@@ -937,11 +950,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
         orca_data.mkdir()
         (orca_data / "orca-runtime.json").write_text(
             json.dumps(
-                {
-                    "transports": [
-                        {"kind": "unix", "endpoint": str(root / "orca.sock")}
-                    ]
-                }
+                {"transports": [{"kind": "unix", "endpoint": str(root / "orca.sock")}]}
             ),
             encoding="utf-8",
         )
@@ -955,7 +964,9 @@ class AgentTeamStartTest(AgentTeamTestCase):
             "ORCA_USER_DATA_PATH": str(orca_data),
         }
 
-    def test_stop_tree_deletes_current_owner_runtime_files_and_directories(self) -> None:
+    def test_stop_tree_deletes_current_owner_runtime_files_and_directories(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "project"
@@ -1232,9 +1243,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 config,
                 workspace,
                 "start",
-                env=self.live_env(
-                    root, fake_bin, log_path, fail="terminal switch"
-                ),
+                env=self.live_env(root, fake_bin, log_path, fail="terminal switch"),
             )
             payload = json.loads(result.stdout)
             state_path = Path(payload["state_path"])
@@ -1258,9 +1267,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
             )
             self.assertEqual(started.returncode, 0, started.stderr)
             status = self.run_launcher(config, workspace, "status", env=env)
-            attach = self.run_launcher(
-                config, workspace, "attach", "main", env=env
-            )
+            attach = self.run_launcher(config, workspace, "attach", "main", env=env)
             stop = self.run_launcher(config, workspace, "stop", env=env)
             log = [
                 json.loads(line)
@@ -1270,9 +1277,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertEqual(attach.returncode, 0, attach.stderr)
         self.assertEqual(stop.returncode, 0, stop.stderr)
-        self.assertIn(
-            ["terminal", "switch", "--terminal", "term_main", "--json"], log
-        )
+        self.assertIn(["terminal", "switch", "--terminal", "term_main", "--json"], log)
         self.assertIn(
             [
                 "terminal",
