@@ -1,8 +1,31 @@
-#!/usr/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+resolve_script_directory() {
+  local script_path="$1"
+  local script_dir
+  local link_target
+
+  if [[ "$script_path" != /* && "$script_path" != */* ]]; then
+    script_path="$(command -v "$script_path" 2>/dev/null || printf '%s' "$script_path")"
+  fi
+  while [[ -L "$script_path" ]]; do
+    script_dir="$(cd -P "$(dirname "$script_path")" && pwd)" || return 1
+    link_target="$(readlink "$script_path")" || return 1
+    if [[ "$link_target" == /* ]]; then
+      script_path="$link_target"
+    else
+      script_path="$script_dir/$link_target"
+    fi
+  done
+  cd -P "$(dirname "$script_path")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_directory "$0")" || {
+  echo "ERROR: failed to resolve remove_homebrew.sh directory." >&2
+  exit 1
+}
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
@@ -74,6 +97,8 @@ print_homebrew_uninstall_command() {
 }
 
 remove_homebrew() {
+  local uninstall_script
+
   print_homebrew_uninstall_command
 
   if (( ! APPLY )); then
@@ -93,7 +118,16 @@ remove_homebrew() {
     return 1
   fi
 
-  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"
+  if ! uninstall_script="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"; then
+    echo "ERROR: failed to download Homebrew uninstall script." >&2
+    return 1
+  fi
+  if ! printf '%s' "$uninstall_script" | grep -q '[^[:space:]]'; then
+    echo "ERROR: Homebrew uninstall script download was empty." >&2
+    return 1
+  fi
+
+  NONINTERACTIVE=1 /bin/bash -c "$uninstall_script"
 }
 
 main() {

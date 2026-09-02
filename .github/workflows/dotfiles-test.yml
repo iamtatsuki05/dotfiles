@@ -28,6 +28,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zsh
 
+      - name: Install Bash 5 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash
+          bash5_path="$(brew --prefix bash)/bin/bash"
+          test -x "$bash5_path"
+          "$bash5_path" -c '(( BASH_VERSINFO[0] == 5 ))'
+          echo "BASH5_BIN=$bash5_path" >> "$GITHUB_ENV"
+
       - name: Install chezmoi
         run: |
           sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"

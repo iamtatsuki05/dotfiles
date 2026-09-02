@@ -110,11 +110,6 @@ description = "AI agent設定/hooks/skillsを同期"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_agent_files.sh"
 
-[tasks.kimi-webbridge-setup]
-description = "Kimi WebBridgeのlocal serviceとagent skillを設定"
-dir = "__DOTFILES_REPO_ROOT__"
-run = "zsh scripts/setup_kimi_webbridge.sh"
-
 [tasks.hermes-setup]
 description = "Hermes Agentを公式installerで導入"
 dir = "__DOTFILES_REPO_ROOT__"

@@ -173,15 +173,34 @@ shared_link_specs() {
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.gemini/antigravity-cli/plugins/dotfiles-agent/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.cursor/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$xdg_config_home/opencode/skills"
-  print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.hermes/skills"
+  print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.hermes/dotfiles-skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.openclaw/workspace/skills"
 
   print -r -- "$AGENT_DIR/pets"$'\t'"$HOME/.codex/pets"
+  print -r -- "$REPO_ROOT/scripts/agent-run-compact"$'\t'"$HOME/.local/bin/agent-run-compact"
+}
+
+# Hermes writes its bundled skills, sync manifest, and curator state into
+# ~/.hermes/skills, so that path must stay a real directory owned by Hermes.
+# The shared tree is exposed to Hermes read-only through skills.external_dirs.
+ensure_hermes_local_skills_dir() {
+  local dst="$HOME/.hermes/skills"
+
+  if [[ -L "$dst" ]]; then
+    if [[ ! -e "$dst" || "$dst" -ef "$AGENT_DIR/skills" ]]; then
+      rm -f "$dst"
+    else
+      echo "ERROR: $dst must be a real directory owned by Hermes, but it is a symlink to an unmanaged target: $(readlink "$dst")" >&2
+      return 1
+    fi
+  fi
+  ensure_dir "$dst"
 }
 
 sync_shared_files() {
   preflight_required_shared_skill_link "$HOME/.codex/skills"
   preflight_required_shared_skill_link "$HOME/.claude/skills"
+  ensure_hermes_local_skills_dir
   sync_link_specs shared_link_specs
   require_shared_skill_link "$HOME/.codex/skills"
   require_shared_skill_link "$HOME/.claude/skills"

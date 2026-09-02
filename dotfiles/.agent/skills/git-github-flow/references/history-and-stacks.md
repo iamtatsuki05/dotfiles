@@ -67,7 +67,7 @@ gh stack view --json
 
 - `gh stack view --json`: read-only。状態確認に使ってよい。
 - `gh stack init` / `add`: local branchとstack metadataを変更する。stack作成が依頼された場合だけ使う。
-- `gh stack submit --auto --remote "$stack_remote"`: 全branchをbranchごとの `--force-with-lease` でpushし、Draft PR群を作る非atomic操作。stackの公開・PR作成と、対象stack全branchへのforce-pushが明示的に許可された場合だけ使う。作成後は各PRを `gh pr edit` し、このskillのtitle、英語見出し、本文言語、assignee、labels、Links規則へ合わせる。`--open` は明示的にReady作成を求められた場合だけ使う。
+- `gh stack submit --auto --remote "$stack_remote"`: 全branchをbranchごとの `--force-with-lease` でpushし、Draft PR群を作る非atomic操作。stackの公開・PR作成と、対象stack全branchへのforce-pushが明示的に許可された場合だけ使う。作成後は各PRを `gh pr edit` し、このskillのtitle、英語見出し、本文言語、assignee、labels、Links規則へ合わせる。`--open` は使わず、各PRを通常PRと同じCI gate通過後に個別にReadyへ変更する。
 - `gh stack push --remote "$stack_remote"`: 全active branchをbranchごとの `--force-with-lease` でpushする非atomic操作。対象stack全branchへのforce-pushが明示的に許可された場合だけ使う。
 - `gh stack rebase --remote "$stack_remote"`: 未公開stackのcommit整理、または明示的なrebase依頼に限定する。公開済みstackでは後続pushがforce-pushになるため、force-push許可がなければ実行しない。
 - `gh stack sync --remote "$stack_remote"`: rebase＋push＋PR同期をまとめて行い、force-with-leaseを使い得る。対象stackへのforce-push許可がない限り絶対に実行しない。

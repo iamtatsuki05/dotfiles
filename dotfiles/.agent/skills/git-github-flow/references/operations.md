@@ -8,7 +8,18 @@ Git/GitHub 作業を、レビューしやすい単位と追跡可能なリンク
 
 `git` / `gh` のread-only操作は自由に行ってよいが、`git add`、commit、push、Issue/PR作成・編集、merge、close、release、repository設定変更は、それぞれ依頼された範囲だけ実行する。stageを依頼された場合も今回の変更ファイルだけを対象にし、commitやpushへ許可を広げない。文面作成の依頼は、対応するGit/GitHub操作の許可ではない。
 
-GitHub操作前に `gh auth status` と対象host/accountを確認する。未認証なら `gh auth login` の実行方針を確認し、tokenを出力・credential fileから抽出・remote URLへ埋め込み・平文保存しない。repository作成/fork、branch protection、secrets、releaseなど影響の大きい操作は、対象・影響・取消方法を示して明示許可を得る。
+GitHub操作前に対象repositoryのhost/accountを確定し、hostを省略せず認証とloginを確認する。login取得失敗または空値ならwriteへ進まない。
+
+```bash
+github_host=$(gh repo view "$(git remote get-url "$base_remote")" --json url \
+  --jq '.url | sub("^https://"; "") | split("/")[0]')
+test -n "$github_host"
+gh auth status --hostname "$github_host"
+current_user=$(gh api --hostname "$github_host" user --jq .login)
+test -n "$current_user"
+```
+
+未認証なら `gh auth login` の実行方針を確認し、tokenを出力・credential fileから抽出・remote URLへ埋め込み・平文保存しない。repository作成/fork、branch protection、secrets、releaseなど影響の大きい操作は、対象・影響・取消方法を示して明示許可を得る。
 
 既定ブランチをそのまま作業baseと仮定せず、branch/PRごとの直接のmerge先を先に確定する。根拠の優先順は、今回の明示指示、リポジトリの `AGENTS.md` / `CONTRIBUTING.md` / branch設定、同じ作業種別の一貫した最近のPR履歴、既定ブランチの順とする。最高順位の利用可能な根拠が一意なら、下位の履歴はsanity checkにだけ使い、決定を覆さない。最高順位の根拠が不足・内部矛盾して複数の長期branchが候補になる場合は、作成前に停止して確認する。中間branchの証拠がなく既定branchだけが候補の場合に限り、既定branchへfallbackする。branchの存在だけではbaseを決めない。
 
@@ -71,7 +82,8 @@ git merge-base --is-ancestor "$base_oid" "$head_remote/$branch"
 
 ## GitHub metadata と Development
 
-- 実際に作成・編集する `gh issue create` / `gh pr create` に `--assignee @me` を含める。既存 Issue/PR は `gh issue edit` / `gh pr edit` で `@me` を追加する。片方を操作するために、もう片方を新規作成しない。
+- 実際に作成・編集するIssue/PRには、`@me`ではなく認証済みの明示login `$current_user` を `--assignee` / `--add-assignee` で設定する。片方を操作するために、もう片方を新規作成しない。
+- 作成・編集直後にassigneesをreadbackし、`$current_user` が無ければ `gh issue edit` / `gh pr edit` の `--add-assignee "$current_user"` で補正して再確認する。再確認後も無ければ完了扱いせず、権限・assignabilityの問題として報告する。
 - `gh label list` で確認した既存ラベルから、種類・領域・優先度など判断に役立つ最小限を選び、実際に作成・編集するIssue/PRへ `--label` または `--add-label` で付ける。ラベルを推測で新設しない。適切な既存ラベルがなければ明示し、作成は別途許可を得る。
 - GitHubのauto-closeを使う場合、PRのbaseが既定ブランチ以外なら、論理的に完了していても `Refs #123` を使う。PRのbaseが既定ブランチで、そのmergeがIssueを完了させる場合だけ `Closes #123` を使う。親 tracker は全体完了まで閉じず、`Part of #100` と子 Issue/PR のリンクを併記する。
 - 対応対象の既存Issueがある場合、IssueとbranchのDevelopment linkは `gh issue develop`、作成後の確認は `gh issue develop --list 123` のように対象Issueを指定する。IssueがないPRではDevelopment linkや`Closes` / `Refs`を捏造しない。
@@ -86,7 +98,7 @@ if [ "$base_repo" != "$branch_repo" ]; then
   maintainer_edit_args=(--no-maintainer-edit)
 fi
 gh pr create -R "$base_repo" --base "$target_base" --head "$head_arg" \
-  --assignee @me --title "$title" --body-file "$body_file" \
+  --draft --assignee "$current_user" --title "$title" --body-file "$body_file" \
   "${maintainer_edit_args[@]}"
 ```
 
@@ -98,7 +110,7 @@ pr_url=$(gh api "repos/$base_repo/pulls" --method POST \
   -f head_repo="$branch_repo" \
   -f title="$title" -f body="$(<"$body_file")" \
   -F draft=true -F maintainer_can_modify=false --jq .html_url)
-gh pr edit "$pr_url" -R "$base_repo" --add-assignee @me \
+gh pr edit "$pr_url" -R "$base_repo" --add-assignee "$current_user" \
   --add-label "$existing_label"
 ```
 
@@ -114,13 +126,26 @@ PR本文のMarkdown見出し名は、ユーザー指示・既存テンプレー�
 
 PR本文を保存・送信する前に、`#` から始まる全Markdown見出し行を監査し、見出し名がすべて英語であることを確認する。fallback Ready PRは `Why` / `What` / `Verification` / `Risks and remaining work`、fallback Draft PRは `Status` / `Why` / `Completed` / `Remaining` / `Review focus` / `Partial verification` を使い、関連先がある場合だけ `Links` を加える。
 
-途中で PR を開く場合は Draft にし、タイトルを `[WIP] <concise English title>` とする。本文には完了済み、残作業、今回見てほしい点、部分検証、関連Issueがあればそのリンクを明記する。
+新規PRは実装やlocal検証が完了済みでも、必ず `gh pr create --draft` で作り、タイトルを `[WIP] <concise English title>` とする。本文には完了済み、残作業またはCI待ち、今回見てほしい点、部分検証、関連Issueがあればそのリンクを明記する。作成直後に `isDraft=true` とassigneeをreadbackする。初回からReadyで作らず、Ready作成を求められていても次のgateまではDraftを維持する。
 
-Ready にする直前に実装と必要な検証を完了し、`gh pr edit` で `[WIP]` を外した最終 title と、最終的な変更・検証・リスクを反映した body に置き換えてから `gh pr ready` を実行する。本文置換時も既存の `Closes` / `Refs` / `Part of` / `Depends on` とURLを失わず、最終baseと完了条件に応じて `Closes` / `Refs` だけを更新する。未完了 PR が Ready なら `gh pr ready --undo` で Draft に戻す。
+Readyへ変更できるのは、実装とlocal検証が完了し、期待checkの全名称が登録され、全check成功とmetadataを同じhead SHAで確認できた後だけとする。PR作成前にworkflow、branch protection/ruleset、同じbaseの最近のPRから期待check名を列挙する。一つでも未登録・欠落・判定不能ならActions登録待ちとしてDraftを維持する。repositoryにCIが無い場合は、同じ根拠からcheckが無いことを確認し、その根拠とlocal検証を記録してから進める。
+
+```bash
+checked_head=$(gh pr view "$pr_url" -R "$base_repo" --json headRefOid --jq .headRefOid)
+gh pr checks "$pr_url" -R "$base_repo" --watch --interval 10
+current_head=$(gh pr view "$pr_url" -R "$base_repo" --json headRefOid --jq .headRefOid)
+test "$checked_head" = "$current_head"
+```
+
+pending、failure、cancel中はDraftを維持する。check成功後にhead SHAが変わっていれば、新しいheadのlocal検証、期待check登録、全成功の確認をやり直す。
+
+期待されるcheckが `ready_for_review` でしか起動しない構成では、このgateと両立しない。Readyにして起動するfallbackは使わず、Draftを維持したままworkflowまたは運用の変更が必要なblockerとして報告する。
+
+gate通過後に `gh pr edit` で `[WIP]` を外した最終titleと、最終的な変更・検証・リスクを反映したbodyに置き換え、`gh pr ready "$pr_url" -R "$base_repo"` を実行する。本文置換時も既存の `Closes` / `Refs` / `Part of` / `Depends on` とURLを失わず、最終baseと完了条件に応じて `Closes` / `Refs` だけを更新する。最後に `isDraft=false` とmetadataを再確認する。gate未達のReady PRは `gh pr ready --undo` でDraftに戻す。
 
 ## 作成後の検証
 
-作成・編集後は readback し、作成・編集したIssue/PRのURL、base/head、Draft状態、title、body、`@me`、labelsを確認する。対応する既存Issueがある場合だけDevelopmentとclosing linkも確認する。branch作成直後は、作成直前に記録した `base_oid` がhead branchの祖先であることも確認する。PR時点の `baseRefOid` は作成後に進み得るため、`headRefOid` の祖先であることを要求せず、両OIDは現在のserver stateとして記録する。
+作成・編集後は readback し、作成・編集したIssue/PRのURL、base/head、Draft状態、title、body、`$current_user`、labelsを確認する。assigneesに `$current_user` が無ければ前述の補正と再確認を行う。対応する既存Issueがある場合だけDevelopmentとclosing linkも確認する。branch作成直後は、作成直前に記録した `base_oid` がhead branchの祖先であることも確認する。PR時点の `baseRefOid` は作成後に進み得るため、`headRefOid` の祖先であることを要求せず、両OIDは現在のserver stateとして記録する。
 
 ```bash
 gh issue view 42 -R "$base_repo" --json url,title,body,assignees,labels

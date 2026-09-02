@@ -9,7 +9,7 @@ English version: [README.md](README.md)
 
 | Path | 用途 |
 |---|---|
-| `run.sh` | local と compatibility wrapper から使う main test runner。 |
+| `run.sh` | local と CI で使う main test runner。 |
 | `lib/` | shell test 向けの共通 assertion と fixture helper。 |
 | `test_agent_*.sh` | AI agent config、support matrix、upstream skill の check。 |
 | `test_chezmoi_*.sh` | chezmoi source state と rendered-home の check。 |

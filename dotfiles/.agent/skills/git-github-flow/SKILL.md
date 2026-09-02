@@ -5,24 +5,22 @@ description: Use when Git or GitHub work involves authentication, repositories, 
 
 # Git and GitHub Flow
 
-GitHubは`gh`、Gitは`git`を使う。
-
 ## USE FOR:
 
-- auth、repo/fork、remote、worktree、branch、Issue、PR、review、CI、merge、release、revert
-- commit整理、stacked PR、失敗した履歴操作の復旧
+- auth、repo、worktree、branch、Issue/PR、CI、履歴復旧
 
 ## DO NOT USE FOR:
 
-- Git/GitHub操作を伴わない実装
-- CI workflowだけの作業（`ci-cd`を使う）
+- Git/GitHub操作なし
+- CI workflow編集（`ci-cd`）
 
 ## Contract
 
-- 最初に `gh auth status` と `git status --short --branch` を確認する。
-- read-onlyは自由。stage、commit、push、Issue/PR、merge等は操作ごとに明示された範囲だけ実行する。
-- repo規約、dirty state、branch topology、template、重複、labels、過去履歴を先に確認し、独立作業はworktreeへ分離する。
-- 作成・編集したIssue/PRへ`@me`と既存labelsを付けreadbackする。既存IssueだけをDevelopment linkし、PRのためのIssueは作らない。commit/PR titleとPR見出しは英語、本文は明示指示→最近のPR→日本語。
+- 最初にauth、status、repo規約、dirty state、base、template、重複、labels、履歴を確認し、並列作業はworktreeへ分離する。
+- write操作は明示範囲だけ。
+- Issue/PRのassigneeは`@me`を使わず認証loginを明示する。既存labelsもreadbackし、欠落は補正、確認不能なら未完了。
+- 新規PRは必ずDraft。期待CIが未登録・pending・failureの間はReady禁止。全成功後だけReadyにする。
+- 既存IssueだけをDevelopment linkし、PRのためのIssueは作らない。commit/PR title・PR見出しは英語、本文は指示→最近のPR→日本語。
 - force-pushは直接・間接とも明示許可なしで禁止。共有履歴の取消はrevert、未公開commitの整理はsquash/rebaseを使う。
 
 ## Routing

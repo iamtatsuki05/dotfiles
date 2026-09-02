@@ -1,10 +1,39 @@
-#!/usr/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
-zmodload zsh/datetime
 
-readonly SCRIPT_DIR="${0:A:h}"
-readonly REPO_ROOT="${SCRIPT_DIR:h}"
+resolve_script_directory() {
+  local script_path="$1"
+  local script_dir
+  local link_target
+  local bash_source_declaration
+
+  if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    bash_source_declaration="$(declare -p BASH_SOURCE 2>/dev/null || true)"
+    if [[ "$bash_source_declaration" == 'declare -a BASH_SOURCE'* ]]; then
+      script_path="${BASH_SOURCE[0]}"
+    fi
+  fi
+  if [[ "$script_path" != /* && "$script_path" != */* ]]; then
+    script_path="$(command -v "$script_path" 2>/dev/null || printf '%s' "$script_path")"
+  fi
+  while [[ -L "$script_path" ]]; do
+    script_dir="$(cd -P "$(dirname "$script_path")" && pwd)" || return 1
+    link_target="$(readlink "$script_path")" || return 1
+    if [[ "$link_target" == /* ]]; then
+      script_path="$link_target"
+    else
+      script_path="$script_dir/$link_target"
+    fi
+  done
+  cd -P "$(dirname "$script_path")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_directory "$0")" || {
+  echo "ERROR: failed to resolve nix_install.sh directory." >&2
+  exit 1
+}
+readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly REMOVE_HOMEBREW_SCRIPT="$SCRIPT_DIR/remove_homebrew.sh"
 readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
 readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
@@ -13,7 +42,82 @@ readonly HOME_MANAGER_BACKUP_EXTENSION="before-nix-darwin"
 readonly DARWIN_SUDO_LOCAL_PATH="${DOTFILES_DARWIN_SUDO_LOCAL_PATH:-/etc/pam.d/sudo_local}"
 readonly DARWIN_SUDO_LOCAL_BACKUP_PATH="${DARWIN_SUDO_LOCAL_PATH}.${HOME_MANAGER_BACKUP_EXTENSION}"
 readonly DARWIN_ETC_SHELL_RC_PATHS="${DOTFILES_DARWIN_ETC_SHELL_RC_PATHS:-/etc/bashrc:/etc/zshrc}"
-readonly HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="${DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH:-$EPOCHSECONDS}"
+
+detect_host_os_name() {
+  local uname_bin
+  local kernel_name
+
+  if [[ -x /usr/bin/uname ]]; then
+    uname_bin="/usr/bin/uname"
+  elif [[ -x /bin/uname ]]; then
+    uname_bin="/bin/uname"
+  else
+    echo "ERROR: uname is required to detect the host OS." >&2
+    return 1
+  fi
+  kernel_name="$("$uname_bin" -s)" || {
+    echo "ERROR: failed to detect the host OS." >&2
+    return 1
+  }
+  case "$kernel_name" in
+    Darwin)
+      REPLY="Darwin"
+      ;;
+    Linux)
+      REPLY="Linux"
+      ;;
+    *)
+      echo "ERROR: unsupported host kernel: $kernel_name" >&2
+      return 1
+      ;;
+  esac
+}
+
+detect_host_machine_name() {
+  local uname_bin
+  local machine_name
+
+  if [[ -x /usr/bin/uname ]]; then
+    uname_bin="/usr/bin/uname"
+  elif [[ -x /bin/uname ]]; then
+    uname_bin="/bin/uname"
+  else
+    echo "ERROR: uname is required to detect the host architecture." >&2
+    return 1
+  fi
+  machine_name="$("$uname_bin" -m)" || {
+    echo "ERROR: failed to detect the host architecture." >&2
+    return 1
+  }
+  case "$machine_name" in
+    arm64|aarch64|x86_64|amd64)
+      REPLY="$machine_name"
+      ;;
+    *)
+      echo "ERROR: unsupported host architecture: $machine_name" >&2
+      return 1
+      ;;
+  esac
+}
+
+detect_host_os_name
+readonly DOTFILES_HOST_OS_NAME="$REPLY"
+case "$DOTFILES_HOST_OS_NAME" in
+  Darwin) OSTYPE=darwin ;;
+  Linux) OSTYPE=linux ;;
+esac
+
+HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="${DOTFILES_HOME_MANAGER_BACKUP_ARCHIVE_EPOCH:-}"
+if [[ -z "$HOME_MANAGER_BACKUP_ARCHIVE_EPOCH" ]]; then
+  HOME_MANAGER_BACKUP_ARCHIVE_EPOCH="$(date +%s)"
+fi
+case "$HOME_MANAGER_BACKUP_ARCHIVE_EPOCH" in
+  ''|*[!0-9]*)
+    echo "ERROR: Home Manager backup archive epoch must be a non-negative integer." >&2
+    exit 1
+    ;;
+esac
+readonly HOME_MANAGER_BACKUP_ARCHIVE_EPOCH
 
 source "$SCRIPT_DIR/lib/setup_profile.sh"
 source "$SCRIPT_DIR/lib/homebrew.sh"
@@ -124,7 +228,8 @@ system_attr() {
   else
     os_name="Linux"
   fi
-  machine="${CPUTYPE:-${MACHTYPE%%-*}}"
+  detect_host_machine_name || return 1
+  machine="$REPLY"
 
   case "$os_name:$machine" in
     Darwin:arm64|Darwin:aarch64)
@@ -224,27 +329,90 @@ next_home_manager_backup_archive_path() {
 }
 
 archive_existing_home_manager_backups() {
-  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
-  local -a stale_backups=()
+  local config_dir="$HOME/.config"
+  if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+    config_dir="$XDG_CONFIG_HOME"
+  fi
+  local temp_root
+  local temp_dir
+  local previous_umask
+  local temp_dir_status
+  local home_backup_list_file
+  local config_backup_list_file
   local backup_path
   local archive_path
 
   (( DRY_RUN )) && return 0
 
-  setopt local_options null_glob glob_dots
-  stale_backups+=("$HOME"/.*."$HOME_MANAGER_BACKUP_EXTENSION"(N))
-  if [[ -d "$config_dir" ]]; then
-    stale_backups+=("$config_dir"/**/*."$HOME_MANAGER_BACKUP_EXTENSION"(N))
+  dotfiles_temporary_directory_root
+  temp_root="$REPLY"
+  previous_umask="$(umask)"
+  umask 077
+  if dotfiles_create_unique_temp_directory "$temp_root" "dotfiles-nix-backups"; then
+    temp_dir="$REPLY"
+    temp_dir_status=0
+  else
+    temp_dir_status=$?
+  fi
+  umask "$previous_umask"
+  (( temp_dir_status == 0 )) || return "$temp_dir_status"
+  if ! chmod 700 "$temp_dir"; then
+    rm -rf "$temp_dir"
+    return 1
+  fi
+  if ! home_backup_list_file="$(mktemp "$temp_dir/dotfiles-home-backups.XXXXXX")"; then
+    rm -rf "$temp_dir"
+    return 1
+  fi
+  if ! config_backup_list_file="$(mktemp "$temp_dir/dotfiles-config-backups.XXXXXX")"; then
+    rm -rf "$temp_dir"
+    return 1
+  fi
+  if ! chmod 600 "$home_backup_list_file" "$config_backup_list_file"; then
+    rm -rf "$temp_dir"
+    return 1
   fi
 
-  for backup_path in "${stale_backups[@]}"; do
+  if ! find "$HOME" -mindepth 1 -maxdepth 1 -name ".*.$HOME_MANAGER_BACKUP_EXTENSION" -print0 > "$home_backup_list_file"; then
+    rm -rf "$temp_dir"
+    echo "ERROR: failed to discover existing Home Manager backups under $HOME." >&2
+    return 1
+  fi
+  if [[ -d "$config_dir" ]]; then
+    if ! find "$config_dir" -mindepth 1 -name "*.$HOME_MANAGER_BACKUP_EXTENSION" -print0 > "$config_backup_list_file"; then
+      rm -rf "$temp_dir"
+      echo "ERROR: failed to discover existing Home Manager backups under $config_dir." >&2
+      return 1
+    fi
+  fi
+
+  while IFS= read -r -d '' backup_path; do
     [[ -e "$backup_path" || -L "$backup_path" ]] || continue
 
     next_home_manager_backup_archive_path "$backup_path"
     archive_path="$REPLY"
     echo "Archiving existing Home Manager backup $backup_path to $archive_path before activation."
-    mv "$backup_path" "$archive_path"
-  done
+    if ! mv "$backup_path" "$archive_path"; then
+      rm -rf "$temp_dir"
+      echo "ERROR: failed to archive existing Home Manager backup $backup_path." >&2
+      return 1
+    fi
+  done < "$home_backup_list_file"
+
+  while IFS= read -r -d '' backup_path; do
+    [[ -e "$backup_path" || -L "$backup_path" ]] || continue
+
+    next_home_manager_backup_archive_path "$backup_path"
+    archive_path="$REPLY"
+    echo "Archiving existing Home Manager backup $backup_path to $archive_path before activation."
+    if ! mv "$backup_path" "$archive_path"; then
+      rm -rf "$temp_dir"
+      echo "ERROR: failed to archive existing Home Manager backup $backup_path." >&2
+      return 1
+    fi
+  done < "$config_backup_list_file"
+
+  rm -rf "$temp_dir"
 }
 
 backup_existing_darwin_sudo_local() {
@@ -270,11 +438,16 @@ backup_existing_darwin_etc_shell_rc_files() {
     return 0
   fi
 
-  local -a rc_paths
+  local -a rc_paths=()
+  local remaining_rc_paths="$DARWIN_ETC_SHELL_RC_PATHS"
   local rc_path
   local backup_path
 
-  rc_paths=("${(@ps/:/)DARWIN_ETC_SHELL_RC_PATHS}")
+  while [[ "$remaining_rc_paths" == *:* ]]; do
+    rc_paths+=("${remaining_rc_paths%%:*}")
+    remaining_rc_paths="${remaining_rc_paths#*:}"
+  done
+  rc_paths+=("$remaining_rc_paths")
   for rc_path in "${rc_paths[@]}"; do
     [[ -n "$rc_path" ]] || continue
     [[ -e "$rc_path" ]] || continue
@@ -423,7 +596,7 @@ remove_homebrew_after_switch() {
     return 0
   fi
 
-  zsh "$REMOVE_HOMEBREW_SCRIPT" --apply --confirm-nix-ready
+  bash "$REMOVE_HOMEBREW_SCRIPT" --apply --confirm-nix-ready
 }
 
 main() {
