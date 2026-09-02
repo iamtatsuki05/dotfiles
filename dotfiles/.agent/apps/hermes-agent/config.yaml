@@ -56,6 +56,9 @@ onboarding:
 agent:
   reasoning_effort: medium
   verify_on_stop: false
+skills:
+  external_dirs:
+    - ~/.hermes/dotfiles-skills
 plugins:
   enabled:
     - orca-status

@@ -36,7 +36,6 @@ skills/
 | `agent-cli-consult` | 外部 agent CLI（Codex CLI / Claude Code CLI）へのレビュー・調査相談。 | 明示的に CLI 相談を求められた時に使う。 |
 | `agent-job-scheduler` | 複数 agent CLI の長時間・非対話ジョブを CSV 台帳で queue / retry / cancel する。 | 内部アプリ本体、README、pytest を含む大きめの skill。 |
 | `alphaxiv-paper-lookup` | arXiv / alphaxiv 論文の要約、比較、実装詳細抽出。 | 論文調査用。 |
-| `api-design` | REST API / OpenAPI / versioning / auth / error response の設計・レビュー。 | `eng-practices` と連携。 |
 | `auto-debugger` | エラー、stack trace、失敗テストの原因調査と修正。 | 実装前に再現・仮説・検証を重視。 |
 | `ci-cd` | GitHub Actions などの CI/CD 設計・修正・調査。 | workflow YAML とログ調査向け。 |
 | `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
@@ -47,8 +46,6 @@ skills/
 | `goal-prompt-builder` | Codex `/goal` 用の長期作業 prompt を作る。 | durable objective と検証条件を固める。 |
 | `gws` | Google Calendar / Drive / Gmail / Tasks を `gws` CLI で扱う。 | 外部操作は確認を重視。 |
 | `html-preview-review` | 検証済みの Agent 実行結果を、安全な自己完結型 local HTML にして視覚レビューする。 | 必要な独立レビュー後、main agent が成果物を提示する。 |
-| `kimi-webbridge` | ユーザーの実ブラウザを local daemon 経由で操作する。 | ログイン済み browser session が必要な作業向け。 |
-| `magika` | ファイル種別の判定、拡張子と中身の確認。 | Magika CLI 用。 |
 | `markdown-docs` | README、技術文書、校閲、Markdown 整形。 | この README もこの skill の対象。 |
 | `markitdown` | PDF / Word / PowerPoint / Excel / HTML などを Markdown に変換。 | MarkItDown CLI 用。 |
 | `missing-tools` | 見つからないコマンドを global install なしで解決する。 | project env、mise、comma、Nix fallback を優先。 |
@@ -84,7 +81,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
-| `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、prototype、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
+| `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
@@ -101,7 +98,6 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `grill-with-docs` | `grilling` と `domain-modeling` を組み合わせる。 |
 | `handoff` | 会話を別 agent 向けの引き継ぎ文書にまとめる。 |
 | `improve-codebase-architecture` | codebase の構造改善、deep module、testability を探す。 |
-| `prototype` | throwaway prototype で状態設計や UI 案を試す。 |
 
 ### superpowers group
 

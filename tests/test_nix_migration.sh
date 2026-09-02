@@ -956,7 +956,6 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     agent-cli-consult
     agent-job-scheduler
     alphaxiv-paper-lookup
-    api-design
     auto-debugger
     ci-cd
     compatibility-safety
@@ -967,7 +966,6 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
     google-colab-cli
     gws
     html-preview-review
-    magika
     markdown-docs
     markitdown
     missing-tools
