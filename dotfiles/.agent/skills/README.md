@@ -37,7 +37,6 @@ Do not manually copy external skill trees without recording provenance and revie
 | `agent-cli-consult` | Consult an external agent CLI (Codex CLI / Claude Code CLI) for review, debugging, and analysis. | Use only when the user explicitly asks for a CLI consultation. |
 | `agent-job-scheduler` | Queue, inspect, retry, and cancel long non-interactive jobs for multiple agent CLIs. | Larger skill with an internal app, README, and pytest coverage. |
 | `alphaxiv-paper-lookup` | Summarize, compare, and extract implementation details from arXiv / alphaxiv papers. | Paper research workflow. |
-| `api-design` | Design and review REST APIs, OpenAPI specs, versioning, auth, and error responses. | Links to `eng-practices`. |
 | `auto-debugger` | Investigate errors, stack traces, and failing tests. | Emphasizes reproduction, hypotheses, and verification before fixing. |
 | `ci-cd` | Design, edit, and debug CI/CD workflows such as GitHub Actions. | Workflow YAML and log investigation. |
 | `compatibility-safety` | Avoid unrequested compatibility layers, aliases, silent fallbacks, and default-value fallbacks. | Use before adding compatibility behavior or legacy paths. |
@@ -48,8 +47,6 @@ Do not manually copy external skill trees without recording provenance and revie
 | `goal-prompt-builder` | Create durable Codex `/goal` prompts. | Clarifies durable objectives and verification conditions. |
 | `gws` | Operate Google Calendar, Drive, Gmail, and Tasks through the `gws` CLI. | Be conservative around external actions. |
 | `html-preview-review` | Render verified agent results as safe, self-contained local HTML for visual review. | The main agent presents the artifact after required independent review. |
-| `kimi-webbridge` | Control the user's real browser through a local daemon. | For logged-in browser sessions and real-site interaction. |
-| `magika` | Identify file types and verify whether extensions match file contents. | Magika CLI workflow. |
 | `markdown-docs` | Create, edit, review, and lint README and Markdown documentation. | This README is also covered by this skill. |
 | `markitdown` | Convert PDF, Word, PowerPoint, Excel, HTML, and other sources into Markdown. | MarkItDown CLI workflow. |
 | `missing-tools` | Resolve unavailable commands without changing global machine state. | Prefers project env, mise, comma, and Nix fallbacks. |
@@ -85,7 +82,7 @@ An update fails before overwriting local files if a source match count differs f
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | Japanese skill for iteratively improving agent instructions through executor feedback. |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
-| `mattpocock-skills` | `mattpocock/skills` | `grilling/`, `diagnosing-bugs/`, `domain-modeling/`, etc. | Current design, diagnosis, prototyping, handoff, and architecture skills without deprecated aliases. Each skill includes the upstream LICENSE. |
+| `mattpocock-skills` | `mattpocock/skills` | `grilling/`, `diagnosing-bugs/`, `domain-modeling/`, etc. | Current design, diagnosis, handoff, and architecture skills without deprecated aliases. Each skill includes the upstream LICENSE. |
 | `superpowers` | `obra/superpowers` | `brainstorming/`, `dispatching-parallel-agents/`, `software-development/systematic-debugging/`, `test-driven-development/`, `writing-skills/` | Five selected workflow areas. Three skills are vendored directly; systematic debugging keeps the richer local skill with pinned upstream waiting references, and brainstorming is a minimal local Three Paths router. |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied Apache-2.0 license. |
@@ -102,7 +99,6 @@ An update fails before overwriting local files if a source match count differs f
 | `grill-with-docs` | Compose `grilling` with `domain-modeling`. |
 | `handoff` | Compact the conversation into a handoff document for another agent. |
 | `improve-codebase-architecture` | Find architecture improvements, deep modules, and testability opportunities. |
-| `prototype` | Build throwaway prototypes for state design or UI exploration. |
 
 ### Superpowers Group
 

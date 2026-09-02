@@ -7,7 +7,7 @@ description: "Use when the user asks about engineering practices, code review st
 
 Google の公開ドキュメント [eng-practices](https://github.com/google/eng-practices)（Reviewer Guide + CL Author Guide）の要点を、Claude Code エージェントが「自分で実装するとき」「PR をレビューするとき」「PR 説明を書くとき」「指摘を受けたとき」にすぐ使える行動規範に翻訳したスキル。
 
-他の開発系スキル（`git-github-flow` / `python-dev` / `go-dev` / `typescript-dev` / `api-design` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `auto-debugger` / `markdown-docs`）から共通参照される。
+他の開発系スキル（`git-github-flow` / `python-dev` / `go-dev` / `typescript-dev` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `auto-debugger` / `markdown-docs`）から共通参照される。
 
 ## 目的・適用範囲
 
@@ -31,7 +31,7 @@ Google の公開ドキュメント [eng-practices](https://github.com/google/eng
 
 ## 自分で実装するとき
 
-`python-dev` / `go-dev` / `typescript-dev` / `api-design` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `markdown-docs` から流入してきた場合のセルフチェック。
+`python-dev` / `go-dev` / `typescript-dev` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `markdown-docs` から流入してきた場合のセルフチェック。
 
 - **スコープを絞る**: 1 CL は 1 目的。リファクタと機能追加を同居させない。混ざりそうなら 2 CL に分け、依存順を CL 説明で明示する。
 - **テスト同梱**: 機能変更には新規/更新テストを同 CL に入れる。テストを別 CL に分けるのは「先に大きな refactor を入れて読みやすくする」など正当な理由がある場合のみ。

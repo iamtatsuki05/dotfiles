@@ -91,7 +91,7 @@ Use the same scratch-home pattern with the target agent's documented config-home
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 | `apps/grok/config.toml` | `~/.grok/config.toml` |
 
-`skills/` is linked to each supported agent home. For Antigravity CLI, it is linked into `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills`. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/antigravity-cli/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
+`skills/` is linked to each supported agent home. For Antigravity CLI, it is linked into `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills`. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Hermes is the exception: `~/.hermes/skills` stays a real directory that Hermes owns, so its bundled-skill sync, `.bundled_manifest`, hub, and curator writes land there, and the shared tree is linked to `~/.hermes/dotfiles-skills` and loaded through `skills.external_dirs` in the managed `config.yaml`. Hermes treats that external tree as externally owned, but a user-directed `skill_manage` edit still writes to the repository. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/antigravity-cli/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
 
 Hermes also links files from `apps/hermes-agent/agent-hooks/` into `~/.hermes/agent-hooks/`.
 
