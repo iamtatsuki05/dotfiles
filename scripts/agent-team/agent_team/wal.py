@@ -2777,8 +2777,13 @@ class WalSidecarController:
     @staticmethod
     def _path_from_fd(fd: int) -> str:
         if os.uname().sysname == "Darwin":
+            getpath_command = getattr(fcntl, "F_GETPATH", None)
+            if type(getpath_command) is not int:
+                raise WalSidecarRecoveryRequiredError(
+                    "descriptor path anchor is unavailable"
+                )
             try:
-                raw_path = fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024)
+                raw_path = fcntl.fcntl(fd, getpath_command, b"\0" * 1024)
             except OSError as exc:
                 raise WalSidecarRecoveryRequiredError(
                     "descriptor path anchor is unavailable"

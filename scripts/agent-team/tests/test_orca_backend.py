@@ -3413,7 +3413,8 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             child = (
-                "import os; os.close(0); os.write(2, b'child stderr\\n'); os._exit(7)"
+                "import os, time; os.close(0); time.sleep(0.05); "
+                "os.write(2, b'child stderr\\n'); os._exit(7)"
             )
             runner = ProcessRunner()
             with (
