@@ -179,6 +179,11 @@ def _validate_review_authority_ref(value: object) -> None:
             "invalid-authority-ref",
             "review authority ref is malformed",
         ) from exc
+    if type(reference) is not str or type(digest) is not str:
+        raise _error(
+            "invalid-authority-ref",
+            "review authority ref scalars are invalid",
+        )
     if issuer is not _REVIEW_AUTHORITY_ISSUER:
         raise _error(
             "invalid-authority-ref",
@@ -208,6 +213,11 @@ def _validate_review_authority_ref(value: object) -> None:
 def _issue_review_authority_ref(reference: str, digest: str) -> ReviewAuthorityRef:
     """Issue one validated opaque reference from the review-policy owner."""
 
+    if type(reference) is not str or type(digest) is not str:
+        raise _error(
+            "invalid-authority-ref",
+            "review authority ref scalars are invalid",
+        )
     reference_value = _text(reference, "review_authority.reference")
     if _REVIEW_AUTHORITY_REFERENCE.fullmatch(reference_value) is None:
         raise _error(

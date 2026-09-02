@@ -96,6 +96,76 @@ identity, completion ID, origin sequence, outcome kind, and target pair. Its
 explanatory text and the handoff copy's explanatory text are not compared and
 cannot authorize or reject a handoff.
 
+## Schema-4 review checkpoint producer (Issue #81)
+
+The pure reducer remains the policy authority. The package-private
+`ReviewCheckpointProducer` is the separate schema-4 persistence seam for a
+normal `CoordinationStore`. It accepts an actual `ReviewPolicyUpdate`, the
+actual `SerialReviewPolicy`, and the matching #74 owner-issued
+`ReviewAuthorityRef`. The #74 process-local binding proof revalidates the
+update, policy, issuer, reference, and complete nested causal values before
+the Store sees them. A raw projection, `CompletionAdmissionRef`, `ApprovalRef`,
+route result, reservation result, caller-supplied checkpoint, or event is not
+an alternative input. The producer does not route a task, issue an owner ref,
+compose approval, or invoke a backend, runner, reviewer process, or
+reservation.
+
+The producer is immutable and cannot be rebound through reinitialization or
+post-issuance mutation. The handoff's owner registry Store is part of that
+immutable binding. Its opaque request is accepted only by the exact registered
+Store; Store method/error bindings, state-root identity, checkpoint
+issuer, and returned commit/read evidence are revalidated before the result is
+trusted. Unregistered ports are not invoked, foreign observations are rejected,
+and only genuine Store errors preserve cleanup capability. The full persistence
+boundary is specified in the
+[coordination Store contract](coordination-store.md#schema-4-review-checkpoint-producer-issue-81).
+
+The producer accepts exactly these three actual #49 edges, in order. Each edge
+is one separate transaction:
+
+| Actual event | Task-policy edge | Workflow edge | Result |
+| --- | --- | --- | --- |
+| `WorkerCompletion(kind=SUCCEEDED)` | `ASSIGNED(T) -> WORKER_DONE(T+1)` | `WORKER_DONE(W) -> WORKER_DONE(W+1)` | Materialize the exact assigned task preimage once, then commit the next full task row and one policy event. |
+| `ReviewRequest` | `WORKER_DONE(T) -> REVIEW_PENDING(T+1)` | `WORKER_DONE(W) -> REVIEW_PENDING(W+1)` | Commit the next full task row and checkpoint, then return one `ReviewerAssignment` intent. |
+| `ReviewDecision(kind=APPROVED)` | `REVIEW_PENDING(T) -> APPROVED(T+1)` | `REVIEW_PENDING(W) -> REVIEW_PENDING(W+1)` | Commit the next full task row and one state-preserving policy event; no effect is executed. |
+
+Every commit updates `task_policy_states`, the current workflow checkpoint,
+and one `workflow_events` row together. The task row and checkpoint reference
+are compared in both directions. Task and workflow sequences advance by one;
+the event is `kind='policy_transition'`, has the fixed producer actor, and
+has `operation_id` and `receipt_id` set to `NULL`. The Store-owned authority
+digest is written to both `checkpoint.review_authority` and
+`event.evidence_ref`; the request and authority digests are separate
+domain-separated values. Their timestamp and global workflow event ID are not
+digest inputs; the event's own digest remains Store-defined.
+
+The first edge requires an absent task row and an exact `ASSIGNED(T)` task
+reference in the current checkpoint. It materializes that preimage inside the
+same transaction before advancing to `WORKER_DONE`; a fault rolls back the
+task row, checkpoint, and event together. The later edges require the existing
+full row and guarded sequence, digest, bytes, identity, and checkpoint
+preconditions. A current-only commit, sequence jump, synthetic event, stale
+checkpoint, foreign owner ref, nested-value mutation, unresolved operation,
+or non-empty verification table is rejected without a partial write.
+
+Normal schema-4 open and `load_review_checkpoint()` validate only the closed
+producer suffix: up to the three ordered policy events, full task row
+projection, matching checkpoint snapshots, and the complete workflow prefix.
+The read observation also includes the canonical checkpoint bytes immediately
+before the first policy event, so the producer independently recomputes the
+first and all subsequent request digests.
+After all three commits, the fresh current pair is a workflow
+`REVIEW_PENDING` checkpoint with `W0 >= 2` and a task row at policy phase
+`APPROVED`; `verification_operations` and `verification_receipts` remain
+empty, and
+`ReviewerAssignment` is only a post-commit intent. The generic
+`commit_transition()` remains state-preserving for roots without a task-ledger
+row; after #81 creates that row, only a dedicated task-aware writer may
+advance the root, and generic transition/lifecycle entry points reject it. The
+schema-3 validator is unchanged. Backup,
+inspect, restore, and Doctor continue to reject task-row images until their
+separate #83 evidence contract is implemented.
+
 `policy_authority_projection(update, policy)` is the return-only factory for a
 validated update. `PolicyAuthorityProjection` contains only typed identity,
 phase/event kind, completion/decision kind and reference, target pair, reason,
@@ -136,14 +206,17 @@ rejected without changing the supplied state. Explanations are bounded text
 for humans only: strings such as `APPROVED`, terminal idle/done state, process
 exit, and Main/Agent prompt text are not event types or approval authority.
 
-## Future adapters
+## Future adapters and the current Store boundary
 
-`ReviewPolicyStorePort.update(update, policy)` is the minimal persistence seam.
-A future implementation owns compare-and-swap, transactionality, and storage;
-it must call `validate_policy_update(update, policy)` before accepting the
-typed update. `ReviewPolicyEffectPort.assign_reviewer(assignment, policy, expected_state)`
-must call `validate_reviewer_assignment(assignment, policy, expected_state)`
-before dispatch; the expected state must be the matching `worker_done` state.
+`ReviewPolicyStorePort.update(update, policy)` remains the minimal pure-policy
+integration seam. It must call `validate_policy_update(update, policy)` before
+accepting the typed update. The current schema-4 producer uses its separate
+package-private `ReviewWorkflowStorePort.commit_review_policy()` seam for the
+transaction described above; it does not weaken or replace the generic
+`commit_transition()` contract. `ReviewPolicyEffectPort.assign_reviewer(assignment,
+policy, expected_state)` must call `validate_reviewer_assignment(assignment,
+policy, expected_state)` before dispatch; the expected state must be the
+matching `worker_done` state.
 `ReviewPolicyHandoffPort.save_authority(update, policy)` receives the
 policy-bound `ReviewPolicyUpdate` and actual `SerialReviewPolicy`, not a raw
 projection. The #74 `PolicyVerificationHandoff` implementation revalidates
@@ -160,15 +233,16 @@ malformed, foreign, stale, mutated, or non-approved value is rejected before
 approval composition. The handoff stores no explanation, prompt, raw body, or
 provider output, and it does not add retry or fallback behavior.
 
-This module and the handoff adapter do not implement SQLite, schema-4 ledger
-records, process restart, `mark_unknown`, or provider exactly-once proof. The
-earlier [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78) plan to
-own the durable ledger, restart boundary, and full runtime correlation is
-historical. Current ownership is split across the [Issue #80 schema-4
-foundation](https://github.com/iamtatsuki05/dotfiles/issues/80), [#81 task/review
-persistence](https://github.com/iamtatsuki05/dotfiles/issues/81), [#82
-verification transaction and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
-and [#83 non-empty image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83).
-The handoff's deterministic fake is test evidence only. The reducer still
-returns `ReviewerAssignment` only and never invokes an external process or
-backend.
+This module and the handoff adapter do not implement the Store transaction,
+process restart, `mark_unknown`, or provider exactly-once proof. The earlier
+[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78) plan to own the
+durable ledger, restart boundary, and full runtime correlation is historical.
+Issue #81 now owns only the normal-Store task/review suffix described above;
+Issue #80 owns the schema-4 physical foundation, [#82 verification
+transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)
+owns actual completion admission, capture/context, and verification
+lifecycle, and [#83 non-empty image evidence, backup/restore, and
+Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83) owns those image
+boundaries. The handoff's deterministic fake is test evidence only. The
+reducer remains pure, returns `ReviewerAssignment` as an intent, and never
+invokes an external process or backend.

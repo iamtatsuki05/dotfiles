@@ -3854,7 +3854,7 @@ class TaskVerificationSchemaTests(unittest.TestCase):
                 self.assertRaises(StoreIntegrityError) as raised,
             ):
                 CoordinationStore(state_root, busy_timeout_ms=100)
-            self.assertEqual(_FOUNDATION_NOT_READY_MESSAGE, str(raised.exception))
+            self.assertIn("SQLite task policy", str(raised.exception))
             self.assertFalse(workflow_validation.called)
             self.assertFalse(high_water_validation.called)
             self.assertEqual(before, _root_inventory(state_root))
@@ -4075,10 +4075,10 @@ class TaskVerificationSchemaTests(unittest.TestCase):
                 state_root, after_injection
             )
 
-    def test_foundation_gate_rejects_nonempty_task_state_row(
+    def test_task_row_validator_rejects_noncanonical_or_unbound_state(
         self,
     ) -> None:
-        """A non-empty task projection is rejected until a Store writer exists."""
+        """Normal open accepts only a canonical task row bound to its checkpoint."""
 
         cases = ("bytes", "digest", "scalar")
         for case in cases:
@@ -4140,9 +4140,10 @@ class TaskVerificationSchemaTests(unittest.TestCase):
                 _assert_injection_preserved_lifecycle_files(
                     self, before_injection, after_injection
                 )
-                self._assert_foundation_gate_rejects_nonempty_ledger(
-                    state_root, after_injection
-                )
+                with self.assertRaises(StoreIntegrityError) as raised:
+                    CoordinationStore(state_root, busy_timeout_ms=100)
+                self.assertIn("SQLite task policy", str(raised.exception))
+                self.assertEqual(after_injection, _foundation_snapshot(state_root))
 
     def test_foundation_gate_rejects_nonempty_operation_row(
         self,

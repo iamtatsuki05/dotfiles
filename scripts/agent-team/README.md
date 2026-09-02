@@ -31,12 +31,16 @@ linked reference documents when changing the implementation or configuration.
   and keeps provider effects outside the Store. The current [Issue #80 schema-4
   foundation](https://github.com/iamtatsuki05/dotfiles/issues/80) fixes the
   twelve-table object set, read-only image classifier, and pure codecs; its
-  empty-ledger and non-empty fail-closed boundary is explicit there.
+  empty-ledger and non-empty fail-closed boundary is explicit there. The
+  normal Store's [Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)
+  now persists the full task row and the closed three-event review suffix;
+  verification rows and non-empty image evidence remain downstream.
 - [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
   `TaskSpec`, dependency order, and state observation contract without storage
   or workflow execution.
 - [Serial review policy](docs/review-policy.md) defines the typed serial gate
-  shared by normal tasks and Issue #50-admitted express tasks, without backend wiring.
+  shared by normal tasks and Issue #50-admitted express tasks, without backend
+  wiring. It also documents the Issue #81 normal-Store checkpoint producer.
 - [Path/resource policy](docs/path-resource-policy.md) defines canonical path
   admission, explicit resource modes, reservation-port handoff, and the
   normal/express/research lane matrix without filesystem or provider effects.
@@ -45,7 +49,8 @@ linked reference documents when changing the implementation or configuration.
   normalized receipt required before a write task can be completed.
 - [Policy/verification handoff](docs/policy-verification-handoff.md) defines
   the #49 review ref, #50 completion ref, approved-only composition, exact
-  Store readback, and the boundary around the schema-4 work split across
+  Store readback, the #81 process-local review binding, and the boundary around
+  the schema-4 work split across
   [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80),
   [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
   [#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
@@ -233,11 +238,12 @@ agent-team status \
   `.coordination.sqlite3.restore-` is reserved and rejected as a destination.
 - Version-1 backup/inspect keeps its exact ten-field, two-file manifest shape.
   The schema-4 foundation records `store_schema=4`,
-  `event_schema_version=2`, and `sqlite_user_version=4` (`4/2/4`). Its
-  production path writes no row to the three new tables: only an image with
-  those tables empty is a structural baseline. A non-empty new table fails
-  closed; #80 does not claim non-empty verification image inspection or
-  backup/restore success.
+  `event_schema_version=2`, and `sqlite_user_version=4` (`4/2/4`). The #80
+  foundation path writes no row to the three new tables. The normal Store
+  admits only the #81 full `task_policy_states` row and its closed review
+  suffix; `verification_operations` and `verification_receipts` remain empty.
+  Other non-empty images fail closed; #80 does not claim non-empty verification
+  image inspection or backup/restore success.
 - The established image is classified before root mutation through a
   read-only, WAL/SHM-aware pre-gate. Structural WAL is copied with the image;
   SQLite reconstructs the ephemeral SHM cache only in a private temporary
@@ -248,9 +254,10 @@ agent-team status \
   approval-binding snapshot, body-free verification request, and normalized
   receipt. They exclude raw argv/environment values and raw bodies, and check
   value consistency only; they do not capture owner authority or hydrate a
-  Gate value. Live capture/context, Store adapter, lifecycle transactions,
-  logical record digest, non-empty image semantics, and verification-aware
-  Doctor/restore remain downstream work.
+  Gate value. Issue #81 owns only normal-Store task/review transactions and
+  full task-row projection. Live capture/context, Store adapter, lifecycle
+  transactions, logical record digest, non-empty image semantics, and
+  verification-aware Doctor/restore remain downstream work in #82 and #83.
 - Provider-only restore remains candidate-first and provider-free under its
   historical contract. The #80 foundation proves only the empty-new-ledger
   schema-4 backup/restore round trip; it does not silently repair logs,
@@ -288,9 +295,10 @@ backend, projector, and real Store prove this adapter contract only. They do
 not prove provider-side exactly-once or a #31 cross-store atomic join. Workflow
 reducer wiring remains #33, and policy/verification handoff remains #74.
 The schema-4 foundation is [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80);
-task/review production transitions are [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
-verification transactions and adapter wiring are [#82](https://github.com/iamtatsuki05/dotfiles/issues/82),
-and image evidence, backup/restore, and Doctor work are [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
+normal-Store task/review production transitions are [#81](https://github.com/iamtatsuki05/dotfiles/issues/81);
+verification transactions, actual completion admission, and adapter wiring are
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82); and image evidence,
+backup/restore, and Doctor work are [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 Issue #74's handoff takes the actual #49 `ReviewPolicyUpdate` plus policy and
 the actual #50 `route_task()` plus matching reservation result. Each owner ref
@@ -303,10 +311,10 @@ as #50 comparisons. The Gate keeps `start(ApprovalRef)` and
 `resume(VerificationHandle)` and its six state-port operations. Handoff tests
 use a deterministic fake, which is not evidence of SQLite, restart, or
 provider exactly-once behavior. [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
-is split into the [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)
-and the downstream [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83) work. The full ledger,
+is split into the [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80),
+the [#81](https://github.com/iamtatsuki05/dotfiles/issues/81) task/review
+producer, and the downstream [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
+and [#83](https://github.com/iamtatsuki05/dotfiles/issues/83) work. The full ledger,
 restart/replay, `mark_unknown`, and non-empty image claims are outside #80.
 There is no raw-body/action alias/payload path or retry/fallback.
 

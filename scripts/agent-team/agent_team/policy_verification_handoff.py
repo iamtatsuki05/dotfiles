@@ -5,11 +5,11 @@ issuing the opaque approval consumed by #51.  It owns no persistence and no
 runner: one injected private registry must save and read every contract record
 and provide the existing six-method verification state port.
 
-Issue #74 supplies this contract and deterministic test fixtures only.  The
-schema-4 durable implementation, canonical codec/hydrator, restart
-reconstruction, and unknown-effect mutation belong to Issue #78.  That adapter
-consumes the owner-ref/approval contract; it must not hydrate these private
-process-local record classes or issuer sentinels.
+Issue #74 supplies the owner contract and deterministic fixtures.  Issue #81
+uses the read-only process-local update/ref binding for review persistence;
+Issue #82 owns approval capture, Store hydration, and unknown-effect mutation
+on the schema-4 foundation from Issue #80.  Neither child hydrates these
+private record classes or issuer sentinels as wire values.
 """
 
 from __future__ import annotations
@@ -19,8 +19,11 @@ import hmac
 import posixpath
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+from enum import Enum
+from threading import RLock
 from typing import Final, NoReturn, Protocol, SupportsIndex
+from weakref import WeakKeyDictionary
 
 from . import verification_gate as _gate
 from .path_resource_policy import (
@@ -236,6 +239,91 @@ class _ReviewAuthorityRecord(_OpaqueRecord):
 
     def __repr__(self) -> str:
         return "<_ReviewAuthorityRecord opaque>"
+
+
+@dataclass(frozen=True, slots=True, init=False, repr=False, eq=False, weakref_slot=True)
+class _ReviewAuthorityBinding(_OpaqueRecord):
+    """Process-local proof that one actual policy update owns one ref.
+
+    The update and policy are retained as the exact objects supplied by the
+    policy owner.  The object is intentionally not a wire value: its weak-key
+    registry entry carries immutable snapshots used to reject ``object``
+    mutation, forged instances, and ref substitution before a consumer can
+    use the update.
+    """
+
+    update: ReviewPolicyUpdate
+    policy: SerialReviewPolicy
+    review_ref: ReviewAuthorityRef
+    _issuer: object = field(repr=False, compare=False)
+
+    def __new__(cls, *args: object, **kwargs: object) -> NoReturn:
+        del cls, args, kwargs
+        raise TypeError("review authority binding is return-only")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("review authority binding is return-only")
+
+    def __repr__(self) -> str:
+        return "<_ReviewAuthorityBinding opaque>"
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("review authority binding cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("review authority binding cannot be deep-copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("review authority binding cannot be pickled")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        del protocol
+        raise TypeError("review authority binding cannot be pickled")
+
+
+@dataclass(frozen=True, slots=True)
+class _ReviewAuthorityEvidence:
+    """Validated, typed owner evidence returned to a producer consumer."""
+
+    owner: PolicyVerificationHandoff
+    update: ReviewPolicyUpdate
+    policy: SerialReviewPolicy
+    review_ref: ReviewAuthorityRef
+
+    @property
+    def actual_update(self) -> ReviewPolicyUpdate:
+        return self.update
+
+    @property
+    def ref(self) -> ReviewAuthorityRef:
+        return self.review_ref
+
+
+@dataclass(frozen=True, slots=True)
+class _ReviewAuthorityBindingState:
+    """Registry-only state for one process-local binding object."""
+
+    owner: PolicyVerificationHandoff
+    store: object
+    update: ReviewPolicyUpdate
+    policy: SerialReviewPolicy
+    review_ref: ReviewAuthorityRef
+    update_snapshot: tuple[object, ...]
+    policy_snapshot: tuple[object, ...]
+    record_snapshot: tuple[object, ...]
+
+
+_REVIEW_AUTHORITY_BINDING_ISSUER: Final = object()
+_REVIEW_AUTHORITY_BINDINGS: WeakKeyDictionary[
+    _ReviewAuthorityBinding, _ReviewAuthorityBindingState
+] = WeakKeyDictionary()
+_REVIEW_AUTHORITY_BINDINGS_LOCK: Final = RLock()
+_HANDOFF_REVIEW_REF_OWNERS: WeakKeyDictionary[
+    ReviewAuthorityRef, tuple[object, object]
+] = WeakKeyDictionary()
+_HANDOFF_REVIEW_REF_OWNERS_LOCK: Final = RLock()
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
@@ -512,6 +600,100 @@ def _make_review_record(
         raise _error(
             "review-input-invalid", "review update is not admissible"
         ) from None
+
+
+def _binding_failure() -> PolicyVerificationHandoffError:
+    """Return one constant error for every malformed binding path."""
+
+    return _error(
+        "review-authority-binding-invalid", "review authority binding is invalid"
+    )
+
+
+def _binding_value_snapshot(
+    value: object, _active: set[int] | None = None
+) -> tuple[object, ...]:
+    """Capture the complete typed update/policy graph without invoking repr.
+
+    The policy objects are frozen dataclasses, but callers can still mutate
+    them through ``object.__setattr__``.  A structural snapshot therefore
+    complements the object-identity registry: identity catches substitution,
+    while this snapshot catches mutation of any nested causal value.
+    """
+
+    active = set() if _active is None else _active
+    if value is None:
+        return ("none",)
+    if type(value) is bool:
+        return ("bool", value)
+    if type(value) is int:
+        return ("int", value)
+    if type(value) is str:
+        return ("str", value)
+    if type(value) is bytes:
+        return ("bytes", value)
+    if isinstance(value, Enum):
+        return (
+            "enum",
+            type(value),
+            _binding_value_snapshot(value.value, active),
+        )
+    if type(value) is tuple:
+        identity = id(value)
+        if identity in active:
+            raise _binding_failure()
+        active.add(identity)
+        try:
+            return (
+                "tuple",
+                tuple(_binding_value_snapshot(item, active) for item in value),
+            )
+        finally:
+            active.remove(identity)
+    if type(value) is list:
+        identity = id(value)
+        if identity in active:
+            raise _binding_failure()
+        active.add(identity)
+        try:
+            return (
+                "list",
+                tuple(_binding_value_snapshot(item, active) for item in value),
+            )
+        finally:
+            active.remove(identity)
+    if is_dataclass(value) and not isinstance(value, type):
+        identity = id(value)
+        if identity in active:
+            raise _binding_failure()
+        active.add(identity)
+        try:
+            return (
+                "dataclass",
+                type(value),
+                tuple(
+                    (
+                        item.name,
+                        _binding_value_snapshot(
+                            object.__getattribute__(value, item.name), active
+                        ),
+                    )
+                    for item in fields(value)
+                ),
+            )
+        finally:
+            active.remove(identity)
+    raise _binding_failure()
+
+
+def _review_record_snapshot(value: _ReviewAuthorityRecord) -> tuple[object, ...]:
+    """Snapshot a validated owner record without retaining its issuer object."""
+
+    return (
+        value.reference,
+        value.digest,
+        *_review_parts(value),
+    )
 
 
 def _path_claim_parts(
@@ -1157,7 +1339,10 @@ class PolicyVerificationHandoff:
             conflict_code="review-authority-conflict",
             recovery_code="review-authority-response-loss",
         )
-        return _issue_review_authority_ref(record.reference, record.digest)
+        result = _issue_review_authority_ref(record.reference, record.digest)
+        with _HANDOFF_REVIEW_REF_OWNERS_LOCK:
+            _HANDOFF_REVIEW_REF_OWNERS[result] = (self, self._store)
+        return result
 
     def issue_completion_admission(
         self,
@@ -1245,9 +1430,72 @@ class PolicyVerificationHandoff:
         )
         return _issue_completion_admission_ref(record.reference, record.digest)
 
+    def _bind_review_authority(
+        self,
+        update: ReviewPolicyUpdate,
+        policy: SerialReviewPolicy,
+        review_ref: ReviewAuthorityRef,
+    ) -> _ReviewAuthorityBinding:
+        """Bind one actual policy update to its owner-issued review ref.
+
+        This is a read-only consumer seam for the schema-4 review producer.
+        It deliberately does not issue a ref or invoke any route/composition
+        operation.  The owner record is read once during binding and again by
+        :func:`_validate_review_authority_binding` before consumption.
+        """
+
+        try:
+            if (
+                type(update) is not ReviewPolicyUpdate
+                or type(policy) is not SerialReviewPolicy
+                or type(review_ref) is not ReviewAuthorityRef
+            ):
+                raise _binding_failure()
+            validate_policy_update(update, policy)
+            expected = _make_review_record(update, policy)
+            observed = self._read_review(review_ref)
+            if not _same_review_record(expected, observed):
+                raise _binding_failure()
+            expected_snapshot = _review_record_snapshot(expected)
+            observed_snapshot = _review_record_snapshot(observed)
+            if expected_snapshot != observed_snapshot:
+                raise _binding_failure()
+            binding = object.__new__(_ReviewAuthorityBinding)
+            for name, value in (
+                ("update", update),
+                ("policy", policy),
+                ("review_ref", review_ref),
+                ("_issuer", _REVIEW_AUTHORITY_BINDING_ISSUER),
+            ):
+                object.__setattr__(binding, name, value)
+            state = _ReviewAuthorityBindingState(
+                owner=self,
+                store=self._store,
+                update=update,
+                policy=policy,
+                review_ref=review_ref,
+                update_snapshot=_binding_value_snapshot(update),
+                policy_snapshot=_binding_value_snapshot(policy),
+                record_snapshot=observed_snapshot,
+            )
+            with _REVIEW_AUTHORITY_BINDINGS_LOCK:
+                _REVIEW_AUTHORITY_BINDINGS[binding] = state
+            return binding
+        except PolicyVerificationHandoffError:
+            raise _binding_failure() from None
+        except Exception:  # noqa: BLE001 - owner/input text must not escape
+            raise _binding_failure() from None
+
     def _read_review(self, ref: ReviewAuthorityRef) -> _ReviewAuthorityRecord:
         try:
             _validate_review_authority_ref(ref)
+            with _HANDOFF_REVIEW_REF_OWNERS_LOCK:
+                owner = _HANDOFF_REVIEW_REF_OWNERS.get(ref)
+            if owner is None or owner[0] is not self or owner[1] is not self._store:
+                raise _error(
+                    "review-authority-invalid",
+                    "review authority owner differs",
+                )
             value = self._store.read_review_authority(ref.reference)
             record = _validate_review_record(value)
         except Exception:  # noqa: BLE001 - injected Store text must not escape
@@ -1477,6 +1725,61 @@ class PolicyVerificationHandoff:
                     "state-port-invalid", "verification state port is incomplete"
                 )
         return state
+
+
+def _validate_review_authority_binding(
+    binding: object,
+) -> _ReviewAuthorityEvidence:
+    """Revalidate a process-local binding against current owner readback.
+
+    A binding is useful only while its exact update, policy, ref, owner Store,
+    and owner record remain the values captured at issuance.  Every check is
+    repeated here so a consumer cannot treat the return-only wrapper as a
+    durable authority or bypass the owner's current readback.
+    """
+
+    try:
+        if type(binding) is not _ReviewAuthorityBinding:
+            raise _binding_failure()
+        if object.__getattribute__(binding, "_issuer") is not (
+            _REVIEW_AUTHORITY_BINDING_ISSUER
+        ):
+            raise _binding_failure()
+        update = object.__getattribute__(binding, "update")
+        policy = object.__getattribute__(binding, "policy")
+        review_ref = object.__getattribute__(binding, "review_ref")
+        with _REVIEW_AUTHORITY_BINDINGS_LOCK:
+            state = _REVIEW_AUTHORITY_BINDINGS.get(binding)
+        if state is None:
+            raise _binding_failure()
+        if (
+            state.update is not update
+            or state.policy is not policy
+            or state.review_ref is not review_ref
+        ):
+            raise _binding_failure()
+        if (
+            type(update) is not ReviewPolicyUpdate
+            or type(policy) is not SerialReviewPolicy
+            or type(review_ref) is not ReviewAuthorityRef
+        ):
+            raise _binding_failure()
+        if _binding_value_snapshot(update) != state.update_snapshot:
+            raise _binding_failure()
+        if _binding_value_snapshot(policy) != state.policy_snapshot:
+            raise _binding_failure()
+        _validate_review_authority_ref(review_ref)
+        if object.__getattribute__(state.owner, "_store") is not state.store:
+            raise _binding_failure()
+        expected = _make_review_record(update, policy)
+        observed = PolicyVerificationHandoff._read_review(state.owner, review_ref)
+        if not _same_review_record(expected, observed):
+            raise _binding_failure()
+        if _review_record_snapshot(observed) != state.record_snapshot:
+            raise _binding_failure()
+        return _ReviewAuthorityEvidence(state.owner, update, policy, review_ref)
+    except Exception:  # noqa: BLE001 - binding/owner text must not escape
+        raise _binding_failure() from None
 
 
 __all__ = [

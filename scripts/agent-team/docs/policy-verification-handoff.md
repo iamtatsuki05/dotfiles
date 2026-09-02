@@ -37,7 +37,7 @@ transportable as a bounded identifier, but it is authority only when it resolves
 to the exact approval and both exact owner records in the injected contract
 registry.
 
-## Current status: #74 handoff is implemented; #80 provides the empty-ledger foundation
+## Current status: #74 handoff and #81 review producer are implemented; #80 provides the foundation
 
 The current #74 code provides the private handoff module,
 `PolicyVerificationHandoff`, and an injected package-private contract registry.
@@ -45,22 +45,27 @@ It also provides focused deterministic tests. The registry is process-local
 test/composition infrastructure; this package does not provide a production
 SQLite implementation or a durable codec for these private records.
 
-| Area | Implemented in the #74 boundary | Not established by #74 |
+| Area | Current implementation status | Not established here |
 | --- | --- | --- |
 | Review authority | Validate the actual `ReviewPolicyUpdate` and `SerialReviewPolicy`, derive the canonical projection internally, save a bounded record, read it back exactly, then issue `ReviewAuthorityRef`. | A new review transition, a caller-supplied projection, or a durable schema. |
 | Completion admission | Call the existing `route_task()` once with typed path/resource/profile inputs and the reservation port; issue `CompletionAdmissionRef` only for an eligible matching result. | A second route, retry, alternate lane/provider/backend, or provider proof. |
 | Composition | Resolve and revalidate both owner records, compare only their overlap, retain #49-only fields as #49 provenance, and save/read back the bound approval. | A claim that #50 owns or verified #49-only runtime fields. |
 | Verification entry | Preserve `VerificationGate.start(ApprovalRef)`, `resume(VerificationHandle)`, and the six existing state-port operations. | SQLite durability, fresh-process replay, `mark_unknown`, or provider exactly-once. |
+| Schema-4 review checkpoint | #81 consumes the actual #49 update plus its bound `ReviewAuthorityRef` and commits the closed three-edge task/workflow suffix through the normal Store. | `CompletionAdmissionRef`, `ApprovalRef`, verification rows, external effects, or image/restore authority. |
 
 The focused suite proves the handoff contract and a deterministic fake state
 model. It does not turn that fake into production persistence.
 
 The [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)
-now fixes the physical twelve-table image and pure task/verification codecs,
-but it does not change the #74 handoff into a durable authority. Its new
-verification tables remain empty in the #80 production path; non-empty image,
-lifecycle, capture, adapter, hydration, and recovery claims belong to the
-downstream work linked below.
+fixes the physical twelve-table image and pure task/verification codecs, but it
+does not change the #74 handoff into a durable authority. The normal Store's
+[#81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)
+now writes only the full `task_policy_states` row and its three policy-event
+suffix entries. `verification_operations` and `verification_receipts` remain
+empty, and backup, inspect, restore, and Doctor still reject this non-empty
+task-row image until #83 supplies the image-evidence contract. Actual
+completion admission, capture/context, verification lifecycle, and durable
+verification records remain downstream work in #82.
 
 ## #49 issues review authority from the actual update and policy
 
@@ -155,10 +160,16 @@ Reviewer terminal, review round, target `HEAD`/tree, or `claim_ref`. Those are
 retains them in the bound approval as #49 provenance; it does not claim that
 #50 route/reservation data was compared against them. The adapter never adds
 those fields as raw arguments or guesses them from task text, path names, or a
-reservation ID. The full runtime join is downstream of the [Issue #80
+reservation ID. The #81 review producer consumes this #49 evidence through
+its process-local binding seam, but it does not accept a #50
+`CompletionAdmissionRef`, create an `ApprovalRef`, or persist owner-private
+records. The full runtime join remains downstream of the [Issue #80
 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80) and belongs to
-the verification and image work in [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
-and [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
+the verification work in [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
+and image work in [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
+Each review ref is bound to the exact `PolicyVerificationHandoff` and registry
+that issued it. A text-identical ref from another handoff is foreign and is
+rejected before the #81 Store transaction.
 
 After the overlap check, the composer derives a stable approval identity,
 passes the validated bound approval to #51's private factory, saves an approval
@@ -253,14 +264,16 @@ TaskPolicy/approval/request/receipt codecs. The three new ledger tables remain
 empty in the #80 production path; an image with any non-empty new table fails
 closed. #80 proves only the empty schema-4 backup/restore round trip.
 
-The downstream [#81 task and review transitions](https://github.com/iamtatsuki05/dotfiles/issues/81),
-[#82 verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82),
-and [#83 image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)
-own the non-empty lifecycle and image semantics. Live owner capture/context,
-Store adapter, snapshot hydration, the 58-field operation-row digest,
-non-empty lifecycle, verification-aware Doctor, and non-empty image evidence
-are not #80 claims. Exact schema-2 and schema-3 images remain
-`StoreMigrationRequiredError` to target schema `4`; #80 does not migrate them.
+The [#81 task and review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)
+now owns the normal-Store task row and closed three-event review suffix. It
+does not create verification rows or consume a #50 completion admission. The
+downstream [#82 verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)
+owns actual completion admission, owner capture/context, snapshot hydration,
+the 58-field operation-row digest, and verification lifecycle. [#83 image
+evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)
+owns non-empty image semantics and those image boundaries. Exact schema-2 and
+schema-3 images remain `StoreMigrationRequiredError` to target schema `4`;
+#80 does not migrate them.
 
 The schema-4 children define their own canonical payload and decoder boundaries.
 They consume the #74 owner-ref/approval contract; they must not reconstruct
@@ -268,10 +281,12 @@ They consume the #74 owner-ref/approval contract; they must not reconstruct
 with `object.__new__`, copy their module-local issuer sentinels, or implement
 the package-private registry protocol as a durable wire contract.
 
-Until the downstream children supply their records, #74 must not claim SQLite
-persistence, restart recovery, durable `mark_unknown`, or provider exactly-once.
-A deterministic fake, an in-memory registry, a terminal state, or an effect
-result is not a substitute for that proof.
+The #74 handoff itself still must not claim SQLite persistence, restart
+recovery, durable `mark_unknown`, or provider exactly-once. #81's normal-Store
+review suffix is a separate consumer contract, not a durable copy of the
+private #74 registry records. A deterministic fake, an in-memory registry, a
+terminal state, or an effect result is not a substitute for the verification
+proof owned by #82.
 
 ## Rejection and non-goals are fail-closed
 
@@ -306,5 +321,7 @@ behavior, and the existing Gate's effect-once/replay behavior through the
 handoff.
 
 SQLite reopen, crash injection, provider login/effect tests, schema-4
-validation, durable `mark_unknown`, and production migration remain not-run in
-#74 and are acceptance work for #80 and its downstream children.
+validation, durable `mark_unknown`, and production migration remain outside
+#74. The #80 foundation and #81 review producer have their own Store evidence;
+verification lifecycle and non-empty image evidence remain acceptance work for
+#82 and #83.

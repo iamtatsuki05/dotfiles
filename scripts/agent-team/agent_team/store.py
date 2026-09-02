@@ -26,6 +26,10 @@ from types import MappingProxyType
 from typing import Final, NoReturn, Self, cast
 from urllib.parse import quote
 
+from . import _review_workflow_store as _review_workflow
+from . import review_policy as _review
+from . import task_policy as _task_policy
+from . import task_verification_ledger as _task_ledger
 from . import workflow_store as _workflow
 from .lease import (
     Claim,
@@ -1453,6 +1457,30 @@ CREATE TABLE task_policy_states (
         ON UPDATE RESTRICT ON DELETE RESTRICT
 )
 """
+
+_TASK_POLICY_STATE_ROW_COLUMNS: Final = (
+    "root_key",
+    "task_id",
+    "version",
+    "state_codec_version",
+    "team_id",
+    "workspace",
+    "sequence",
+    "attempt_id",
+    "dispatch_id",
+    "worker_node",
+    "reviewer_node",
+    "review_round",
+    "target_head",
+    "target_tree_digest",
+    "claim_ref",
+    "receipt_ref",
+    "phase",
+    "state_bytes",
+    "state_digest",
+    "run_id",
+    "updated_ns",
+)
 
 _VERIFICATION_OPERATIONS_SQL = """
 CREATE TABLE verification_operations (
@@ -4048,18 +4076,302 @@ def _foreign_key_contract_for_connection(
     return tuple(sorted(contracts))
 
 
-def _validate_schema4_ledger_is_empty(connection: sqlite3.Connection) -> None:
-    """Reject schema-4 ledger rows until their Store writer is authoritative."""
+def _task_policy_row_values(
+    state: _task_policy.TaskPolicyStateV4,
+    *,
+    root_key: str,
+    run_id: str,
+    updated_ns: int,
+) -> dict[str, object]:
+    """Project one canonical task state into the exact schema-4 row shape."""
 
-    for table in (
-        "task_policy_states",
-        "verification_operations",
-        "verification_receipts",
+    state_bytes = _task_ledger.encode_task_state(state)
+    state_digest = str(_task_ledger.task_state_digest(state_bytes))
+    scalars = _task_policy.task_state_to_dict(state)
+    values: dict[str, object] = {
+        "root_key": root_key,
+        "task_id": scalars["task_id"],
+        "version": scalars["version"],
+        "state_codec_version": _task_ledger.TASK_STATE_CODEC_VERSION,
+        "team_id": scalars["team_id"],
+        "workspace": scalars["workspace"],
+        "sequence": scalars["sequence"],
+        "attempt_id": scalars["attempt_id"],
+        "dispatch_id": scalars["dispatch_id"],
+        "worker_node": scalars["worker_node"],
+        "reviewer_node": scalars["reviewer_node"],
+        "review_round": scalars["review_round"],
+        "target_head": scalars["target_head"],
+        "target_tree_digest": scalars["target_tree_digest"],
+        "claim_ref": scalars["claim_ref"],
+        "receipt_ref": scalars["receipt_ref"],
+        "phase": scalars["phase"],
+        "state_bytes": state_bytes,
+        "state_digest": state_digest,
+        "run_id": run_id,
+        "updated_ns": updated_ns,
+    }
+    if tuple(values) != _TASK_POLICY_STATE_ROW_COLUMNS:
+        raise StoreIntegrityError("task policy row projection order differs")
+    return values
+
+
+def _task_policy_observation_from_row(
+    row: sqlite3.Row,
+) -> _review_workflow.StoredTaskPolicyState:
+    """Decode and compare every SQL scalar against its canonical task bytes."""
+
+    try:
+        raw = row["state_bytes"]
+        if type(raw) is not bytes:
+            raise ValueError("task state bytes are invalid")
+        state = _task_ledger.decode_task_state(raw)
+        values = _task_policy_row_values(
+            state,
+            root_key=row["root_key"],
+            run_id=row["run_id"],
+            updated_ns=row["updated_ns"],
+        )
+        for column in _TASK_POLICY_STATE_ROW_COLUMNS:
+            expected = values[column]
+            actual = row[column]
+            if type(actual) is not type(expected) or actual != expected:
+                raise ValueError("task state scalar projection differs")
+        return _review_workflow.StoredTaskPolicyState(
+            root_key=row["root_key"],
+            state=state,
+            state_bytes=raw,
+            state_digest=row["state_digest"],
+            run_id=row["run_id"],
+            updated_ns=row["updated_ns"],
+        )
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        _task_ledger.TaskStateCodecError,
+    ) as exc:
+        raise StoreIntegrityError("SQLite task policy row is invalid") from exc
+
+
+def _validate_task_observation_checkpoint(
+    task: _review_workflow.StoredTaskPolicyState,
+    checkpoint: _workflow.WorkflowCheckpointV4,
+) -> None:
+    reference = checkpoint.task_policy
+    state = task.state
+    if (
+        task.root_key != checkpoint.root.root_key
+        or task.run_id != checkpoint.run.run_id
+        or task.updated_ns != checkpoint.updated_ns
+        or reference is None
+        or checkpoint.task_sequence != state.sequence
+        or reference.version != state.version
+        or reference.team_id != str(state.team_id)
+        or reference.workspace != str(state.workspace)
+        or reference.task_id != str(state.task_id)
+        or reference.sequence != state.sequence
+        or reference.state_digest != task.state_digest
     ):
-        if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
+        raise StoreIntegrityError(
+            "SQLite task policy row differs from its current checkpoint"
+        )
+
+
+def _validate_schema4_review_task_rows(connection: sqlite3.Connection) -> None:
+    """Accept only the bounded review-policy suffix written by Issue #81."""
+
+    previous_row_factory = connection.row_factory
+    task_count = 0
+    try:
+        connection.row_factory = sqlite3.Row
+        with _workflow_stream_rows(
+            connection,
+            "SELECT * FROM task_policy_states ORDER BY root_key, task_id",
+        ) as rows:
+            for row in rows:
+                task_count += 1
+                task = _task_policy_observation_from_row(row)
+                checkpoint = _workflow_checkpoint_for_root(
+                    connection,
+                    task.root_key,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                )
+                if type(checkpoint) is not _workflow.WorkflowCheckpointV4:
+                    raise StoreIntegrityError(
+                        "SQLite task policy row has no committed workflow"
+                    )
+                _validate_task_observation_checkpoint(task, checkpoint)
+
+                event_count = 0
+                first_workflow_sequence: int | None = None
+                last_workflow_sequence: int | None = None
+                previous_task_sequence: int | None = None
+                last_event_checkpoint: _workflow.WorkflowCheckpointV4 | None = None
+                edge_states = (
+                    (
+                        _workflow.CheckpointState.WORKER_DONE.value,
+                        _workflow.CheckpointState.WORKER_DONE.value,
+                    ),
+                    (
+                        _workflow.CheckpointState.WORKER_DONE.value,
+                        _workflow.CheckpointState.REVIEW_PENDING.value,
+                    ),
+                    (
+                        _workflow.CheckpointState.REVIEW_PENDING.value,
+                        _workflow.CheckpointState.REVIEW_PENDING.value,
+                    ),
+                )
+                with _workflow_stream_rows(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE root_key = ? "
+                    "AND kind = ? AND actor = ? ORDER BY workflow_sequence",
+                    (
+                        task.root_key,
+                        _workflow.TransitionKind.POLICY.value,
+                        _review_workflow.REVIEW_POLICY_ACTOR,
+                    ),
+                ) as event_rows:
+                    for event_row in event_rows:
+                        if event_count >= len(edge_states):
+                            raise StoreIntegrityError(
+                                "SQLite review policy event suffix is too long"
+                            )
+                        CoordinationStore._workflow_validate_event_row(
+                            event_row,
+                            store_schema=_CURRENT_STORE_SCHEMA,
+                        )
+                        event_checkpoint = (
+                            CoordinationStore._workflow_decode_event_checkpoint(
+                                event_row,
+                                store_schema=_CURRENT_STORE_SCHEMA,
+                            )
+                        )
+                        if type(event_checkpoint) is not _workflow.WorkflowCheckpointV4:
+                            raise StoreIntegrityError(
+                                "SQLite review policy event checkpoint is not a run"
+                            )
+                        expected_from, expected_to = edge_states[event_count]
+                        before_sequence = event_row["task_sequence_before"]
+                        after_sequence = event_row["task_sequence_after"]
+                        event_reference = event_checkpoint.task_policy
+                        if (
+                            event_row["operation_id"] is not None
+                            or event_row["receipt_id"] is not None
+                            or event_row["from_state"] != expected_from
+                            or event_row["to_state"] != expected_to
+                            or type(before_sequence) is not int
+                            or type(after_sequence) is not int
+                            or after_sequence != before_sequence + 1
+                            or (
+                                previous_task_sequence is not None
+                                and before_sequence != previous_task_sequence
+                            )
+                            or event_reference is None
+                            or event_reference.team_id != str(task.state.team_id)
+                            or event_reference.workspace != str(task.state.workspace)
+                            or event_reference.task_id != str(task.state.task_id)
+                            or event_reference.sequence != after_sequence
+                            or event_checkpoint.task_sequence != after_sequence
+                            or event_checkpoint.review_authority is None
+                            or event_checkpoint.verification_authority is not None
+                            or event_checkpoint.review_authority.digest
+                            != event_row["evidence_ref"]
+                        ):
+                            raise StoreIntegrityError(
+                                "SQLite review policy event suffix differs"
+                            )
+                        workflow_sequence = event_row["workflow_sequence"]
+                        if first_workflow_sequence is None:
+                            first_workflow_sequence = workflow_sequence
+                        last_workflow_sequence = workflow_sequence
+                        previous_task_sequence = after_sequence
+                        last_event_checkpoint = event_checkpoint
+                        event_count += 1
+
+                expected_phase = {
+                    1: _task_policy.TaskPhase.WORKER_DONE,
+                    2: _task_policy.TaskPhase.REVIEW_PENDING,
+                    3: _task_policy.TaskPhase.APPROVED,
+                }.get(event_count)
+                expected_workflow_state = (
+                    _workflow.CheckpointState.WORKER_DONE
+                    if event_count == 1
+                    else _workflow.CheckpointState.REVIEW_PENDING
+                )
+                if (
+                    expected_phase is None
+                    or first_workflow_sequence
+                    != checkpoint.workflow_sequence - event_count + 1
+                    or last_workflow_sequence != checkpoint.workflow_sequence
+                    or previous_task_sequence != task.state.sequence
+                    or task.state.phase is not expected_phase
+                    or checkpoint.workflow_state is not expected_workflow_state
+                    or checkpoint.verification_authority is not None
+                    or last_event_checkpoint != checkpoint
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite review policy current suffix differs"
+                    )
+
+        orphan = _workflow_read_one(
+            connection,
+            "SELECT 1 FROM workflow_events AS e "
+            "WHERE e.kind = ? AND e.actor = ? "
+            "AND NOT EXISTS(SELECT 1 FROM task_policy_states AS t "
+            "WHERE t.root_key = e.root_key) LIMIT 1",
+            (
+                _workflow.TransitionKind.POLICY.value,
+                _review_workflow.REVIEW_POLICY_ACTOR,
+            ),
+        )
+        if orphan is not None:
+            raise StoreIntegrityError(
+                "SQLite review policy event has no task policy row"
+            )
+        if task_count == 0:
+            return
+    finally:
+        connection.row_factory = previous_row_factory
+
+
+def _validate_schema4_ledger_gate(
+    connection: sqlite3.Connection,
+    *,
+    allow_review_task_rows: bool,
+) -> None:
+    """Keep verification rows closed while admitting normal-Store review rows."""
+
+    for table in ("verification_operations", "verification_receipts"):
+        if _workflow_read_one(connection, f"SELECT 1 FROM {table} LIMIT 1") is not None:
             raise StoreIntegrityError(
                 "SQLite schema-4 verification ledger validation is unavailable"
             )
+    has_task_row = (
+        _workflow_read_one(connection, "SELECT 1 FROM task_policy_states LIMIT 1")
+        is not None
+    )
+    has_review_event = (
+        _workflow_read_one(
+            connection,
+            "SELECT 1 FROM workflow_events WHERE kind = ? AND actor = ? LIMIT 1",
+            (
+                _workflow.TransitionKind.POLICY.value,
+                _review_workflow.REVIEW_POLICY_ACTOR,
+            ),
+        )
+        is not None
+    )
+    if has_task_row and not allow_review_task_rows:
+        raise StoreIntegrityError(
+            "SQLite schema-4 verification ledger validation is unavailable"
+        )
+    if has_review_event and not allow_review_task_rows:
+        raise StoreIntegrityError(
+            "SQLite review policy event requires normal Store task validation"
+        )
+    if allow_review_task_rows:
+        _validate_schema4_review_task_rows(connection)
 
 
 @dataclass(frozen=True, slots=True)
@@ -4750,6 +5062,7 @@ def _workflow_validate_operation_semantics(
                 intent=intent,
             )
         except (
+            AttributeError,
             TypeError,
             ValueError,
             _workflow.WorkflowStoreError,
@@ -4962,6 +5275,7 @@ def _workflow_stream_root_events(
     root_key: str,
     checkpoint: _workflow.WorkflowCheckpointObservation,
     store_schema: int = _CURRENT_STORE_SCHEMA,
+    allow_review_policy_edges: bool = False,
 ) -> int:
     """Validate one root event stream without retaining its event history."""
 
@@ -5104,7 +5418,90 @@ def _workflow_stream_root_events(
                         raise StoreIntegrityError(
                             "SQLite workflow transition task sequence differs"
                         )
-                if after.workflow_state is not before.workflow_state:
+                is_review_policy_edge = (
+                    allow_review_policy_edges
+                    and store_schema == _CURRENT_STORE_SCHEMA
+                    and kind is _workflow.TransitionKind.POLICY
+                    and row["actor"] == _review_workflow.REVIEW_POLICY_ACTOR
+                )
+                if is_review_policy_edge:
+                    review_edge = {
+                        (
+                            _workflow.CheckpointState.WORKER_DONE,
+                            _workflow.CheckpointState.WORKER_DONE,
+                        ): _review_workflow.ReviewPolicyEdge.WORKER_COMPLETION,
+                        (
+                            _workflow.CheckpointState.WORKER_DONE,
+                            _workflow.CheckpointState.REVIEW_PENDING,
+                        ): _review_workflow.ReviewPolicyEdge.REVIEW_REQUEST,
+                        (
+                            _workflow.CheckpointState.REVIEW_PENDING,
+                            _workflow.CheckpointState.REVIEW_PENDING,
+                        ): _review_workflow.ReviewPolicyEdge.APPROVED_DECISION,
+                    }.get(
+                        (
+                            before.workflow_state,
+                            after.workflow_state,
+                        )
+                    )
+                    if target_authority is None:
+                        raise StoreIntegrityError(
+                            "SQLite review policy transition authority differs"
+                        )
+                    before_task = before.task_policy
+                    after_task = after.task_policy
+                    expected_authority: _workflow.AuthorityReference | None = None
+                    if (
+                        review_edge is not None
+                        and before_task is not None
+                        and after_task is not None
+                    ):
+                        try:
+                            owner_digest = (
+                                _review_workflow._review_owner_digest_from_reference(
+                                    target_authority.reference
+                                )
+                            )
+                            expected_authority = (
+                                _review_workflow._review_policy_authority_reference(
+                                    review_edge,
+                                    before,
+                                    review_reference=target_authority.reference,
+                                    review_digest=owner_digest,
+                                    before_task_digest=before_task.state_digest,
+                                    after_task_digest=after_task.state_digest,
+                                )
+                            )
+                        except _review_workflow.ReviewCheckpointError as exc:
+                            raise StoreIntegrityError(
+                                "SQLite review policy transition authority differs"
+                            ) from exc
+                    expected_request_digest = (
+                        _review_workflow._review_policy_request_digest(
+                            review_edge,
+                            before,
+                            target_authority,
+                        )
+                        if review_edge is not None
+                        else None
+                    )
+                    if (
+                        review_edge is None
+                        or before.task_sequence is None
+                        or after.task_sequence != before.task_sequence + 1
+                        or after.review_authority == before.review_authority
+                        or before.verification_authority is not None
+                        or after.verification_authority is not None
+                        or target_authority != expected_authority
+                        or row["request_digest"] != expected_request_digest
+                    ):
+                        message = (
+                            "SQLite review policy transition request differs"
+                            if row["request_digest"] != expected_request_digest
+                            else "SQLite review policy transition edge differs"
+                        )
+                        raise StoreIntegrityError(message)
+                elif after.workflow_state is not before.workflow_state:
                     raise StoreIntegrityError(
                         "SQLite workflow transition changed workflow state"
                     )
@@ -5254,6 +5651,7 @@ def _validate_workflow_rows_for_connection(
     connection: sqlite3.Connection,
     *,
     store_schema: int = _CURRENT_STORE_SCHEMA,
+    allow_review_policy_edges: bool = False,
 ) -> tuple[int, int, int, int]:
     """Validate workflow rows for one explicitly selected store schema."""
 
@@ -5296,6 +5694,7 @@ def _validate_workflow_rows_for_connection(
                     root_key=row["root_key"],
                     checkpoint=checkpoint,
                     store_schema=store_schema,
+                    allow_review_policy_edges=allow_review_policy_edges,
                 )
                 _workflow_validate_checkpoint_last_operation(connection, checkpoint)
 
@@ -5325,6 +5724,7 @@ def _validate_schema_contract(
     expected_foreign_keys: Mapping[str, tuple[tuple[str, str, str, str, str], ...]],
     expected_meta_keys: frozenset[str],
     validate_workflow_rows: bool = True,
+    allow_review_task_rows: bool = False,
 ) -> None:
     """Validate one exact schema contract without changing the database."""
 
@@ -5396,7 +5796,10 @@ def _validate_schema_contract(
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise StoreIntegrityError("SQLite foreign_key_check failed")
         if schema_version == _CURRENT_STORE_SCHEMA:
-            _validate_schema4_ledger_is_empty(connection)
+            _validate_schema4_ledger_gate(
+                connection,
+                allow_review_task_rows=allow_review_task_rows,
+            )
         for row in connection.execute(
             """
             SELECT event_id, event_schema_version, operation_id, attempt,
@@ -5431,6 +5834,7 @@ def _validate_schema_contract(
             _validate_workflow_rows_for_connection(
                 connection,
                 store_schema=schema_version,
+                allow_review_policy_edges=allow_review_task_rows,
             )
         _validate_existing_image_high_water(connection)
     except (StoreError, sqlite3.DatabaseError):
@@ -5439,7 +5843,11 @@ def _validate_schema_contract(
         raise StoreSchemaError("SQLite store schema data is invalid") from exc
 
 
-def _validate_existing_schema(connection: sqlite3.Connection) -> None:
+def _validate_existing_schema(
+    connection: sqlite3.Connection,
+    *,
+    allow_review_task_rows: bool = False,
+) -> None:
     """Validate a current schema-4 image and classify exact legacy images.
 
     This is the read-only counterpart of ``CoordinationStore._validate_schema``.
@@ -5457,6 +5865,7 @@ def _validate_existing_schema(connection: sqlite3.Connection) -> None:
             expected_indexes=_EXPECTED_INDEX_CONTRACT,
             expected_foreign_keys=_EXPECTED_FOREIGN_KEYS,
             expected_meta_keys=_EXPECTED_META_KEYS,
+            allow_review_task_rows=allow_review_task_rows,
         )
         return
     except (StoreSchemaError, StoreIntegrityError) as error:
@@ -6160,6 +6569,19 @@ class CoordinationStore:
             self._release_startup_lock()
             self._release_lifetime_gate()
             self._lifetime_gate_persistent = False
+            if self._state_root_identity is None:
+                raise StoreIntegrityError("SQLite state root identity is unavailable")
+            _review_workflow._register_review_workflow_store(
+                self,
+                StoreError,
+                _CleanupCapability,
+                commit_function=CoordinationStore.commit_review_policy,
+                read_function=CoordinationStore.load_review_checkpoint,
+                event_observation_function=CoordinationStore._review_event_observation,
+                state_root_path=str(self.state_root),
+                state_root_identity=self._state_root_identity,
+                checkpoint_issuer=self._workflow_issuer,
+            )
         except StoreError as exc:
             cleanup = self._cleanup_failed_initialization(
                 fresh_bootstrap_started=fresh_bootstrap_started,
@@ -10135,6 +10557,603 @@ class CoordinationStore:
             raise StoreIntegrityError("SQLite workflow checkpoint is invalid") from exc
         return None
 
+    @staticmethod
+    def _review_task_row_tx(
+        connection: sqlite3.Connection,
+        *,
+        root_key: str,
+        task_id: str,
+    ) -> sqlite3.Row | None:
+        return _workflow_read_one(
+            connection,
+            "SELECT * FROM task_policy_states WHERE root_key = ? AND task_id = ?",
+            (root_key, task_id),
+        )
+
+    @staticmethod
+    def _review_insert_task_row(
+        connection: sqlite3.Connection,
+        values: Mapping[str, object],
+    ) -> None:
+        if tuple(values) != _TASK_POLICY_STATE_ROW_COLUMNS:
+            raise WorkflowOperationIdentityError(
+                "review task row projection is invalid"
+            )
+        columns = ", ".join(_TASK_POLICY_STATE_ROW_COLUMNS)
+        placeholders = ", ".join("?" for _ in _TASK_POLICY_STATE_ROW_COLUMNS)
+        connection.execute(
+            f"INSERT INTO task_policy_states({columns}) VALUES ({placeholders})",
+            tuple(values[column] for column in _TASK_POLICY_STATE_ROW_COLUMNS),
+        )
+
+    @staticmethod
+    def _review_update_task_row(
+        connection: sqlite3.Connection,
+        values: Mapping[str, object],
+        *,
+        expected: _review_workflow.StoredTaskPolicyState,
+    ) -> None:
+        if tuple(values) != _TASK_POLICY_STATE_ROW_COLUMNS:
+            raise WorkflowOperationIdentityError(
+                "review task row projection is invalid"
+            )
+        assignments = ", ".join(
+            f"{column} = ?"
+            for column in _TASK_POLICY_STATE_ROW_COLUMNS
+            if column not in {"root_key", "task_id"}
+        )
+        parameters = tuple(
+            values[column]
+            for column in _TASK_POLICY_STATE_ROW_COLUMNS
+            if column not in {"root_key", "task_id"}
+        )
+        cursor = connection.execute(
+            "UPDATE task_policy_states SET "
+            + assignments
+            + " WHERE root_key = ? AND task_id = ? AND sequence = ? "
+            "AND state_digest = ? AND state_bytes = ? AND run_id = ? "
+            "AND team_id = ? AND workspace = ?",
+            (
+                *parameters,
+                expected.root_key,
+                str(expected.state.task_id),
+                expected.state.sequence,
+                expected.state_digest,
+                expected.state_bytes,
+                expected.run_id,
+                str(expected.state.team_id),
+                str(expected.state.workspace),
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise WorkflowStateConflictError(
+                "review task policy compare-and-swap was lost"
+            )
+
+    @staticmethod
+    def _review_update_checkpoint(
+        connection: sqlite3.Connection,
+        value: _workflow.WorkflowCheckpointV4,
+        *,
+        expected: _workflow.WorkflowCheckpointV4,
+    ) -> None:
+        values = CoordinationStore._workflow_projection_values(value)
+        if values["root_key"] != expected.root.root_key:
+            raise WorkflowOperationIdentityError(
+                "review checkpoint root identity differs"
+            )
+        assignments = ", ".join(
+            f"{column} = ?"
+            for column in _WORKFLOW_CHECKPOINT_ROW_COLUMNS
+            if column != "root_key"
+        )
+        parameters = tuple(
+            values[column]
+            for column in _WORKFLOW_CHECKPOINT_ROW_COLUMNS
+            if column != "root_key"
+        )
+        cursor = connection.execute(
+            "UPDATE workflow_checkpoints SET "
+            + assignments
+            + " WHERE root_key = ? AND workflow_sequence = ? "
+            "AND task_sequence IS ? AND checkpoint_digest = ?",
+            (
+                *parameters,
+                expected.root.root_key,
+                expected.workflow_sequence,
+                expected.task_sequence,
+                expected.checkpoint_digest,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise WorkflowStateConflictError(
+                "review checkpoint compare-and-swap was lost"
+            )
+
+    @staticmethod
+    def _review_event_observation(
+        row: sqlite3.Row,
+    ) -> _review_workflow.ReviewPolicyEventObservation:
+        CoordinationStore._workflow_validate_event_row(
+            row,
+            store_schema=_CURRENT_STORE_SCHEMA,
+        )
+        try:
+            before_sequence = row["task_sequence_before"]
+            after_sequence = row["task_sequence_after"]
+            evidence_ref = row["evidence_ref"]
+            if (
+                type(before_sequence) is not int
+                or type(after_sequence) is not int
+                or type(evidence_ref) is not str
+            ):
+                raise ValueError("review event projection is incomplete")
+            return _review_workflow.ReviewPolicyEventObservation(
+                workflow_event_id=row["workflow_event_id"],
+                workflow_event_schema_version=row["workflow_event_schema_version"],
+                root_key=row["root_key"],
+                operation_id=row["operation_id"],
+                workflow_sequence=row["workflow_sequence"],
+                task_sequence_before=before_sequence,
+                task_sequence_after=after_sequence,
+                from_state=row["from_state"],
+                to_state=row["to_state"],
+                kind=row["kind"],
+                actor=row["actor"],
+                clock_ns=row["clock_ns"],
+                request_digest=row["request_digest"],
+                receipt_id=row["receipt_id"],
+                checkpoint_bytes=row["checkpoint_bytes"],
+                checkpoint_digest=row["checkpoint_digest"],
+                evidence_ref=evidence_ref,
+                event_digest=row["event_digest"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StoreIntegrityError("SQLite review policy event is invalid") from exc
+
+    def load_review_checkpoint(
+        self,
+        key: _workflow.WorkflowRootKey,
+    ) -> _review_workflow.ReviewCheckpointObservation | None:
+        root_key = _require_opaque_identifier(key, "review workflow root_key")
+        try:
+            with self._workflow_read_snapshot() as connection:
+                _validate_schema4_ledger_gate(
+                    connection,
+                    allow_review_task_rows=True,
+                )
+                _validate_workflow_rows_for_connection(
+                    connection,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                    allow_review_policy_edges=True,
+                )
+                checkpoint = self._workflow_load_checkpoint_tx(connection, root_key)
+                if checkpoint is None:
+                    return None
+                if type(checkpoint) is not _workflow.WorkflowCheckpointV4:
+                    raise StoreIntegrityError(
+                        "review workflow checkpoint is not a committed run"
+                    )
+                self._workflow_validate_root(checkpoint.root)
+                reference = checkpoint.task_policy
+                if reference is None:
+                    return None
+                row = self._review_task_row_tx(
+                    connection,
+                    root_key=root_key,
+                    task_id=reference.task_id,
+                )
+                if row is None:
+                    return None
+                task = _task_policy_observation_from_row(row)
+                _validate_task_observation_checkpoint(task, checkpoint)
+                events: list[_review_workflow.ReviewPolicyEventObservation] = []
+                with _workflow_stream_rows(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE root_key = ? "
+                    "AND kind = ? AND actor = ? ORDER BY workflow_sequence",
+                    (
+                        root_key,
+                        _workflow.TransitionKind.POLICY.value,
+                        _review_workflow.REVIEW_POLICY_ACTOR,
+                    ),
+                ) as rows:
+                    for event_row in rows:
+                        events.append(self._review_event_observation(event_row))
+                if not events:
+                    raise StoreIntegrityError("review policy event prefix is missing")
+                predecessor_row = _workflow_read_one(
+                    connection,
+                    "SELECT checkpoint_bytes FROM workflow_events "
+                    "WHERE root_key = ? AND workflow_sequence = ?",
+                    (root_key, events[0].workflow_sequence - 1),
+                )
+                if predecessor_row is None:
+                    raise StoreIntegrityError(
+                        "review policy event predecessor is missing"
+                    )
+                predecessor_checkpoint_bytes = predecessor_row["checkpoint_bytes"]
+                if (
+                    type(predecessor_checkpoint_bytes) is not bytes
+                    or not predecessor_checkpoint_bytes
+                ):
+                    raise StoreIntegrityError(
+                        "review policy event predecessor is invalid"
+                    )
+                operation_count_row = _workflow_read_one(
+                    connection,
+                    "SELECT COUNT(*) FROM verification_operations",
+                )
+                receipt_count_row = _workflow_read_one(
+                    connection,
+                    "SELECT COUNT(*) FROM verification_receipts",
+                )
+                if operation_count_row is None or receipt_count_row is None:
+                    raise StoreIntegrityError("verification table count is unavailable")
+                operation_count = int(operation_count_row[0])
+                receipt_count = int(receipt_count_row[0])
+                return _review_workflow.ReviewCheckpointObservation(
+                    checkpoint=checkpoint,
+                    task=task,
+                    events=tuple(events),
+                    predecessor_checkpoint_bytes=predecessor_checkpoint_bytes,
+                    verification_operation_count=operation_count,
+                    verification_receipt_count=receipt_count,
+                )
+        except StoreError:
+            raise
+        except sqlite3.OperationalError as exc:
+            self._raise_read_error(exc)
+        except sqlite3.DatabaseError as exc:
+            raise StoreIntegrityError("SQLite review checkpoint read failed") from exc
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _review_workflow.ReviewCheckpointError,
+        ) as exc:
+            raise StoreIntegrityError("SQLite review checkpoint is invalid") from exc
+        return None
+
+    @staticmethod
+    def _review_validate_workflow_identity(
+        current: _workflow.WorkflowCheckpointV4,
+        plan: _review_workflow._ReviewPolicyPlan,
+    ) -> None:
+        assignment = current.active_assignment
+        policy_assignment = plan.update.previous_state.assignment
+        if assignment is None or policy_assignment is None:
+            raise WorkflowOperationIdentityError(
+                "review workflow assignment is missing"
+            )
+        completion_identity = assignment.completion_identity
+        shared_assignment = (
+            (current.run.run_id, str(policy_assignment.run_id)),
+            (assignment.task_id, str(policy_assignment.task_id)),
+            (assignment.dispatch_id, str(policy_assignment.dispatch_id)),
+            (assignment.worker_node, str(policy_assignment.worker_node)),
+            (assignment.terminal_id, str(policy_assignment.worker_terminal_id)),
+            (completion_identity.run_id, str(policy_assignment.run_id)),
+            (completion_identity.task_id, str(policy_assignment.task_id)),
+            (completion_identity.dispatch_id, str(policy_assignment.dispatch_id)),
+            (
+                completion_identity.sender_terminal_id,
+                str(policy_assignment.worker_terminal_id),
+            ),
+        )
+        if any(left != right for left, right in shared_assignment):
+            raise WorkflowOperationIdentityError(
+                "review workflow assignment identity differs"
+            )
+        delivery = current.pending_delivery
+        if (
+            delivery is None
+            or len(delivery.ordered_event_projection) != 1
+            or delivery.ordered_message_ids
+        ):
+            raise WorkflowOperationIdentityError(
+                "review workflow completion Delivery is missing"
+            )
+        projection = delivery.ordered_event_projection[0]
+        if (
+            projection.kind is not _workflow.EventProjectionKind.WORKER_DONE
+            or projection.outcome is not _workflow.EventOutcome.SUCCEEDED
+            or projection.completion_identity != completion_identity
+        ):
+            raise WorkflowOperationIdentityError(
+                "review workflow completion Delivery differs"
+            )
+        policy_completion = plan.update.previous_state.completion
+        if plan.edge is _review_workflow.ReviewPolicyEdge.WORKER_COMPLETION:
+            event = plan.update.event
+            if type(event) is not _review.WorkerCompletion:
+                raise WorkflowOperationIdentityError(
+                    "review Worker completion type differs"
+                )
+            policy_completion = event
+        if policy_completion is None:
+            raise WorkflowOperationIdentityError("review policy completion is missing")
+        shared_completion = (
+            (completion_identity.run_id, str(policy_completion.run_id)),
+            (completion_identity.task_id, str(policy_completion.task_id)),
+            (completion_identity.dispatch_id, str(policy_completion.dispatch_id)),
+            (
+                completion_identity.sender_terminal_id,
+                str(policy_completion.worker_terminal_id),
+            ),
+        )
+        if any(left != right for left, right in shared_completion):
+            raise WorkflowOperationIdentityError(
+                "review workflow completion identity differs"
+            )
+
+    def commit_review_policy(
+        self,
+        request: _review_workflow.ReviewPolicyCommitRequest,
+    ) -> _review_workflow.ReviewPolicyCommitResult:
+        if type(request) is not _review_workflow.ReviewPolicyCommitRequest:
+            raise TypeError("review policy request is invalid")
+        try:
+            request_current, _ = (
+                _review_workflow._validate_review_policy_commit_request(
+                    request,
+                    self,
+                )
+            )
+            _workflow._validate_checkpoint_observation(
+                request_current,
+                issuer=self._workflow_issuer,
+            )
+            plan = _review_workflow._plan_review_policy_request(request, self)
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            _workflow.WorkflowStoreError,
+            _review_workflow.ReviewCheckpointError,
+        ) as exc:
+            raise WorkflowOperationIdentityError(
+                "review policy request is invalid"
+            ) from exc
+
+        result: _review_workflow.ReviewPolicyCommitResult | None = None
+        try:
+            with self._write_transaction(
+                precommit_validator=lambda: self._workflow_validate_root(
+                    plan.current.root
+                )
+            ) as connection:
+                for table in ("verification_operations", "verification_receipts"):
+                    if (
+                        _workflow_read_one(
+                            connection,
+                            f"SELECT 1 FROM {table} LIMIT 1",
+                        )
+                        is not None
+                    ):
+                        raise StoreIntegrityError(
+                            "review policy requires empty verification tables"
+                        )
+                current = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.current.root.root_key,
+                )
+                if type(current) is not _workflow.WorkflowCheckpointV4:
+                    raise WorkflowStateConflictError(
+                        "review policy requires a committed run"
+                    )
+                self._workflow_validate_root(current.root)
+                if current != plan.current:
+                    raise WorkflowStateConflictError(
+                        "review policy checkpoint is stale"
+                    )
+                if current.verification_authority is not None:
+                    raise WorkflowOperationIdentityError(
+                        "review policy verification authority is not empty"
+                    )
+                if (
+                    current.last_operation is not None
+                    and current.last_operation.status
+                    in (
+                        _workflow.OperationStatus.INTENT,
+                        _workflow.OperationStatus.UNKNOWN_EFFECT,
+                    )
+                ):
+                    raise WorkflowRecoveryRequiredError(
+                        "review policy has an unresolved workflow operation"
+                    )
+                self._review_validate_workflow_identity(current, plan)
+
+                task_id = str(plan.before_state.task_id)
+                task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=current.root.root_key,
+                    task_id=task_id,
+                )
+                if plan.edge is _review_workflow.ReviewPolicyEdge.WORKER_COMPLETION:
+                    if task_row is not None:
+                        raise WorkflowStateConflictError(
+                            "initial review task row already exists"
+                        )
+                    before_values = _task_policy_row_values(
+                        plan.before_state,
+                        root_key=current.root.root_key,
+                        run_id=current.run.run_id,
+                        updated_ns=current.updated_ns,
+                    )
+                    self._fault("before_review_policy_task_preimage")
+                    self._review_insert_task_row(connection, before_values)
+                    self._fault("after_review_policy_task_preimage")
+                    task_row = self._review_task_row_tx(
+                        connection,
+                        root_key=current.root.root_key,
+                        task_id=task_id,
+                    )
+                elif task_row is None:
+                    raise WorkflowStateConflictError(
+                        "review task policy row is missing"
+                    )
+                if task_row is None:
+                    raise StoreIntegrityError(
+                        "review task policy preimage is unavailable"
+                    )
+                before_task = _task_policy_observation_from_row(task_row)
+                _validate_task_observation_checkpoint(before_task, current)
+                if (
+                    before_task.state != plan.before_state
+                    or before_task.state_bytes != plan.before_state_bytes
+                    or before_task.state_digest != plan.before_state_digest
+                ):
+                    raise WorkflowStateConflictError(
+                        "review task policy preimage differs"
+                    )
+
+                timestamp = self._record_clock(
+                    connection,
+                    self._timestamp(None),
+                    strict=self._clock_injected,
+                )
+                after_values = _task_policy_row_values(
+                    plan.after_state,
+                    root_key=current.root.root_key,
+                    run_id=current.run.run_id,
+                    updated_ns=timestamp,
+                )
+                self._fault("before_review_policy_task_write")
+                self._review_update_task_row(
+                    connection,
+                    after_values,
+                    expected=before_task,
+                )
+                self._fault("after_review_policy_task_write")
+
+                next_reference = _workflow.TaskPolicyReference(
+                    version=plan.after_state.version,
+                    team_id=str(plan.after_state.team_id),
+                    workspace=str(plan.after_state.workspace),
+                    task_id=str(plan.after_state.task_id),
+                    sequence=plan.after_state.sequence,
+                    state_digest=plan.after_state_digest,
+                )
+                next_draft = _workflow.WorkflowCheckpointDraft(
+                    root=current.root,
+                    run=current.run,
+                    workflow_sequence=current.workflow_sequence + 1,
+                    task_sequence=plan.after_state.sequence,
+                    execution_mode=current.execution_mode,
+                    workflow_state=plan.next_workflow_state,
+                    task_policy=next_reference,
+                    active_assignment=current.active_assignment,
+                    pending_delivery=current.pending_delivery,
+                    replied_message_ids=current.replied_message_ids,
+                    read_observed=current.read_observed,
+                    released=current.released,
+                    review_authority=plan.authority,
+                    verification_authority=current.verification_authority,
+                    last_operation=current.last_operation,
+                )
+                next_checkpoint = self._workflow_issue_checkpoint(
+                    next_draft,
+                    updated_ns=timestamp,
+                )
+                self._fault("before_review_policy_checkpoint_write")
+                self._review_update_checkpoint(
+                    connection,
+                    next_checkpoint,
+                    expected=current,
+                )
+                self._fault("after_review_policy_checkpoint_write")
+                self._fault("before_review_policy_event_write")
+                self._workflow_insert_event(
+                    connection,
+                    root_key=current.root.root_key,
+                    operation_id=None,
+                    workflow_sequence=next_checkpoint.workflow_sequence,
+                    task_sequence_before=plan.before_state.sequence,
+                    task_sequence_after=plan.after_state.sequence,
+                    from_state=current.workflow_state.value,
+                    to_state=next_checkpoint.workflow_state.value,
+                    kind=_workflow.TransitionKind.POLICY.value,
+                    actor=_review_workflow.REVIEW_POLICY_ACTOR,
+                    clock_ns=timestamp,
+                    request_digest=plan.request_digest,
+                    receipt_id=None,
+                    checkpoint=next_checkpoint,
+                    evidence_ref=plan.authority.digest,
+                )
+                self._fault("after_review_policy_event_write")
+
+                stored_checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    current.root.root_key,
+                )
+                if stored_checkpoint != next_checkpoint:
+                    raise StoreIntegrityError("review checkpoint readback differs")
+                stored_task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=current.root.root_key,
+                    task_id=task_id,
+                )
+                if stored_task_row is None:
+                    raise StoreIntegrityError("review task readback is missing")
+                stored_task = _task_policy_observation_from_row(stored_task_row)
+                _validate_task_observation_checkpoint(
+                    stored_task,
+                    next_checkpoint,
+                )
+                if (
+                    stored_task.state != plan.after_state
+                    or stored_task.state_bytes != plan.after_state_bytes
+                    or stored_task.state_digest != plan.after_state_digest
+                ):
+                    raise StoreIntegrityError("review task readback differs")
+                stored_event_row = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE root_key = ? "
+                    "AND workflow_sequence = ? AND kind = ? AND actor = ?",
+                    (
+                        current.root.root_key,
+                        next_checkpoint.workflow_sequence,
+                        _workflow.TransitionKind.POLICY.value,
+                        _review_workflow.REVIEW_POLICY_ACTOR,
+                    ),
+                )
+                if stored_event_row is None:
+                    raise StoreIntegrityError("review event readback is missing")
+                event = self._review_event_observation(stored_event_row)
+                _validate_schema4_review_task_rows(connection)
+                self._workflow_validate_root(current.root)
+                result = _review_workflow.ReviewPolicyCommitResult(
+                    checkpoint=next_checkpoint,
+                    task=stored_task,
+                    event=event,
+                    reviewer_assignment=plan.reviewer_assignment,
+                    replayed=False,
+                )
+                self._fault("before_review_policy_commit")
+                self._workflow_validate_root(current.root)
+        except (
+            WorkflowStateConflictError,
+            WorkflowOperationIdentityError,
+            WorkflowRecoveryRequiredError,
+        ):
+            raise
+        except _review_workflow.ReviewCheckpointError as exc:
+            raise WorkflowOperationIdentityError(
+                "review policy transaction input differs"
+            ) from exc
+        except sqlite3.OperationalError as exc:
+            _raise_sqlite_write_error(exc)
+        except sqlite3.DatabaseError as exc:
+            _raise_sqlite_write_error(exc)
+        except StoreError:
+            raise
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise StoreIntegrityError("review policy transaction failed") from exc
+        if result is None:
+            raise StoreIntegrityError("review policy result is unavailable")
+        return result
+
     def _workflow_validate_open_roots(self) -> None:
         """Fail normal open before exposing a stale workspace/config binding."""
 
@@ -11119,6 +12138,18 @@ class CoordinationStore:
                             raise WorkflowStateConflictError(
                                 "workflow run has not been started"
                             )
+                        if (
+                            _workflow_read_one(
+                                connection,
+                                "SELECT 1 FROM task_policy_states "
+                                "WHERE root_key = ? LIMIT 1",
+                                (intent.root_key,),
+                            )
+                            is not None
+                        ):
+                            raise WorkflowOperationIdentityError(
+                                "generic workflow operation cannot mutate a task-ledger checkpoint"
+                            )
                         self._workflow_validate_root(current.root)
                         if current.workflow_sequence != expected_workflow_sequence:
                             raise WorkflowStateConflictError(
@@ -11916,6 +12947,17 @@ class CoordinationStore:
                         "workflow transition requires a committed run"
                     )
                 self._workflow_validate_root(current.root)
+                if (
+                    _workflow_read_one(
+                        connection,
+                        "SELECT 1 FROM task_policy_states WHERE root_key = ? LIMIT 1",
+                        (transition.root_key,),
+                    )
+                    is not None
+                ):
+                    raise WorkflowOperationIdentityError(
+                        "generic workflow transition cannot mutate a task-ledger checkpoint"
+                    )
                 expected_authority = (
                     next_checkpoint.review_authority
                     if transition.kind is _workflow.TransitionKind.POLICY
@@ -16208,7 +17250,10 @@ class CoordinationStore:
                     )
                     connection.row_factory = sqlite3.Row
                     connection.execute("PRAGMA query_only = ON")
-                    _validate_existing_schema(connection)
+                    _validate_existing_schema(
+                        connection,
+                        allow_review_task_rows=True,
+                    )
                     if wal_size == 0:
                         try:
                             _validate_sqlite_wal_binding(
@@ -16282,7 +17327,10 @@ class CoordinationStore:
             connection.execute(f"PRAGMA user_version = {_CURRENT_STORE_SCHEMA}")
 
     def _validate_schema(self) -> None:
-        _validate_existing_schema(self._require_connection())
+        _validate_existing_schema(
+            self._require_connection(),
+            allow_review_task_rows=True,
+        )
 
     def _schema_objects(self) -> dict[tuple[str, str], str]:
         return _schema_objects_for_connection(self._require_connection())
@@ -16307,7 +17355,11 @@ class CoordinationStore:
         self._existing_sidecar_names()
 
     @contextmanager
-    def _write_transaction(self) -> Iterator[sqlite3.Connection]:
+    def _write_transaction(
+        self,
+        *,
+        precommit_validator: Callable[[], None] | None = None,
+    ) -> Iterator[sqlite3.Connection]:
         connection = self._require_connection()
         with self._shared_lifetime_gate():
             self._fault("before_begin")
@@ -16344,6 +17396,8 @@ class CoordinationStore:
             try:
                 self._fault("before_commit")
                 self._assert_transaction_identity()
+                if precommit_validator is not None:
+                    precommit_validator()
             except _CLEANUP_EXCEPTION as body_error:
                 rollback_body(body_error)
 

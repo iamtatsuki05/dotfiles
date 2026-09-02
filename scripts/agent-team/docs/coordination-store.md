@@ -328,8 +328,11 @@ the non-empty schema-4 lifecycle.
 
 [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80) fixes the
 schema-4 physical object set and the pure payload boundary. It is a
-foundation-only child: it does not make the verification ledger non-empty or
-claim the later lifecycle, image, or recovery semantics.
+foundation-only child: its writer does not make the verification ledger
+non-empty or claim the later lifecycle, image, or recovery semantics. The
+normal Store now has the narrower [Issue #81 review checkpoint
+producer](https://github.com/iamtatsuki05/dotfiles/issues/81) path described
+below; that path does not expand #80's verification-ledger or image claims.
 
 ### Version and object boundary
 
@@ -368,12 +371,15 @@ WAL salt and checksum fields are not treated as database identity. The later
 image-evidence work in #83 owns the stronger source/pair provenance boundary.
 
 An exact schema-4 image whose three new tables are empty is the structural
-open baseline. If any of those tables has a row, #80 fails closed because its
-non-empty semantic validator is not provided. It does not report successful
-non-empty verification open, inspection, backup, restore, lifecycle, or
-three-layer image evidence. The historical nine-table provider/workflow
-contract remains separate and is not silently reinterpreted as verification
-evidence.
+open baseline for the #80 foundation writer. If a foundation-only path finds
+any new-table row, it fails closed because its non-empty semantic validator is
+not provided. The normal Store's #81 path is a narrow exception for a full
+`task_policy_states` row and its closed three-event review suffix; it does not
+admit rows in `verification_operations` or `verification_receipts`. It does
+not report successful non-empty verification open, inspection, backup,
+restore, or three-layer image evidence. The historical nine-table
+provider/workflow contract remains separate and is not silently reinterpreted
+as verification evidence.
 
 After the exact object, integrity, and foreign-key checks, the schema-4
 empty-ledger gate runs before workflow transition and high-water semantics.
@@ -405,17 +411,105 @@ secrets are not stored.
 The codecs validate internal value consistency only. They do not capture live
 owner authority, resolve a context, issue a Store adapter, hydrate a Gate
 value, or implement the 58-field operation-row digest. SQL
-`record_version=1` is only a row discriminator. Live capture, Store adapter,
-snapshot hydration, non-empty lifecycle transactions, semantic image
-validation, verification-aware Doctor, and non-empty backup/restore
-belong to [#81](https://github.com/iamtatsuki05/dotfiles/issues/81),
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82), and
+`record_version=1` is only a row discriminator. The #81 producer owns the
+normal-Store task/review transactions and full task-row projection described
+below. Live capture/context, Store adapter, snapshot hydration, the
+58-field operation-row digest, verification lifecycle transactions, semantic
+image validation, verification-aware Doctor, and non-empty backup/restore
+belong to [#82](https://github.com/iamtatsuki05/dotfiles/issues/82) and
 [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 For #80, backup and restore evidence is limited to the version-1
 two-file-manifest round trip for an exact schema-4 image with an empty new
-ledger. Non-empty verification images are not opened, inspected, backed up,
-restored, or treated as successful by this foundation.
+ledger. The #81 task-row image is accepted only by the normal Store validator;
+non-empty task-row images are not inspected, backed up, restored, or treated
+as successful by #80's image paths.
+
+## Schema-4 review checkpoint producer (Issue #81)
+
+`agent_team._review_workflow_store.ReviewCheckpointProducer` is the
+package-private producer for the normal schema-4 Store. It consumes an actual
+#49 `ReviewPolicyUpdate`, the actual `SerialReviewPolicy`, and the matching
+#74 owner-issued `ReviewAuthorityRef`. The #74 process-local binding seam
+revalidates the issuer, reference, policy binding, and complete nested causal
+graph before a Store transaction is planned. The producer does not accept a
+raw projection, `CompletionAdmissionRef`, `ApprovalRef`, route or reservation
+result, caller-built checkpoint/event, or caller-supplied digest. It does not
+generate or reconstruct a policy update. It revalidates the supplied update
+through the existing pure reducer contract, without rerunning route,
+reservation, or owner-ref issuance.
+
+The producer and its opaque commit request remain bound to the exact handoff,
+that handoff's owner registry Store, and the registered `CoordinationStore` at
+every lower Store call. Registration
+fixes the base commit, read, and event-projection functions, the `StoreError`
+type, the state-root path/device/inode, and the checkpoint issuer. Producer
+reinitialization, post-issuance mutation, an unregistered port, or a foreign
+commit/read result fails closed. Commit and read results are correlated again
+with the request/current root and complete policy-event prefix. Only a genuine
+Store error retains its cleanup capability; arbitrary port exception text is
+mapped to a bounded producer error.
+
+### Three independent policy transactions
+
+The producer accepts exactly the following #49 edges, in this order. The
+workflow state and task-policy phase intentionally differ on the final edge:
+
+| Actual event | Task-policy edge | Workflow edge | Durable result |
+| --- | --- | --- | --- |
+| `WorkerCompletion(kind=SUCCEEDED)` | `ASSIGNED(T) -> WORKER_DONE(T+1)` | `WORKER_DONE(W) -> WORKER_DONE(W+1)` | Materialize the exact assigned task preimage once, then write the next full task row and one policy event. |
+| `ReviewRequest` | `WORKER_DONE(T) -> REVIEW_PENDING(T+1)` | `WORKER_DONE(W) -> REVIEW_PENDING(W+1)` | Write the next full task row and checkpoint, then return one `ReviewerAssignment` intent. |
+| `ReviewDecision(kind=APPROVED)` | `REVIEW_PENDING(T) -> APPROVED(T+1)` | `REVIEW_PENDING(W) -> REVIEW_PENDING(W+1)` | Write the next full task row and one state-preserving policy event. No effect is executed. |
+
+Each edge is a separate short `BEGIN IMMEDIATE` transaction. It updates the
+full `task_policy_states` projection, current workflow checkpoint, and one
+`workflow_events` row atomically. The task row and checkpoint reference are
+compared in both directions. Task and workflow sequences advance by one.
+Review events use `kind='policy_transition'`, actor
+`review-policy-producer-v1`, `operation_id=NULL`, and `receipt_id=NULL`.
+The Store-owned authority digest is copied to both `review_authority` and
+`evidence_ref`; the authority and request digests use separate domains. Their
+timestamp and global workflow event ID are excluded from those digests; the
+event's own digest remains Store-defined.
+
+The first transaction requires no existing task row and an exact
+`ASSIGNED(T)` reference in the current checkpoint. It materializes that
+preimage before advancing to `WORKER_DONE`, so an injected fault rolls back
+the preimage, checkpoint, and event together. The next two transactions
+require the existing full row and exact sequence, bytes, digest, identity, and
+checkpoint CAS preconditions. Current-only commits, sequence jumps, synthetic
+events, stale or foreign authority, nested-value mutation, unresolved
+operations, and non-empty verification rows fail without a partial write.
+
+### Normal reopen and authority boundary
+
+Normal schema-4 open and `load_review_checkpoint()` validate only the closed
+producer suffix: at most three ordered policy events, the full task-row
+projection, matching checkpoint snapshots, and the complete workflow prefix.
+The read observation includes the canonical checkpoint bytes immediately before
+the first policy event, allowing the producer to recompute the first request
+digest as well as every later request digest. Those predecessor bytes are
+Store-read evidence, not another caller input.
+After the three commits, a fresh reopen returns a workflow
+`REVIEW_PENDING` checkpoint with `W0 >= 2` and a task row at policy phase
+`APPROVED`. `verification_operations` and `verification_receipts` remain
+empty. The returned `ReviewerAssignment` is a post-commit intent only; no
+backend, runner, reviewer process, reservation, or external effect is
+called.
+
+The generic `commit_transition()` remains state-preserving for the historical
+row-empty workflow boundary. Once a schema-4 root has a task-ledger row, only
+the dedicated task/review or verification writer may advance it; the generic
+transition and public lifecycle `begin_operation()` reject that root instead
+of desynchronizing the task row and checkpoint. The schema-3 validator remains
+unchanged. Backup, inspect,
+restore, and Doctor use the foundation's
+fail-closed image path and do not accept the #81 task-row image until #83
+provides its non-empty image-evidence contract. A pre-issued #50
+`CompletionAdmissionRef` is retained only by the trusted composition root;
+#81 neither receives nor persists it. #81 also does not compose or resolve a
+#74 `ApprovalRef` or create verification authority. Those operations belong to
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82).
 
 ## Additional environment validation
 

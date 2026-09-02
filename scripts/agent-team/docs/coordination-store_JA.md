@@ -286,8 +286,10 @@ refとapproval compositionを実装する。schema-4 workは、[Issue #80 founda
 ## 現行schema-4 foundation（Issue #80）
 
 [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)は、schema-4の物理object setと
-pureなpayload境界を固定するfoundation-onlyのchildである。verification ledgerをnon-emptyにしたり、
-後続のlifecycle、image、recovery semanticsを実装したりするものではない。
+pureなpayload境界を固定するfoundation-onlyのchildである。writerはverification ledgerをnon-emptyにしたり、
+後続のlifecycle、image、recovery semanticsを実装したりしない。通常のStoreには、下記の
+[Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)という狭い経路があるが、
+#80のverification ledgerやimageの主張を広げるものではない。
 
 ### versionとobjectの境界
 
@@ -315,10 +317,12 @@ private copyを開く前に照合する。WALがない場合はprivate copyを�
 page sizeが同じWALの出所を認証できない。このためWALのsaltやchecksumをdatabase identityとは扱わず、
 より強いsource/pair provenanceは#83のimage evidenceで実装する。
 
-3つの新しいtableが空のexact schema-4 imageだけをstructural open baselineとする。いずれかにrowが
-あれば、non-empty semantic validatorがまだないため#80はfail-closedで停止する。non-empty verification
-imageのopen、inspect、backup、restore、lifecycle、three-layer image evidenceを成功とは報告しない。
-既存9 tableのprovider/workflow contractは別の境界として残し、verification evidenceへ暗黙に読み替えない。
+3つの新しいtableが空のexact schema-4 imageだけを、#80のfoundation writerにおけるstructural open baselineとする。
+foundation-only pathで新しいtableにrowがあれば、non-empty semantic validatorがないためfail-closedで停止する。
+通常のStoreにおける#81 pathは、fullな`task_policy_states` rowとclosedな3件のreview suffixだけを例外的に受け付ける。
+`verification_operations`と`verification_receipts`のrowは受け付けない。non-empty verification imageのopen、
+inspect、backup、restore、three-layer image evidenceを成功とは報告しない。既存9 tableのprovider/workflow contractは
+別の境界として残し、verification evidenceへ暗黙に読み替えない。
 
 exact object、integrity、foreign keyを確認した後、schema-4のempty-ledger gateをworkflow transitionと
 high-waterの意味検証より先に実行する。workflow validatorは4 table全体をmaterializeせず、cursorで
@@ -343,14 +347,73 @@ argv/environment value、raw body、secretは保存しない。
 
 codecが検証するのはvalueの内部整合性だけである。live owner authorityのcapture、contextのresolve、
 Store adapterの発行、Gate valueのhydration、58-fieldのoperation-row digestは実装しない。
-SQLの`record_version=1`はrow discriminatorに限る。live capture、Store adapter、snapshot
-hydration、non-empty lifecycle transaction、semantic image validation、verification-aware Doctor、
-non-empty backup/restoreは、[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の後続範囲である。
+SQLの`record_version=1`はrow discriminatorに限る。#81がnormal Store向けtask/review transactionとfull task-row projectionを
+担当する。live capture/context、Store adapter、snapshot hydration、58-fieldのoperation-row digest、verification lifecycle
+transaction、semantic image validation、verification-aware Doctor、non-empty backup/restoreは、[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)と
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の範囲である。
 
 #80で確認するbackup/restore evidenceは、新しいledgerが空のexact schema-4 imageについての
-version-1 two-file manifest round tripだけである。non-empty verification imageをopen、inspect、backup、
-restoreしたり、成功したimageとして扱ったりしない。
+version-1 two-file manifest round tripだけである。#81のtask row imageを受け付けるのはnormal Store validatorだけであり、
+non-empty task row imageを#80のimage pathでinspect、backup、restoreしたり、成功したimageとして扱ったりしない。
+
+## schema-4 review checkpoint producer（Issue #81）
+
+`agent_team._review_workflow_store.ReviewCheckpointProducer`は、通常のschema-4 Store向けの
+package-privateなproducerである。実際の#49 `ReviewPolicyUpdate`、実際の`SerialReviewPolicy`、それに対応する
+#74 owner-issued `ReviewAuthorityRef`を受け取る。Store transactionを計画する前に、#74のprocess-local
+binding seamがissuer、reference、policy binding、nestedな因果グラフ全体を再検証する。raw projection、
+`CompletionAdmissionRef`、`ApprovalRef`、route/reservation result、callerが作ったcheckpoint/event、caller指定digestは
+受け付けない。渡されたupdateは既存のpure reducer contractで再検証するが、新しいupdateを生成・再構成せず、
+route、reservation、owner refの発行も再実行しない。
+
+producerとopaqueなcommit requestは、各lower Store callでexactなhandoff、そのhandoffのowner registry Store、
+登録済み`CoordinationStore`へ束縛する。登録時にbaseのcommit/read/event projection関数、`StoreError`型、
+state rootのpath/device/inode、checkpoint issuerを固定する。producerの再初期化、request発行後のmutation、
+未登録port、foreignなcommit/read resultはfail closedで拒否する。commit/read resultはrequest/current rootと
+完全なpolicy-event prefixへ再度相関する。cleanup capabilityを保持するのはgenuine Store errorだけであり、
+任意portの例外本文はboundedなproducer errorへ写像する。
+
+### 3つの独立したpolicy transaction
+
+受け付ける#49 edgeは次の3つだけで、順序も固定する。最後のedgeではworkflow stateとtask-policy phaseが意図的に異なる。
+
+| actual event | task-policy edge | workflow edge | durable result |
+| --- | --- | --- | --- |
+| `WorkerCompletion(kind=SUCCEEDED)` | `ASSIGNED(T) -> WORKER_DONE(T+1)` | `WORKER_DONE(W) -> WORKER_DONE(W+1)` | exactなassigned task preimageを一度だけmaterializeし、次のfull task rowとpolicy eventを保存する。 |
+| `ReviewRequest` | `WORKER_DONE(T) -> REVIEW_PENDING(T+1)` | `WORKER_DONE(W) -> REVIEW_PENDING(W+1)` | 次のfull task rowとcheckpointを保存し、`ReviewerAssignment` intentを1件だけ返す。 |
+| `ReviewDecision(kind=APPROVED)` | `REVIEW_PENDING(T) -> APPROVED(T+1)` | `REVIEW_PENDING(W) -> REVIEW_PENDING(W+1)` | 次のfull task rowとstate-preservingなpolicy eventを保存し、effectは実行しない。 |
+
+各edgeは短い`BEGIN IMMEDIATE`の別transactionである。fullな`task_policy_states` projection、current workflow
+checkpoint、1件の`workflow_events` rowをatomicに更新する。task rowとcheckpoint referenceは双方向に比較し、
+task/workflow sequenceを1つずつ進める。review eventは`kind='policy_transition'`、actor
+`review-policy-producer-v1`、`operation_id=NULL`、`receipt_id=NULL`である。Store-owned authority digestは
+`review_authority`と`evidence_ref`の両方へコピーし、authority digestとrequest digestは別domainで計算する。
+これらのdigestにtimestampとglobal workflow event IDは含めず、event自体のdigestはStoreの定義に従う。
+
+最初のtransactionはtask rowが存在せず、current checkpointにexactな`ASSIGNED(T)` referenceがあることを要求する。
+`WORKER_DONE`へ進む前に同じtransaction内でpreimageをmaterializeするため、fault injectionではpreimage、checkpoint、
+eventをまとめてrollbackする。後続2 transactionは、既存full rowに対するsequence、bytes、digest、identity、
+checkpointのexactなCAS条件を要求する。current-only、sequence jump、synthetic event、stale/foreign authority、
+nested value mutation、unresolved operation、verification rowの非空はpartial writeなしでfail-closedとなる。
+
+### normal reopenとauthority境界
+
+normal schema-4 openと`load_review_checkpoint()`は、producerのclosed suffixだけを検証する。最大3件のordered
+policy event、full task-row projection、matchingするcheckpoint snapshot、completeなworkflow prefixを確認する。
+read observationには最初のpolicy event直前にあるcanonical checkpoint bytesも含める。producerはこのbytesから
+先頭を含む全request digestを再計算する。predecessor bytesはStoreがreadしたevidenceであり、callerの追加入力ではない。
+3つのcommit後、fresh reopenはworkflowが`REVIEW_PENDING`で`W0 >= 2`、task rowがpolicy phase `APPROVED`のcurrent pairを
+返す。`verification_operations`と`verification_receipts`は空のままである。返される`ReviewerAssignment`はcommit後の
+intentだけであり、backend、runner、reviewer process、reservation、external effectは呼び出さない。
+
+generic `commit_transition()`は、historicalなtask-row-empty workflowではstate-preserving contractを維持する。
+schema-4 rootにtask-ledger rowができた後は、task rowとcheckpointの分離を防ぐため、専用のtask/reviewまたは
+verification writerだけが更新できる。generic transitionとpublic lifecycle `begin_operation()`はそのrootを
+拒否する。schema-3 validatorは変更しない。
+backup、inspect、restore、Doctorは、
+#83がnon-empty image-evidence contractを提供するまで#81 task row imageを受け付けない。#50が事前発行した
+`CompletionAdmissionRef`はtrusted composition rootだけが保持し、#81は受け取らず保存もしない。#81は#74の`ApprovalRef`を
+compose/resolveせず、verification authorityも作らない。これらは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)の範囲である。
 
 ## 追加の環境検証
 

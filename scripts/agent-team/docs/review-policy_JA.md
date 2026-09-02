@@ -69,6 +69,56 @@ transportや再構成後にstore adapterが再検証できるよう、公開関�
 `ReviewRequest`は、completionのauthorityであるidentity、completion ID、origin sequence、outcome kind、
 target pairだけを比較します。説明文とhandoff側の説明文は比較せず、handoffを許可・拒否する根拠にもなりません。
 
+## schema-4 review checkpoint producer（Issue #81）
+
+pureなreducerがpolicyのauthorityであることは変わりません。package-privateな
+`ReviewCheckpointProducer`は、通常のschema-4 `CoordinationStore`へ接続する別の保存seamです。
+受け取るのは、実際の`ReviewPolicyUpdate`、実際の`SerialReviewPolicy`、および対応する#74 owner-issued
+`ReviewAuthorityRef`だけです。Storeへ渡す前に、#74のprocess-local binding proofがupdate、policy、issuer、
+reference、nestedな因果値全体を再検証します。raw projection、`CompletionAdmissionRef`、`ApprovalRef`、
+route result、reservation result、caller指定のcheckpointやeventを代替入力にはしません。taskのroute、owner refの
+発行、approvalのcompose、backend、runner、reviewer process、reservationの呼び出しも行いません。
+
+producerはimmutableであり、再初期化やrequest発行後のmutationでは束縛先を変更できません。handoffのowner registry
+Storeもimmutableな束縛に含めます。opaque requestを受け付けるのはexactな登録済みStoreだけです。Store method/errorの束縛、
+state-root identity、checkpoint issuer、
+返されたcommit/read evidenceを再検証してから結果を信頼します。未登録portは呼び出さず、foreign observationを
+拒否し、cleanup capabilityを保持するのはgenuine Store errorだけです。永続化境界の全体は
+[coordination Store contract](coordination-store_JA.md#schema-4-review-checkpoint-producerissue-81)で定義します。
+
+受け付ける#49のactual edgeは次の3つだけで、順序も固定します。各edgeは別々のtransactionでcommitします。
+
+| actual event | task-policy edge | workflow edge | 結果 |
+| --- | --- | --- | --- |
+| `WorkerCompletion(kind=SUCCEEDED)` | `ASSIGNED(T) -> WORKER_DONE(T+1)` | `WORKER_DONE(W) -> WORKER_DONE(W+1)` | current checkpointのexactなassigned preimageを一度だけmaterializeし、次のfull task rowとpolicy eventを保存します。 |
+| `ReviewRequest` | `WORKER_DONE(T) -> REVIEW_PENDING(T+1)` | `WORKER_DONE(W) -> REVIEW_PENDING(W+1)` | 次のfull task rowとcheckpointを保存した後、`ReviewerAssignment` intentを1件だけ返します。 |
+| `ReviewDecision(kind=APPROVED)` | `REVIEW_PENDING(T) -> APPROVED(T+1)` | `REVIEW_PENDING(W) -> REVIEW_PENDING(W+1)` | 次のfull task rowとstate-preservingなpolicy eventを保存します。effectは実行しません。 |
+
+各commitは、`task_policy_states`、current workflow checkpoint、1件の`workflow_events` rowを同じtransactionで
+更新し、task rowとcheckpoint referenceを双方向に比較します。task/workflow sequenceは常に1つ進みます。eventのshapeは
+`kind='policy_transition'`、固定したproducer actor、`operation_id=NULL`、`receipt_id=NULL`です。Store-owned
+authority digestは`checkpoint.review_authority`と`event.evidence_ref`の両方へ保存します。authority digestとrequest digestは
+別domainで計算し、timestampとglobal workflow event IDを含めません。event自体のdigestはStoreの定義に従います。
+
+最初のedgeでは、task rowがまだ存在せず、current checkpointのtask referenceがexactな`ASSIGNED(T)`であることが
+必要です。同じtransaction内でpreimageをmaterializeしてから`WORKER_DONE`へ進むため、faultがあればtask row、
+checkpoint、eventをまとめてrollbackします。後続edgeは、既存のfull rowに対してsequence、digest、bytes、identity、
+checkpointのguardを要求する契約です。current-onlyのcommit、sequence jump、synthetic event、stale checkpoint、foreign
+owner ref、nested valueのmutation、unresolved operation、verification tableの非空は、partial writeなしで拒否します。
+
+通常のschema-4 openと`load_review_checkpoint()`が検証するのは、producerが作るclosed suffixだけです。最大3件の
+ordered policy event、full task row projection、matchingするcheckpoint snapshot、completeなworkflow prefixを
+確認します。3つのcommitが完了したfresh current pairは、workflowが`REVIEW_PENDING`で`W0 >= 2`、task rowがpolicy
+phase `APPROVED`です。read observationは最初のpolicy event直前にあるcanonical checkpoint bytesも含み、producerは
+先頭と後続のrequest digestをすべて再計算します。
+verification ledgerの`verification_operations`と`verification_receipts`は空のままで、
+`ReviewerAssignment`はcommit後のintentにすぎません。
+generic `commit_transition()`はtask-ledger rowのないrootでstate-preserving contractを維持します。#81が
+task rowを作った後は、専用のtask-aware writerだけがrootを進め、generic transitionとpublic lifecycle
+entry pointは拒否します。
+schema-3 validatorは変更しません。backup、inspect、restore、Doctorは、
+別の#83 evidence contractができるまでtask rowを含むimageを拒否します。
+
 `policy_authority_projection(update, policy)`は、検証済みupdateからcanonicalなprojectionを返すreturn-only factoryです。
 `PolicyAuthorityProjection`に含めるのはtyped identity、phase/event kind、completion/decision kindとreference、
 target pair、reason、sequence、policy fingerprintだけです。通常constructorは無効化し、policy-bound factoryから発行します。
@@ -99,12 +149,14 @@ stale attempt、old roundのeventは、stateを変えずに拒否します。exp
 にすぎず、`APPROVED`という文字列、terminalのidle/done、process exit、Main/Agentのprompt本文は
 event typeでもapproval authorityでもありません。
 
-## 後続adapter
+## 後続adapterと現在のStore境界
 
-`ReviewPolicyStorePort.update(update, policy)`が最小の保存seamです。将来の実装はcompare-and-swap、
-transaction、保存形式を担当し、受け入れ前の`validate_policy_update(update, policy)`呼び出しを
-契約に含めます。`ReviewPolicyEffectPort.assign_reviewer(assignment, policy, expected_state)`も、
-dispatch前の`validate_reviewer_assignment(assignment, policy, expected_state)`呼び出しが前提です。
+`ReviewPolicyStorePort.update(update, policy)`は、pureなpolicy integrationの最小seamとして残ります。typed updateを
+受け入れる前に`validate_policy_update(update, policy)`を呼ぶことが契約です。現在のschema-4 producerは、上記transaction
+のために別のpackage-privateな`ReviewWorkflowStorePort.commit_review_policy()` seamを使います。genericな
+`commit_transition()`のcontractを緩めたり、置き換えたりしません。`ReviewPolicyEffectPort.assign_reviewer(assignment,
+policy, expected_state)`はdispatch前に`validate_reviewer_assignment(assignment, policy, expected_state)`を呼び、
+matchingする`worker_done` stateをexpected stateにします。
 `ReviewPolicyHandoffPort.save_authority(update, policy)`はraw projectionを受け取らず、policy-boundな
 `ReviewPolicyUpdate`と実際の`SerialReviewPolicy`だけが入力です。#74の`PolicyVerificationHandoff`は
 この入力を再検証し、内部で`policy_authority_projection(update, policy)`を呼び、boundedなprimitive fieldだけの
@@ -116,10 +168,10 @@ handoffは受理済みupdateからrefを発行できますが、composerがadmit
 malformed、foreign、stale、mutated、non-approvedな値はapproval compositionの前に拒否します。explanation、prompt、raw body、
 provider outputを保存せず、retryやfallbackも追加しません。
 
-このmoduleとhandoff adapterは、SQLite、schema-4 ledger record、process restart、`mark_unknown`、provider exactly-once proofを
+このmoduleとhandoff adapterは、Store transaction、process restart、`mark_unknown`、provider exactly-once proofを
 実装しません。以前の[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)がdurable ledger、restart境界、full runtime
-correlationを一括で所有する計画はhistoricalなものです。現在の責務は、[Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)、
-[#81 task/review persistence](https://github.com/iamtatsuki05/dotfiles/issues/81)、
-[#82 verification transactionとadapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-[#83 non-empty image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。
-handoffのdeterministic fakeはtest evidenceだけです。reducerは引き続き`ReviewerAssignment`だけを返し、外部processやbackendは呼び出しません。
+correlationを一括で所有する計画はhistoricalなものです。Issue #81が所有するのは上記のnormal Store向けtask/review suffixだけで、
+Issue #80はschema-4のphysical foundation、[#82 verification transactionとadapter](https://github.com/iamtatsuki05/dotfiles/issues/82)は
+actual completion admission、capture/context、verification lifecycle、[#83 non-empty image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)は
+image境界を所有します。handoffのdeterministic fakeはtest evidenceだけです。reducerはpureなまま`ReviewerAssignment` intentを返し、
+外部processやbackendは呼び出しません。

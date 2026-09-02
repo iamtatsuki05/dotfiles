@@ -34,27 +34,31 @@ provider outputへ置き換えられません。`ApprovalRef` はbounded identif
 できますが、注入したcontract registry内のexactなapproval recordと2つのowner recordへ
 解決できる場合だけauthorityになります。
 
-## 現在の状態: #74 handoffは実装済み、#80はempty-ledger foundationを提供する
+## 現在の状態: #74 handoffと#81 review producerは実装済み、#80はfoundationを提供する
 
 現在の #74 codeには、private module `PolicyVerificationHandoff` と、注入するpackage-privateな
 contract registryがあります。focusedなdeterministic testもあります。registryはprocess-localな
 test/composition infrastructureです。このpackageは、これらのprivate record向けproduction SQLite
 implementationやdurable codecを提供しません。
 
-| 領域 | #74の境界で実装済み | #74では証明しないこと |
+| 領域 | 現行の実装状況 | ここでは証明しないこと |
 | --- | --- | --- |
 | Review authority | 実際の`ReviewPolicyUpdate`と`SerialReviewPolicy`を検証し、canonical projectionを内部で導出し、bounded recordを保存してexact readbackを行った後に`ReviewAuthorityRef`を発行します。 | 新しいreview transition、callerが作ったprojection、durable schema。 |
 | Completion admission | typedなpath/resource/profile入力とreservation portで既存の`route_task()`を1回呼び、条件を満たすmatching resultだけから`CompletionAdmissionRef`を発行します。 | 2回目のroute、retry、別lane/provider/backend、provider proof。 |
 | Composition | 2つのowner recordを解決・再検証し、共通部分だけを比較し、#49専有fieldを#49 provenanceとして保持してbound approvalを保存・readbackします。 | #50が#49専有runtime fieldを所有または検証したという主張。 |
 | Verification entry | `VerificationGate.start(ApprovalRef)`、`resume(VerificationHandle)`と、既存state portの6操作を維持します。 | SQLite durability、fresh process replay、`mark_unknown`、provider exactly-once。 |
+| Schema-4 review checkpoint | #81が実際の#49 updateと、それに束縛された`ReviewAuthorityRef`を受け取り、normal Storeを通じて3 edgeのclosedなtask/workflow suffixをcommitします。 | `CompletionAdmissionRef`、`ApprovalRef`、verification row、external effect、image/restore authority。 |
 
 focused suiteが証明するのはhandoff contractとdeterministic fakeのstate modelです。fakeを
 production persistenceの証拠へ読み替えません。
 
 [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)は、schema-4の
 物理的な12 tableとtask/verificationのpure codecを固定します。ただし、#74 handoff自体をdurableな
-authorityへ変えるものではありません。#80のproduction pathでは新しいverification tableは空のままで、
-non-empty image、lifecycle、capture、adapter、hydration、recoveryの主張は下記の後続作業に残ります。
+authorityへ変えるものではありません。現在の[#81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)は、
+normal Storeでfullな`task_policy_states` rowと3件のpolicy-event suffixだけを書きます。
+`verification_operations`と`verification_receipts`は空のままであり、backup、inspect、restore、Doctorは、
+#83のimage-evidence contractができるまで、このnon-empty task row imageを拒否します。actual completion admission、
+capture/context、verification lifecycle、durableなverification rowは#82の後続範囲です。
 
 ## #49は実際のupdateとpolicyからreview authorityを発行する
 
@@ -138,10 +142,12 @@ completion ownerは`Run`、`Dispatch`、`Attempt`、Worker/Reviewer terminal、r
 target `HEAD`/tree、`claim_ref`を持ちません。これらは#49専有のruntime fieldです。
 composerは#49 record内でそれらを検証し、bound approvalには#49 provenanceとして保持します。
 #50のroute/reservationと照合済みとは主張しません。adapterがそれらをraw引数として追加したり、
-Task本文、path名、reservation IDから推測したりすることもありません。full runtime joinは、
-[Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)の後続にあたる
-[#82 verification](https://github.com/iamtatsuki05/dotfiles/issues/82)と
-[#83 image](https://github.com/iamtatsuki05/dotfiles/issues/83)の責務です。
+Task本文、path名、reservation IDから推測したりもしない契約です。#81のreview producerは、この#49 evidenceを
+process-local binding seam経由で消費しますが、#50の`CompletionAdmissionRef`を受け取らず、`ApprovalRef`を作らず、
+owner-private recordも保存しません。full runtime joinは、[Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)の
+後続にあたる[#82 verification](https://github.com/iamtatsuki05/dotfiles/issues/82)と[#83 image](https://github.com/iamtatsuki05/dotfiles/issues/83)の責務です。
+review refは、発行元の`PolicyVerificationHandoff`とregistryにも束縛します。別handoffが発行した
+text-identicalなrefはforeignとして扱い、#81 Store transactionの前に拒否します。
 
 overlapの検査後、composerはstableなapproval identityを導出し、検証済みbound approvalを
 #51のprivate factoryへの入力とします。両方のowner ref/digestと#51 authority digestを含むapproval
@@ -223,25 +229,25 @@ cross-process atomicity、provider-side exactly-once executionは示しません
 [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)は、物理的な
 Store contractを固定します。対象は`STORE_SCHEMA=4`、provider/workflow event schema `2/1`、
 正確な12 table、version-1 manifestの`4/2/4`、read-only WAL/SHM-aware pre-gate、
-TaskPolicy/approval/request/receiptのpure version-1 codecです。新しい3 tableは#80のproduction pathで
+TaskPolicy/approval/request/receiptのpure version-1 codecを含みます。新しい3 tableは#80のproduction pathで
 空のままです。いずれかがnon-emptyならfail-closedにし、#80で証明するbackup/restoreは空のschema-4
-imageのround tripだけです。
+imageのround tripに限定します。
 
-non-empty lifecycleとimage semanticsは、[#81 task/review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)、
-[#82 verification transaction/adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-[#83 image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)が担当します。
-live owner capture/context、Store adapter、snapshot hydration、58-fieldのoperation-row digest、
-non-empty lifecycle、verification-aware Doctor、non-empty image evidenceは#80の主張ではありません。
-exact schema-2とschema-3 imageはtarget schema `4`への`StoreMigrationRequiredError`となり、#80はmigrationを行いません。
+[#81 task/review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)は、normal Storeのtask rowとclosedな3件の
+policy-event suffixを担当します。verification rowは作らず、#50 completion admissionも消費しません。
+[#82 verification transaction/adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)はactual completion admission、ownerの
+capture/context、snapshot hydration、58-fieldのoperation-row digest、verification lifecycleを担当します。
+[#83 image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)はnon-empty image semanticsと
+image境界を担当します。exact schema-2とschema-3 imageはtarget schema `4`への`StoreMigrationRequiredError`となり、#80はmigrationを行いません。
 
 schema-4の各childは、独自のcanonical payloadとdecoder境界を定義します。#74から消費するのはowner refと
 approval contractだけです。`_ReviewAuthorityRecord`、`_CompletionAdmissionRecord`、`_ApprovalRecord`を
 `object.__new__`で復元したり、module-localなissuer sentinelを複製したり、package-private registry protocolを
 durable wire contractとして実装したりしません。
 
-後続childがrecordを用意するまでは、#74はSQLite persistence、restart recovery、durable `mark_unknown`、
-provider exactly-onceを主張しません。deterministic fake、in-memory registry、terminal state、effect resultは、
-その証拠になりません。
+#74 handoff自体にとって、SQLite persistence、restart recovery、durable `mark_unknown`、provider exactly-onceは
+引き続き主張の対象外です。#81のnormal Store review suffixは、#74のprivate registry recordをdurableにコピーするものではありません。
+deterministic fake、in-memory registry、terminal state、effect resultは、#82が所有するverification proofの代替になりません。
 
 ## rejectionとnon-goalはfail-closedにする
 
@@ -269,5 +275,5 @@ fakeの明示的なcall-order trace、dual-CAS/all-or-none、handoff経由で既
 effect-once/replayを対象にします。
 
 SQLite reopen、crash injection、provider login/effect test、schema-4 validation、durable
-`mark_unknown`、production migrationは#74では未実施です。#80または後続Issueのacceptanceに
-残します。
+`mark_unknown`、production migrationは#74の範囲外です。#80 foundationと#81 review producerにはそれぞれStore evidenceがあり、
+verification lifecycleとnon-empty image evidenceは#82と#83のacceptanceに残ります。

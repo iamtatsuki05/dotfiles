@@ -25,15 +25,17 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
   adapter実装、snapshot境界、復旧方法を説明します。
 - [Coordination store、recovery、backup、restore](docs/coordination-store_JA.md)は
   SQLiteのschema境界、stable writer marker、WAL sidecar controller、backup artifact、
-  candidate-first restoreを説明します。Issue #72のhistorical sectionには、v3 workflow
-  checkpoint/CAS contractと、Storeが外部effectを呼び出さない境界を残しています。現在の
+  candidate-first restoreまで扱います。Issue #72のhistorical sectionは、v3 workflow
+  checkpoint/CAS contractと、Storeが外部effectを呼び出さない境界を残した章です。現在の
   [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)では、
   12 tableのobject set、read-only image classifier、pure codec、およびledgerが空でない場合の
-  fail-closed境界を定めています。
+  fail-closed境界を定めます。通常のStoreの[Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)は、
+  fullなtask rowとclosedな3件のreview event suffixを保存し、verification rowとnon-empty image evidenceは後続範囲に残します。
 - [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
   保存やworkflow実行を含まないstate観測契約を説明します。
 - [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
-  express laneで共通する、Workerから独立Reviewerへ進むtyped serial gateを説明します。
+  express laneで共通する、Workerから独立Reviewerへ進むtyped serial gateを説明します。Issue #81のnormal Store向け
+  checkpoint producerも説明します。
 - [Path/resource policy](docs/path-resource-policy_JA.md)は、filesystemやproviderを操作せず、
   canonical path admission、明示的なresource mode、reservation port、normal/express/researchの
   lane matrixを説明します。
@@ -41,7 +43,8 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
   する前提となる typed approval、固定 verification request、before/after snapshot の束縛、
   normalized receipt を説明します。
 - [Policy/verification handoff](docs/policy-verification-handoff_JA.md)は、#49のreview ref、
-  #50のcompletion ref、approved-only composition、Storeのexact readback、schema-4 workを分ける
+  #50のcompletion ref、approved-only composition、Storeのexact readback、#81のprocess-local review binding、
+  schema-4 workを分ける
   [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、
   [#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
   [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
@@ -214,8 +217,9 @@ agent-team status \
   restore candidate namespaceの`.coordination.sqlite3.restore-`は予約済みで、destinationには使えません。
 - version-1 backup/inspectは従来の2-file、exact 10-field manifest shapeを維持します。
   schema-4 foundationの値は`store_schema=4`、`event_schema_version=2`、
-  `sqlite_user_version=4`（`4/2/4`）です。production pathは新しい3 tableへrowを書かず、
-  その3 tableが空のimageだけをstructural baselineにします。新しいtableが非空ならfail-closedであり、
+  `sqlite_user_version=4`（`4/2/4`）です。#80のfoundation pathは新しい3 tableへrowを書きません。
+  通常のStoreが受け付けるのは#81のfullな`task_policy_states` rowとclosedなreview suffixだけであり、
+  `verification_operations`と`verification_receipts`は空のままです。それ以外のnon-empty imageはfail-closedであり、
   #80はnon-empty verification imageのinspectやbackup/restore成功を主張しません。
 - established imageはrootを変更する前に、read-onlyでWAL/SHM-awareなpre-gateで分類します。
   structural WALはimageの一部としてcopyし、ephemeralなSHM cacheはSQLiteがprivateな一時copy上だけで
@@ -224,8 +228,9 @@ agent-team status \
 - #80のcodecは、15-fieldの`TaskPolicyStateV4`、approval-binding snapshot、body-free verification
   request、normalized receipt向けのpure version-1 codecです。argv/environmentのraw valueやraw bodyを
   保存せず、valueの内部整合性だけを検証します。owner authorityのcaptureやGate valueのhydrationは行いません。
-  live capture/context、Store adapter、lifecycle transaction、logical record digest、non-empty imageの
-  semantic validation、verification-aware Doctor/restoreは後続作業です。
+  #81はnormal Storeのtask/review transactionとfull task-row projectionだけを担当します。live capture/context、
+  Store adapter、lifecycle transaction、logical record digest、non-empty imageのsemantic validation、verification-aware
+  Doctor/restoreは#82と#83の後続作業です。
 - provider-only restoreは、history上のcontractどおりcandidate-firstかつprovider-freeです。#80が確認するのは
   新しいledgerが空のschema-4 backup/restore round tripだけであり、logの暗黙修復、external effectのretry、
   non-empty verification imageの認可は行いません。
@@ -257,10 +262,10 @@ lookupを1回実行する場合があります。`INTENT`、`UNKNOWN_EFFECT`、r
 deterministic fake authority/backend/projectorと実Storeが証明するのはadapter contractだけで、
 provider側のexactly-onceや#31のcross-store atomic joinは証明しません。WorkflowEngineの
 reducer wiringは#33、policy/verification handoffは#74の担当です。
-schema-4 foundationは[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、
-task/reviewのproduction transitionは[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
-verification transactionとadapter wiringは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-image evidence、backup/restore、Doctorは[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)が担当します。
+schema-4 foundationは[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、normal Storeのtask/review production
+transitionは[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、verification transaction、actual completion admission、
+adapter wiringは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、image evidence、backup/restore、Doctorは
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)が担当します。
 
 Issue #74のhandoffは、実際の#49 `ReviewPolicyUpdate`とpolicy、および実際の#50 `route_task()`と
 matchingなreservation resultを受け取ります。各owner refは、owner validationと`save_*`/exact
@@ -272,9 +277,9 @@ target、`claim_ref`は#49 provenanceとして残し、#50と比較済みとは�
 deterministic fakeは、SQLite、restart、provider exactly-onceの証拠ではありません。
 [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)のschema-4 workは、
 [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)のfoundationと
-[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
+[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)のtask/review producerと、後続の
 [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の後続実装に分かれます。full ledger、
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。full ledger、
 restart/replay、`mark_unknown`、non-empty imageの主張は#80の範囲外です。raw body/action alias/payloadの
 経路やretry/fallbackはありません。
 
