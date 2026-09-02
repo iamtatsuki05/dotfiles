@@ -324,6 +324,10 @@ _HANDOFF_REVIEW_REF_OWNERS: WeakKeyDictionary[
     ReviewAuthorityRef, tuple[object, object]
 ] = WeakKeyDictionary()
 _HANDOFF_REVIEW_REF_OWNERS_LOCK: Final = RLock()
+_HANDOFF_COMPLETION_REF_OWNERS: WeakKeyDictionary[
+    CompletionAdmissionRef, tuple[object, object, str, str]
+] = WeakKeyDictionary()
+_HANDOFF_COMPLETION_REF_OWNERS_LOCK: Final = RLock()
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
@@ -1428,7 +1432,15 @@ class PolicyVerificationHandoff:
             conflict_code="completion-admission-conflict",
             recovery_code="completion-admission-response-loss",
         )
-        return _issue_completion_admission_ref(record.reference, record.digest)
+        result = _issue_completion_admission_ref(record.reference, record.digest)
+        with _HANDOFF_COMPLETION_REF_OWNERS_LOCK:
+            _HANDOFF_COMPLETION_REF_OWNERS[result] = (
+                self,
+                self._store,
+                result.reference,
+                result.digest,
+            )
+        return result
 
     def _bind_review_authority(
         self,
@@ -1506,11 +1518,32 @@ class PolicyVerificationHandoff:
             raise _error("review-authority-invalid", "review authority digest differs")
         return record
 
+    def _validate_completion_owner(self, ref: CompletionAdmissionRef) -> None:
+        try:
+            _validate_completion_admission_ref(ref)
+            with _HANDOFF_COMPLETION_REF_OWNERS_LOCK:
+                owner = _HANDOFF_COMPLETION_REF_OWNERS.get(ref)
+            if (
+                owner is None
+                or owner[0] is not self
+                or owner[1] is not self._store
+                or owner[2] != ref.reference
+                or owner[3] != ref.digest
+            ):
+                raise _error(
+                    "completion-admission-invalid",
+                    "completion admission owner differs",
+                )
+        except Exception:  # noqa: BLE001 - injected ref text must not escape
+            raise _error(
+                "completion-admission-invalid", "completion admission is unavailable"
+            ) from None
+
     def _read_completion(
         self, ref: CompletionAdmissionRef
     ) -> _CompletionAdmissionRecord:
         try:
-            _validate_completion_admission_ref(ref)
+            self._validate_completion_owner(ref)
             value = self._store.read_completion_admission(ref.reference)
             record = _validate_completion_record(value)
         except Exception:  # noqa: BLE001 - injected Store text must not escape

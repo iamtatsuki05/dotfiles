@@ -186,7 +186,7 @@ reply/read/release marker、非対象authority、sequenceを据え置くtask-pol
 完全に保持する。P0のgeneric transitionはworkflow stateも保持する。Issue #74はtypedなowner
 evidenceとcomposition contractを提供するが、このgeneric v3 transitionはreview/verificationの
 state edgeをまだ受理できない。full task/verification ledgerとatomic state transitionをIssue #78が
-担当するのは当時の計画であり、現在のworkは後続のschema-4 childへ分かれている。
+担当するのは当時の計画であり、現在のschema-4 workは各childに分かれている。
 
 `wait`が作るDeliveryは、必ず`PENDING`かつACK operationなしで始まる。
 `ACK_INTENT/<operation_id>`へ変更できるのは、対応するACK begin transactionだけである。
@@ -219,8 +219,8 @@ P0は外部effectのexactly-onceを主張しない。
 ### privateなdurable effect adapter（Issue #73）
 
 privateな`workflow_effect_adapter.py` seamはtyped Store portだけを使い、SQLiteのrow、
-connection、lockへ直接アクセスしません。publicな`TeamRuntime`/`BackendPort`の3 methodと
-CLI/MCP envelopeを維持します。現行のpublic backendとOrca implementationは、role effectの
+connection、lockへ直接アクセスしない。publicな`TeamRuntime`/`BackendPort`の3 methodと
+CLI/MCP envelopeを維持する。現行のpublic backendとOrca implementationは、role effectの
 metadata、consumer generation、exactなDelivery/read lookup、provider proofが不足するため、
 effect前に`DurabilityUnsupported`でfail-fastする。現行OrcaのSTOPも、private contractが
 要求する順序付きcomposite-stop proofとpure lookupを持たない。adapterはCLI/MCPへ配線して
@@ -319,10 +319,11 @@ page sizeが同じWALの出所を認証できない。このためWALのsaltやc
 
 3つの新しいtableが空のexact schema-4 imageだけを、#80のfoundation writerにおけるstructural open baselineとする。
 foundation-only pathで新しいtableにrowがあれば、non-empty semantic validatorがないためfail-closedで停止する。
-通常のStoreにおける#81 pathは、fullな`task_policy_states` rowとclosedな3件のreview suffixだけを例外的に受け付ける。
-`verification_operations`と`verification_receipts`のrowは受け付けない。non-empty verification imageのopen、
-inspect、backup、restore、three-layer image evidenceを成功とは報告しない。既存9 tableのprovider/workflow contractは
-別の境界として残し、verification evidenceへ暗黙に読み替えない。
+通常のStoreにおける#81 pathは、fullな`task_policy_states` rowとclosedな3件のreview suffixを例外的に受け付ける。
+`verification_operations`と`verification_receipts`のfirst writerは#82のStore-backed verification pathであり、
+このpathは自分が書いたnon-empty lifecycle rowとclosedなworkflow event suffixをnormal reopenで検証する。
+#80と#82はいずれも#83のfullなnon-empty image inspect、backup/restore、verification-aware Doctor evidenceを主張しない。
+既存9 tableのprovider/workflow contractは別の境界として残し、verification evidenceへ暗黙に読み替えない。
 
 exact object、integrity、foreign keyを確認した後、schema-4のempty-ledger gateをworkflow transitionと
 high-waterの意味検証より先に実行する。workflow validatorは4 table全体をmaterializeせず、cursorで
@@ -346,11 +347,11 @@ bounded BLOB、byte-exact Unicodeを使う。requestにはargvのdigestとenviro
 argv/environment value、raw body、secretは保存しない。
 
 codecが検証するのはvalueの内部整合性だけである。live owner authorityのcapture、contextのresolve、
-Store adapterの発行、Gate valueのhydration、58-fieldのoperation-row digestは実装しない。
-SQLの`record_version=1`はrow discriminatorに限る。#81がnormal Store向けtask/review transactionとfull task-row projectionを
-担当する。live capture/context、Store adapter、snapshot hydration、58-fieldのoperation-row digest、verification lifecycle
-transaction、semantic image validation、verification-aware Doctor、non-empty backup/restoreは、[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)と
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の範囲である。
+Store adapterの発行、Gate valueのhydrationは実装しない。SQLの`record_version=1`はrow discriminatorに限る。
+#81がnormal Store向けtask/review transactionとfull task-row projectionを担当する。#82はlive capture/context、
+Store adapter、snapshot hydration、58-fieldのoperation-row digest、verification lifecycle transactionを担当する。
+#82のnormal reopen validatorは自分が書くlifecycleに限り、fullなnon-empty image semantics、backup/restore、
+verification-aware Doctorは[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)の範囲である。
 
 #80で確認するbackup/restore evidenceは、新しいledgerが空のexact schema-4 imageについての
 version-1 two-file manifest round tripだけである。#81のtask row imageを受け付けるのはnormal Store validatorだけであり、
@@ -403,8 +404,8 @@ policy event、full task-row projection、matchingするcheckpoint snapshot、co
 read observationには最初のpolicy event直前にあるcanonical checkpoint bytesも含める。producerはこのbytesから
 先頭を含む全request digestを再計算する。predecessor bytesはStoreがreadしたevidenceであり、callerの追加入力ではない。
 3つのcommit後、fresh reopenはworkflowが`REVIEW_PENDING`で`W0 >= 2`、task rowがpolicy phase `APPROVED`のcurrent pairを
-返す。`verification_operations`と`verification_receipts`は空のままである。返される`ReviewerAssignment`はcommit後の
-intentだけであり、backend、runner、reviewer process、reservation、external effectは呼び出さない。
+返す。このproducer stageでは`verification_operations`と`verification_receipts`は空のままである。返される
+`ReviewerAssignment`はcommit後のintentだけであり、backend、runner、reviewer process、reservation、external effectは呼び出さない。
 
 generic `commit_transition()`は、historicalなtask-row-empty workflowではstate-preserving contractを維持する。
 schema-4 rootにtask-ledger rowができた後は、task rowとcheckpointの分離を防ぐため、専用のtask/reviewまたは
@@ -413,7 +414,51 @@ verification writerだけが更新できる。generic transitionとpublic lifecy
 backup、inspect、restore、Doctorは、
 #83がnon-empty image-evidence contractを提供するまで#81 task row imageを受け付けない。#50が事前発行した
 `CompletionAdmissionRef`はtrusted composition rootだけが保持し、#81は受け取らず保存もしない。#81は#74の`ApprovalRef`を
-compose/resolveせず、verification authorityも作らない。これらは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)の範囲である。
+compose/resolveせず、verification authorityも作らない。これらは次の#82 capture pathの範囲である。
+
+## schema-4 verification transactionとadapter（Issue #82）
+
+`agent_team.verification_store`はverification lifecycleのpackage-privateなfirst writerである。開始点は、completeな
+event prefixとStore-issued contextを伴う#81のfreshな`REVIEW_PENDING(W0 >= 2)` + `APPROVED(n)`だけである。
+`capture_approval_binding`は同じrevisionでcontextを読み、保持した#74 owner refを検証し、`compose`と`resolve`を
+各1回だけ呼ぶ。結果のimmutableなapproval bindingをstageするが、capture自体はStoreを変更しない。durable
+factoryは次のとおりである。
+
+```python
+StoreVerificationAdapter.from_capture(
+    store, snapshot, staged_admission, profile_resolver
+)
+StoreVerificationAdapter.from_store(
+    store, root_key, verification_ref, owner_id, profile_resolver
+)
+```
+
+同じprivate adapterが既存の`VerificationStatePort`の6操作、`prepare_once`、`begin_effect_once`、`read`、`status`、
+`record_receipt_once`、`apply_terminal_once`を実装する。Gateのprivate hookである`_read_with_status`と`_mark_unknown`も
+接続するが、publicなGate、CLI、MCP、Protocolのsurfaceは拡張しない。fresh re-entryではcanonicalなStore rowから
+bound request、owner、effect、receiptをhydrateし、#74のlive owner refは再度呼ばない。
+
+Storeはtask/workflowのdual-CAS、full row readback、event pointer、固定58-field operation `record_digest`を伴って、各
+lifecycle edgeをcommitする。
+
+| status | durable edge | re-entryの動作 |
+| --- | --- | --- |
+| `PREPARED` | `REVIEW_PENDING(W0) + APPROVED(n)` → `VERIFYING(W1) + VERIFYING(n+1)` | fresh processでは未arm operationだけをarmできる。 |
+| `EFFECT_PREPARED` | Store-ownedのeffect owner、epoch、fence、nonceを記録し、workflow eventは追加しない。 | runnerを再実行せず、recoveryに止める。 |
+| `RECEIPTED` | immutableなreceipt、task/workflow step、receipt eventを同一commitで保存する。 | exact receipt replayはrunner/effectを呼ばない。 |
+| `TERMINAL` | taskを`COMPLETED`または`VERIFICATION_FAILED(n+3)`にし、workflowは`VERIFYING(W3)`に留める。 | exact terminal replayはrunner/effectを呼ばない。 |
+| `UNKNOWN_EFFECT` | workflowを`RECOVERY_REQUIRED(W2)`へ進め、taskは`VERIFYING(n+1)`に留める。 | `RecoveryRequired`を返し、retry/fallbackしない。 |
+
+#82のunknown markerが受け付けるdurable reason codeは、`effect-response-loss`、`runner-response-loss`、
+`runner-response-invalid`、`cleanup-unknown`、`snapshot-drift`、`receipt-response-loss`、
+`receipt-commit-unknown`、`effect-fence-unknown`の8つに固定されている。`restore_invalidation`は#83専用である。
+SQLite commitの結果が不明な場合、Gateは利用可能なStore cleanup capabilityを`RecoveryRequired`へ保持する。
+cleanupは明示的に再試行できるが、transaction自体はblind retryしない。
+
+normal Store reopenは、#82が書いたlifecycle rowについてnested codecのdecode/re-encode、owner/request/receipt binding、
+status/null matrix、effect epoch/fence/floor、task/workflow observation、event evidence/pointer、operation digestを検証する。
+これはfullなimage inspectではない。fullなnon-empty imageのinspect、backup/restore、verification-aware Doctorは#83の
+範囲であり、#82のtestはprovider-side exactly-once executionを証明しない。
 
 ## 追加の環境検証
 

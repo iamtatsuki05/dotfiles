@@ -450,6 +450,28 @@ class SnapshotPort(WorkspaceSnapshotPort):
 
 
 class VerificationGateTest(unittest.TestCase):
+    def test_secret_bearing_verification_values_have_redacted_repr(self) -> None:
+        canary = "visible-environment-canary"
+        approved = approved_review()
+        bound = gate._make_bound_approval(APPROVAL_REF, approved)
+        selected_profile = replace(
+            profile(),
+            environment_values=(canary, "C"),
+        )
+        request = gate._build_request(
+            bound,
+            selected_profile,
+            snapshot(approved),
+        )
+        prepared = gate._make_prepare(
+            gate.VerificationRef(request.verification_id),
+            APPROVAL_REF,
+            request,
+            PreparationStatus.PREPARED,
+        )
+        for value in (selected_profile, request, prepared):
+            self.assertNotIn(canary, repr(value))
+
     def test_public_seam_uses_opaque_ref_and_handle_only(self) -> None:
         verification_gate, _, _, _ = make_gate()
         self.assertEqual(

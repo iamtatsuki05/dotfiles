@@ -12,10 +12,12 @@ from __future__ import annotations
 import hashlib
 import posixpath
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
+from threading import RLock
 from typing import Final, Literal, NewType, Protocol
+from weakref import ReferenceType, ref
 
 from .task_policy import (
     ClaimRef,
@@ -49,6 +51,7 @@ MAX_TIMEOUT_MS: Final = 86_400_000
 MAX_OUTPUT_LIMIT_BYTES: Final = 64 * 1024 * 1024
 MAX_OUTPUT_BYTES: Final = MAX_OUTPUT_LIMIT_BYTES
 _SHA256: Final = re.compile(r"[0-9a-f]{64}\Z")
+_SHA256_WRAPPER: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ENV_NAME: Final = re.compile(r"[A-Z][A-Z0-9_]{0,63}\Z")
 _SECRET_VALUE: Final = re.compile(
     r"(?i)(?:token|secret|password|private[_-]?key|authorization|bearer)\s*[:=]\s*\S+"
@@ -70,6 +73,22 @@ _RECORD_ISSUER: Final = object()
 _EVIDENCE_ISSUER: Final = object()
 _HANDLE_ISSUER: Final = object()
 _TERMINAL_ISSUER: Final = object()
+_STATE_REASON_ISSUER: Final = object()
+_BOUNDARY_EXCEPTION: Final[type[Exception]] = Exception
+
+_UNKNOWN_REASON_CODES: Final = frozenset(
+    {
+        "effect-response-loss",
+        "runner-response-loss",
+        "runner-response-invalid",
+        "cleanup-unknown",
+        "snapshot-drift",
+        "receipt-response-loss",
+        "receipt-commit-unknown",
+        "effect-fence-unknown",
+        "restore_invalidation",
+    }
+)
 
 
 class VerificationGateError(ValueError):
@@ -83,10 +102,35 @@ class VerificationGateError(ValueError):
 class RecoveryRequired(VerificationGateError):
     """Raised when an external effect cannot be classified safely."""
 
+    retry_cleanup: Callable[[], None] | None
+
     def __init__(self, reason_code: str) -> None:
         _safe_text(reason_code, "recovery.reason_code", MAX_IDENTIFIER_CHARS)
         self.reason_code = reason_code
+        self.retry_cleanup = None
         super().__init__("recovery-required", reason_code)
+
+
+def _recovery_from_boundary(
+    reason_code: str,
+    source: BaseException,
+) -> RecoveryRequired:
+    error = RecoveryRequired(reason_code)
+    try:
+        marker = object.__getattribute__(
+            source,
+            "_verification_cleanup_capability",
+        )
+        retry_cleanup = object.__getattribute__(source, "retry_cleanup")
+    except _BOUNDARY_EXCEPTION:
+        return error
+    if marker is True and callable(retry_cleanup):
+
+        def retry() -> None:
+            retry_cleanup()
+
+        error.retry_cleanup = retry
+    return error
 
 
 class VerificationOutcome(str, Enum):
@@ -158,6 +202,12 @@ def _digest(value: object, context: str) -> str:
     return candidate
 
 
+def _sha256_wrapper(value: object, context: str) -> str:
+    if type(value) is not str or _SHA256_WRAPPER.fullmatch(value) is None:
+        raise _error("invalid-digest", f"{context} must be a sha256-prefixed digest")
+    return value
+
+
 def _git_object_id(value: object, context: str) -> None:
     candidate = _safe_text(value, context, 64)
     if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", candidate) is None:
@@ -209,6 +259,43 @@ def _framed_digest(parts: Iterable[str]) -> str:
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
     return digest.hexdigest()
+
+
+def _post_arm_reason(reason_code: str, default: str) -> str:
+    mapped = {
+        "approval-drift-before-run": "effect-fence-unknown",
+        "effect-identity-mismatch": "effect-fence-unknown",
+        "effect-response-invalid": "effect-response-loss",
+        "executable-identity-after-run-unavailable": "runner-response-invalid",
+        "profile-drift-before-run": "effect-fence-unknown",
+        "profile-response-invalid": "effect-fence-unknown",
+        "request-profile-drift": "effect-fence-unknown",
+        "runner-unavailable-contract": "runner-response-invalid",
+        "snapshot-drift-before-run": "snapshot-drift",
+        "snapshot-response-invalid": "snapshot-drift",
+        "snapshot-response-loss": "snapshot-drift",
+        "unknown-effect": "effect-response-loss",
+        "cleanup-unknown": "cleanup-unknown",
+        "receipt-response-invalid": "receipt-response-loss",
+    }.get(reason_code, reason_code)
+    if mapped in _UNKNOWN_REASON_CODES:
+        return mapped
+    return default
+
+
+def _state_boundary_reason(source: BaseException, default: str) -> str:
+    try:
+        issuer = object.__getattribute__(source, "_verification_reason_issuer")
+        reason = object.__getattribute__(source, "_verification_reason_code")
+    except _BOUNDARY_EXCEPTION:
+        return default
+    if (
+        issuer is _STATE_REASON_ISSUER
+        and type(reason) is str
+        and reason in _UNKNOWN_REASON_CODES
+    ):
+        return reason
+    return default
 
 
 def _argv_digest(argv: tuple[str, ...]) -> ArgvDigest:
@@ -401,7 +488,7 @@ def _same_snapshot(left: object, right: object) -> bool:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class VerificationProfile:
     ref: VerificationProfileRef
     profile_identity: VerificationProfileIdentity
@@ -492,6 +579,9 @@ class VerificationProfile:
                 )
             ),
         )
+
+    def __repr__(self) -> str:
+        return "<VerificationProfile redacted>"
 
 
 def _validate_environment_names(value: object, context: str) -> tuple[EnvName, ...]:
@@ -765,7 +855,7 @@ class ApprovalAdmissionPort(Protocol):
         """Resolve and validate one private bound approval."""
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class VerificationRequest:
     approval_ref: ApprovalRef
     approval: ApprovedReview
@@ -790,6 +880,9 @@ class VerificationRequest:
 
     def __init__(self) -> None:
         raise TypeError("VerificationRequest is return-only")
+
+    def __repr__(self) -> str:
+        return "<VerificationRequest redacted>"
 
 
 def _request_parts(value: VerificationRequest) -> tuple[str, ...]:
@@ -945,8 +1038,8 @@ def _validate_request(value: VerificationRequest, *, verify_digest: bool) -> Non
                 raise _error(
                     "request-digest", "request digest does not bind its fields"
                 )
-    except AttributeError as exc:
-        raise _error("request-invalid", "request is malformed") from exc
+    except AttributeError:
+        raise _error("request-invalid", "request is malformed") from None
 
 
 def _compute_request_digest(value: VerificationRequest) -> ReceiptDigest:
@@ -981,7 +1074,7 @@ def _validate_snapshot_approval(
         raise _error("target-identity", "snapshot tree differs from approval")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class VerificationRunResult:
     verification_ref: VerificationRef
     request_digest: ReceiptDigest
@@ -1057,7 +1150,7 @@ class VerificationRunResult:
             raise _error("result-contract", "failed result requires non-zero exit code")
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class VerificationPrepareResult:
     verification_ref: VerificationRef
     approval_ref: ApprovalRef
@@ -1070,8 +1163,11 @@ class VerificationPrepareResult:
     def __init__(self) -> None:
         raise TypeError("VerificationPrepareResult is return-only")
 
+    def __repr__(self) -> str:
+        return "<VerificationPrepareResult redacted>"
 
-@dataclass(frozen=True, slots=True, init=False)
+
+@dataclass(frozen=True, slots=True, init=False, weakref_slot=True)
 class VerificationEffectLease:
     verification_ref: VerificationRef
     request_digest: ReceiptDigest
@@ -1297,8 +1393,8 @@ def _validate_receipt(value: VerificationReceipt, *, verify_digest: bool) -> Non
             value.receipt_digest, _compute_receipt_digest(value)
         ):
             raise _error("receipt-digest", "receipt digest does not bind its fields")
-    except AttributeError as exc:
-        raise _error("receipt-invalid", "receipt is malformed") from exc
+    except AttributeError:
+        raise _error("receipt-invalid", "receipt is malformed") from None
 
 
 def _compute_receipt_digest(value: VerificationReceipt) -> ReceiptDigest:
@@ -1650,11 +1746,11 @@ def _validate_result_for_request(
     effect: VerificationEffectLease,
 ) -> None:
     if type(result) is not VerificationRunResult:
-        raise RecoveryRequired("runner-response-loss")
+        raise RecoveryRequired("runner-response-invalid")
     try:
         VerificationRunResult.__post_init__(result)
-    except Exception as exc:
-        raise RecoveryRequired("runner-response-invalid") from exc
+    except _BOUNDARY_EXCEPTION:
+        raise RecoveryRequired("runner-response-invalid") from None
     _validate_effect(effect)
     if not _same_text(result.verification_ref, request.verification_id):
         raise _error("identity-mismatch", "runner verification ref differs")
@@ -1729,6 +1825,122 @@ def _validate_result_for_request(
         raise _error("result-contract", "failed result requires non-zero exit code")
 
 
+@dataclass(frozen=True, slots=True)
+class _RunnerResultAttestation:
+    result_ref: ReferenceType[VerificationRunResult]
+    result_snapshot: tuple[object, ...]
+    request: VerificationRequest
+    request_snapshot: tuple[str, ...]
+    effect: VerificationEffectLease
+    effect_snapshot: tuple[object, ...]
+
+
+_RUNNER_RESULT_ATTESTATIONS: Final[dict[int, _RunnerResultAttestation]] = {}
+_RUNNER_RESULT_ATTESTATIONS_LOCK: Final = RLock()
+
+
+class _RunnerInvocationFailure(Exception):
+    pass
+
+
+class _RunnerResultFailure(Exception):
+    reason_code: str
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__("runner result is invalid")
+
+
+def _result_parts(result: VerificationRunResult) -> tuple[object, ...]:
+    return tuple(
+        getattr(result, name)
+        for name in result.__dataclass_fields__
+        if not name.startswith("_")
+    )
+
+
+def _effect_parts(effect: VerificationEffectLease) -> tuple[object, ...]:
+    _validate_effect(effect)
+    return (
+        effect.verification_ref,
+        effect.request_digest,
+        effect.effect_nonce,
+        effect.lease_epoch,
+        effect.fencing_token,
+        effect.status,
+    )
+
+
+def _run_and_attest(
+    runner: VerificationRunnerPort,
+    request: VerificationRequest,
+    effect: VerificationEffectLease,
+) -> VerificationRunResult:
+    """Invoke the configured runner before issuing exact result provenance."""
+
+    try:
+        result = runner.run(request, effect)
+    except _BOUNDARY_EXCEPTION:
+        raise _RunnerInvocationFailure from None
+    try:
+        _validate_result_for_request(result, request, effect)
+    except RecoveryRequired as exc:
+        raise _RunnerResultFailure(exc.reason_code) from None
+    except _BOUNDARY_EXCEPTION:
+        raise _RunnerResultFailure("runner-response-invalid") from None
+    result_key = id(result)
+
+    def expire(result_ref: ReferenceType[VerificationRunResult]) -> None:
+        with _RUNNER_RESULT_ATTESTATIONS_LOCK:
+            current = _RUNNER_RESULT_ATTESTATIONS.get(result_key)
+            if current is not None and current.result_ref is result_ref:
+                del _RUNNER_RESULT_ATTESTATIONS[result_key]
+
+    result_ref = ref(result, expire)
+    attestation = _RunnerResultAttestation(
+        result_ref=result_ref,
+        result_snapshot=_result_parts(result),
+        request=request,
+        request_snapshot=_request_parts(request),
+        effect=effect,
+        effect_snapshot=_effect_parts(effect),
+    )
+    with _RUNNER_RESULT_ATTESTATIONS_LOCK:
+        existing = _RUNNER_RESULT_ATTESTATIONS.get(result_key)
+        if existing is not None and existing.result_ref() is not result:
+            raise RecoveryRequired("runner-response-invalid")
+        _RUNNER_RESULT_ATTESTATIONS[result_key] = attestation
+    return result
+
+
+def _consume_runner_result_attestation(
+    result: VerificationRunResult,
+    request: VerificationRequest,
+    effect: VerificationEffectLease,
+) -> None:
+    """Consume the one-shot runner provenance needed by receipt persistence."""
+
+    with _RUNNER_RESULT_ATTESTATIONS_LOCK:
+        attestation = _RUNNER_RESULT_ATTESTATIONS.get(id(result))
+    if (
+        attestation is None
+        or attestation.result_ref() is not result
+        or attestation.effect is not effect
+        or attestation.result_snapshot != _result_parts(result)
+        or attestation.request_snapshot != _request_parts(request)
+        or attestation.effect_snapshot != _effect_parts(effect)
+    ):
+        raise RecoveryRequired("runner-response-invalid")
+    _validate_result_for_request(result, request, effect)
+
+
+def _discard_runner_result_attestation(result: object) -> None:
+    with _RUNNER_RESULT_ATTESTATIONS_LOCK:
+        attestation = _RUNNER_RESULT_ATTESTATIONS.get(id(result))
+        if attestation is not None and attestation.result_ref() is result:
+            del _RUNNER_RESULT_ATTESTATIONS[id(result)]
+
+
 def _validate_receipt_for_result(
     receipt: VerificationReceipt,
     request: VerificationRequest,
@@ -1740,10 +1952,10 @@ def _validate_receipt_for_result(
         raise RecoveryRequired("receipt-response-loss")
     try:
         _validate_receipt(receipt, verify_digest=True)
-    except RecoveryRequired:
-        raise
-    except Exception as exc:
-        raise RecoveryRequired("receipt-response-invalid") from exc
+    except RecoveryRequired as exc:
+        raise RecoveryRequired(exc.reason_code) from None
+    except _BOUNDARY_EXCEPTION:
+        raise RecoveryRequired("receipt-response-invalid") from None
     if not _same_snapshot(after, request.before_snapshot):
         raise RecoveryRequired("snapshot-drift")
     _validate_snapshot_approval(after, request.approval)
@@ -1791,14 +2003,14 @@ def _capture_snapshot(
         snapshot = snapshot_port.capture(
             WorkspaceIdentity(approval.workspace), ClaimRef(approval.claim_ref)
         )
-    except Exception as exc:
-        raise RecoveryRequired("snapshot-response-loss") from exc
+    except _BOUNDARY_EXCEPTION:
+        raise RecoveryRequired("snapshot-response-loss") from None
     if type(snapshot) is not VerificationSnapshot:
         raise RecoveryRequired("snapshot-response-invalid")
     try:
         VerificationSnapshot.__post_init__(snapshot)
-    except Exception as exc:
-        raise RecoveryRequired("snapshot-response-invalid") from exc
+    except _BOUNDARY_EXCEPTION:
+        raise RecoveryRequired("snapshot-response-invalid") from None
     return snapshot
 
 
@@ -1816,10 +2028,10 @@ def _resolve_bound(
                 "admission returned non-exact bound approval",
             )
         _validate_bound_approval(bound)
-    except RecoveryRequired:
-        raise
-    except Exception as exc:
-        raise RecoveryRequired("approval-response-invalid") from exc
+    except RecoveryRequired as exc:
+        raise RecoveryRequired(exc.reason_code) from None
+    except _BOUNDARY_EXCEPTION:
+        raise RecoveryRequired("approval-response-invalid") from None
     if not _same_text(bound.approval_ref, approval_ref):
         raise RecoveryRequired("approval-ref-mismatch")
     return bound
@@ -1838,10 +2050,10 @@ def _resolve_profile(
                 "profile-response-invalid", "resolver returned non-exact profile"
             )
         VerificationProfile.__post_init__(profile)
-    except RecoveryRequired:
-        raise
-    except Exception as exc:
-        raise RecoveryRequired("profile-response-invalid") from exc
+    except RecoveryRequired as exc:
+        raise RecoveryRequired(exc.reason_code) from None
+    except _BOUNDARY_EXCEPTION:
+        raise RecoveryRequired("profile-response-invalid") from None
     if not _same_text(profile.ref, profile_ref):
         raise RecoveryRequired("profile-drift")
     return profile
@@ -1942,8 +2154,8 @@ class VerificationGate:
         request = _build_request(bound, profile, before)
         try:
             prepared = self._state.prepare_once(request)
-        except Exception as exc:
-            raise RecoveryRequired("prepare-response-loss") from exc
+        except _BOUNDARY_EXCEPTION as exc:
+            raise _recovery_from_boundary("prepare-response-loss", exc) from None
         if type(prepared) is not VerificationPrepareResult:
             raise RecoveryRequired("prepare-response-invalid")
         if getattr(prepared, "_issuer", None) is not _PREPARE_ISSUER:
@@ -1958,8 +2170,8 @@ class VerificationGate:
             )
             if type(prepared.status) is not PreparationStatus:
                 raise _error("prepare-response-invalid", "prepare status is invalid")
-        except Exception as exc:
-            raise RecoveryRequired("prepare-response-invalid") from exc
+        except _BOUNDARY_EXCEPTION:
+            raise RecoveryRequired("prepare-response-invalid") from None
         if prepared.status is PreparationStatus.UNKNOWN:
             raise RecoveryRequired("prepare-unknown")
         if not _same_text(prepared.approval_ref, approval_ref):
@@ -1984,22 +2196,9 @@ class VerificationGate:
         """Reconstruct durable state and perform/replay one fenced effect."""
 
         _validate_handle(handle)
-        try:
-            record = self._state.read(handle.verification_ref)
-            observed_status = self._state.status(handle.verification_ref)
-        except Exception as exc:
-            raise RecoveryRequired("state-read-response-loss") from exc
-        if type(record) is not VerificationDurableRecord:
-            raise RecoveryRequired("state-read-response-invalid")
-        try:
-            _validate_record(record)
-        except Exception as exc:
-            raise RecoveryRequired("state-read-response-invalid") from exc
-        if (
-            type(observed_status) is not DurableRecordStatus
-            or observed_status is not record.status
-        ):
-            raise RecoveryRequired("state-status-mismatch")
+        record, _observed_status, _revision_digest = self._read_state_snapshot(
+            handle.verification_ref
+        )
         if not _same_text(record.verification_ref, handle.verification_ref):
             raise RecoveryRequired("handle-state-mismatch")
         if not _same_text(record.approval_ref, handle.approval_ref):
@@ -2021,14 +2220,38 @@ class VerificationGate:
             effect = self._state.begin_effect_once(
                 record.verification_ref, record.request.request_digest
             )
-        except Exception as exc:
-            raise RecoveryRequired("effect-response-loss") from exc
+        except _BOUNDARY_EXCEPTION as exc:
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                None,
+                "effect-response-loss",
+            )
+            if replay is not None:
+                return replay
+            raise _recovery_from_boundary("effect-response-loss", exc) from None
         if type(effect) is not VerificationEffectLease:
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                None,
+                "effect-response-invalid",
+            )
+            if replay is not None:
+                return replay
             raise RecoveryRequired("effect-response-invalid")
         try:
             _validate_effect(effect)
-        except Exception as exc:
-            raise RecoveryRequired("effect-response-invalid") from exc
+        except _BOUNDARY_EXCEPTION:
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                None,
+                "effect-response-invalid",
+            )
+            if replay is not None:
+                return replay
+            raise RecoveryRequired("effect-response-invalid") from None
         if not _same_text(effect.verification_ref, record.verification_ref):
             raise RecoveryRequired("effect-identity-mismatch")
         if not _same_text(effect.request_digest, record.request.request_digest):
@@ -2057,19 +2280,132 @@ class VerificationGate:
             raise RecoveryRequired("effect-unknown")
         return self._run_once(record, bound, effect)
 
-    def _read_again(
+    def _read_state_snapshot(
         self, verification_ref: VerificationRef
-    ) -> VerificationDurableRecord:
+    ) -> tuple[VerificationDurableRecord, DurableRecordStatus, str]:
+        hook = getattr(self._state, "_read_with_status", None)
+        if callable(hook):
+            try:
+                observation = hook(verification_ref)
+            except _BOUNDARY_EXCEPTION:
+                raise RecoveryRequired("state-read-response-loss") from None
+            if type(observation) is not tuple or len(observation) != 3:
+                raise RecoveryRequired("state-read-response-invalid")
+            record, observed_status, revision_digest = observation
+            if type(record) is not VerificationDurableRecord:
+                raise RecoveryRequired("state-read-response-invalid")
+            try:
+                _validate_record(record)
+            except _BOUNDARY_EXCEPTION:
+                raise RecoveryRequired("state-read-response-invalid") from None
+            if not _same_text(record.verification_ref, verification_ref):
+                raise RecoveryRequired("state-read-response-invalid")
+            if (
+                type(observed_status) is not DurableRecordStatus
+                or observed_status is not record.status
+            ):
+                raise RecoveryRequired("state-status-mismatch")
+            try:
+                revision = _sha256_wrapper(
+                    revision_digest, "state-observation.revision_digest"
+                )
+            except _BOUNDARY_EXCEPTION:
+                raise RecoveryRequired("state-read-response-invalid") from None
+            return record, observed_status, revision
+
         try:
             record = self._state.read(verification_ref)
-        except Exception as exc:
-            raise RecoveryRequired("state-read-response-loss") from exc
+            observed_status = self._state.status(verification_ref)
+        except _BOUNDARY_EXCEPTION:
+            raise RecoveryRequired("state-read-response-loss") from None
         if type(record) is not VerificationDurableRecord:
             raise RecoveryRequired("state-read-response-invalid")
         try:
             _validate_record(record)
-        except Exception as exc:
-            raise RecoveryRequired("state-read-response-invalid") from exc
+        except _BOUNDARY_EXCEPTION:
+            raise RecoveryRequired("state-read-response-invalid") from None
+        if (
+            type(observed_status) is not DurableRecordStatus
+            or observed_status is not record.status
+        ):
+            raise RecoveryRequired("state-status-mismatch")
+        return record, observed_status, ""
+
+    def _recover_post_arm_failure(
+        self,
+        record: VerificationDurableRecord,
+        bound: _BoundApproval,
+        effect: VerificationEffectLease | None,
+        reason_code: str,
+    ) -> VerificationTerminalResult | None:
+        hook = getattr(self._state, "_mark_unknown", None)
+        if not callable(hook):
+            return None
+
+        try:
+            observed, observed_status, _revision = self._read_state_snapshot(
+                record.verification_ref
+            )
+        except RecoveryRequired:
+            return None
+        if not _same_text(
+            observed.request.request_digest, record.request.request_digest
+        ):
+            return None
+        if observed_status is DurableRecordStatus.TERMINAL:
+            return self._replay_record(observed, bound)
+        if observed_status is DurableRecordStatus.RECEIPTED:
+            if observed.effect is None or observed.receipt is None:
+                return None
+            return self._apply_receipted(
+                observed, bound, observed.effect, observed.receipt
+            )
+        if observed_status is not DurableRecordStatus.PREPARED:
+            return None
+        if observed.receipt is not None or observed.effect is None:
+            return None
+        observed_effect = observed.effect
+        if effect is not None and not _same_effect(effect, observed_effect):
+            return None
+        if observed_effect.status is not EffectBeginStatus.RUN_ONCE:
+            return None
+        mark_effect = effect if effect is not None else observed_effect
+        try:
+            _validate_effect(mark_effect)
+            _validate_record(observed)
+        except _BOUNDARY_EXCEPTION:
+            return None
+        reason = _post_arm_reason(reason_code, "effect-response-loss")
+        evidence_digest = "sha256:" + _framed_digest(
+            (
+                "agent-team/verification-recovery/v1",
+                str(record.verification_ref),
+                str(record.request.request_digest),
+                reason,
+                str(mark_effect.effect_nonce),
+                str(mark_effect.lease_epoch),
+                str(mark_effect.fencing_token),
+            )
+        )
+        try:
+            hook(
+                record.verification_ref,
+                record.request.request_digest,
+                reason_code=reason,
+                effect=mark_effect,
+                evidence_digest=evidence_digest,
+            )
+        except _BOUNDARY_EXCEPTION as exc:
+            recovery = _recovery_from_boundary(reason, exc)
+            if recovery.retry_cleanup is not None:
+                raise recovery from None
+            return None
+        return None
+
+    def _read_again(
+        self, verification_ref: VerificationRef
+    ) -> VerificationDurableRecord:
+        record, _status, _revision = self._read_state_snapshot(verification_ref)
         return record
 
     def _run_once(
@@ -2098,40 +2434,109 @@ class VerificationGate:
         if not _same_request(canonical, record.request):
             raise RecoveryRequired("profile-drift-before-run")
         try:
-            result = self._runner.run(canonical, effect)
-        except Exception as exc:
-            raise RecoveryRequired("runner-response-loss") from exc
-        try:
-            _validate_result_for_request(result, canonical, effect)
-        except RecoveryRequired:
-            raise
-        except Exception as exc:
-            raise RecoveryRequired("runner-response-invalid") from exc
-        after = _capture_snapshot(self._snapshots, bound.approved)
-        try:
-            _validate_snapshot_approval(after, bound.approved)
-        except Exception as exc:
-            raise RecoveryRequired("snapshot-drift") from exc
-        if not _same_snapshot(after, canonical.before_snapshot):
-            raise RecoveryRequired("snapshot-drift")
-        try:
-            receipt = self._state.record_receipt_once(
-                record.verification_ref,
+            result = _run_and_attest(self._runner, canonical, effect)
+        except _RunnerInvocationFailure:
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
                 effect,
-                result,
-                canonical.before_snapshot,
-                after,
+                "runner-response-loss",
             )
-        except Exception as exc:
-            raise RecoveryRequired("receipt-response-loss") from exc
+            if replay is not None:
+                return replay
+            raise RecoveryRequired("runner-response-loss") from None
+        except _RunnerResultFailure as exc:
+            reason = _post_arm_reason(exc.reason_code, "runner-response-invalid")
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                reason,
+            )
+            if replay is not None:
+                return replay
+            raise RecoveryRequired(reason) from None
+        try:
+            after = _capture_snapshot(self._snapshots, bound.approved)
+            _validate_snapshot_approval(after, bound.approved)
+            if not _same_snapshot(after, canonical.before_snapshot):
+                raise RecoveryRequired("snapshot-drift")
+        except RecoveryRequired as exc:
+            reason = _post_arm_reason(exc.reason_code, "snapshot-drift")
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                reason,
+            )
+            if replay is not None:
+                return replay
+            raise _recovery_from_boundary(reason, exc) from None
+        except _BOUNDARY_EXCEPTION:
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                "snapshot-drift",
+            )
+            if replay is not None:
+                return replay
+            raise RecoveryRequired("snapshot-drift") from None
+        try:
+            try:
+                receipt = self._state.record_receipt_once(
+                    record.verification_ref,
+                    effect,
+                    result,
+                    canonical.before_snapshot,
+                    after,
+                )
+            finally:
+                _discard_runner_result_attestation(result)
+        except _BOUNDARY_EXCEPTION as exc:
+            reason = _state_boundary_reason(exc, "receipt-response-loss")
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                reason,
+            )
+            if replay is not None:
+                return replay
+            raise _recovery_from_boundary(reason, exc) from None
         if type(receipt) is not VerificationReceipt:
-            raise RecoveryRequired("receipt-response-invalid")
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                "receipt-response-invalid",
+            )
+            if replay is not None:
+                return replay
+            raise RecoveryRequired("receipt-response-invalid") from None
         try:
             _validate_receipt_for_result(receipt, canonical, result, effect, after)
-        except RecoveryRequired:
-            raise
-        except Exception as exc:
-            raise RecoveryRequired("receipt-response-invalid") from exc
+        except RecoveryRequired as exc:
+            reason = _post_arm_reason(exc.reason_code, "receipt-response-loss")
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                reason,
+            )
+            if replay is not None:
+                return replay
+            raise RecoveryRequired(reason) from None
+        except _BOUNDARY_EXCEPTION:
+            replay = self._recover_post_arm_failure(
+                record,
+                bound,
+                effect,
+                "receipt-response-loss",
+            )
+            if replay is not None:
+                return replay
+            raise RecoveryRequired("receipt-response-loss") from None
         profile_after = _resolve_profile(
             self._profiles, VerificationProfileRef(bound.approved.profile_ref)
         )
@@ -2172,10 +2577,10 @@ class VerificationGate:
                 effect,
                 current,
             )
-        except RecoveryRequired:
-            raise
-        except Exception as exc:
-            raise RecoveryRequired("receipt-replay-invalid") from exc
+        except RecoveryRequired as exc:
+            raise RecoveryRequired(exc.reason_code) from None
+        except _BOUNDARY_EXCEPTION:
+            raise RecoveryRequired("receipt-replay-invalid") from None
         profile_after = _resolve_profile(
             self._profiles, VerificationProfileRef(bound.approved.profile_ref)
         )
@@ -2209,10 +2614,10 @@ class VerificationGate:
             _validate_receipt_for_result(
                 record.receipt, request, result, record.effect, current
             )
-        except RecoveryRequired:
-            raise
-        except Exception as exc:
-            raise RecoveryRequired("terminal-replay-invalid") from exc
+        except RecoveryRequired as exc:
+            raise RecoveryRequired(exc.reason_code) from None
+        except _BOUNDARY_EXCEPTION:
+            raise RecoveryRequired("terminal-replay-invalid") from None
         return _make_terminal(
             record.verification_ref,
             record.receipt.receipt_ref,
@@ -2231,14 +2636,14 @@ class VerificationGate:
             terminal = self._state.apply_terminal_once(
                 verification_ref, receipt.receipt_ref, receipt.receipt_digest
             )
-        except Exception as exc:
-            raise RecoveryRequired("terminal-response-loss") from exc
+        except _BOUNDARY_EXCEPTION as exc:
+            raise _recovery_from_boundary("terminal-response-loss", exc) from None
         if type(terminal) is not VerificationTerminalResult:
             raise RecoveryRequired("terminal-response-invalid")
         try:
             _validate_terminal(terminal)
-        except Exception as exc:
-            raise RecoveryRequired("terminal-response-invalid") from exc
+        except _BOUNDARY_EXCEPTION:
+            raise RecoveryRequired("terminal-response-invalid") from None
         if not _same_text(terminal.verification_ref, verification_ref):
             raise RecoveryRequired("terminal-identity-mismatch")
         if not _same_text(terminal.receipt_ref, receipt.receipt_ref):

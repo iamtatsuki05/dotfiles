@@ -834,6 +834,33 @@ class PolicyVerificationHandoffComposerTests(unittest.TestCase):
                 self.assertEqual(state.prepare_calls, 0)
                 self.assertEqual(store.save_calls, 0)
 
+    def test_same_store_foreign_handoff_completion_ref_is_rejected(self) -> None:
+        module = _load_handoff(self)
+        handoff, store, review_ref, _ = _fixture(module)
+        task = authority_fixtures._path_task()
+        foreign_handoff = module.PolicyVerificationHandoff(store)
+        foreign_completion = foreign_handoff.issue_completion_admission(
+            **authority_fixtures._route_inputs(
+                task,
+                port=authority_fixtures.RecordingReservationPort(),
+            )
+        )
+        state = _state_from(self, handoff, store)
+        before = state.snapshot()
+        approval_count = len(store.approval_records)
+        store.save_calls = 0
+
+        _assert_rejected(
+            self,
+            module,
+            lambda: handoff.compose(review_ref, foreign_completion),
+        )
+
+        self.assertEqual(before, state.snapshot())
+        self.assertEqual(approval_count, len(store.approval_records))
+        self.assertEqual(0, store.save_calls)
+        self.assertEqual(0, state.prepare_calls)
+
     def test_dual_sequence_prepare_has_one_winner_and_no_partial_commit(self) -> None:
         module = _load_handoff(self)
         handoff, store, _, _ = _fixture(module)

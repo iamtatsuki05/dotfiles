@@ -29,8 +29,10 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
   checkpoint/CAS contractと、Storeが外部effectを呼び出さない境界を残した章です。現在の
   [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)では、
   12 tableのobject set、read-only image classifier、pure codec、およびledgerが空でない場合の
-  fail-closed境界を定めます。通常のStoreの[Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)は、
-  fullなtask rowとclosedな3件のreview event suffixを保存し、verification rowとnon-empty image evidenceは後続範囲に残します。
+  fail-closed境界を定めるものです。通常のStoreの[Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)は、
+  fullなtask rowとclosedな3件のreview event suffixを保存します。#82のStore-backed verification pathは、
+  verification operation/receipt lifecycleと、最小限のsemantic reopen evidenceを保存します。fullなnon-empty imageの
+  inspect、backup/restore、Doctor evidenceは#83の範囲です。
 - [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
   保存やworkflow実行を含まないstate観測契約を説明します。
 - [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
@@ -218,9 +220,9 @@ agent-team status \
 - version-1 backup/inspectは従来の2-file、exact 10-field manifest shapeを維持します。
   schema-4 foundationの値は`store_schema=4`、`event_schema_version=2`、
   `sqlite_user_version=4`（`4/2/4`）です。#80のfoundation pathは新しい3 tableへrowを書きません。
-  通常のStoreが受け付けるのは#81のfullな`task_policy_states` rowとclosedなreview suffixだけであり、
-  `verification_operations`と`verification_receipts`は空のままです。それ以外のnon-empty imageはfail-closedであり、
-  #80はnon-empty verification imageのinspectやbackup/restore成功を主張しません。
+  #81 producerはfullな`task_policy_states` rowとclosedなreview suffixを受け付け、#82のStore-backed pathは
+  verification lifecycle rowを書いて検証します。それ以外のnon-empty imageはfail-closedであり、#80はnon-empty imageの
+  inspectやbackup/restore成功を主張しません。
 - established imageはrootを変更する前に、read-onlyでWAL/SHM-awareなpre-gateで分類します。
   structural WALはimageの一部としてcopyし、ephemeralなSHM cacheはSQLiteがprivateな一時copy上だけで
   再構成します。source、gate、marker、fileset、DB/WAL/SHM bytesは変わらず、checkpoint、truncate、
@@ -228,9 +230,10 @@ agent-team status \
 - #80のcodecは、15-fieldの`TaskPolicyStateV4`、approval-binding snapshot、body-free verification
   request、normalized receipt向けのpure version-1 codecです。argv/environmentのraw valueやraw bodyを
   保存せず、valueの内部整合性だけを検証します。owner authorityのcaptureやGate valueのhydrationは行いません。
-  #81はnormal Storeのtask/review transactionとfull task-row projectionだけを担当します。live capture/context、
-  Store adapter、lifecycle transaction、logical record digest、non-empty imageのsemantic validation、verification-aware
-  Doctor/restoreは#82と#83の後続作業です。
+  #81はnormal Storeのtask/review transactionとfull task-row projectionを担当します。#82はlive capture/context、
+  private Store adapter、snapshot hydration、58-fieldのlogical record digest、verification lifecycle transaction、
+  およびnormal Storeの最小限のsemantic reopen validationを担当します。fullなnon-empty imageのsemantic validation、
+  backup/restore、verification-aware Doctorは#83の範囲です。
 - provider-only restoreは、history上のcontractどおりcandidate-firstかつprovider-freeです。#80が確認するのは
   新しいledgerが空のschema-4 backup/restore round tripだけであり、logの暗黙修復、external effectのretry、
   non-empty verification imageの認可は行いません。
@@ -277,11 +280,11 @@ target、`claim_ref`は#49 provenanceとして残し、#50と比較済みとは�
 deterministic fakeは、SQLite、restart、provider exactly-onceの証拠ではありません。
 [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)のschema-4 workは、
 [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)のfoundationと
-[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)のtask/review producerと、後続の
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。full ledger、
-restart/replay、`mark_unknown`、non-empty imageの主張は#80の範囲外です。raw body/action alias/payloadの
-経路やretry/fallbackはありません。
+[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)のtask/review producer、実装済みの
+[#82](https://github.com/iamtatsuki05/dotfiles/issues/82) verification transaction/adapter、
+[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)のimage evidenceに分かれます。#82は
+verification operation lifecycle、fresh Gate hydration/replay、`mark_unknown`を担当します。fullなnon-empty imageの
+inspect、backup/restore、Doctorの主張は#82の範囲外です。raw body/action alias/payloadの経路やretry/fallbackはありません。
 
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 

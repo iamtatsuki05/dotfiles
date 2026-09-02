@@ -12,6 +12,7 @@ import fcntl
 import hashlib
 import os
 import re
+import secrets
 import sqlite3
 import stat
 import sys
@@ -20,16 +21,19 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, NoReturn, Self, cast
 from urllib.parse import quote
+from weakref import WeakKeyDictionary
 
 from . import _review_workflow_store as _review_workflow
 from . import review_policy as _review
 from . import task_policy as _task_policy
 from . import task_verification_ledger as _task_ledger
+from . import verification_gate as _gate
+from . import verification_store as _verification_store
 from . import workflow_store as _workflow
 from .lease import (
     Claim,
@@ -2559,7 +2563,7 @@ _WORKFLOW_EVENT_ROW_COLUMNS: Final[tuple[str, ...]] = (
 class _CleanupCapability:
     """Opaque, bounded owner for deferred cleanup retries."""
 
-    __slots__ = ("_members",)
+    __slots__ = ("__weakref__", "_members")
 
     def __init__(self, retry: Callable[[], None]) -> None:
         self._members: list[Callable[[], None]] = [retry]
@@ -2604,6 +2608,62 @@ class _CleanupCapability:
         self._members = remaining
         if first_error is not None:
             raise first_error
+
+
+_CLEANUP_CAPABILITY_PROVENANCE: Final = WeakKeyDictionary[
+    _CleanupCapability, tuple[tuple[object, object, object], ...]
+]()
+_CLEANUP_CAPABILITY_PROVENANCE_LOCK: Final = threading.RLock()
+
+
+def _register_cleanup_capability_provenance(
+    capability: _CleanupCapability,
+) -> None:
+    bindings: list[tuple[object, object, object]] = []
+    for retry in capability._members:
+        owner = getattr(retry, "__self__", None)
+        if type(owner) is CoordinationStore:
+            marker = getattr(owner, "_verification_store_marker", None)
+            generation = getattr(owner, "_verification_open_generation", None)
+            if marker is not None and generation is not None:
+                bindings.append((owner, marker, generation))
+    with _CLEANUP_CAPABILITY_PROVENANCE_LOCK:
+        _CLEANUP_CAPABILITY_PROVENANCE[capability] = tuple(bindings)
+
+
+def _validate_verification_cleanup_capability(
+    capability: object,
+    retry_cleanup: object,
+) -> bool:
+    if type(capability) is not _CleanupCapability or not callable(retry_cleanup):
+        return False
+    try:
+        retry_owner = object.__getattribute__(retry_cleanup, "__self__")
+        retry_function = object.__getattribute__(retry_cleanup, "__func__")
+        direct_retry = (
+            retry_owner is capability
+            and retry_function is _CleanupCapability.retry_cleanup
+        )
+        store_error_retry = (
+            isinstance(retry_owner, StoreError)
+            and retry_owner._cleanup_capability is capability
+            and retry_function is StoreError.retry_cleanup
+        )
+        if not direct_retry and not store_error_retry:
+            return False
+    except (AttributeError, TypeError):
+        return False
+    with _CLEANUP_CAPABILITY_PROVENANCE_LOCK:
+        bindings = _CLEANUP_CAPABILITY_PROVENANCE.get(capability)
+    if not bindings:
+        return False
+    return any(
+        type(store) is CoordinationStore
+        and getattr(store, "_verification_store_marker", None) is marker
+        and getattr(store, "_verification_open_generation", None) is generation
+        and getattr(store, "_connection", None) is not None
+        for store, marker, generation in bindings
+    )
 
 
 class _FDRecoveryOwner:
@@ -2753,6 +2813,7 @@ class StoreError(RuntimeError):
             if existing is None
             else _CleanupCapability.compose(capability, existing)
         )
+        _register_cleanup_capability_provenance(self._cleanup_capability)
 
     def retry_cleanup(self) -> None:
         """Retry an opaque, deferred resource cleanup, if one is pending."""
@@ -2856,6 +2917,7 @@ def _attach_cleanup_capability(
     error: BaseException,
     capability: _CleanupCapability,
 ) -> BaseException:
+    _register_cleanup_capability_provenance(capability)
     if isinstance(error, StoreError):
         error._attach_cleanup_capability(capability)
         return error
@@ -2877,6 +2939,7 @@ def _attach_cleanup_capability(
                     capability,
                     _CleanupCapability(cast(Callable[[], None], retry)),
                 )
+        _register_cleanup_capability_provenance(capability)
         setattr(error, cleanup_attribute, capability)
         setattr(error, retry_attribute, capability.retry_cleanup)
     except _CLEANUP_EXCEPTION:
@@ -4157,13 +4220,15 @@ def _task_policy_observation_from_row(
 def _validate_task_observation_checkpoint(
     task: _review_workflow.StoredTaskPolicyState,
     checkpoint: _workflow.WorkflowCheckpointV4,
+    *,
+    require_updated_ns: bool = True,
 ) -> None:
     reference = checkpoint.task_policy
     state = task.state
     if (
         task.root_key != checkpoint.root.root_key
         or task.run_id != checkpoint.run.run_id
-        or task.updated_ns != checkpoint.updated_ns
+        or (require_updated_ns and task.updated_ns != checkpoint.updated_ns)
         or reference is None
         or checkpoint.task_sequence != state.sequence
         or reference.version != state.version
@@ -4335,18 +4400,897 @@ def _validate_schema4_review_task_rows(connection: sqlite3.Connection) -> None:
         connection.row_factory = previous_row_factory
 
 
+def _validate_schema4_receipted_row(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    snapshot: _task_ledger.ApprovalBindingSnapshotV1,
+    request: _task_ledger.VerificationRequestProjectionV1,
+    checkpoint: _workflow.WorkflowCheckpointV4,
+    task: _review_workflow.StoredTaskPolicyState,
+) -> None:
+    receipt_ref = row["receipt_ref"]
+    receipt_row = _workflow_read_one(
+        connection,
+        "SELECT * FROM verification_receipts WHERE root_key = ? AND receipt_ref = ?",
+        (row["root_key"], receipt_ref),
+    )
+    prepare_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+        (row["prepare_event_id"],),
+    )
+    receipt_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+        (row["receipt_event_id"],),
+    )
+    predecessor_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE root_key = ? AND workflow_sequence = ?",
+        (row["root_key"], snapshot.workflow_sequence),
+    )
+    if (
+        type(receipt_ref) is not str
+        or receipt_row is None
+        or prepare_event is None
+        or receipt_event is None
+        or predecessor_event is None
+    ):
+        raise StoreIntegrityError("SQLite receipted verification prefix is missing")
+    CoordinationStore._workflow_validate_event_row(
+        prepare_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    CoordinationStore._workflow_validate_event_row(
+        receipt_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    prepared_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+        prepare_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    predecessor = CoordinationStore._workflow_decode_event_checkpoint(
+        predecessor_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    if (
+        type(prepared_checkpoint) is not _workflow.WorkflowCheckpointV4
+        or type(predecessor) is not _workflow.WorkflowCheckpointV4
+    ):
+        raise StoreIntegrityError("SQLite receipted verification prefix is invalid")
+    receipt_bytes = receipt_row["receipt_bytes"]
+    if type(receipt_bytes) is not bytes:
+        raise StoreIntegrityError("SQLite verification receipt payload differs")
+    receipt = _task_ledger.decode_verification_receipt_projection(receipt_bytes)
+    before_task = _task_ledger.decode_task_state(snapshot.task_state_bytes)
+    prepared_task = replace(
+        before_task,
+        sequence=before_task.sequence + 1,
+        receipt_ref=None,
+        phase=_task_policy.TaskPhase.VERIFYING,
+    )
+    prepared_task_bytes = _task_ledger.encode_task_state(prepared_task)
+    prepared_task_digest = str(_task_ledger.task_state_digest(prepared_task_bytes))
+    expected_prepare_request = _verification_store._verification_request_wrapper(
+        _verification_store.VerificationStage.PREPARE,
+        row["root_key"],
+        row["verification_ref"],
+        snapshot.workflow_sequence,
+        snapshot.workflow_sequence + 1,
+        snapshot.task_sequence,
+        snapshot.task_sequence + 1,
+        row["request_digest"],
+    )
+    expected_prepare_evidence = _verification_store._verification_evidence_wrapper(
+        _verification_store.VerificationStage.PREPARE,
+        row["root_key"],
+        row["verification_ref"],
+        snapshot.workflow_sequence,
+        snapshot.workflow_sequence + 1,
+        snapshot.task_sequence,
+        snapshot.task_sequence + 1,
+        row["approval_binding_digest"],
+    )
+    expected_receipt_request = _verification_store._verification_request_wrapper(
+        _verification_store.VerificationStage.RECEIPT,
+        row["root_key"],
+        row["verification_ref"],
+        prepared_checkpoint.workflow_sequence,
+        checkpoint.workflow_sequence,
+        prepared_task.sequence,
+        task.state.sequence,
+        row["request_digest"],
+    )
+    expected_receipt_evidence = _verification_store._verification_evidence_wrapper(
+        _verification_store.VerificationStage.RECEIPT,
+        row["root_key"],
+        row["verification_ref"],
+        prepared_checkpoint.workflow_sequence,
+        checkpoint.workflow_sequence,
+        prepared_task.sequence,
+        task.state.sequence,
+        row["receipt_digest"],
+    )
+    metadata = {
+        str(item[0]): item[1]
+        for item in connection.execute(
+            "SELECT key, value FROM store_meta ORDER BY key"
+        ).fetchall()
+    }
+    prepared_authority = prepared_checkpoint.verification_authority
+    current_authority = checkpoint.verification_authority
+    approved = dict(snapshot.approved_review)
+    if (
+        _task_ledger.encode_verification_receipt_projection(receipt) != receipt_bytes
+        or receipt_row["verification_ref"] != row["verification_ref"]
+        or receipt_row["receipt_digest"] != row["receipt_digest"]
+        or receipt.receipt_ref != receipt_ref
+        or receipt.receipt_digest != row["receipt_digest"]
+        or receipt.request_digest != request.request_digest
+        or receipt.approval != request.approval
+        or receipt.effect_nonce != row["effect_nonce"]
+        or receipt.lease_epoch != row["effect_epoch"]
+        or receipt.fencing_token != row["effect_fence"]
+        or predecessor.workflow_state is not _workflow.CheckpointState.REVIEW_PENDING
+        or predecessor.checkpoint_digest != snapshot.workflow_checkpoint_digest
+        or prepared_checkpoint.workflow_state is not _workflow.CheckpointState.VERIFYING
+        or prepared_checkpoint.workflow_sequence != snapshot.workflow_sequence + 1
+        or prepared_checkpoint.task_sequence != snapshot.task_sequence + 1
+        or prepared_checkpoint.task_policy is None
+        or prepared_checkpoint.task_policy.state_digest != prepared_task_digest
+        or prepared_authority is None
+        or prepared_authority.reference != row["verification_ref"]
+        or prepared_authority.digest != expected_prepare_evidence
+        or prepare_event["request_digest"] != expected_prepare_request
+        or prepare_event["evidence_ref"] != expected_prepare_evidence
+        or prepare_event["event_digest"] != row["prepare_event_digest"]
+        or checkpoint.workflow_state is not _workflow.CheckpointState.VERIFYING
+        or checkpoint.workflow_sequence != prepared_checkpoint.workflow_sequence + 1
+        or checkpoint.task_sequence != prepared_task.sequence + 1
+        or checkpoint.checkpoint_digest != row["workflow_digest_after"]
+        or task.state.phase is not _task_policy.TaskPhase.VERIFYING
+        or task.state.sequence != row["task_sequence_after"]
+        or task.state.receipt_ref != receipt_ref
+        or task.state_digest != row["task_digest_after"]
+        or current_authority is None
+        or current_authority.reference != row["verification_ref"]
+        or current_authority.digest != expected_receipt_evidence
+        or receipt_event["request_digest"] != expected_receipt_request
+        or receipt_event["evidence_ref"] != expected_receipt_evidence
+        or receipt_event["event_digest"] != row["receipt_event_digest"]
+        or receipt_event["checkpoint_digest"] != checkpoint.checkpoint_digest
+        or receipt_event["operation_id"] is not None
+        or receipt_event["receipt_id"] is not None
+        or checkpoint.review_authority != prepared_checkpoint.review_authority
+        or snapshot.run_id != checkpoint.run.run_id
+        or snapshot.main_terminal_id != checkpoint.run.main_terminal_id
+        or snapshot.consumer_generation != checkpoint.run.consumer_generation
+        or row["worker_terminal_id"] != approved["worker_terminal_id"]
+        or row["reviewer_terminal_id"] != approved["reviewer_terminal_id"]
+        or row["effect_owner"] != snapshot.effect_owner
+        or row["effect_attempt"] != 1
+        or row["effect_epoch"] != metadata.get("recovery_epoch")
+        or type(row["effect_fence"]) is not int
+        or row["effect_fence"] > metadata.get("fencing_token_floor", -1)
+        or row["created_ns"] != prepared_checkpoint.updated_ns
+        or row["updated_ns"] != checkpoint.updated_ns
+        or receipt_row["stored_ns"] != checkpoint.updated_ns
+        or row["updated_ns"] > metadata.get("last_clock_ns", -1)
+    ):
+        raise StoreIntegrityError("SQLite receipted verification semantics differ")
+
+
+def _validate_schema4_terminal_row(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    snapshot: _task_ledger.ApprovalBindingSnapshotV1,
+    request: _task_ledger.VerificationRequestProjectionV1,
+    checkpoint: _workflow.WorkflowCheckpointV4,
+    task: _review_workflow.StoredTaskPolicyState,
+) -> None:
+    """Validate the RECEIPTED prefix and current TERMINAL projection."""
+
+    receipt_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+        (row["receipt_event_id"],),
+    )
+    terminal_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+        (row["terminal_event_id"],),
+    )
+    receipt_row = _workflow_read_one(
+        connection,
+        "SELECT * FROM verification_receipts WHERE root_key = ? AND receipt_ref = ?",
+        (row["root_key"], row["receipt_ref"]),
+    )
+    if receipt_event is None or terminal_event is None or receipt_row is None:
+        raise StoreIntegrityError("SQLite terminal verification prefix is missing")
+    CoordinationStore._workflow_validate_event_row(
+        receipt_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    CoordinationStore._workflow_validate_event_row(
+        terminal_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    receipted_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+        receipt_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    terminal_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+        terminal_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    if (
+        type(receipted_checkpoint) is not _workflow.WorkflowCheckpointV4
+        or type(terminal_checkpoint) is not _workflow.WorkflowCheckpointV4
+        or terminal_checkpoint != checkpoint
+    ):
+        raise StoreIntegrityError("SQLite terminal verification checkpoint differs")
+    receipt_bytes = receipt_row["receipt_bytes"]
+    if type(receipt_bytes) is not bytes:
+        raise StoreIntegrityError("SQLite terminal verification receipt differs")
+    receipt = _task_ledger.decode_verification_receipt_projection(receipt_bytes)
+    before_task = _task_ledger.decode_task_state(snapshot.task_state_bytes)
+    prepared_task = replace(
+        before_task,
+        sequence=before_task.sequence + 1,
+        receipt_ref=None,
+        phase=_task_policy.TaskPhase.VERIFYING,
+    )
+    receipted_task = replace(
+        prepared_task,
+        sequence=prepared_task.sequence + 1,
+        receipt_ref=_task_policy.ReceiptRef(receipt.receipt_ref),
+        phase=_task_policy.TaskPhase.VERIFYING,
+    )
+    receipted_task_bytes = _task_ledger.encode_task_state(receipted_task)
+    receipted_task_digest = str(_task_ledger.task_state_digest(receipted_task_bytes))
+    receipted_observation = _review_workflow.StoredTaskPolicyState(
+        root_key=row["root_key"],
+        state=receipted_task,
+        state_bytes=receipted_task_bytes,
+        state_digest=receipted_task_digest,
+        run_id=receipted_checkpoint.run.run_id,
+        updated_ns=receipted_checkpoint.updated_ns,
+    )
+    receipted_view = dict(row)
+    receipted_view.update(
+        {
+            "status": "RECEIPTED",
+            "task_sequence_after": receipted_task.sequence,
+            "task_digest_after": receipted_task_digest,
+            "workflow_sequence_after": receipted_checkpoint.workflow_sequence,
+            "workflow_digest_after": receipted_checkpoint.checkpoint_digest,
+            "updated_ns": receipted_checkpoint.updated_ns,
+        }
+    )
+    _validate_schema4_receipted_row(
+        connection,
+        cast(sqlite3.Row, receipted_view),
+        snapshot,
+        request,
+        receipted_checkpoint,
+        receipted_observation,
+    )
+
+    terminal_phase = row["terminal_phase"]
+    expected_phase = {
+        "completed": _task_policy.TaskPhase.COMPLETED,
+        "verification_failed": _task_policy.TaskPhase.VERIFICATION_FAILED,
+    }.get(terminal_phase)
+    receipt_expected_phase = (
+        _task_policy.TaskPhase.COMPLETED
+        if receipt.outcome is _gate.VerificationOutcome.PASSED
+        else _task_policy.TaskPhase.VERIFICATION_FAILED
+    )
+    if expected_phase is None or expected_phase is not receipt_expected_phase:
+        raise StoreIntegrityError("SQLite terminal verification phase differs")
+    terminal_task = replace(
+        receipted_task,
+        sequence=receipted_task.sequence + 1,
+        phase=expected_phase,
+    )
+    terminal_task_bytes = _task_ledger.encode_task_state(terminal_task)
+    terminal_task_digest = str(_task_ledger.task_state_digest(terminal_task_bytes))
+    expected_request = _verification_store._verification_request_wrapper(
+        _verification_store.VerificationStage.TERMINAL,
+        row["root_key"],
+        row["verification_ref"],
+        receipted_checkpoint.workflow_sequence,
+        checkpoint.workflow_sequence,
+        receipted_task.sequence,
+        terminal_task.sequence,
+        row["request_digest"],
+    )
+    expected_evidence = _verification_store._verification_evidence_wrapper(
+        _verification_store.VerificationStage.TERMINAL,
+        row["root_key"],
+        row["verification_ref"],
+        receipted_checkpoint.workflow_sequence,
+        checkpoint.workflow_sequence,
+        receipted_task.sequence,
+        terminal_task.sequence,
+        terminal_phase,
+        row["terminal_receipt_ref"],
+        row["terminal_receipt_digest"],
+    )
+    authority = checkpoint.verification_authority
+    metadata = {
+        str(item[0]): item[1]
+        for item in connection.execute(
+            "SELECT key, value FROM store_meta ORDER BY key"
+        ).fetchall()
+    }
+    if (
+        row["status"] != "TERMINAL"
+        or row["receipt_ref"] != receipt.receipt_ref
+        or row["receipt_digest"] != receipt.receipt_digest
+        or row["terminal_receipt_ref"] != receipt.receipt_ref
+        or row["terminal_receipt_digest"] != receipt.receipt_digest
+        or row["unknown_code"] is not None
+        or row["unknown_evidence_digest"] is not None
+        or row["unknown_event_id"] is not None
+        or row["unknown_event_digest"] is not None
+        or task.state != terminal_task
+        or task.state_bytes != terminal_task_bytes
+        or task.state_digest != terminal_task_digest
+        or task.updated_ns != checkpoint.updated_ns
+        or checkpoint.workflow_state is not _workflow.CheckpointState.VERIFYING
+        or checkpoint.workflow_sequence != receipted_checkpoint.workflow_sequence + 1
+        or checkpoint.task_sequence != terminal_task.sequence
+        or checkpoint.checkpoint_digest != row["workflow_digest_after"]
+        or row["workflow_sequence_after"] != checkpoint.workflow_sequence
+        or row["task_sequence_after"] != terminal_task.sequence
+        or row["task_digest_after"] != terminal_task_digest
+        or checkpoint.review_authority != receipted_checkpoint.review_authority
+        or authority is None
+        or authority.reference != row["verification_ref"]
+        or authority.digest != expected_evidence
+        or terminal_event["root_key"] != row["root_key"]
+        or terminal_event["operation_id"] is not None
+        or terminal_event["receipt_id"] is not None
+        or terminal_event["workflow_sequence"] != checkpoint.workflow_sequence
+        or terminal_event["task_sequence_before"] != receipted_task.sequence
+        or terminal_event["task_sequence_after"] != terminal_task.sequence
+        or terminal_event["from_state"] != _workflow.CheckpointState.VERIFYING.value
+        or terminal_event["to_state"] != _workflow.CheckpointState.VERIFYING.value
+        or terminal_event["kind"] != _workflow.TransitionKind.VERIFICATION.value
+        or terminal_event["actor"] != _verification_store.VERIFICATION_ACTOR
+        or terminal_event["request_digest"] != expected_request
+        or terminal_event["evidence_ref"] != expected_evidence
+        or terminal_event["event_digest"] != row["terminal_event_digest"]
+        or terminal_event["checkpoint_digest"] != checkpoint.checkpoint_digest
+        or terminal_event["clock_ns"] != checkpoint.updated_ns
+        or row["updated_ns"] != checkpoint.updated_ns
+        or row["updated_ns"] > metadata.get("last_clock_ns", -1)
+    ):
+        raise StoreIntegrityError("SQLite terminal verification semantics differ")
+
+
+def _validate_schema4_unknown_row(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    snapshot: _task_ledger.ApprovalBindingSnapshotV1,
+    checkpoint: _workflow.WorkflowCheckpointV4,
+    task: _review_workflow.StoredTaskPolicyState,
+) -> None:
+    """Validate the armed prefix and current UNKNOWN_EFFECT projection."""
+
+    prepare_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+        (row["prepare_event_id"],),
+    )
+    unknown_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+        (row["unknown_event_id"],),
+    )
+    predecessor_event = _workflow_read_one(
+        connection,
+        "SELECT * FROM workflow_events WHERE root_key = ? AND workflow_sequence = ?",
+        (row["root_key"], snapshot.workflow_sequence),
+    )
+    if prepare_event is None or unknown_event is None or predecessor_event is None:
+        raise StoreIntegrityError("SQLite unknown verification prefix is missing")
+    CoordinationStore._workflow_validate_event_row(
+        prepare_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    CoordinationStore._workflow_validate_event_row(
+        unknown_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    prepared_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+        prepare_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    unknown_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+        unknown_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    predecessor = CoordinationStore._workflow_decode_event_checkpoint(
+        predecessor_event,
+        store_schema=_CURRENT_STORE_SCHEMA,
+    )
+    if (
+        type(prepared_checkpoint) is not _workflow.WorkflowCheckpointV4
+        or type(unknown_checkpoint) is not _workflow.WorkflowCheckpointV4
+        or type(predecessor) is not _workflow.WorkflowCheckpointV4
+        or unknown_checkpoint != checkpoint
+    ):
+        raise StoreIntegrityError("SQLite unknown verification checkpoint differs")
+    before_task = _task_ledger.decode_task_state(snapshot.task_state_bytes)
+    prepared_task = replace(
+        before_task,
+        sequence=before_task.sequence + 1,
+        receipt_ref=None,
+        phase=_task_policy.TaskPhase.VERIFYING,
+    )
+    prepared_task_bytes = _task_ledger.encode_task_state(prepared_task)
+    prepared_task_digest = str(_task_ledger.task_state_digest(prepared_task_bytes))
+    expected_prepare_request = _verification_store._verification_request_wrapper(
+        _verification_store.VerificationStage.PREPARE,
+        row["root_key"],
+        row["verification_ref"],
+        snapshot.workflow_sequence,
+        prepared_checkpoint.workflow_sequence,
+        snapshot.task_sequence,
+        prepared_task.sequence,
+        row["request_digest"],
+    )
+    expected_prepare_evidence = _verification_store._verification_evidence_wrapper(
+        _verification_store.VerificationStage.PREPARE,
+        row["root_key"],
+        row["verification_ref"],
+        snapshot.workflow_sequence,
+        prepared_checkpoint.workflow_sequence,
+        snapshot.task_sequence,
+        prepared_task.sequence,
+        row["approval_binding_digest"],
+    )
+    expected_unknown_request = _verification_store._verification_request_wrapper(
+        _verification_store.VerificationStage.UNKNOWN,
+        row["root_key"],
+        row["verification_ref"],
+        prepared_checkpoint.workflow_sequence,
+        checkpoint.workflow_sequence,
+        prepared_task.sequence,
+        prepared_task.sequence,
+        row["request_digest"],
+    )
+    expected_unknown_evidence = _verification_store._verification_evidence_wrapper(
+        _verification_store.VerificationStage.UNKNOWN,
+        row["root_key"],
+        row["verification_ref"],
+        prepared_checkpoint.workflow_sequence,
+        checkpoint.workflow_sequence,
+        prepared_task.sequence,
+        prepared_task.sequence,
+        row["unknown_code"],
+        row["unknown_evidence_digest"],
+        row["effect_fence"],
+    )
+    prepared_authority = prepared_checkpoint.verification_authority
+    current_authority = checkpoint.verification_authority
+    metadata = {
+        str(item[0]): item[1]
+        for item in connection.execute(
+            "SELECT key, value FROM store_meta ORDER BY key"
+        ).fetchall()
+    }
+    if (
+        row["status"] != "UNKNOWN_EFFECT"
+        or row["unknown_code"] not in _verification_store._UNKNOWN_CODES
+        or type(row["unknown_evidence_digest"]) is not str
+        or row["receipt_ref"] is not None
+        or row["receipt_digest"] is not None
+        or row["terminal_phase"] is not None
+        or row["terminal_receipt_ref"] is not None
+        or row["terminal_receipt_digest"] is not None
+        or row["receipt_event_id"] is not None
+        or row["terminal_event_id"] is not None
+        or predecessor.workflow_state is not _workflow.CheckpointState.REVIEW_PENDING
+        or predecessor.checkpoint_digest != snapshot.workflow_checkpoint_digest
+        or prepared_checkpoint.workflow_state is not _workflow.CheckpointState.VERIFYING
+        or prepared_checkpoint.workflow_sequence != snapshot.workflow_sequence + 1
+        or prepared_checkpoint.task_sequence != prepared_task.sequence
+        or prepared_checkpoint.task_policy is None
+        or prepared_checkpoint.task_policy.state_digest != prepared_task_digest
+        or prepared_authority is None
+        or prepared_authority.reference != row["verification_ref"]
+        or prepared_authority.digest != expected_prepare_evidence
+        or prepare_event["request_digest"] != expected_prepare_request
+        or prepare_event["evidence_ref"] != expected_prepare_evidence
+        or prepare_event["event_digest"] != row["prepare_event_digest"]
+        or checkpoint.workflow_state is not _workflow.CheckpointState.RECOVERY_REQUIRED
+        or checkpoint.workflow_sequence != prepared_checkpoint.workflow_sequence + 1
+        or checkpoint.task_sequence != prepared_task.sequence
+        or checkpoint.checkpoint_digest != row["workflow_digest_after"]
+        or row["workflow_sequence_after"] != checkpoint.workflow_sequence
+        or task.state != prepared_task
+        or task.state_bytes != prepared_task_bytes
+        or task.state_digest != prepared_task_digest
+        or task.root_key != checkpoint.root.root_key
+        or task.run_id != checkpoint.run.run_id
+        or row["task_sequence_after"] != prepared_task.sequence
+        or row["task_digest_after"] != prepared_task_digest
+        or task.updated_ns != prepared_checkpoint.updated_ns
+        or current_authority is None
+        or current_authority.reference != row["verification_ref"]
+        or current_authority.digest != expected_unknown_evidence
+        or checkpoint.review_authority != prepared_checkpoint.review_authority
+        or checkpoint.run != prepared_checkpoint.run
+        or checkpoint.execution_mode != prepared_checkpoint.execution_mode
+        or checkpoint.task_policy != prepared_checkpoint.task_policy
+        or checkpoint.active_assignment != prepared_checkpoint.active_assignment
+        or checkpoint.pending_delivery != prepared_checkpoint.pending_delivery
+        or checkpoint.replied_message_ids != prepared_checkpoint.replied_message_ids
+        or checkpoint.read_observed != prepared_checkpoint.read_observed
+        or checkpoint.released != prepared_checkpoint.released
+        or checkpoint.last_operation != prepared_checkpoint.last_operation
+        or row["effect_owner"] != snapshot.effect_owner
+        or row["effect_attempt"] != 1
+        or row["effect_epoch"] != metadata.get("recovery_epoch")
+        or type(row["effect_fence"]) is not int
+        or row["effect_fence"] > metadata.get("fencing_token_floor", -1)
+        or type(row["effect_nonce"]) is not str
+        or unknown_event["root_key"] != row["root_key"]
+        or unknown_event["operation_id"] is not None
+        or unknown_event["receipt_id"] is not None
+        or unknown_event["workflow_sequence"] != checkpoint.workflow_sequence
+        or unknown_event["task_sequence_before"] != prepared_task.sequence
+        or unknown_event["task_sequence_after"] != prepared_task.sequence
+        or unknown_event["from_state"] != _workflow.CheckpointState.VERIFYING.value
+        or unknown_event["to_state"]
+        != _workflow.CheckpointState.RECOVERY_REQUIRED.value
+        or unknown_event["kind"] != _workflow.TransitionKind.VERIFICATION.value
+        or unknown_event["actor"] != _verification_store.VERIFICATION_ACTOR
+        or unknown_event["request_digest"] != expected_unknown_request
+        or unknown_event["evidence_ref"] != expected_unknown_evidence
+        or unknown_event["event_digest"] != row["unknown_event_digest"]
+        or unknown_event["checkpoint_digest"] != checkpoint.checkpoint_digest
+        or unknown_event["clock_ns"] != checkpoint.updated_ns
+        or row["created_ns"] != prepared_checkpoint.updated_ns
+        or row["updated_ns"] != checkpoint.updated_ns
+        or row["updated_ns"] > metadata.get("last_clock_ns", -1)
+    ):
+        raise StoreIntegrityError("SQLite unknown verification semantics differ")
+
+
+def _validate_schema4_verification_prepare_rows(
+    connection: sqlite3.Connection,
+) -> None:
+    """Validate the minimal non-empty PREPARED image written by Issue #82."""
+
+    previous_row_factory = connection.row_factory
+    operation_count = 0
+    receipted_count = 0
+    expected_verification_event_count = 0
+    try:
+        connection.row_factory = sqlite3.Row
+        with _workflow_stream_rows(
+            connection,
+            "SELECT * FROM verification_operations ORDER BY root_key, verification_ref",
+        ) as rows:
+            for row in rows:
+                operation_count += 1
+                if row["status"] not in {
+                    "PREPARED",
+                    "EFFECT_PREPARED",
+                    "RECEIPTED",
+                    "TERMINAL",
+                    "UNKNOWN_EFFECT",
+                }:
+                    raise StoreIntegrityError(
+                        "SQLite verification status requires lifecycle validation"
+                    )
+                actual = {
+                    column: row[column]
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                }
+                if (
+                    tuple(actual) != _verification_store._VERIFICATION_RECORD_COLUMNS
+                    or _verification_store._verification_record_digest(actual)
+                    != row["record_digest"]
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite verification record digest differs"
+                    )
+                binding_bytes = row["approval_binding_bytes"]
+                request_bytes = row["request_bytes"]
+                if type(binding_bytes) is not bytes or type(request_bytes) is not bytes:
+                    raise StoreIntegrityError(
+                        "SQLite verification payload type differs"
+                    )
+                try:
+                    snapshot = _task_ledger.decode_approval_binding_snapshot(
+                        binding_bytes
+                    )
+                    request = _task_ledger.decode_verification_request_projection(
+                        request_bytes
+                    )
+                except _task_ledger.TaskVerificationLedgerError as exc:
+                    raise StoreIntegrityError(
+                        "SQLite verification payload is invalid"
+                    ) from exc
+                if (
+                    _task_ledger.encode_approval_binding_snapshot(snapshot)
+                    != binding_bytes
+                    or _task_ledger.approval_binding_snapshot_digest(binding_bytes)
+                    != row["approval_binding_digest"]
+                    or snapshot.binding_digest != row["approval_binding_digest"]
+                    or snapshot.review_ref != row["review_ref"]
+                    or snapshot.review_digest != row["review_digest"]
+                    or snapshot.completion_ref != row["completion_ref"]
+                    or snapshot.completion_digest != row["completion_digest"]
+                    or snapshot.approval_ref != row["approval_ref"]
+                    or snapshot.approval_digest != row["approval_digest"]
+                    or snapshot.approved_review != request.approval
+                    or _task_ledger.encode_verification_request_projection(request)
+                    != request_bytes
+                    or request.approval_ref != row["approval_ref"]
+                    or request.verification_id != row["verification_ref"]
+                    or request.request_digest != row["request_digest"]
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite verification payload binding differs"
+                    )
+                before_task = _task_ledger.decode_task_state(snapshot.task_state_bytes)
+                if (
+                    before_task.phase is not _task_policy.TaskPhase.APPROVED
+                    or before_task.sequence != row["task_sequence_before"]
+                    or snapshot.task_state_digest != row["task_digest_before"]
+                    or snapshot.task_sequence != row["task_sequence_before"]
+                    or snapshot.root_key != row["root_key"]
+                    or snapshot.run_id != row["run_id"]
+                    or snapshot.main_terminal_id != row["main_terminal_id"]
+                    or snapshot.workflow_sequence != row["workflow_sequence_before"]
+                    or snapshot.workflow_checkpoint_digest
+                    != row["workflow_digest_before"]
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite verification prepare preimage differs"
+                    )
+                checkpoint = _workflow_checkpoint_for_root(
+                    connection,
+                    row["root_key"],
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                )
+                if type(checkpoint) is not _workflow.WorkflowCheckpointV4:
+                    raise StoreIntegrityError(
+                        "SQLite verification checkpoint is not a run"
+                    )
+                task_row = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM task_policy_states "
+                    "WHERE root_key = ? AND task_id = ?",
+                    (row["root_key"], row["task_id"]),
+                )
+                if task_row is None:
+                    raise StoreIntegrityError(
+                        "SQLite verification current task is missing"
+                    )
+                task = _task_policy_observation_from_row(task_row)
+                if row["status"] != "UNKNOWN_EFFECT":
+                    _validate_task_observation_checkpoint(task, checkpoint)
+                if row["status"] in {"RECEIPTED", "TERMINAL"}:
+                    if row["status"] == "RECEIPTED":
+                        _validate_schema4_receipted_row(
+                            connection,
+                            row,
+                            snapshot,
+                            request,
+                            checkpoint,
+                            task,
+                        )
+                        expected_verification_event_count += 2
+                    else:
+                        _validate_schema4_terminal_row(
+                            connection,
+                            row,
+                            snapshot,
+                            request,
+                            checkpoint,
+                            task,
+                        )
+                        expected_verification_event_count += 3
+                    receipted_count += 1
+                    continue
+                if row["status"] == "UNKNOWN_EFFECT":
+                    _validate_schema4_unknown_row(
+                        connection,
+                        row,
+                        snapshot,
+                        checkpoint,
+                        task,
+                    )
+                    expected_verification_event_count += 2
+                    continue
+                expected_verification_event_count += 1
+                event = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+                    (row["prepare_event_id"],),
+                )
+                before_event = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events "
+                    "WHERE root_key = ? AND workflow_sequence = ?",
+                    (row["root_key"], row["workflow_sequence_before"]),
+                )
+                if event is None or before_event is None:
+                    raise StoreIntegrityError(
+                        "SQLite verification event prefix is missing"
+                    )
+                CoordinationStore._workflow_validate_event_row(
+                    event,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                )
+                before_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+                    before_event,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                )
+                if type(before_checkpoint) is not _workflow.WorkflowCheckpointV4:
+                    raise StoreIntegrityError(
+                        "SQLite verification predecessor is not a run"
+                    )
+                expected_request = _verification_store._verification_request_wrapper(
+                    _verification_store.VerificationStage.PREPARE,
+                    row["root_key"],
+                    row["verification_ref"],
+                    row["workflow_sequence_before"],
+                    row["workflow_sequence_after"],
+                    row["task_sequence_before"],
+                    row["task_sequence_after"],
+                    row["request_digest"],
+                )
+                expected_evidence = _verification_store._verification_evidence_wrapper(
+                    _verification_store.VerificationStage.PREPARE,
+                    row["root_key"],
+                    row["verification_ref"],
+                    row["workflow_sequence_before"],
+                    row["workflow_sequence_after"],
+                    row["task_sequence_before"],
+                    row["task_sequence_after"],
+                    row["approval_binding_digest"],
+                )
+                authority = checkpoint.verification_authority
+                approved = dict(snapshot.approved_review)
+                metadata = {
+                    str(item[0]): item[1]
+                    for item in connection.execute(
+                        "SELECT key, value FROM store_meta ORDER BY key"
+                    ).fetchall()
+                }
+                if frozenset(metadata) != _EXPECTED_META_KEYS:
+                    raise StoreIntegrityError("SQLite verification metadata differs")
+                if row["status"] == "PREPARED":
+                    status_valid = (
+                        row["created_ns"] == row["updated_ns"]
+                        and row["updated_ns"] == checkpoint.updated_ns
+                    )
+                else:
+                    status_valid = (
+                        row["effect_owner"] == snapshot.effect_owner
+                        and row["effect_attempt"] == 1
+                        and row["effect_epoch"] == metadata["recovery_epoch"]
+                        and type(row["effect_fence"]) is int
+                        and 0 < row["effect_fence"] <= metadata["fencing_token_floor"]
+                        and type(row["effect_nonce"]) is str
+                        and bool(row["effect_nonce"])
+                        and row["created_ns"] == checkpoint.updated_ns
+                        and row["created_ns"] <= row["updated_ns"]
+                        and row["updated_ns"] <= metadata["last_clock_ns"]
+                    )
+                if (
+                    not status_valid
+                    or checkpoint.workflow_state
+                    is not _workflow.CheckpointState.VERIFYING
+                    or checkpoint.workflow_sequence != row["workflow_sequence_after"]
+                    or checkpoint.checkpoint_digest != row["workflow_digest_after"]
+                    or checkpoint.task_sequence != row["task_sequence_after"]
+                    or task.state.phase is not _task_policy.TaskPhase.VERIFYING
+                    or task.state.sequence != row["task_sequence_after"]
+                    or task.state_digest != row["task_digest_after"]
+                    or before_checkpoint.workflow_state
+                    is not _workflow.CheckpointState.REVIEW_PENDING
+                    or before_checkpoint.workflow_sequence
+                    != row["workflow_sequence_before"]
+                    or before_checkpoint.checkpoint_digest
+                    != row["workflow_digest_before"]
+                    or before_checkpoint.task_sequence != row["task_sequence_before"]
+                    or before_checkpoint.verification_authority is not None
+                    or checkpoint.review_authority != before_checkpoint.review_authority
+                    or snapshot.root_key != checkpoint.root.root_key
+                    or snapshot.run_id != checkpoint.run.run_id
+                    or snapshot.main_terminal_id != checkpoint.run.main_terminal_id
+                    or snapshot.consumer_generation
+                    != checkpoint.run.consumer_generation
+                    or snapshot.review_ref != row["review_ref"]
+                    or snapshot.review_digest != row["review_digest"]
+                    or before_checkpoint.review_authority is None
+                    or before_checkpoint.review_authority.reference
+                    != snapshot.review_ref
+                    or _review_workflow._review_owner_digest_from_reference(
+                        before_checkpoint.review_authority.reference
+                    )
+                    != snapshot.review_digest
+                    or row["worker_terminal_id"] != approved["worker_terminal_id"]
+                    or row["reviewer_terminal_id"] != approved["reviewer_terminal_id"]
+                    or row["team_id"] != approved["team_id"]
+                    or row["workspace"] != approved["workspace"]
+                    or row["task_id"] != approved["task_id"]
+                    or row["dispatch_id"] != approved["dispatch_id"]
+                    or row["attempt_id"] != approved["attempt_id"]
+                    or row["worker_node"] != approved["worker_node"]
+                    or row["reviewer_node"] != approved["reviewer_node"]
+                    or row["review_round"] != approved["review_round"]
+                    or authority is None
+                    or authority.reference != row["verification_ref"]
+                    or authority.digest != expected_evidence
+                    or event["root_key"] != row["root_key"]
+                    or event["operation_id"] is not None
+                    or event["receipt_id"] is not None
+                    or event["workflow_sequence"] != row["workflow_sequence_after"]
+                    or event["task_sequence_before"] != row["task_sequence_before"]
+                    or event["task_sequence_after"] != row["task_sequence_after"]
+                    or event["from_state"]
+                    != _workflow.CheckpointState.REVIEW_PENDING.value
+                    or event["to_state"] != _workflow.CheckpointState.VERIFYING.value
+                    or event["kind"] != _workflow.TransitionKind.VERIFICATION.value
+                    or event["actor"] != _verification_store.VERIFICATION_ACTOR
+                    or event["request_digest"] != expected_request
+                    or event["evidence_ref"] != expected_evidence
+                    or event["event_digest"] != row["prepare_event_digest"]
+                    or event["checkpoint_digest"] != checkpoint.checkpoint_digest
+                    or event["clock_ns"] != checkpoint.updated_ns
+                    or task.updated_ns != checkpoint.updated_ns
+                ):
+                    raise StoreIntegrityError(
+                        "SQLite verification prepare semantics differ"
+                    )
+        verification_event_count = connection.execute(
+            "SELECT COUNT(*) FROM workflow_events WHERE kind = ? AND actor = ?",
+            (
+                _workflow.TransitionKind.VERIFICATION.value,
+                _verification_store.VERIFICATION_ACTOR,
+            ),
+        ).fetchone()
+        if (
+            operation_count == 0
+            or verification_event_count is None
+            or verification_event_count[0] != expected_verification_event_count
+        ):
+            raise StoreIntegrityError("SQLite verification prepare event count differs")
+        receipt_count = connection.execute(
+            "SELECT COUNT(*) FROM verification_receipts"
+        ).fetchone()
+        if receipt_count is None or receipt_count[0] != receipted_count:
+            raise StoreIntegrityError("SQLite verification receipt count differs")
+    finally:
+        connection.row_factory = previous_row_factory
+
+
 def _validate_schema4_ledger_gate(
     connection: sqlite3.Connection,
     *,
     allow_review_task_rows: bool,
+    allow_verification_rows: bool = False,
 ) -> None:
-    """Keep verification rows closed while admitting normal-Store review rows."""
+    """Admit only the explicitly selected schema-4 task/verification subset."""
 
-    for table in ("verification_operations", "verification_receipts"):
-        if _workflow_read_one(connection, f"SELECT 1 FROM {table} LIMIT 1") is not None:
-            raise StoreIntegrityError(
-                "SQLite schema-4 verification ledger validation is unavailable"
-            )
+    has_verification_row = any(
+        _workflow_read_one(connection, f"SELECT 1 FROM {table} LIMIT 1") is not None
+        for table in ("verification_operations", "verification_receipts")
+    )
+    if has_verification_row and not allow_verification_rows:
+        raise StoreIntegrityError(
+            "SQLite schema-4 verification ledger validation is unavailable"
+        )
     has_task_row = (
         _workflow_read_one(connection, "SELECT 1 FROM task_policy_states LIMIT 1")
         is not None
@@ -4370,7 +5314,14 @@ def _validate_schema4_ledger_gate(
         raise StoreIntegrityError(
             "SQLite review policy event requires normal Store task validation"
         )
-    if allow_review_task_rows:
+    if has_verification_row:
+        try:
+            _validate_schema4_verification_prepare_rows(connection)
+        except StoreIntegrityError as exc:
+            raise StoreIntegrityError(
+                "SQLite schema-4 verification ledger validation is unavailable"
+            ) from exc
+    elif allow_review_task_rows:
         _validate_schema4_review_task_rows(connection)
 
 
@@ -5276,6 +6227,7 @@ def _workflow_stream_root_events(
     checkpoint: _workflow.WorkflowCheckpointObservation,
     store_schema: int = _CURRENT_STORE_SCHEMA,
     allow_review_policy_edges: bool = False,
+    allow_verification_edges: bool = False,
 ) -> int:
     """Validate one root event stream without retaining its event history."""
 
@@ -5424,6 +6376,12 @@ def _workflow_stream_root_events(
                     and kind is _workflow.TransitionKind.POLICY
                     and row["actor"] == _review_workflow.REVIEW_POLICY_ACTOR
                 )
+                is_verification_edge = (
+                    allow_verification_edges
+                    and store_schema == _CURRENT_STORE_SCHEMA
+                    and kind is _workflow.TransitionKind.VERIFICATION
+                    and row["actor"] == _verification_store.VERIFICATION_ACTOR
+                )
                 if is_review_policy_edge:
                     review_edge = {
                         (
@@ -5501,6 +6459,200 @@ def _workflow_stream_root_events(
                             else "SQLite review policy transition edge differs"
                         )
                         raise StoreIntegrityError(message)
+                elif is_verification_edge:
+                    operation = _workflow_read_one(
+                        connection,
+                        "SELECT * FROM verification_operations "
+                        "WHERE root_key = ? AND "
+                        "(prepare_event_id = ? OR receipt_event_id = ? "
+                        "OR terminal_event_id = ? OR unknown_event_id = ?)",
+                        (
+                            row["root_key"],
+                            row["workflow_event_id"],
+                            row["workflow_event_id"],
+                            row["workflow_event_id"],
+                            row["workflow_event_id"],
+                        ),
+                    )
+                    before_task = before.task_policy
+                    after_task = after.task_policy
+                    if operation is None or before_task is None or after_task is None:
+                        raise StoreIntegrityError(
+                            "SQLite verification transition operation differs"
+                        )
+                    is_prepare = (
+                        operation["prepare_event_id"] == row["workflow_event_id"]
+                    )
+                    is_receipt = (
+                        operation["receipt_event_id"] == row["workflow_event_id"]
+                    )
+                    is_terminal = (
+                        operation["terminal_event_id"] == row["workflow_event_id"]
+                    )
+                    is_unknown = (
+                        operation["unknown_event_id"] == row["workflow_event_id"]
+                    )
+                    evidence_source: tuple[object, ...]
+                    if is_prepare:
+                        stage = _verification_store.VerificationStage.PREPARE
+                        evidence_source = (operation["approval_binding_digest"],)
+                        snapshot_bytes = operation["approval_binding_bytes"]
+                        if type(snapshot_bytes) is not bytes:
+                            raise StoreIntegrityError(
+                                "SQLite verification prepare snapshot differs"
+                            )
+                        snapshot = _task_ledger.decode_approval_binding_snapshot(
+                            snapshot_bytes
+                        )
+                        edge_valid = (
+                            operation["status"]
+                            in {
+                                "PREPARED",
+                                "EFFECT_PREPARED",
+                                "RECEIPTED",
+                                "TERMINAL",
+                                "UNKNOWN_EFFECT",
+                            }
+                            and before.workflow_state
+                            is _workflow.CheckpointState.REVIEW_PENDING
+                            and after.workflow_state
+                            is _workflow.CheckpointState.VERIFYING
+                            and before.verification_authority is None
+                            and after.verification_authority == target_authority
+                            and before.task_sequence == snapshot.task_sequence
+                            and after.task_sequence == snapshot.task_sequence + 1
+                            and before.checkpoint_digest
+                            == snapshot.workflow_checkpoint_digest
+                            and before_task.state_digest == snapshot.task_state_digest
+                            and operation["prepare_event_digest"] == row["event_digest"]
+                        )
+                    elif is_receipt:
+                        stage = _verification_store.VerificationStage.RECEIPT
+                        evidence_source = (operation["receipt_digest"],)
+                        edge_valid = (
+                            operation["status"] in {"RECEIPTED", "TERMINAL"}
+                            and before.workflow_state
+                            is _workflow.CheckpointState.VERIFYING
+                            and after.workflow_state
+                            is _workflow.CheckpointState.VERIFYING
+                            and before.verification_authority is not None
+                            and after.verification_authority == target_authority
+                            and before.task_sequence is not None
+                            and after.task_sequence == before.task_sequence + 1
+                            and (
+                                operation["status"] == "TERMINAL"
+                                or (
+                                    operation["workflow_sequence_after"]
+                                    == after.workflow_sequence
+                                    and operation["workflow_digest_after"]
+                                    == after.checkpoint_digest
+                                    and operation["task_sequence_after"]
+                                    == after.task_sequence
+                                    and operation["task_digest_after"]
+                                    == after_task.state_digest
+                                )
+                            )
+                            and operation["receipt_event_digest"] == row["event_digest"]
+                        )
+                    elif is_terminal:
+                        stage = _verification_store.VerificationStage.TERMINAL
+                        evidence_source = (
+                            operation["terminal_phase"],
+                            operation["terminal_receipt_ref"],
+                            operation["terminal_receipt_digest"],
+                        )
+                        edge_valid = (
+                            operation["status"] == "TERMINAL"
+                            and before.workflow_state
+                            is _workflow.CheckpointState.VERIFYING
+                            and after.workflow_state
+                            is _workflow.CheckpointState.VERIFYING
+                            and before.verification_authority is not None
+                            and after.verification_authority == target_authority
+                            and before.task_sequence is not None
+                            and after.task_sequence == before.task_sequence + 1
+                            and operation["workflow_sequence_after"]
+                            == after.workflow_sequence
+                            and operation["workflow_digest_after"]
+                            == after.checkpoint_digest
+                            and operation["task_sequence_after"] == after.task_sequence
+                            and operation["task_digest_after"]
+                            == after_task.state_digest
+                            and operation["terminal_event_digest"]
+                            == row["event_digest"]
+                        )
+                    elif is_unknown:
+                        stage = _verification_store.VerificationStage.UNKNOWN
+                        evidence_source = (
+                            operation["unknown_code"],
+                            operation["unknown_evidence_digest"],
+                            operation["effect_fence"],
+                        )
+                        edge_valid = (
+                            operation["status"] == "UNKNOWN_EFFECT"
+                            and before.workflow_state
+                            is _workflow.CheckpointState.VERIFYING
+                            and after.workflow_state
+                            is _workflow.CheckpointState.RECOVERY_REQUIRED
+                            and before.verification_authority is not None
+                            and after.verification_authority == target_authority
+                            and before.task_sequence is not None
+                            and after.task_sequence == before.task_sequence
+                            and after.task_policy == before.task_policy
+                            and operation["workflow_sequence_after"]
+                            == after.workflow_sequence
+                            and operation["workflow_digest_after"]
+                            == after.checkpoint_digest
+                            and operation["task_sequence_after"] == after.task_sequence
+                            and operation["task_digest_after"]
+                            == after_task.state_digest
+                            and operation["unknown_event_digest"] == row["event_digest"]
+                        )
+                    else:
+                        raise StoreIntegrityError(
+                            "SQLite verification transition stage differs"
+                        )
+                    if not edge_valid:
+                        raise StoreIntegrityError(
+                            "SQLite verification transition edge differs"
+                        )
+                    if before.task_sequence is None or after.task_sequence is None:
+                        raise StoreIntegrityError(
+                            "SQLite verification task sequence differs"
+                        )
+                    expected_request = (
+                        _verification_store._verification_request_wrapper(
+                            stage,
+                            row["root_key"],
+                            operation["verification_ref"],
+                            before.workflow_sequence,
+                            after.workflow_sequence,
+                            before.task_sequence,
+                            after.task_sequence,
+                            operation["request_digest"],
+                        )
+                    )
+                    expected_evidence = (
+                        _verification_store._verification_evidence_wrapper(
+                            stage,
+                            row["root_key"],
+                            operation["verification_ref"],
+                            before.workflow_sequence,
+                            after.workflow_sequence,
+                            before.task_sequence,
+                            after.task_sequence,
+                            *evidence_source,
+                        )
+                    )
+                    if (
+                        row["request_digest"] != expected_request
+                        or row["evidence_ref"] != expected_evidence
+                        or target_authority.reference != operation["verification_ref"]
+                        or target_authority.digest != expected_evidence
+                    ):
+                        raise StoreIntegrityError(
+                            "SQLite verification transition wrapper differs"
+                        )
                 elif after.workflow_state is not before.workflow_state:
                     raise StoreIntegrityError(
                         "SQLite workflow transition changed workflow state"
@@ -5652,6 +6804,7 @@ def _validate_workflow_rows_for_connection(
     *,
     store_schema: int = _CURRENT_STORE_SCHEMA,
     allow_review_policy_edges: bool = False,
+    allow_verification_edges: bool = False,
 ) -> tuple[int, int, int, int]:
     """Validate workflow rows for one explicitly selected store schema."""
 
@@ -5695,6 +6848,7 @@ def _validate_workflow_rows_for_connection(
                     checkpoint=checkpoint,
                     store_schema=store_schema,
                     allow_review_policy_edges=allow_review_policy_edges,
+                    allow_verification_edges=allow_verification_edges,
                 )
                 _workflow_validate_checkpoint_last_operation(connection, checkpoint)
 
@@ -5725,6 +6879,7 @@ def _validate_schema_contract(
     expected_meta_keys: frozenset[str],
     validate_workflow_rows: bool = True,
     allow_review_task_rows: bool = False,
+    allow_verification_rows: bool = False,
 ) -> None:
     """Validate one exact schema contract without changing the database."""
 
@@ -5799,6 +6954,7 @@ def _validate_schema_contract(
             _validate_schema4_ledger_gate(
                 connection,
                 allow_review_task_rows=allow_review_task_rows,
+                allow_verification_rows=allow_verification_rows,
             )
         for row in connection.execute(
             """
@@ -5835,6 +6991,7 @@ def _validate_schema_contract(
                 connection,
                 store_schema=schema_version,
                 allow_review_policy_edges=allow_review_task_rows,
+                allow_verification_edges=allow_verification_rows,
             )
         _validate_existing_image_high_water(connection)
     except (StoreError, sqlite3.DatabaseError):
@@ -5847,6 +7004,7 @@ def _validate_existing_schema(
     connection: sqlite3.Connection,
     *,
     allow_review_task_rows: bool = False,
+    allow_verification_rows: bool = False,
 ) -> None:
     """Validate a current schema-4 image and classify exact legacy images.
 
@@ -5866,6 +7024,7 @@ def _validate_existing_schema(
             expected_foreign_keys=_EXPECTED_FOREIGN_KEYS,
             expected_meta_keys=_EXPECTED_META_KEYS,
             allow_review_task_rows=allow_review_task_rows,
+            allow_verification_rows=allow_verification_rows,
         )
         return
     except (StoreSchemaError, StoreIntegrityError) as error:
@@ -6451,6 +7610,9 @@ class CoordinationStore:
         self._normal_open_state: object | None = None
         self._committed_tombstones: tuple[tuple[str, str], ...] = ()
         self._last_clock_ns = 0
+        self._verification_generation_lock = threading.RLock()
+        self._verification_store_marker = object()
+        self._verification_open_generation = object()
         self._workflow_issuer = object()
         # The receipt adapter test/composition seam intentionally exposes the
         # same opaque issuer used by this Store.  It is not a serializable
@@ -6581,6 +7743,20 @@ class CoordinationStore:
                 state_root_path=str(self.state_root),
                 state_root_identity=self._state_root_identity,
                 checkpoint_issuer=self._workflow_issuer,
+            )
+            _verification_store._register_verification_store(
+                self,
+                read_context_function=CoordinationStore.read_verification_context,
+                prepare_function=CoordinationStore.commit_verification_prepare,
+                effect_function=CoordinationStore.commit_verification_effect_begin,
+                reentry_function=CoordinationStore.read_verification_reentry,
+                receipt_function=CoordinationStore.commit_verification_receipt,
+                lifecycle_read_function=CoordinationStore.read_verification_lifecycle,
+                terminal_function=CoordinationStore.commit_verification_terminal,
+                unknown_function=CoordinationStore.commit_verification_unknown,
+                cleanup_capability_type=_CleanupCapability,
+                cleanup_capability_validator=_validate_verification_cleanup_capability,
+                commit_unknown_error_type=StoreCommitUnknownError,
             )
         except StoreError as exc:
             cleanup = self._cleanup_failed_initialization(
@@ -8254,6 +9430,14 @@ class CoordinationStore:
     def close(self) -> None:
         if self._fresh_cleanup_pending and self._state_root_fd is not None:
             raise StoreUnavailableError("fresh coordination cleanup is pending")
+        with self._verification_generation_lock:
+            closing_generation = self._verification_open_generation
+            self._verification_open_generation = object()
+            _verification_store._invalidate_verification_store(
+                self,
+                self._verification_store_marker,
+                closing_generation,
+            )
         first_error: BaseException | None = None
 
         def attempt(action: Callable[[], None]) -> None:
@@ -10711,6 +11895,258 @@ class CoordinationStore:
         except (KeyError, TypeError, ValueError) as exc:
             raise StoreIntegrityError("SQLite review policy event is invalid") from exc
 
+    def _review_checkpoint_observation_tx(
+        self,
+        connection: sqlite3.Connection,
+        root_key: str,
+    ) -> _review_workflow.ReviewCheckpointObservation | None:
+        """Read the complete #81 review observation from one SQLite snapshot."""
+
+        _validate_schema4_ledger_gate(
+            connection,
+            allow_review_task_rows=True,
+        )
+        _validate_workflow_rows_for_connection(
+            connection,
+            store_schema=_CURRENT_STORE_SCHEMA,
+            allow_review_policy_edges=True,
+        )
+        checkpoint = self._workflow_load_checkpoint_tx(connection, root_key)
+        if checkpoint is None:
+            return None
+        if type(checkpoint) is not _workflow.WorkflowCheckpointV4:
+            raise StoreIntegrityError(
+                "review workflow checkpoint is not a committed run"
+            )
+        self._workflow_validate_root(checkpoint.root)
+        reference = checkpoint.task_policy
+        if reference is None:
+            return None
+        row = self._review_task_row_tx(
+            connection,
+            root_key=root_key,
+            task_id=reference.task_id,
+        )
+        if row is None:
+            return None
+        task = _task_policy_observation_from_row(row)
+        _validate_task_observation_checkpoint(task, checkpoint)
+        events: list[_review_workflow.ReviewPolicyEventObservation] = []
+        with _workflow_stream_rows(
+            connection,
+            "SELECT * FROM workflow_events WHERE root_key = ? "
+            "AND kind = ? AND actor = ? ORDER BY workflow_sequence",
+            (
+                root_key,
+                _workflow.TransitionKind.POLICY.value,
+                _review_workflow.REVIEW_POLICY_ACTOR,
+            ),
+        ) as rows:
+            for event_row in rows:
+                events.append(self._review_event_observation(event_row))
+        if not events:
+            raise StoreIntegrityError("review policy event prefix is missing")
+        predecessor_row = _workflow_read_one(
+            connection,
+            "SELECT checkpoint_bytes FROM workflow_events "
+            "WHERE root_key = ? AND workflow_sequence = ?",
+            (root_key, events[0].workflow_sequence - 1),
+        )
+        if predecessor_row is None:
+            raise StoreIntegrityError("review policy event predecessor is missing")
+        predecessor_checkpoint_bytes = predecessor_row["checkpoint_bytes"]
+        if (
+            type(predecessor_checkpoint_bytes) is not bytes
+            or not predecessor_checkpoint_bytes
+        ):
+            raise StoreIntegrityError("review policy event predecessor is invalid")
+        operation_count_row = _workflow_read_one(
+            connection,
+            "SELECT COUNT(*) FROM verification_operations",
+        )
+        receipt_count_row = _workflow_read_one(
+            connection,
+            "SELECT COUNT(*) FROM verification_receipts",
+        )
+        if operation_count_row is None or receipt_count_row is None:
+            raise StoreIntegrityError("verification table count is unavailable")
+        return _review_workflow.ReviewCheckpointObservation(
+            checkpoint=checkpoint,
+            task=task,
+            events=tuple(events),
+            predecessor_checkpoint_bytes=predecessor_checkpoint_bytes,
+            verification_operation_count=int(operation_count_row[0]),
+            verification_receipt_count=int(receipt_count_row[0]),
+        )
+
+    @staticmethod
+    def _verification_read_revision_tx(
+        connection: sqlite3.Connection,
+        observation: _review_workflow.ReviewCheckpointObservation,
+    ) -> tuple[int, str]:
+        """Hash the canonical Store rows visible to one context read."""
+
+        metadata = {
+            str(row[0]): row[1]
+            for row in connection.execute(
+                "SELECT key, value FROM store_meta ORDER BY key"
+            ).fetchall()
+        }
+        if frozenset(metadata) != _EXPECTED_META_KEYS:
+            raise StoreIntegrityError("verification Store metadata differs")
+        for key in _EXPECTED_META_KEYS:
+            _require_sqlite_integer(metadata[key], f"verification {key}")
+        checkpoint = observation.checkpoint
+        events = connection.execute(
+            "SELECT workflow_event_id, workflow_sequence, clock_ns, "
+            "checkpoint_digest, event_digest FROM workflow_events "
+            "WHERE root_key = ? ORDER BY workflow_sequence",
+            (checkpoint.root.root_key,),
+        ).fetchall()
+        if len(events) != checkpoint.workflow_sequence:
+            raise StoreIntegrityError("verification workflow prefix differs")
+        values: list[object] = [
+            "schema-4-verification-context-revision",
+            checkpoint.root.root_key,
+            checkpoint.run.run_id,
+            checkpoint.run.main_terminal_id,
+            checkpoint.run.consumer_generation,
+            checkpoint.workflow_sequence,
+            checkpoint.checkpoint_digest,
+            observation.task.state.sequence,
+            observation.task.state_digest,
+            "sha256:" + hashlib.sha256(observation.task.state_bytes).hexdigest(),
+            "sha256:"
+            + hashlib.sha256(observation.predecessor_checkpoint_bytes).hexdigest(),
+            observation.verification_operation_count,
+            observation.verification_receipt_count,
+        ]
+        for key in sorted(_EXPECTED_META_KEYS):
+            values.extend((key, metadata[key]))
+        for row in events:
+            event_values = tuple(row)
+            if (
+                len(event_values) != 5
+                or any(type(value) is not int for value in event_values[:3])
+                or any(type(value) is not str for value in event_values[3:])
+            ):
+                raise StoreIntegrityError("verification workflow revision differs")
+            values.extend(event_values)
+        return (
+            cast(int, metadata["last_clock_ns"]),
+            _verification_store._verification_read_revision_digest(tuple(values)),
+        )
+
+    @staticmethod
+    def _verification_lifecycle_revision_tx(
+        connection: sqlite3.Connection,
+        operation: sqlite3.Row,
+        checkpoint: _workflow.WorkflowCheckpointV4,
+        task: _review_workflow.StoredTaskPolicyState,
+    ) -> tuple[int, str]:
+        """Hash one complete Store-validated lifecycle read revision."""
+
+        metadata = {
+            str(item[0]): item[1]
+            for item in connection.execute(
+                "SELECT key, value FROM store_meta ORDER BY key"
+            ).fetchall()
+        }
+        if frozenset(metadata) != _EXPECTED_META_KEYS:
+            raise StoreIntegrityError("verification lifecycle metadata differs")
+        for key in _EXPECTED_META_KEYS:
+            _require_sqlite_integer(metadata[key], f"verification lifecycle {key}")
+        events = connection.execute(
+            "SELECT workflow_event_id, workflow_sequence, clock_ns, "
+            "checkpoint_bytes, checkpoint_digest, event_digest "
+            "FROM workflow_events WHERE root_key = ? ORDER BY workflow_sequence",
+            (operation["root_key"],),
+        ).fetchall()
+        if len(events) != checkpoint.workflow_sequence:
+            raise StoreIntegrityError("verification lifecycle event prefix differs")
+        predecessor = _workflow_read_one(
+            connection,
+            "SELECT checkpoint_bytes FROM workflow_events "
+            "WHERE root_key = ? AND workflow_sequence = ?",
+            (
+                operation["root_key"],
+                operation["workflow_sequence_before"],
+            ),
+        )
+        if predecessor is None or type(predecessor[0]) is not bytes:
+            raise StoreIntegrityError("verification lifecycle predecessor differs")
+        operation_count = connection.execute(
+            "SELECT COUNT(*) FROM verification_operations WHERE root_key = ?",
+            (operation["root_key"],),
+        ).fetchone()
+        receipt_count = connection.execute(
+            "SELECT COUNT(*) FROM verification_receipts WHERE root_key = ?",
+            (operation["root_key"],),
+        ).fetchone()
+        if operation_count is None or receipt_count is None:
+            raise StoreIntegrityError("verification lifecycle row count differs")
+        values: list[object] = [
+            "schema-4-verification-lifecycle-revision",
+            operation["root_key"],
+            operation["verification_ref"],
+            operation["status"],
+            operation["record_digest"],
+            checkpoint.workflow_sequence,
+            checkpoint.checkpoint_digest,
+            task.state.sequence,
+            task.state_digest,
+            "sha256:" + hashlib.sha256(task.state_bytes).hexdigest(),
+            task.updated_ns,
+            "sha256:" + hashlib.sha256(predecessor[0]).hexdigest(),
+            operation_count[0],
+            receipt_count[0],
+        ]
+        for key in sorted(_EXPECTED_META_KEYS):
+            values.extend((key, metadata[key]))
+        for event in events:
+            event_values = tuple(event)
+            if (
+                len(event_values) != 6
+                or any(type(value) is not int for value in event_values[:3])
+                or type(event_values[3]) is not bytes
+                or any(type(value) is not str for value in event_values[4:])
+            ):
+                raise StoreIntegrityError(
+                    "verification lifecycle event revision differs"
+                )
+            values.extend(
+                (
+                    *event_values[:3],
+                    "sha256:" + hashlib.sha256(event_values[3]).hexdigest(),
+                    *event_values[4:],
+                )
+            )
+        if operation["receipt_ref"] is None:
+            values.append("no-receipt")
+        else:
+            receipt = _workflow_read_one(
+                connection,
+                "SELECT receipt_ref, receipt_digest, receipt_bytes, stored_ns "
+                "FROM verification_receipts WHERE root_key = ? AND receipt_ref = ?",
+                (operation["root_key"], operation["receipt_ref"]),
+            )
+            if receipt is None or type(receipt[2]) is not bytes:
+                raise StoreIntegrityError(
+                    "verification lifecycle receipt revision differs"
+                )
+            values.extend(
+                (
+                    receipt[0],
+                    receipt[1],
+                    "sha256:" + hashlib.sha256(receipt[2]).hexdigest(),
+                    receipt[3],
+                )
+            )
+        return (
+            cast(int, metadata["last_clock_ns"]),
+            _verification_store._verification_read_revision_digest(tuple(values)),
+        )
+
     def load_review_checkpoint(
         self,
         key: _workflow.WorkflowRootKey,
@@ -10718,88 +12154,7 @@ class CoordinationStore:
         root_key = _require_opaque_identifier(key, "review workflow root_key")
         try:
             with self._workflow_read_snapshot() as connection:
-                _validate_schema4_ledger_gate(
-                    connection,
-                    allow_review_task_rows=True,
-                )
-                _validate_workflow_rows_for_connection(
-                    connection,
-                    store_schema=_CURRENT_STORE_SCHEMA,
-                    allow_review_policy_edges=True,
-                )
-                checkpoint = self._workflow_load_checkpoint_tx(connection, root_key)
-                if checkpoint is None:
-                    return None
-                if type(checkpoint) is not _workflow.WorkflowCheckpointV4:
-                    raise StoreIntegrityError(
-                        "review workflow checkpoint is not a committed run"
-                    )
-                self._workflow_validate_root(checkpoint.root)
-                reference = checkpoint.task_policy
-                if reference is None:
-                    return None
-                row = self._review_task_row_tx(
-                    connection,
-                    root_key=root_key,
-                    task_id=reference.task_id,
-                )
-                if row is None:
-                    return None
-                task = _task_policy_observation_from_row(row)
-                _validate_task_observation_checkpoint(task, checkpoint)
-                events: list[_review_workflow.ReviewPolicyEventObservation] = []
-                with _workflow_stream_rows(
-                    connection,
-                    "SELECT * FROM workflow_events WHERE root_key = ? "
-                    "AND kind = ? AND actor = ? ORDER BY workflow_sequence",
-                    (
-                        root_key,
-                        _workflow.TransitionKind.POLICY.value,
-                        _review_workflow.REVIEW_POLICY_ACTOR,
-                    ),
-                ) as rows:
-                    for event_row in rows:
-                        events.append(self._review_event_observation(event_row))
-                if not events:
-                    raise StoreIntegrityError("review policy event prefix is missing")
-                predecessor_row = _workflow_read_one(
-                    connection,
-                    "SELECT checkpoint_bytes FROM workflow_events "
-                    "WHERE root_key = ? AND workflow_sequence = ?",
-                    (root_key, events[0].workflow_sequence - 1),
-                )
-                if predecessor_row is None:
-                    raise StoreIntegrityError(
-                        "review policy event predecessor is missing"
-                    )
-                predecessor_checkpoint_bytes = predecessor_row["checkpoint_bytes"]
-                if (
-                    type(predecessor_checkpoint_bytes) is not bytes
-                    or not predecessor_checkpoint_bytes
-                ):
-                    raise StoreIntegrityError(
-                        "review policy event predecessor is invalid"
-                    )
-                operation_count_row = _workflow_read_one(
-                    connection,
-                    "SELECT COUNT(*) FROM verification_operations",
-                )
-                receipt_count_row = _workflow_read_one(
-                    connection,
-                    "SELECT COUNT(*) FROM verification_receipts",
-                )
-                if operation_count_row is None or receipt_count_row is None:
-                    raise StoreIntegrityError("verification table count is unavailable")
-                operation_count = int(operation_count_row[0])
-                receipt_count = int(receipt_count_row[0])
-                return _review_workflow.ReviewCheckpointObservation(
-                    checkpoint=checkpoint,
-                    task=task,
-                    events=tuple(events),
-                    predecessor_checkpoint_bytes=predecessor_checkpoint_bytes,
-                    verification_operation_count=operation_count,
-                    verification_receipt_count=receipt_count,
-                )
+                return self._review_checkpoint_observation_tx(connection, root_key)
         except StoreError:
             raise
         except sqlite3.OperationalError as exc:
@@ -10813,6 +12168,2664 @@ class CoordinationStore:
             _review_workflow.ReviewCheckpointError,
         ) as exc:
             raise StoreIntegrityError("SQLite review checkpoint is invalid") from exc
+        return None
+
+    def read_verification_context(
+        self,
+        root_key: str,
+        owner_id: str,
+        final_review_binding: object,
+    ) -> tuple[
+        _verification_store.VerificationContextSeed,
+        _verification_store.VerificationEffectOwner,
+        int,
+        str,
+    ]:
+        """Issue the #82 context and owner from one validated SQLite snapshot."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        selected_root = _require_opaque_identifier(
+            root_key, "verification workflow root_key"
+        )
+        selected_owner = _require_opaque_identifier(
+            owner_id, "verification owner locator"
+        )
+        try:
+            with self._workflow_read_snapshot() as connection:
+                observation = self._review_checkpoint_observation_tx(
+                    connection,
+                    selected_root,
+                )
+                if observation is None:
+                    raise WorkflowOperationIdentityError(
+                        "verification current pair is unavailable"
+                    )
+                revision, revision_digest = self._verification_read_revision_tx(
+                    connection,
+                    observation,
+                )
+                return _verification_store._issue_verification_context(
+                    self,
+                    observation,
+                    selected_owner,
+                    final_review_binding,
+                    revision=revision,
+                    revision_digest=revision_digest,
+                    read_function=CoordinationStore.read_verification_context,
+                    store_marker=self._verification_store_marker,
+                    open_generation=self._verification_open_generation,
+                )
+        except StoreError:
+            raise
+        except sqlite3.OperationalError as exc:
+            self._raise_read_error(exc)
+        except sqlite3.DatabaseError as exc:
+            raise StoreIntegrityError(
+                "SQLite verification context read failed"
+            ) from exc
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _review_workflow.ReviewCheckpointError,
+            _verification_store.VerificationStoreError,
+        ):
+            raise WorkflowOperationIdentityError(
+                "verification context is not admissible"
+            ) from None
+        raise StoreIntegrityError("SQLite verification context read did not complete")
+
+    @staticmethod
+    def _verification_operation_row_tx(
+        connection: sqlite3.Connection,
+        *,
+        root_key: str,
+        verification_ref: str,
+    ) -> sqlite3.Row | None:
+        return _workflow_read_one(
+            connection,
+            "SELECT * FROM verification_operations "
+            "WHERE root_key = ? AND verification_ref = ?",
+            (root_key, verification_ref),
+        )
+
+    @staticmethod
+    def _verification_require_internal_methods(store: CoordinationStore) -> None:
+        for name, expected in _CANONICAL_VERIFICATION_INTERNAL_METHODS.items():
+            if getattr(CoordinationStore, name) is not expected:
+                raise WorkflowOperationIdentityError(
+                    "verification Store internals differ"
+                )
+            resolved: object | None = None
+            try:
+                resolved = object.__getattribute__(store, name)
+                owner = object.__getattribute__(resolved, "__self__")
+                function = object.__getattribute__(resolved, "__func__")
+            except (AttributeError, TypeError):
+                if resolved is expected:
+                    continue
+                raise WorkflowOperationIdentityError(
+                    "verification Store internals differ"
+                ) from None
+            if owner is not store or function is not expected:
+                raise WorkflowOperationIdentityError(
+                    "verification Store internals differ"
+                )
+
+    @staticmethod
+    def _verification_insert_operation(
+        connection: sqlite3.Connection,
+        values: Mapping[str, object],
+    ) -> None:
+        columns = _verification_store._VERIFICATION_RECORD_COLUMNS
+        if tuple(values) != columns:
+            raise WorkflowOperationIdentityError(
+                "verification operation projection order differs"
+            )
+        connection.execute(
+            "INSERT INTO verification_operations("
+            + ", ".join(columns)
+            + ") VALUES ("
+            + ", ".join("?" for _ in columns)
+            + ")",
+            tuple(values[column] for column in columns),
+        )
+
+    @staticmethod
+    def _verification_prepare_values(
+        plan: _verification_store._VerificationPreparePlan,
+        checkpoint: _workflow.WorkflowCheckpointV4,
+        event: sqlite3.Row,
+        *,
+        timestamp: int,
+    ) -> dict[str, object]:
+        request = plan.request_projection
+        approved = dict(request.approval)
+        before = plan.before_task
+        required = (
+            before.task_id,
+            before.dispatch_id,
+            before.attempt_id,
+            before.worker_node,
+            before.reviewer_node,
+        )
+        if any(value is None for value in required):
+            raise WorkflowOperationIdentityError(
+                "verification task identity is incomplete"
+            )
+        values: dict[str, object] = {
+            "root_key": plan.context.root_key,
+            "verification_ref": request.verification_id,
+            "record_version": 1,
+            "approval_binding_version": plan.snapshot.version,
+            "approval_binding_bytes": plan.approval_binding_bytes,
+            "approval_binding_digest": plan.snapshot.binding_digest,
+            "request_schema_version": plan.request_projection.version,
+            "approval_ref": request.approval_ref,
+            "approval_digest": approved["authority_digest"],
+            "review_ref": plan.snapshot.review_ref,
+            "review_digest": plan.snapshot.review_digest,
+            "completion_ref": plan.snapshot.completion_ref,
+            "completion_digest": plan.snapshot.completion_digest,
+            "request_bytes": plan.request_bytes,
+            "request_digest": request.request_digest,
+            "record_digest": "sha256:" + "0" * 64,
+            "run_id": plan.context.run_id,
+            "main_terminal_id": plan.context.main_terminal_id,
+            "task_id": str(before.task_id),
+            "dispatch_id": str(before.dispatch_id),
+            "attempt_id": str(before.attempt_id),
+            "worker_node": str(before.worker_node),
+            "reviewer_node": str(before.reviewer_node),
+            "worker_terminal_id": plan.context.worker_terminal_id,
+            "reviewer_terminal_id": plan.context.reviewer_terminal_id,
+            "team_id": str(before.team_id),
+            "workspace": str(before.workspace),
+            "review_round": before.review_round,
+            "task_sequence_before": before.sequence,
+            "task_sequence_after": plan.after_task.sequence,
+            "task_digest_before": plan.before_task_digest,
+            "task_digest_after": plan.after_task_digest,
+            "workflow_sequence_before": plan.context.workflow_sequence,
+            "workflow_sequence_after": checkpoint.workflow_sequence,
+            "workflow_digest_before": plan.context.workflow_checkpoint_digest,
+            "workflow_digest_after": checkpoint.checkpoint_digest,
+            "status": "PREPARED",
+            "effect_owner": None,
+            "effect_attempt": None,
+            "effect_epoch": None,
+            "effect_fence": None,
+            "effect_nonce": None,
+            "receipt_ref": None,
+            "receipt_digest": None,
+            "terminal_phase": None,
+            "terminal_receipt_ref": None,
+            "terminal_receipt_digest": None,
+            "unknown_code": None,
+            "unknown_evidence_digest": None,
+            "prepare_event_id": event["workflow_event_id"],
+            "prepare_event_digest": event["event_digest"],
+            "receipt_event_id": None,
+            "receipt_event_digest": None,
+            "terminal_event_id": None,
+            "terminal_event_digest": None,
+            "unknown_event_id": None,
+            "unknown_event_digest": None,
+            "created_ns": timestamp,
+            "updated_ns": timestamp,
+        }
+        if tuple(values) != _verification_store._VERIFICATION_RECORD_COLUMNS:
+            raise WorkflowOperationIdentityError(
+                "verification operation projection differs"
+            )
+        values["record_digest"] = _verification_store._verification_record_digest(
+            values
+        )
+        return values
+
+    @staticmethod
+    def _verification_compare_operation_row(
+        row: sqlite3.Row,
+        expected: Mapping[str, object],
+    ) -> None:
+        if tuple(expected) != _verification_store._VERIFICATION_RECORD_COLUMNS:
+            raise StoreIntegrityError("verification expected row order differs")
+        actual = {column: row[column] for column in tuple(expected)}
+        if any(
+            type(actual[column]) is not type(expected[column])
+            or actual[column] != expected[column]
+            for column in tuple(expected)
+        ):
+            raise StoreIntegrityError("verification operation readback differs")
+        if (
+            _verification_store._verification_record_digest(actual)
+            != actual["record_digest"]
+        ):
+            raise StoreIntegrityError("verification operation digest differs")
+
+    def _verification_prepare_replay(
+        self,
+        connection: sqlite3.Connection,
+        plan: _verification_store._VerificationPreparePlan,
+        row: sqlite3.Row,
+    ) -> _gate.VerificationPrepareResult:
+        if (
+            row["root_key"] != plan.context.root_key
+            or row["verification_ref"] != str(plan.request.verification_id)
+            or row["approval_ref"] != str(plan.request.approval_ref)
+            or row["status"]
+            not in {
+                "PREPARED",
+                "EFFECT_PREPARED",
+                "RECEIPTED",
+                "TERMINAL",
+                "UNKNOWN_EFFECT",
+            }
+        ):
+            raise WorkflowStateConflictError(
+                "verification prepare identity already exists"
+            )
+        event_id = row["prepare_event_id"]
+        event = _workflow_read_one(
+            connection,
+            "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+            (event_id,),
+        )
+        if event is None:
+            raise StoreIntegrityError("verification prepare event is missing")
+        CoordinationStore._workflow_validate_event_row(
+            event,
+            store_schema=_CURRENT_STORE_SCHEMA,
+        )
+        prepared_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+            event,
+            store_schema=_CURRENT_STORE_SCHEMA,
+        )
+        if type(prepared_checkpoint) is not _workflow.WorkflowCheckpointV4:
+            raise StoreIntegrityError("verification prepare checkpoint is missing")
+        expected = self._verification_prepare_values(
+            plan,
+            prepared_checkpoint,
+            event,
+            timestamp=row["created_ns"],
+        )
+        if row["status"] in {"RECEIPTED", "TERMINAL", "UNKNOWN_EFFECT"}:
+            _validate_schema4_verification_prepare_rows(connection)
+            lifecycle_mutable = {
+                "record_digest",
+                "task_sequence_after",
+                "task_digest_after",
+                "workflow_sequence_after",
+                "workflow_digest_after",
+                "status",
+                "effect_owner",
+                "effect_attempt",
+                "effect_epoch",
+                "effect_fence",
+                "effect_nonce",
+                "receipt_ref",
+                "receipt_digest",
+                "terminal_phase",
+                "terminal_receipt_ref",
+                "terminal_receipt_digest",
+                "unknown_code",
+                "unknown_evidence_digest",
+                "receipt_event_id",
+                "receipt_event_digest",
+                "terminal_event_id",
+                "terminal_event_digest",
+                "unknown_event_id",
+                "unknown_event_digest",
+                "updated_ns",
+            }
+            actual = {
+                column: row[column]
+                for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+            }
+            if (
+                prepared_checkpoint.workflow_state
+                is not _workflow.CheckpointState.VERIFYING
+                or prepared_checkpoint.workflow_sequence
+                != plan.context.workflow_sequence + 1
+                or prepared_checkpoint.task_sequence != plan.after_task.sequence
+                or prepared_checkpoint.verification_authority is None
+                or prepared_checkpoint.verification_authority.reference
+                != str(plan.request.verification_id)
+                or prepared_checkpoint.verification_authority.digest
+                != event["evidence_ref"]
+                or any(
+                    column not in lifecycle_mutable
+                    and (
+                        type(row[column]) is not type(expected[column])
+                        or row[column] != expected[column]
+                    )
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                )
+                or _verification_store._verification_record_digest(actual)
+                != row["record_digest"]
+            ):
+                raise StoreIntegrityError(
+                    "verification lifecycle prepare replay differs"
+                )
+            return _gate._make_prepare(
+                _gate.VerificationRef(plan.request.verification_id),
+                _gate.ApprovalRef(plan.request.approval_ref),
+                plan.request,
+                _gate.PreparationStatus.EXISTING,
+            )
+
+        current = self._workflow_load_checkpoint_tx(
+            connection,
+            plan.context.root_key,
+        )
+        if type(current) is not _workflow.WorkflowCheckpointV4:
+            raise StoreIntegrityError("verification replay checkpoint is missing")
+        task_row = self._review_task_row_tx(
+            connection,
+            root_key=plan.context.root_key,
+            task_id=str(plan.before_task.task_id),
+        )
+        if task_row is None:
+            raise StoreIntegrityError("verification replay task is missing")
+        task = _task_policy_observation_from_row(task_row)
+        _validate_task_observation_checkpoint(task, current)
+        if (
+            current.workflow_state is not _workflow.CheckpointState.VERIFYING
+            or current.workflow_sequence != plan.context.workflow_sequence + 1
+            or current.task_sequence != plan.after_task.sequence
+            or current.verification_authority is None
+            or current.verification_authority.reference
+            != str(plan.request.verification_id)
+            or current.verification_authority.digest != event["evidence_ref"]
+            or task.state != plan.after_task
+            or task.state_bytes != plan.after_task_bytes
+            or task.state_digest != plan.after_task_digest
+            or (row["status"] == "PREPARED" and row["created_ns"] != row["updated_ns"])
+            or row["updated_ns"] < row["created_ns"]
+        ):
+            raise StoreIntegrityError("verification prepare replay differs")
+        expected = self._verification_prepare_values(
+            plan,
+            current,
+            event,
+            timestamp=row["created_ns"],
+        )
+        if row["status"] == "PREPARED":
+            self._verification_compare_operation_row(row, expected)
+        else:
+            mutable = {
+                "status",
+                "effect_owner",
+                "effect_attempt",
+                "effect_epoch",
+                "effect_fence",
+                "effect_nonce",
+                "record_digest",
+                "updated_ns",
+            }
+            if any(
+                column not in mutable
+                and (
+                    type(row[column]) is not type(expected[column])
+                    or row[column] != expected[column]
+                )
+                for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+            ):
+                raise StoreIntegrityError("verification armed prepare replay differs")
+            actual = {
+                column: row[column]
+                for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+            }
+            if (
+                _verification_store._verification_record_digest(actual)
+                != row["record_digest"]
+            ):
+                raise StoreIntegrityError("verification armed prepare digest differs")
+        return _gate._make_prepare(
+            _gate.VerificationRef(plan.request.verification_id),
+            _gate.ApprovalRef(plan.request.approval_ref),
+            plan.request,
+            _gate.PreparationStatus.EXISTING,
+        )
+
+    def commit_verification_prepare(
+        self,
+        request: _verification_store.VerificationPrepareRequest,
+    ) -> _gate.VerificationPrepareResult:
+        """Atomically commit or exactly replay one verification prepare."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        try:
+            plan = _verification_store._validate_verification_prepare_request(
+                request,
+                self,
+            )
+        except _verification_store.VerificationStoreError as exc:
+            raise WorkflowOperationIdentityError(
+                "verification prepare request is invalid"
+            ) from exc
+
+        result: _gate.VerificationPrepareResult | None = None
+        try:
+            with self._write_transaction() as connection:
+                existing_rows = connection.execute(
+                    "SELECT * FROM verification_operations WHERE root_key = ? "
+                    "AND (verification_ref = ? OR approval_ref = ?)",
+                    (
+                        plan.context.root_key,
+                        str(plan.request.verification_id),
+                        str(plan.request.approval_ref),
+                    ),
+                ).fetchall()
+                if len(existing_rows) > 1:
+                    raise StoreIntegrityError(
+                        "verification prepare identity is duplicated"
+                    )
+                if existing_rows:
+                    result = self._verification_prepare_replay(
+                        connection,
+                        plan,
+                        cast(sqlite3.Row, existing_rows[0]),
+                    )
+                    self._fault("before_verification_prepare_commit")
+                    return result
+
+                observation = self._review_checkpoint_observation_tx(
+                    connection,
+                    plan.context.root_key,
+                )
+                if observation is None:
+                    raise WorkflowStateConflictError(
+                        "verification prepare current pair is missing"
+                    )
+                revision, revision_digest = self._verification_read_revision_tx(
+                    connection,
+                    observation,
+                )
+                current = observation.checkpoint
+                before_task = observation.task
+                assignment = current.active_assignment
+                if (
+                    revision != plan.revision
+                    or revision_digest != plan.revision_digest
+                    or current.workflow_state
+                    is not _workflow.CheckpointState.REVIEW_PENDING
+                    or current.workflow_sequence != plan.context.workflow_sequence
+                    or current.checkpoint_digest
+                    != plan.context.workflow_checkpoint_digest
+                    or current.task_sequence != plan.context.task_sequence
+                    or current.verification_authority is not None
+                    or before_task.state != plan.before_task
+                    or before_task.state_bytes != plan.before_task_bytes
+                    or before_task.state_digest != plan.before_task_digest
+                    or before_task.state.phase is not _task_policy.TaskPhase.APPROVED
+                    or current.run.run_id != plan.context.run_id
+                    or current.run.main_terminal_id != plan.context.main_terminal_id
+                    or current.run.consumer_generation
+                    != plan.context.consumer_generation
+                    or assignment is None
+                    or assignment.terminal_id != plan.context.worker_terminal_id
+                    or current.review_authority is None
+                    or current.review_authority.reference != plan.snapshot.review_ref
+                    or _review_workflow._review_owner_digest_from_reference(
+                        current.review_authority.reference
+                    )
+                    != plan.snapshot.review_digest
+                    or str(before_task.state.team_id) != plan.request.approval.team_id
+                    or str(before_task.state.workspace)
+                    != plan.request.approval.workspace
+                    or str(before_task.state.task_id) != plan.request.approval.task_id
+                    or str(before_task.state.dispatch_id)
+                    != plan.request.approval.dispatch_id
+                    or str(before_task.state.attempt_id)
+                    != plan.request.approval.attempt_id
+                    or str(before_task.state.worker_node)
+                    != plan.request.approval.worker_node
+                    or str(before_task.state.reviewer_node)
+                    != plan.request.approval.reviewer_node
+                    or plan.context.worker_terminal_id
+                    != plan.request.approval.worker_terminal_id
+                    or plan.context.reviewer_terminal_id
+                    != plan.request.approval.reviewer_terminal_id
+                ):
+                    raise WorkflowStateConflictError(
+                        "verification prepare current pair is stale"
+                    )
+                if (
+                    current.last_operation is not None
+                    and current.last_operation.status
+                    in {
+                        _workflow.OperationStatus.INTENT,
+                        _workflow.OperationStatus.UNKNOWN_EFFECT,
+                    }
+                ):
+                    raise WorkflowRecoveryRequiredError(
+                        "verification prepare has unresolved workflow operation"
+                    )
+                timestamp = self._record_clock(
+                    connection,
+                    self._timestamp(None),
+                    strict=self._clock_injected,
+                )
+                after_values = _task_policy_row_values(
+                    plan.after_task,
+                    root_key=plan.context.root_key,
+                    run_id=plan.context.run_id,
+                    updated_ns=timestamp,
+                )
+                self._fault("before_verification_prepare_task_write")
+                self._review_update_task_row(
+                    connection,
+                    after_values,
+                    expected=before_task,
+                )
+                self._fault("after_verification_prepare_task_write")
+
+                next_reference = _workflow.TaskPolicyReference(
+                    version=plan.after_task.version,
+                    team_id=str(plan.after_task.team_id),
+                    workspace=str(plan.after_task.workspace),
+                    task_id=str(plan.after_task.task_id),
+                    sequence=plan.after_task.sequence,
+                    state_digest=plan.after_task_digest,
+                )
+                next_workflow_sequence = current.workflow_sequence + 1
+                evidence = _verification_store._verification_evidence_wrapper(
+                    _verification_store.VerificationStage.PREPARE,
+                    plan.context.root_key,
+                    str(plan.request.verification_id),
+                    current.workflow_sequence,
+                    next_workflow_sequence,
+                    before_task.state.sequence,
+                    plan.after_task.sequence,
+                    plan.snapshot.binding_digest,
+                )
+                next_draft = _workflow.WorkflowCheckpointDraft(
+                    root=current.root,
+                    run=current.run,
+                    workflow_sequence=next_workflow_sequence,
+                    task_sequence=plan.after_task.sequence,
+                    execution_mode=current.execution_mode,
+                    workflow_state=_workflow.CheckpointState.VERIFYING,
+                    task_policy=next_reference,
+                    active_assignment=current.active_assignment,
+                    pending_delivery=current.pending_delivery,
+                    replied_message_ids=current.replied_message_ids,
+                    read_observed=current.read_observed,
+                    released=current.released,
+                    review_authority=current.review_authority,
+                    verification_authority=_workflow.AuthorityReference(
+                        reference=str(plan.request.verification_id),
+                        digest=evidence,
+                    ),
+                    last_operation=current.last_operation,
+                )
+                next_checkpoint = self._workflow_issue_checkpoint(
+                    next_draft,
+                    updated_ns=timestamp,
+                )
+                self._fault("before_verification_prepare_checkpoint_write")
+                self._review_update_checkpoint(
+                    connection,
+                    next_checkpoint,
+                    expected=current,
+                )
+                self._fault("after_verification_prepare_checkpoint_write")
+
+                request_wrapper = _verification_store._verification_request_wrapper(
+                    _verification_store.VerificationStage.PREPARE,
+                    plan.context.root_key,
+                    str(plan.request.verification_id),
+                    current.workflow_sequence,
+                    next_checkpoint.workflow_sequence,
+                    before_task.state.sequence,
+                    plan.after_task.sequence,
+                    str(plan.request.request_digest),
+                )
+                self._fault("before_verification_prepare_event_write")
+                event = self._workflow_insert_event(
+                    connection,
+                    root_key=plan.context.root_key,
+                    operation_id=None,
+                    workflow_sequence=next_checkpoint.workflow_sequence,
+                    task_sequence_before=before_task.state.sequence,
+                    task_sequence_after=plan.after_task.sequence,
+                    from_state=current.workflow_state.value,
+                    to_state=next_checkpoint.workflow_state.value,
+                    kind=_workflow.TransitionKind.VERIFICATION.value,
+                    actor=_verification_store.VERIFICATION_ACTOR,
+                    clock_ns=timestamp,
+                    request_digest=request_wrapper,
+                    receipt_id=None,
+                    checkpoint=next_checkpoint,
+                    evidence_ref=evidence,
+                )
+                self._fault("after_verification_prepare_event_write")
+                CoordinationStore._workflow_validate_event_row(
+                    event,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                )
+
+                operation_values = self._verification_prepare_values(
+                    plan,
+                    next_checkpoint,
+                    event,
+                    timestamp=timestamp,
+                )
+                self._fault("before_verification_prepare_operation_write")
+                self._verification_insert_operation(connection, operation_values)
+                self._fault("after_verification_prepare_operation_write")
+                self._fault("before_verification_prepare_readback")
+
+                stored_checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.context.root_key,
+                )
+                stored_task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.context.root_key,
+                    task_id=str(plan.before_task.task_id),
+                )
+                stored_operation = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.context.root_key,
+                    verification_ref=str(plan.request.verification_id),
+                )
+                if (
+                    stored_checkpoint != next_checkpoint
+                    or stored_task_row is None
+                    or stored_operation is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification prepare readback is incomplete"
+                    )
+                stored_task = _task_policy_observation_from_row(stored_task_row)
+                _validate_task_observation_checkpoint(
+                    stored_task,
+                    next_checkpoint,
+                )
+                if (
+                    stored_task.state != plan.after_task
+                    or stored_task.state_bytes != plan.after_task_bytes
+                    or stored_task.state_digest != plan.after_task_digest
+                ):
+                    raise StoreIntegrityError(
+                        "verification prepare task readback differs"
+                    )
+                self._verification_compare_operation_row(
+                    stored_operation,
+                    operation_values,
+                )
+                clock_row = _workflow_read_one(
+                    connection,
+                    "SELECT value FROM store_meta WHERE key = 'last_clock_ns'",
+                )
+                if clock_row is None or clock_row[0] != timestamp:
+                    raise StoreIntegrityError(
+                        "verification prepare clock readback differs"
+                    )
+                self._fault("after_verification_prepare_readback")
+                result = _gate._make_prepare(
+                    _gate.VerificationRef(plan.request.verification_id),
+                    _gate.ApprovalRef(plan.request.approval_ref),
+                    plan.request,
+                    _gate.PreparationStatus.PREPARED,
+                )
+                self._fault("before_verification_prepare_commit")
+                self._workflow_validate_root(current.root)
+        except (
+            WorkflowStateConflictError,
+            WorkflowOperationIdentityError,
+            WorkflowRecoveryRequiredError,
+        ):
+            raise
+        except sqlite3.OperationalError as exc:
+            _raise_sqlite_write_error(exc)
+        except sqlite3.DatabaseError as exc:
+            _raise_sqlite_write_error(exc)
+        except StoreError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _verification_store.VerificationStoreError,
+        ) as exc:
+            raise StoreIntegrityError(
+                "verification prepare transaction failed"
+            ) from exc
+        if result is None:
+            raise StoreIntegrityError("verification prepare result is unavailable")
+        return result
+
+    def read_verification_reentry(
+        self,
+        root_key: str,
+        verification_ref: str,
+        owner_id: str,
+    ) -> tuple[
+        _verification_store.VerificationContextSeed,
+        _verification_store.VerificationEffectOwner,
+        _task_ledger.ApprovalBindingSnapshotV1,
+        _task_ledger.VerificationRequestProjectionV1,
+        int,
+        str,
+    ]:
+        """Read one prepared operation and issue fresh process-local authority."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        selected_root = _require_opaque_identifier(
+            root_key,
+            "verification reentry root_key",
+        )
+        selected_ref = _require_opaque_identifier(
+            verification_ref,
+            "verification reentry ref",
+        )
+        selected_owner = _require_opaque_identifier(
+            owner_id,
+            "verification reentry owner",
+        )
+        try:
+            with self._workflow_read_snapshot() as connection:
+                _validate_schema4_ledger_gate(
+                    connection,
+                    allow_review_task_rows=True,
+                    allow_verification_rows=True,
+                )
+                _validate_workflow_rows_for_connection(
+                    connection,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                    allow_review_policy_edges=True,
+                    allow_verification_edges=True,
+                )
+                row = self._verification_operation_row_tx(
+                    connection,
+                    root_key=selected_root,
+                    verification_ref=selected_ref,
+                )
+                if row is None or row["status"] not in {
+                    "PREPARED",
+                    "EFFECT_PREPARED",
+                    "RECEIPTED",
+                    "TERMINAL",
+                    "UNKNOWN_EFFECT",
+                }:
+                    raise WorkflowOperationIdentityError(
+                        "verification reentry status is unavailable"
+                    )
+                binding_bytes = row["approval_binding_bytes"]
+                request_bytes = row["request_bytes"]
+                if type(binding_bytes) is not bytes or type(request_bytes) is not bytes:
+                    raise StoreIntegrityError(
+                        "verification reentry payload type differs"
+                    )
+                snapshot = _task_ledger.decode_approval_binding_snapshot(binding_bytes)
+                request_projection = (
+                    _task_ledger.decode_verification_request_projection(request_bytes)
+                )
+                checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    selected_root,
+                )
+                task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=selected_root,
+                    task_id=row["task_id"],
+                )
+                if (
+                    type(checkpoint) is not _workflow.WorkflowCheckpointV4
+                    or task_row is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification reentry current pair is unavailable"
+                    )
+                task = _task_policy_observation_from_row(task_row)
+                _validate_task_observation_checkpoint(
+                    task,
+                    checkpoint,
+                    require_updated_ns=row["status"] != "UNKNOWN_EFFECT",
+                )
+                revision, revision_digest = self._verification_lifecycle_revision_tx(
+                    connection,
+                    row,
+                    checkpoint,
+                    task,
+                )
+                return _verification_store._issue_persisted_verification_context(
+                    self,
+                    snapshot,
+                    request_projection,
+                    selected_owner,
+                    revision=revision,
+                    revision_digest=revision_digest,
+                    read_function=CoordinationStore.read_verification_reentry,
+                    store_marker=self._verification_store_marker,
+                    open_generation=self._verification_open_generation,
+                )
+        except StoreError:
+            raise
+        except sqlite3.OperationalError as exc:
+            self._raise_read_error(exc)
+        except sqlite3.DatabaseError as exc:
+            raise StoreIntegrityError(
+                "SQLite verification reentry read failed"
+            ) from exc
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _task_ledger.TaskVerificationLedgerError,
+            _verification_store.VerificationStoreError,
+        ):
+            raise WorkflowOperationIdentityError(
+                "verification reentry is not admissible"
+            ) from None
+        raise StoreIntegrityError("verification reentry read did not complete")
+
+    def read_verification_lifecycle(
+        self,
+        root_key: str,
+        verification_ref: str,
+    ) -> _verification_store._VerificationLifecycleProjection:
+        """Read one lifecycle record, status, and revision in one snapshot."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        selected_root = _require_opaque_identifier(
+            root_key,
+            "verification lifecycle root_key",
+        )
+        selected_ref = _require_opaque_identifier(
+            verification_ref,
+            "verification lifecycle ref",
+        )
+        try:
+            with self._workflow_read_snapshot() as connection:
+                _validate_schema4_ledger_gate(
+                    connection,
+                    allow_review_task_rows=True,
+                    allow_verification_rows=True,
+                )
+                _validate_workflow_rows_for_connection(
+                    connection,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                    allow_review_policy_edges=True,
+                    allow_verification_edges=True,
+                )
+                row = self._verification_operation_row_tx(
+                    connection,
+                    root_key=selected_root,
+                    verification_ref=selected_ref,
+                )
+                if row is None or row["status"] not in {
+                    "PREPARED",
+                    "EFFECT_PREPARED",
+                    "RECEIPTED",
+                    "TERMINAL",
+                    "UNKNOWN_EFFECT",
+                }:
+                    raise WorkflowOperationIdentityError(
+                        "verification lifecycle status is unavailable"
+                    )
+                binding_bytes = row["approval_binding_bytes"]
+                request_bytes = row["request_bytes"]
+                if type(binding_bytes) is not bytes or type(request_bytes) is not bytes:
+                    raise StoreIntegrityError("verification lifecycle payload differs")
+                snapshot = _task_ledger.decode_approval_binding_snapshot(binding_bytes)
+                request_projection = (
+                    _task_ledger.decode_verification_request_projection(request_bytes)
+                )
+                receipt_projection: (
+                    _task_ledger.VerificationReceiptProjectionV1 | None
+                ) = None
+                receipt_row: sqlite3.Row | None = None
+                if row["receipt_ref"] is not None:
+                    receipt_row = _workflow_read_one(
+                        connection,
+                        "SELECT * FROM verification_receipts "
+                        "WHERE root_key = ? AND receipt_ref = ?",
+                        (selected_root, row["receipt_ref"]),
+                    )
+                    if (
+                        receipt_row is None
+                        or type(receipt_row["receipt_bytes"]) is not bytes
+                    ):
+                        raise StoreIntegrityError(
+                            "verification lifecycle receipt is missing"
+                        )
+                    receipt_projection = (
+                        _task_ledger.decode_verification_receipt_projection(
+                            receipt_row["receipt_bytes"]
+                        )
+                    )
+                checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    selected_root,
+                )
+                task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=selected_root,
+                    task_id=row["task_id"],
+                )
+                if (
+                    type(checkpoint) is not _workflow.WorkflowCheckpointV4
+                    or task_row is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification lifecycle current pair is missing"
+                    )
+                task = _task_policy_observation_from_row(task_row)
+                _revision, revision_digest = self._verification_lifecycle_revision_tx(
+                    connection,
+                    row,
+                    checkpoint,
+                    task,
+                )
+                return _verification_store._VerificationLifecycleProjection(
+                    snapshot=snapshot,
+                    request_projection=request_projection,
+                    status=row["status"],
+                    effect_owner=row["effect_owner"],
+                    effect_attempt=row["effect_attempt"],
+                    effect_epoch=row["effect_epoch"],
+                    effect_fence=row["effect_fence"],
+                    effect_nonce=row["effect_nonce"],
+                    receipt_projection=receipt_projection,
+                    revision_digest=revision_digest,
+                )
+        except StoreError:
+            raise
+        except sqlite3.OperationalError as exc:
+            self._raise_read_error(exc)
+        except sqlite3.DatabaseError as exc:
+            raise StoreIntegrityError(
+                "SQLite verification lifecycle read failed"
+            ) from exc
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _task_ledger.TaskVerificationLedgerError,
+        ):
+            raise WorkflowOperationIdentityError(
+                "verification lifecycle is not admissible"
+            ) from None
+        raise StoreIntegrityError("verification lifecycle read did not complete")
+
+    @staticmethod
+    def _verification_effect_values(
+        row: sqlite3.Row,
+        plan: _verification_store._VerificationEffectBeginPlan,
+        *,
+        timestamp: int,
+        recovery_epoch: int,
+        fencing_token: int,
+        nonce: str,
+    ) -> dict[str, object]:
+        values = {
+            column: row[column]
+            for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+        }
+        if (
+            values["root_key"] != plan.root_key
+            or values["verification_ref"] != plan.verification_ref
+            or values["request_digest"] != plan.request_digest
+            or values["status"] != "PREPARED"
+            or values["effect_owner"] is not None
+            or values["effect_attempt"] is not None
+            or values["effect_epoch"] is not None
+            or values["effect_fence"] is not None
+            or values["effect_nonce"] is not None
+        ):
+            raise WorkflowStateConflictError("verification effect preimage differs")
+        values.update(
+            {
+                "status": "EFFECT_PREPARED",
+                "effect_owner": plan.effect_owner,
+                "effect_attempt": 1,
+                "effect_epoch": recovery_epoch,
+                "effect_fence": fencing_token,
+                "effect_nonce": nonce,
+                "updated_ns": timestamp,
+            }
+        )
+        values["record_digest"] = _verification_store._verification_record_digest(
+            values
+        )
+        return values
+
+    def _verification_effect_current_pair_tx(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> tuple[
+        _workflow.WorkflowCheckpointV4,
+        _review_workflow.StoredTaskPolicyState,
+        sqlite3.Row,
+    ]:
+        checkpoint = self._workflow_load_checkpoint_tx(
+            connection,
+            row["root_key"],
+        )
+        task_row = self._review_task_row_tx(
+            connection,
+            root_key=row["root_key"],
+            task_id=row["task_id"],
+        )
+        prepare_event = _workflow_read_one(
+            connection,
+            "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+            (row["prepare_event_id"],),
+        )
+        if (
+            type(checkpoint) is not _workflow.WorkflowCheckpointV4
+            or task_row is None
+            or prepare_event is None
+        ):
+            raise StoreIntegrityError("verification effect current pair is unavailable")
+        task = _task_policy_observation_from_row(task_row)
+        _validate_task_observation_checkpoint(task, checkpoint)
+        CoordinationStore._workflow_validate_event_row(
+            prepare_event,
+            store_schema=_CURRENT_STORE_SCHEMA,
+        )
+        event_checkpoint = CoordinationStore._workflow_decode_event_checkpoint(
+            prepare_event,
+            store_schema=_CURRENT_STORE_SCHEMA,
+        )
+        expected_request = _verification_store._verification_request_wrapper(
+            _verification_store.VerificationStage.PREPARE,
+            row["root_key"],
+            row["verification_ref"],
+            row["workflow_sequence_before"],
+            row["workflow_sequence_after"],
+            row["task_sequence_before"],
+            row["task_sequence_after"],
+            row["request_digest"],
+        )
+        expected_evidence = _verification_store._verification_evidence_wrapper(
+            _verification_store.VerificationStage.PREPARE,
+            row["root_key"],
+            row["verification_ref"],
+            row["workflow_sequence_before"],
+            row["workflow_sequence_after"],
+            row["task_sequence_before"],
+            row["task_sequence_after"],
+            row["approval_binding_digest"],
+        )
+        authority = checkpoint.verification_authority
+        if (
+            event_checkpoint != checkpoint
+            or checkpoint.workflow_state is not _workflow.CheckpointState.VERIFYING
+            or checkpoint.workflow_sequence != row["workflow_sequence_after"]
+            or checkpoint.checkpoint_digest != row["workflow_digest_after"]
+            or checkpoint.task_sequence != row["task_sequence_after"]
+            or task.state.phase is not _task_policy.TaskPhase.VERIFYING
+            or task.state.sequence != row["task_sequence_after"]
+            or task.state_digest != row["task_digest_after"]
+            or authority is None
+            or authority.reference != row["verification_ref"]
+            or authority.digest != expected_evidence
+            or prepare_event["root_key"] != row["root_key"]
+            or prepare_event["operation_id"] is not None
+            or prepare_event["receipt_id"] is not None
+            or prepare_event["workflow_sequence"] != row["workflow_sequence_after"]
+            or prepare_event["task_sequence_before"] != row["task_sequence_before"]
+            or prepare_event["task_sequence_after"] != row["task_sequence_after"]
+            or prepare_event["from_state"]
+            != _workflow.CheckpointState.REVIEW_PENDING.value
+            or prepare_event["to_state"] != _workflow.CheckpointState.VERIFYING.value
+            or prepare_event["kind"] != _workflow.TransitionKind.VERIFICATION.value
+            or prepare_event["actor"] != _verification_store.VERIFICATION_ACTOR
+            or prepare_event["request_digest"] != expected_request
+            or prepare_event["evidence_ref"] != expected_evidence
+            or prepare_event["event_digest"] != row["prepare_event_digest"]
+            or prepare_event["checkpoint_digest"] != checkpoint.checkpoint_digest
+        ):
+            raise WorkflowStateConflictError("verification effect current pair differs")
+        return checkpoint, task, prepare_event
+
+    def commit_verification_effect_begin(
+        self,
+        request: _verification_store.VerificationEffectBeginRequest,
+    ) -> _gate.VerificationEffectLease:
+        """Arm one prepared verification effect without changing workflow state."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        try:
+            plan = _verification_store._validate_verification_effect_begin_request(
+                request,
+                self,
+            )
+        except _verification_store.VerificationStoreError as exc:
+            raise WorkflowOperationIdentityError(
+                "verification effect request is invalid"
+            ) from exc
+
+        result: _gate.VerificationEffectLease | None = None
+        try:
+            with self._write_transaction() as connection:
+                row = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                if row is None:
+                    raise WorkflowOperationIdentityError(
+                        "verification effect operation is missing"
+                    )
+                _validate_schema4_verification_prepare_rows(connection)
+                actual = {
+                    column: row[column]
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                }
+                if (
+                    _verification_store._verification_record_digest(actual)
+                    != row["record_digest"]
+                    or row["request_digest"] != plan.request_digest
+                    or row["approval_binding_digest"] is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification effect operation is invalid"
+                    )
+                binding_bytes = row["approval_binding_bytes"]
+                if type(binding_bytes) is not bytes:
+                    raise StoreIntegrityError(
+                        "verification effect approval payload differs"
+                    )
+                snapshot = _task_ledger.decode_approval_binding_snapshot(binding_bytes)
+                if (
+                    snapshot.effect_owner != plan.effect_owner
+                    or snapshot.binding_digest != row["approval_binding_digest"]
+                ):
+                    raise WorkflowOperationIdentityError(
+                        "verification effect owner differs"
+                    )
+                current, current_task, prepare_event = (
+                    self._verification_effect_current_pair_tx(connection, row)
+                )
+                recovery_epoch = self._metadata_integer(
+                    connection,
+                    "recovery_epoch",
+                    "recovery_epoch",
+                )
+                if row["status"] == "EFFECT_PREPARED":
+                    if (
+                        row["effect_owner"] != plan.effect_owner
+                        or row["effect_attempt"] != 1
+                        or row["effect_epoch"] != recovery_epoch
+                        or type(row["effect_fence"]) is not int
+                        or type(row["effect_nonce"]) is not str
+                    ):
+                        raise WorkflowRecoveryRequiredError(
+                            "verification armed effect identity differs"
+                        )
+                    result = _gate._make_effect(
+                        _gate.VerificationRef(plan.verification_ref),
+                        _gate.ReceiptDigest(plan.request_digest),
+                        _gate.EffectNonce(row["effect_nonce"]),
+                        row["effect_epoch"],
+                        row["effect_fence"],
+                        _gate.EffectBeginStatus.UNKNOWN,
+                    )
+                    return result
+                if row["status"] != "PREPARED":
+                    raise WorkflowRecoveryRequiredError(
+                        "verification effect status cannot be armed"
+                    )
+
+                timestamp = self._record_clock(
+                    connection,
+                    self._timestamp(None),
+                    strict=self._clock_injected,
+                )
+                fencing_token = self._next_value(connection)
+                nonce = secrets.token_hex(16)
+                expected = self._verification_effect_values(
+                    row,
+                    plan,
+                    timestamp=timestamp,
+                    recovery_epoch=recovery_epoch,
+                    fencing_token=fencing_token,
+                    nonce=nonce,
+                )
+                self._fault("before_verification_effect_write")
+                cursor = connection.execute(
+                    "UPDATE verification_operations SET "
+                    "status = ?, effect_owner = ?, effect_attempt = ?, "
+                    "effect_epoch = ?, effect_fence = ?, effect_nonce = ?, "
+                    "record_digest = ?, updated_ns = ? "
+                    "WHERE root_key = ? AND verification_ref = ? "
+                    "AND status = 'PREPARED' AND record_digest = ? "
+                    "AND effect_owner IS NULL AND effect_attempt IS NULL "
+                    "AND effect_epoch IS NULL AND effect_fence IS NULL "
+                    "AND effect_nonce IS NULL "
+                    "AND task_sequence_after = ? AND task_digest_after = ? "
+                    "AND workflow_sequence_after = ? AND workflow_digest_after = ? "
+                    "AND prepare_event_id = ? AND prepare_event_digest = ?",
+                    (
+                        expected["status"],
+                        expected["effect_owner"],
+                        expected["effect_attempt"],
+                        expected["effect_epoch"],
+                        expected["effect_fence"],
+                        expected["effect_nonce"],
+                        expected["record_digest"],
+                        expected["updated_ns"],
+                        plan.root_key,
+                        plan.verification_ref,
+                        row["record_digest"],
+                        row["task_sequence_after"],
+                        row["task_digest_after"],
+                        row["workflow_sequence_after"],
+                        row["workflow_digest_after"],
+                        row["prepare_event_id"],
+                        row["prepare_event_digest"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkflowStateConflictError(
+                        "verification effect compare-and-swap was lost"
+                    )
+                self._fault("after_verification_effect_write")
+                stored = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                if stored is None:
+                    raise StoreIntegrityError(
+                        "verification armed effect readback is missing"
+                    )
+                self._verification_compare_operation_row(stored, expected)
+                stored_checkpoint, stored_task, stored_prepare_event = (
+                    self._verification_effect_current_pair_tx(connection, stored)
+                )
+                floor = self._metadata_integer(
+                    connection,
+                    "fencing_token_floor",
+                    "fencing_token_floor",
+                )
+                clock = self._metadata_integer(
+                    connection,
+                    "last_clock_ns",
+                    "last_clock_ns",
+                )
+                if (
+                    floor != fencing_token
+                    or clock != timestamp
+                    or stored_checkpoint != current
+                    or stored_task != current_task
+                    or dict(stored_prepare_event) != dict(prepare_event)
+                ):
+                    raise StoreIntegrityError(
+                        "verification effect metadata readback differs"
+                    )
+                self._fault("after_verification_effect_readback")
+                result = _gate._make_effect(
+                    _gate.VerificationRef(plan.verification_ref),
+                    _gate.ReceiptDigest(plan.request_digest),
+                    _gate.EffectNonce(nonce),
+                    recovery_epoch,
+                    fencing_token,
+                    _gate.EffectBeginStatus.RUN_ONCE,
+                )
+                self._fault("before_verification_effect_commit")
+        except (
+            WorkflowStateConflictError,
+            WorkflowOperationIdentityError,
+            WorkflowRecoveryRequiredError,
+        ):
+            raise
+        except sqlite3.OperationalError as exc:
+            _raise_sqlite_write_error(exc)
+        except sqlite3.DatabaseError as exc:
+            _raise_sqlite_write_error(exc)
+        except StoreError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _task_ledger.TaskVerificationLedgerError,
+            _verification_store.VerificationStoreError,
+        ) as exc:
+            raise StoreIntegrityError("verification effect transaction failed") from exc
+        if result is None:
+            raise StoreIntegrityError("verification effect result is unavailable")
+        return result
+
+    @staticmethod
+    def _verification_insert_receipt(
+        connection: sqlite3.Connection,
+        values: Mapping[str, object],
+    ) -> None:
+        columns = (
+            "root_key",
+            "receipt_ref",
+            "verification_ref",
+            "receipt_schema_version",
+            "receipt_bytes",
+            "receipt_digest",
+            "stored_ns",
+        )
+        if tuple(values) != columns:
+            raise WorkflowOperationIdentityError(
+                "verification receipt projection order differs"
+            )
+        connection.execute(
+            "INSERT INTO verification_receipts("
+            + ", ".join(columns)
+            + ") VALUES ("
+            + ", ".join("?" for _ in columns)
+            + ")",
+            tuple(values[column] for column in columns),
+        )
+
+    @staticmethod
+    def _verification_receipt_from_plan(
+        plan: _verification_store._VerificationReceiptPlan,
+        receipt_ref: str,
+    ) -> _gate.VerificationReceipt:
+        receipt = _gate._make_receipt(
+            receipt_ref=_task_policy.ReceiptRef(receipt_ref),
+            request=plan.request,
+            result=plan.result,
+            effect=plan.effect,
+            after_snapshot=plan.after,
+        )
+        _gate._validate_receipt(receipt, verify_digest=True)
+        return receipt
+
+    @staticmethod
+    def _verification_receipt_operation_values(
+        row: sqlite3.Row,
+        receipt: _gate.VerificationReceipt,
+        event: sqlite3.Row,
+        next_task: _task_policy.TaskPolicyStateV4,
+        next_task_digest: str,
+        next_checkpoint: _workflow.WorkflowCheckpointV4,
+        *,
+        timestamp: int,
+    ) -> dict[str, object]:
+        values = {
+            column: row[column]
+            for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+        }
+        if values["status"] != "EFFECT_PREPARED":
+            raise WorkflowStateConflictError(
+                "verification receipt operation is not armed"
+            )
+        values.update(
+            {
+                "status": "RECEIPTED",
+                "receipt_ref": str(receipt.receipt_ref),
+                "receipt_digest": str(receipt.receipt_digest),
+                "task_sequence_after": next_task.sequence,
+                "task_digest_after": next_task_digest,
+                "workflow_sequence_after": next_checkpoint.workflow_sequence,
+                "workflow_digest_after": next_checkpoint.checkpoint_digest,
+                "receipt_event_id": event["workflow_event_id"],
+                "receipt_event_digest": event["event_digest"],
+                "updated_ns": timestamp,
+            }
+        )
+        values["record_digest"] = _verification_store._verification_record_digest(
+            values
+        )
+        return values
+
+    def _verification_receipt_replay(
+        self,
+        connection: sqlite3.Connection,
+        plan: _verification_store._VerificationReceiptPlan,
+        operation: sqlite3.Row,
+    ) -> _gate.VerificationReceipt:
+        if operation["status"] != "RECEIPTED":
+            raise WorkflowRecoveryRequiredError(
+                "verification receipt status cannot replay"
+            )
+        receipt_ref = operation["receipt_ref"]
+        receipt_row = _workflow_read_one(
+            connection,
+            "SELECT * FROM verification_receipts "
+            "WHERE root_key = ? AND receipt_ref = ?",
+            (plan.root_key, receipt_ref),
+        )
+        if receipt_row is None or type(receipt_ref) is not str:
+            raise StoreIntegrityError("verification receipt replay row is missing")
+        receipt = self._verification_receipt_from_plan(plan, receipt_ref)
+        projection = _task_ledger.verification_receipt_projection_from_receipt(receipt)
+        receipt_bytes = _task_ledger.encode_verification_receipt_projection(projection)
+        binding_bytes = operation["approval_binding_bytes"]
+        current = self._workflow_load_checkpoint_tx(connection, plan.root_key)
+        task_row = self._review_task_row_tx(
+            connection,
+            root_key=plan.root_key,
+            task_id=operation["task_id"],
+        )
+        if (
+            type(binding_bytes) is not bytes
+            or type(current) is not _workflow.WorkflowCheckpointV4
+            or task_row is None
+        ):
+            raise StoreIntegrityError(
+                "verification receipt replay authority is missing"
+            )
+        snapshot = _task_ledger.decode_approval_binding_snapshot(binding_bytes)
+        task = _task_policy_observation_from_row(task_row)
+        _validate_task_observation_checkpoint(task, current)
+        if (
+            receipt_row["verification_ref"] != plan.verification_ref
+            or receipt_row["receipt_bytes"] != receipt_bytes
+            or receipt_row["receipt_digest"] != str(receipt.receipt_digest)
+            or operation["receipt_digest"] != str(receipt.receipt_digest)
+            or operation["approval_ref"] != str(plan.request.approval_ref)
+            or operation["request_digest"] != str(plan.request.request_digest)
+            or operation["effect_owner"] != snapshot.effect_owner
+            or operation["effect_attempt"] != 1
+            or operation["effect_nonce"] != str(plan.effect.effect_nonce)
+            or operation["effect_epoch"] != plan.effect.lease_epoch
+            or operation["effect_fence"] != plan.effect.fencing_token
+            or current.workflow_state is not _workflow.CheckpointState.VERIFYING
+            or current.workflow_sequence != operation["workflow_sequence_after"]
+            or current.checkpoint_digest != operation["workflow_digest_after"]
+            or current.task_sequence != operation["task_sequence_after"]
+            or task.state.phase is not _task_policy.TaskPhase.VERIFYING
+            or str(task.state.receipt_ref) != receipt_ref
+            or task.state.sequence != operation["task_sequence_after"]
+            or task.state_digest != operation["task_digest_after"]
+            or current.verification_authority is None
+            or current.verification_authority.reference != plan.verification_ref
+            or operation["record_digest"]
+            != _verification_store._verification_record_digest(
+                {
+                    column: operation[column]
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                }
+            )
+        ):
+            raise WorkflowStateConflictError(
+                "verification receipt replay identity differs"
+            )
+        return receipt
+
+    def commit_verification_receipt(
+        self,
+        request: _verification_store.VerificationReceiptRequest,
+    ) -> _gate.VerificationReceipt:
+        """Atomically persist one normalized receipt and verification edge."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        try:
+            plan = _verification_store._validate_verification_receipt_request(
+                request,
+                self,
+            )
+        except _verification_store.VerificationStoreError as exc:
+            raise WorkflowOperationIdentityError(
+                "verification receipt request is invalid"
+            ) from exc
+
+        result: _gate.VerificationReceipt | None = None
+        try:
+            with self._write_transaction() as connection:
+                operation = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                if operation is None:
+                    raise WorkflowOperationIdentityError(
+                        "verification receipt operation is missing"
+                    )
+                _validate_schema4_verification_prepare_rows(connection)
+                if operation["status"] == "RECEIPTED":
+                    result = self._verification_receipt_replay(
+                        connection,
+                        plan,
+                        operation,
+                    )
+                    return result
+                if (
+                    operation["status"] != "EFFECT_PREPARED"
+                    or operation["request_digest"] != str(plan.effect.request_digest)
+                    or operation["effect_owner"] is None
+                    or operation["effect_nonce"] != str(plan.effect.effect_nonce)
+                    or operation["effect_epoch"] != plan.effect.lease_epoch
+                    or operation["effect_fence"] != plan.effect.fencing_token
+                    or operation["receipt_ref"] is not None
+                    or operation["receipt_event_id"] is not None
+                ):
+                    raise WorkflowStateConflictError(
+                        "verification receipt effect identity differs"
+                    )
+                current = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.root_key,
+                )
+                task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    task_id=operation["task_id"],
+                )
+                if (
+                    type(current) is not _workflow.WorkflowCheckpointV4
+                    or task_row is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification receipt current pair is unavailable"
+                    )
+                current_task = _task_policy_observation_from_row(task_row)
+                _validate_task_observation_checkpoint(current_task, current)
+                if (
+                    current.workflow_state is not _workflow.CheckpointState.VERIFYING
+                    or current.task_sequence != current_task.state.sequence
+                    or current_task.state.phase is not _task_policy.TaskPhase.VERIFYING
+                    or current_task.state.receipt_ref is not None
+                    or current.verification_authority is None
+                    or current.verification_authority.reference != plan.verification_ref
+                ):
+                    raise WorkflowStateConflictError(
+                        "verification receipt current pair differs"
+                    )
+                timestamp = self._record_clock(
+                    connection,
+                    self._timestamp(None),
+                    strict=self._clock_injected,
+                )
+                receipt_ref = _verification_store._verification_receipt_reference(
+                    plan.root_key,
+                    plan.verification_ref,
+                    str(plan.effect.request_digest),
+                    str(plan.effect.effect_nonce),
+                    plan.effect.lease_epoch,
+                    plan.effect.fencing_token,
+                )
+                receipt = self._verification_receipt_from_plan(plan, receipt_ref)
+                receipt_projection = (
+                    _task_ledger.verification_receipt_projection_from_receipt(receipt)
+                )
+                receipt_bytes = _task_ledger.encode_verification_receipt_projection(
+                    receipt_projection
+                )
+                if (
+                    _task_ledger.decode_verification_receipt_projection(receipt_bytes)
+                    != receipt_projection
+                ):
+                    raise StoreIntegrityError("verification receipt projection differs")
+                receipt_values: dict[str, object] = {
+                    "root_key": plan.root_key,
+                    "receipt_ref": receipt_ref,
+                    "verification_ref": plan.verification_ref,
+                    "receipt_schema_version": receipt_projection.version,
+                    "receipt_bytes": receipt_bytes,
+                    "receipt_digest": str(receipt.receipt_digest),
+                    "stored_ns": timestamp,
+                }
+                next_task = replace(
+                    current_task.state,
+                    sequence=current_task.state.sequence + 1,
+                    receipt_ref=_task_policy.ReceiptRef(receipt_ref),
+                    phase=_task_policy.TaskPhase.VERIFYING,
+                )
+                next_task_bytes = _task_ledger.encode_task_state(next_task)
+                next_task = _task_ledger.decode_task_state(next_task_bytes)
+                next_task_digest = str(_task_ledger.task_state_digest(next_task_bytes))
+                next_workflow_sequence = current.workflow_sequence + 1
+                evidence = _verification_store._verification_evidence_wrapper(
+                    _verification_store.VerificationStage.RECEIPT,
+                    plan.root_key,
+                    plan.verification_ref,
+                    current.workflow_sequence,
+                    next_workflow_sequence,
+                    current_task.state.sequence,
+                    next_task.sequence,
+                    str(receipt.receipt_digest),
+                )
+                next_reference = _workflow.TaskPolicyReference(
+                    version=next_task.version,
+                    team_id=str(next_task.team_id),
+                    workspace=str(next_task.workspace),
+                    task_id=str(next_task.task_id),
+                    sequence=next_task.sequence,
+                    state_digest=next_task_digest,
+                )
+                next_checkpoint = self._workflow_issue_checkpoint(
+                    _workflow.WorkflowCheckpointDraft(
+                        root=current.root,
+                        run=current.run,
+                        workflow_sequence=next_workflow_sequence,
+                        task_sequence=next_task.sequence,
+                        execution_mode=current.execution_mode,
+                        workflow_state=_workflow.CheckpointState.VERIFYING,
+                        task_policy=next_reference,
+                        active_assignment=current.active_assignment,
+                        pending_delivery=current.pending_delivery,
+                        replied_message_ids=current.replied_message_ids,
+                        read_observed=current.read_observed,
+                        released=current.released,
+                        review_authority=current.review_authority,
+                        verification_authority=_workflow.AuthorityReference(
+                            reference=plan.verification_ref,
+                            digest=evidence,
+                        ),
+                        last_operation=current.last_operation,
+                    ),
+                    updated_ns=timestamp,
+                )
+                next_task_values = _task_policy_row_values(
+                    next_task,
+                    root_key=plan.root_key,
+                    run_id=current.run.run_id,
+                    updated_ns=timestamp,
+                )
+                self._fault("before_verification_receipt_row_write")
+                self._verification_insert_receipt(connection, receipt_values)
+                self._fault("after_verification_receipt_row_write")
+                self._review_update_task_row(
+                    connection,
+                    next_task_values,
+                    expected=current_task,
+                )
+                self._fault("after_verification_receipt_task_write")
+                self._review_update_checkpoint(
+                    connection,
+                    next_checkpoint,
+                    expected=current,
+                )
+                self._fault("after_verification_receipt_checkpoint_write")
+                request_wrapper = _verification_store._verification_request_wrapper(
+                    _verification_store.VerificationStage.RECEIPT,
+                    plan.root_key,
+                    plan.verification_ref,
+                    current.workflow_sequence,
+                    next_checkpoint.workflow_sequence,
+                    current_task.state.sequence,
+                    next_task.sequence,
+                    str(plan.effect.request_digest),
+                )
+                event = self._workflow_insert_event(
+                    connection,
+                    root_key=plan.root_key,
+                    operation_id=None,
+                    workflow_sequence=next_checkpoint.workflow_sequence,
+                    task_sequence_before=current_task.state.sequence,
+                    task_sequence_after=next_task.sequence,
+                    from_state=current.workflow_state.value,
+                    to_state=next_checkpoint.workflow_state.value,
+                    kind=_workflow.TransitionKind.VERIFICATION.value,
+                    actor=_verification_store.VERIFICATION_ACTOR,
+                    clock_ns=timestamp,
+                    request_digest=request_wrapper,
+                    receipt_id=None,
+                    checkpoint=next_checkpoint,
+                    evidence_ref=evidence,
+                )
+                self._fault("after_verification_receipt_event_write")
+                operation_values = self._verification_receipt_operation_values(
+                    operation,
+                    receipt,
+                    event,
+                    next_task,
+                    next_task_digest,
+                    next_checkpoint,
+                    timestamp=timestamp,
+                )
+                cursor = connection.execute(
+                    "UPDATE verification_operations SET "
+                    "status = ?, receipt_ref = ?, receipt_digest = ?, "
+                    "task_sequence_after = ?, task_digest_after = ?, "
+                    "workflow_sequence_after = ?, workflow_digest_after = ?, "
+                    "receipt_event_id = ?, receipt_event_digest = ?, "
+                    "record_digest = ?, updated_ns = ? "
+                    "WHERE root_key = ? AND verification_ref = ? "
+                    "AND status = 'EFFECT_PREPARED' AND record_digest = ? "
+                    "AND effect_owner = ? AND effect_attempt = ? "
+                    "AND effect_epoch = ? AND effect_fence = ? "
+                    "AND effect_nonce = ? AND receipt_ref IS NULL "
+                    "AND receipt_digest IS NULL AND receipt_event_id IS NULL",
+                    (
+                        operation_values["status"],
+                        operation_values["receipt_ref"],
+                        operation_values["receipt_digest"],
+                        operation_values["task_sequence_after"],
+                        operation_values["task_digest_after"],
+                        operation_values["workflow_sequence_after"],
+                        operation_values["workflow_digest_after"],
+                        operation_values["receipt_event_id"],
+                        operation_values["receipt_event_digest"],
+                        operation_values["record_digest"],
+                        operation_values["updated_ns"],
+                        plan.root_key,
+                        plan.verification_ref,
+                        operation["record_digest"],
+                        operation["effect_owner"],
+                        operation["effect_attempt"],
+                        operation["effect_epoch"],
+                        operation["effect_fence"],
+                        operation["effect_nonce"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkflowStateConflictError(
+                        "verification receipt compare-and-swap was lost"
+                    )
+                self._fault("after_verification_receipt_operation_write")
+                stored_operation = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                stored_receipt = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM verification_receipts "
+                    "WHERE root_key = ? AND receipt_ref = ?",
+                    (plan.root_key, receipt_ref),
+                )
+                stored_checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.root_key,
+                )
+                stored_task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    task_id=operation["task_id"],
+                )
+                stored_event = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+                    (event["workflow_event_id"],),
+                )
+                if (
+                    stored_operation is None
+                    or stored_receipt is None
+                    or stored_checkpoint is None
+                    or stored_task_row is None
+                    or stored_event is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification receipt readback is incomplete"
+                    )
+                self._verification_compare_operation_row(
+                    stored_operation,
+                    operation_values,
+                )
+                if any(
+                    type(stored_receipt[column]) is not type(value)
+                    or stored_receipt[column] != value
+                    for column, value in receipt_values.items()
+                ):
+                    raise StoreIntegrityError(
+                        "verification receipt row readback differs"
+                    )
+                stored_task = _task_policy_observation_from_row(stored_task_row)
+                _validate_task_observation_checkpoint(
+                    stored_task,
+                    next_checkpoint,
+                )
+                if (
+                    stored_checkpoint != next_checkpoint
+                    or stored_task.state != next_task
+                    or stored_task.state_bytes != next_task_bytes
+                    or stored_task.state_digest != next_task_digest
+                    or dict(stored_event) != dict(event)
+                ):
+                    raise StoreIntegrityError(
+                        "verification receipt dual-state readback differs"
+                    )
+                self._fault("after_verification_receipt_readback")
+                result = receipt
+                self._fault("before_verification_receipt_commit")
+        except (
+            WorkflowStateConflictError,
+            WorkflowOperationIdentityError,
+            WorkflowRecoveryRequiredError,
+        ):
+            raise
+        except sqlite3.OperationalError as exc:
+            _raise_sqlite_write_error(exc)
+        except sqlite3.DatabaseError as exc:
+            _raise_sqlite_write_error(exc)
+        except StoreError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _task_ledger.TaskVerificationLedgerError,
+            _verification_store.VerificationStoreError,
+        ) as exc:
+            raise StoreIntegrityError(
+                "verification receipt transaction failed"
+            ) from exc
+        if result is None:
+            raise StoreIntegrityError("verification receipt result is unavailable")
+        return result
+
+    def _verification_terminal_replay(
+        self,
+        connection: sqlite3.Connection,
+        plan: _verification_store._VerificationTerminalPlan,
+        operation: sqlite3.Row,
+    ) -> _gate.VerificationTerminalResult:
+        if (
+            operation["status"] != "TERMINAL"
+            or operation["receipt_ref"] != plan.receipt_ref
+            or operation["receipt_digest"] != plan.receipt_digest
+            or operation["terminal_receipt_ref"] != plan.receipt_ref
+            or operation["terminal_receipt_digest"] != plan.receipt_digest
+        ):
+            raise WorkflowStateConflictError(
+                "verification terminal replay identity differs"
+            )
+        phase_value = operation["terminal_phase"]
+        phase = {
+            "completed": _task_policy.TaskPhase.COMPLETED,
+            "verification_failed": _task_policy.TaskPhase.VERIFICATION_FAILED,
+        }.get(phase_value)
+        if phase is None:
+            raise StoreIntegrityError("verification terminal phase differs")
+        return _gate._make_terminal(
+            _gate.VerificationRef(plan.verification_ref),
+            _task_policy.ReceiptRef(plan.receipt_ref),
+            _gate.ReceiptDigest(plan.receipt_digest),
+            phase,
+        )
+
+    def commit_verification_terminal(
+        self,
+        request: _verification_store.VerificationTerminalRequest,
+    ) -> _gate.VerificationTerminalResult:
+        """Atomically project one durable receipt to terminal task state."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        try:
+            plan = _verification_store._validate_verification_terminal_request(
+                request,
+                self,
+            )
+        except _verification_store.VerificationStoreError as exc:
+            raise WorkflowOperationIdentityError(
+                "verification terminal request is invalid"
+            ) from exc
+        result: _gate.VerificationTerminalResult | None = None
+        try:
+            with self._write_transaction() as connection:
+                operation = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                if operation is None:
+                    raise WorkflowOperationIdentityError(
+                        "verification terminal operation is missing"
+                    )
+                _validate_schema4_verification_prepare_rows(connection)
+                if operation["status"] == "TERMINAL":
+                    return self._verification_terminal_replay(
+                        connection,
+                        plan,
+                        operation,
+                    )
+                if (
+                    operation["status"] != "RECEIPTED"
+                    or operation["receipt_ref"] != plan.receipt_ref
+                    or operation["receipt_digest"] != plan.receipt_digest
+                    or operation["terminal_phase"] is not None
+                    or operation["terminal_event_id"] is not None
+                ):
+                    raise WorkflowStateConflictError(
+                        "verification terminal receipt differs"
+                    )
+                receipt_row = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM verification_receipts "
+                    "WHERE root_key = ? AND receipt_ref = ?",
+                    (plan.root_key, plan.receipt_ref),
+                )
+                if (
+                    receipt_row is None
+                    or type(receipt_row["receipt_bytes"]) is not bytes
+                ):
+                    raise StoreIntegrityError(
+                        "verification terminal receipt row is missing"
+                    )
+                receipt_projection = (
+                    _task_ledger.decode_verification_receipt_projection(
+                        receipt_row["receipt_bytes"]
+                    )
+                )
+                if receipt_projection.receipt_digest != plan.receipt_digest:
+                    raise WorkflowStateConflictError(
+                        "verification terminal receipt digest differs"
+                    )
+                phase = (
+                    _task_policy.TaskPhase.COMPLETED
+                    if receipt_projection.outcome is _gate.VerificationOutcome.PASSED
+                    else _task_policy.TaskPhase.VERIFICATION_FAILED
+                )
+                terminal_phase = (
+                    "completed"
+                    if phase is _task_policy.TaskPhase.COMPLETED
+                    else "verification_failed"
+                )
+                current = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.root_key,
+                )
+                task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    task_id=operation["task_id"],
+                )
+                if (
+                    type(current) is not _workflow.WorkflowCheckpointV4
+                    or task_row is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification terminal current pair is unavailable"
+                    )
+                current_task = _task_policy_observation_from_row(task_row)
+                _validate_task_observation_checkpoint(current_task, current)
+                if (
+                    current.workflow_state is not _workflow.CheckpointState.VERIFYING
+                    or current_task.state.phase is not _task_policy.TaskPhase.VERIFYING
+                    or str(current_task.state.receipt_ref) != plan.receipt_ref
+                ):
+                    raise WorkflowStateConflictError(
+                        "verification terminal current pair differs"
+                    )
+                timestamp = self._record_clock(
+                    connection,
+                    self._timestamp(None),
+                    strict=self._clock_injected,
+                )
+                next_task = replace(
+                    current_task.state,
+                    sequence=current_task.state.sequence + 1,
+                    phase=phase,
+                )
+                next_task_bytes = _task_ledger.encode_task_state(next_task)
+                next_task = _task_ledger.decode_task_state(next_task_bytes)
+                next_task_digest = str(_task_ledger.task_state_digest(next_task_bytes))
+                next_workflow_sequence = current.workflow_sequence + 1
+                evidence = _verification_store._verification_evidence_wrapper(
+                    _verification_store.VerificationStage.TERMINAL,
+                    plan.root_key,
+                    plan.verification_ref,
+                    current.workflow_sequence,
+                    next_workflow_sequence,
+                    current_task.state.sequence,
+                    next_task.sequence,
+                    terminal_phase,
+                    plan.receipt_ref,
+                    plan.receipt_digest,
+                )
+                next_reference = _workflow.TaskPolicyReference(
+                    version=next_task.version,
+                    team_id=str(next_task.team_id),
+                    workspace=str(next_task.workspace),
+                    task_id=str(next_task.task_id),
+                    sequence=next_task.sequence,
+                    state_digest=next_task_digest,
+                )
+                next_checkpoint = self._workflow_issue_checkpoint(
+                    _workflow.WorkflowCheckpointDraft(
+                        root=current.root,
+                        run=current.run,
+                        workflow_sequence=next_workflow_sequence,
+                        task_sequence=next_task.sequence,
+                        execution_mode=current.execution_mode,
+                        workflow_state=_workflow.CheckpointState.VERIFYING,
+                        task_policy=next_reference,
+                        active_assignment=current.active_assignment,
+                        pending_delivery=current.pending_delivery,
+                        replied_message_ids=current.replied_message_ids,
+                        read_observed=current.read_observed,
+                        released=current.released,
+                        review_authority=current.review_authority,
+                        verification_authority=_workflow.AuthorityReference(
+                            reference=plan.verification_ref,
+                            digest=evidence,
+                        ),
+                        last_operation=current.last_operation,
+                    ),
+                    updated_ns=timestamp,
+                )
+                next_task_values = _task_policy_row_values(
+                    next_task,
+                    root_key=plan.root_key,
+                    run_id=current.run.run_id,
+                    updated_ns=timestamp,
+                )
+                self._fault("before_verification_terminal_task_write")
+                self._review_update_task_row(
+                    connection,
+                    next_task_values,
+                    expected=current_task,
+                )
+                self._fault("after_verification_terminal_task_write")
+                self._fault("before_verification_terminal_checkpoint_write")
+                self._review_update_checkpoint(
+                    connection,
+                    next_checkpoint,
+                    expected=current,
+                )
+                self._fault("after_verification_terminal_checkpoint_write")
+                request_wrapper = _verification_store._verification_request_wrapper(
+                    _verification_store.VerificationStage.TERMINAL,
+                    plan.root_key,
+                    plan.verification_ref,
+                    current.workflow_sequence,
+                    next_checkpoint.workflow_sequence,
+                    current_task.state.sequence,
+                    next_task.sequence,
+                    operation["request_digest"],
+                )
+                self._fault("before_verification_terminal_event_write")
+                event = self._workflow_insert_event(
+                    connection,
+                    root_key=plan.root_key,
+                    operation_id=None,
+                    workflow_sequence=next_checkpoint.workflow_sequence,
+                    task_sequence_before=current_task.state.sequence,
+                    task_sequence_after=next_task.sequence,
+                    from_state=current.workflow_state.value,
+                    to_state=next_checkpoint.workflow_state.value,
+                    kind=_workflow.TransitionKind.VERIFICATION.value,
+                    actor=_verification_store.VERIFICATION_ACTOR,
+                    clock_ns=timestamp,
+                    request_digest=request_wrapper,
+                    receipt_id=None,
+                    checkpoint=next_checkpoint,
+                    evidence_ref=evidence,
+                )
+                self._fault("after_verification_terminal_event_write")
+                values = {
+                    column: operation[column]
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                }
+                values.update(
+                    {
+                        "status": "TERMINAL",
+                        "task_sequence_after": next_task.sequence,
+                        "task_digest_after": next_task_digest,
+                        "workflow_sequence_after": next_checkpoint.workflow_sequence,
+                        "workflow_digest_after": next_checkpoint.checkpoint_digest,
+                        "terminal_phase": terminal_phase,
+                        "terminal_receipt_ref": plan.receipt_ref,
+                        "terminal_receipt_digest": plan.receipt_digest,
+                        "terminal_event_id": event["workflow_event_id"],
+                        "terminal_event_digest": event["event_digest"],
+                        "updated_ns": timestamp,
+                    }
+                )
+                values["record_digest"] = (
+                    _verification_store._verification_record_digest(values)
+                )
+                self._fault("before_verification_terminal_operation_write")
+                cursor = connection.execute(
+                    "UPDATE verification_operations SET "
+                    "status = ?, task_sequence_after = ?, task_digest_after = ?, "
+                    "workflow_sequence_after = ?, workflow_digest_after = ?, "
+                    "terminal_phase = ?, terminal_receipt_ref = ?, "
+                    "terminal_receipt_digest = ?, terminal_event_id = ?, "
+                    "terminal_event_digest = ?, record_digest = ?, updated_ns = ? "
+                    "WHERE root_key = ? AND verification_ref = ? "
+                    "AND status = 'RECEIPTED' AND record_digest = ? "
+                    "AND receipt_ref = ? AND receipt_digest = ? "
+                    "AND terminal_phase IS NULL AND terminal_event_id IS NULL",
+                    (
+                        values["status"],
+                        values["task_sequence_after"],
+                        values["task_digest_after"],
+                        values["workflow_sequence_after"],
+                        values["workflow_digest_after"],
+                        values["terminal_phase"],
+                        values["terminal_receipt_ref"],
+                        values["terminal_receipt_digest"],
+                        values["terminal_event_id"],
+                        values["terminal_event_digest"],
+                        values["record_digest"],
+                        values["updated_ns"],
+                        plan.root_key,
+                        plan.verification_ref,
+                        operation["record_digest"],
+                        plan.receipt_ref,
+                        plan.receipt_digest,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkflowStateConflictError(
+                        "verification terminal compare-and-swap was lost"
+                    )
+                self._fault("after_verification_terminal_operation_write")
+                stored = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                stored_checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.root_key,
+                )
+                stored_task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    task_id=operation["task_id"],
+                )
+                stored_event = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+                    (event["workflow_event_id"],),
+                )
+                if (
+                    stored is None
+                    or stored_checkpoint is None
+                    or stored_task_row is None
+                    or stored_event is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification terminal readback is missing"
+                    )
+                self._verification_compare_operation_row(stored, values)
+                stored_task = _task_policy_observation_from_row(stored_task_row)
+                _validate_task_observation_checkpoint(
+                    stored_task,
+                    next_checkpoint,
+                )
+                if (
+                    stored_checkpoint != next_checkpoint
+                    or stored_task.state != next_task
+                    or stored_task.state_bytes != next_task_bytes
+                    or stored_task.state_digest != next_task_digest
+                    or dict(stored_event) != dict(event)
+                ):
+                    raise StoreIntegrityError(
+                        "verification terminal dual-state readback differs"
+                    )
+                self._fault("after_verification_terminal_readback")
+                result = _gate._make_terminal(
+                    _gate.VerificationRef(plan.verification_ref),
+                    _task_policy.ReceiptRef(plan.receipt_ref),
+                    _gate.ReceiptDigest(plan.receipt_digest),
+                    phase,
+                )
+                self._fault("before_verification_terminal_commit")
+        except (
+            WorkflowStateConflictError,
+            WorkflowOperationIdentityError,
+            WorkflowRecoveryRequiredError,
+        ):
+            raise
+        except sqlite3.OperationalError as exc:
+            _raise_sqlite_write_error(exc)
+        except sqlite3.DatabaseError as exc:
+            _raise_sqlite_write_error(exc)
+        except StoreError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _task_ledger.TaskVerificationLedgerError,
+            _verification_store.VerificationStoreError,
+        ) as exc:
+            raise StoreIntegrityError(
+                "verification terminal transaction failed"
+            ) from exc
+        if result is None:
+            raise StoreIntegrityError("verification terminal result is unavailable")
+        return result
+
+    def _verification_unknown_replay(
+        self,
+        connection: sqlite3.Connection,
+        plan: _verification_store._VerificationUnknownPlan,
+        operation: sqlite3.Row,
+        checkpoint: _workflow.WorkflowCheckpointV4,
+        task: _review_workflow.StoredTaskPolicyState,
+    ) -> None:
+        event = _workflow_read_one(
+            connection,
+            "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+            (operation["unknown_event_id"],),
+        )
+        if event is None:
+            raise StoreIntegrityError("verification unknown replay event is missing")
+        CoordinationStore._workflow_validate_event_row(
+            event,
+            store_schema=_CURRENT_STORE_SCHEMA,
+        )
+        expected_request = _verification_store._verification_request_wrapper(
+            _verification_store.VerificationStage.UNKNOWN,
+            plan.root_key,
+            plan.verification_ref,
+            checkpoint.workflow_sequence - 1,
+            checkpoint.workflow_sequence,
+            task.state.sequence,
+            task.state.sequence,
+            plan.request_digest,
+        )
+        expected_evidence = _verification_store._verification_evidence_wrapper(
+            _verification_store.VerificationStage.UNKNOWN,
+            plan.root_key,
+            plan.verification_ref,
+            checkpoint.workflow_sequence - 1,
+            checkpoint.workflow_sequence,
+            task.state.sequence,
+            task.state.sequence,
+            plan.reason_code,
+            plan.evidence_digest,
+            plan.effect.fencing_token,
+        )
+        authority = checkpoint.verification_authority
+        if (
+            operation["status"] != "UNKNOWN_EFFECT"
+            or operation["request_digest"] != plan.request_digest
+            or operation["unknown_code"] != plan.reason_code
+            or operation["unknown_evidence_digest"] != plan.evidence_digest
+            or operation["effect_nonce"] != str(plan.effect.effect_nonce)
+            or operation["effect_epoch"] != plan.effect.lease_epoch
+            or operation["effect_fence"] != plan.effect.fencing_token
+            or operation["receipt_ref"] is not None
+            or operation["terminal_phase"] is not None
+            or checkpoint.workflow_state
+            is not _workflow.CheckpointState.RECOVERY_REQUIRED
+            or checkpoint.workflow_sequence != operation["workflow_sequence_after"]
+            or checkpoint.checkpoint_digest != operation["workflow_digest_after"]
+            or checkpoint.task_sequence != operation["task_sequence_after"]
+            or task.state.sequence != operation["task_sequence_after"]
+            or task.state_digest != operation["task_digest_after"]
+            or authority is None
+            or authority.reference != plan.verification_ref
+            or authority.digest != expected_evidence
+            or event["workflow_sequence"] != checkpoint.workflow_sequence
+            or event["task_sequence_before"] != task.state.sequence
+            or event["task_sequence_after"] != task.state.sequence
+            or event["from_state"] != _workflow.CheckpointState.VERIFYING.value
+            or event["to_state"] != _workflow.CheckpointState.RECOVERY_REQUIRED.value
+            or event["kind"] != _workflow.TransitionKind.VERIFICATION.value
+            or event["actor"] != _verification_store.VERIFICATION_ACTOR
+            or event["request_digest"] != expected_request
+            or event["evidence_ref"] != expected_evidence
+            or event["event_digest"] != operation["unknown_event_digest"]
+            or event["checkpoint_digest"] != checkpoint.checkpoint_digest
+        ):
+            raise WorkflowStateConflictError(
+                "verification unknown replay identity differs"
+            )
+
+    def commit_verification_unknown(
+        self,
+        request: _verification_store.VerificationUnknownRequest,
+    ) -> object:
+        """Atomically mark one exact armed effect as recovery-required."""
+
+        if type(self) is not CoordinationStore:
+            raise WorkflowOperationIdentityError("verification Store type is not exact")
+        _CANONICAL_VERIFICATION_INTERNAL_GUARD(self)
+
+        try:
+            plan = _verification_store._validate_verification_unknown_request(
+                request,
+                self,
+            )
+        except _verification_store.VerificationStoreError as exc:
+            raise WorkflowOperationIdentityError(
+                "verification unknown request is invalid"
+            ) from exc
+        try:
+            with self._write_transaction() as connection:
+                operation = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                if operation is None:
+                    raise WorkflowOperationIdentityError(
+                        "verification unknown operation is missing"
+                    )
+                _validate_schema4_verification_prepare_rows(connection)
+                actual = {
+                    column: operation[column]
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                }
+                if (
+                    _verification_store._verification_record_digest(actual)
+                    != operation["record_digest"]
+                    or operation["request_digest"] != plan.request_digest
+                ):
+                    raise StoreIntegrityError(
+                        "verification unknown operation is invalid"
+                    )
+                current = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.root_key,
+                )
+                task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    task_id=operation["task_id"],
+                )
+                if (
+                    type(current) is not _workflow.WorkflowCheckpointV4
+                    or task_row is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification unknown current pair is unavailable"
+                    )
+                current_task = _task_policy_observation_from_row(task_row)
+                _validate_task_observation_checkpoint(
+                    current_task,
+                    current,
+                    require_updated_ns=operation["status"] != "UNKNOWN_EFFECT",
+                )
+                if operation["status"] == "UNKNOWN_EFFECT":
+                    self._verification_unknown_replay(
+                        connection,
+                        plan,
+                        operation,
+                        current,
+                        current_task,
+                    )
+                    return None
+                if operation["status"] != "EFFECT_PREPARED":
+                    raise WorkflowStateConflictError(
+                        "verification status cannot become unknown"
+                    )
+                binding_bytes = operation["approval_binding_bytes"]
+                if type(binding_bytes) is not bytes:
+                    raise StoreIntegrityError(
+                        "verification unknown approval payload differs"
+                    )
+                snapshot = _task_ledger.decode_approval_binding_snapshot(binding_bytes)
+                prepare_event = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+                    (operation["prepare_event_id"],),
+                )
+                if prepare_event is None:
+                    raise StoreIntegrityError(
+                        "verification unknown prepare event is missing"
+                    )
+                CoordinationStore._workflow_validate_event_row(
+                    prepare_event,
+                    store_schema=_CURRENT_STORE_SCHEMA,
+                )
+                prepared_checkpoint = (
+                    CoordinationStore._workflow_decode_event_checkpoint(
+                        prepare_event,
+                        store_schema=_CURRENT_STORE_SCHEMA,
+                    )
+                )
+                expected_prepare_evidence = (
+                    _verification_store._verification_evidence_wrapper(
+                        _verification_store.VerificationStage.PREPARE,
+                        plan.root_key,
+                        plan.verification_ref,
+                        operation["workflow_sequence_before"],
+                        operation["workflow_sequence_after"],
+                        operation["task_sequence_before"],
+                        operation["task_sequence_after"],
+                        operation["approval_binding_digest"],
+                    )
+                )
+                authority = current.verification_authority
+                metadata = {
+                    str(item[0]): item[1]
+                    for item in connection.execute(
+                        "SELECT key, value FROM store_meta ORDER BY key"
+                    ).fetchall()
+                }
+                if (
+                    type(prepared_checkpoint) is not _workflow.WorkflowCheckpointV4
+                    or prepared_checkpoint != current
+                    or current.workflow_state is not _workflow.CheckpointState.VERIFYING
+                    or current.workflow_sequence != operation["workflow_sequence_after"]
+                    or current.checkpoint_digest != operation["workflow_digest_after"]
+                    or current.task_sequence != operation["task_sequence_after"]
+                    or current_task.state.phase is not _task_policy.TaskPhase.VERIFYING
+                    or current_task.state.sequence != operation["task_sequence_after"]
+                    or current_task.state_digest != operation["task_digest_after"]
+                    or authority is None
+                    or authority.reference != plan.verification_ref
+                    or authority.digest != expected_prepare_evidence
+                    or snapshot.effect_owner != operation["effect_owner"]
+                    or operation["effect_attempt"] != 1
+                    or operation["effect_epoch"] != plan.effect.lease_epoch
+                    or operation["effect_fence"] != plan.effect.fencing_token
+                    or operation["effect_nonce"] != str(plan.effect.effect_nonce)
+                    or operation["effect_epoch"] != metadata.get("recovery_epoch")
+                    or type(operation["effect_fence"]) is not int
+                    or operation["effect_fence"]
+                    > metadata.get("fencing_token_floor", -1)
+                    or operation["receipt_ref"] is not None
+                    or operation["terminal_phase"] is not None
+                    or operation["unknown_code"] is not None
+                    or operation["unknown_event_id"] is not None
+                ):
+                    raise WorkflowStateConflictError(
+                        "verification unknown armed identity differs"
+                    )
+                timestamp = self._record_clock(
+                    connection,
+                    self._timestamp(None),
+                    strict=self._clock_injected,
+                )
+                next_workflow_sequence = current.workflow_sequence + 1
+                evidence = _verification_store._verification_evidence_wrapper(
+                    _verification_store.VerificationStage.UNKNOWN,
+                    plan.root_key,
+                    plan.verification_ref,
+                    current.workflow_sequence,
+                    next_workflow_sequence,
+                    current_task.state.sequence,
+                    current_task.state.sequence,
+                    plan.reason_code,
+                    plan.evidence_digest,
+                    plan.effect.fencing_token,
+                )
+                next_checkpoint = self._workflow_issue_checkpoint(
+                    _workflow.WorkflowCheckpointDraft(
+                        root=current.root,
+                        run=current.run,
+                        workflow_sequence=next_workflow_sequence,
+                        task_sequence=current.task_sequence,
+                        execution_mode=current.execution_mode,
+                        workflow_state=_workflow.CheckpointState.RECOVERY_REQUIRED,
+                        task_policy=current.task_policy,
+                        active_assignment=current.active_assignment,
+                        pending_delivery=current.pending_delivery,
+                        replied_message_ids=current.replied_message_ids,
+                        read_observed=current.read_observed,
+                        released=current.released,
+                        review_authority=current.review_authority,
+                        verification_authority=_workflow.AuthorityReference(
+                            reference=plan.verification_ref,
+                            digest=evidence,
+                        ),
+                        last_operation=current.last_operation,
+                    ),
+                    updated_ns=timestamp,
+                )
+                self._fault("before_verification_unknown_checkpoint_write")
+                self._review_update_checkpoint(
+                    connection,
+                    next_checkpoint,
+                    expected=current,
+                )
+                self._fault("after_verification_unknown_checkpoint_write")
+                request_wrapper = _verification_store._verification_request_wrapper(
+                    _verification_store.VerificationStage.UNKNOWN,
+                    plan.root_key,
+                    plan.verification_ref,
+                    current.workflow_sequence,
+                    next_checkpoint.workflow_sequence,
+                    current_task.state.sequence,
+                    current_task.state.sequence,
+                    plan.request_digest,
+                )
+                self._fault("before_verification_unknown_event_write")
+                event = self._workflow_insert_event(
+                    connection,
+                    root_key=plan.root_key,
+                    operation_id=None,
+                    workflow_sequence=next_checkpoint.workflow_sequence,
+                    task_sequence_before=current_task.state.sequence,
+                    task_sequence_after=current_task.state.sequence,
+                    from_state=current.workflow_state.value,
+                    to_state=next_checkpoint.workflow_state.value,
+                    kind=_workflow.TransitionKind.VERIFICATION.value,
+                    actor=_verification_store.VERIFICATION_ACTOR,
+                    clock_ns=timestamp,
+                    request_digest=request_wrapper,
+                    receipt_id=None,
+                    checkpoint=next_checkpoint,
+                    evidence_ref=evidence,
+                )
+                self._fault("after_verification_unknown_event_write")
+                values = {
+                    column: operation[column]
+                    for column in _verification_store._VERIFICATION_RECORD_COLUMNS
+                }
+                values.update(
+                    {
+                        "status": "UNKNOWN_EFFECT",
+                        "workflow_sequence_after": next_checkpoint.workflow_sequence,
+                        "workflow_digest_after": next_checkpoint.checkpoint_digest,
+                        "unknown_code": plan.reason_code,
+                        "unknown_evidence_digest": plan.evidence_digest,
+                        "unknown_event_id": event["workflow_event_id"],
+                        "unknown_event_digest": event["event_digest"],
+                        "updated_ns": timestamp,
+                    }
+                )
+                values["record_digest"] = (
+                    _verification_store._verification_record_digest(values)
+                )
+                self._fault("before_verification_unknown_operation_write")
+                cursor = connection.execute(
+                    "UPDATE verification_operations SET "
+                    "status = ?, workflow_sequence_after = ?, "
+                    "workflow_digest_after = ?, unknown_code = ?, "
+                    "unknown_evidence_digest = ?, unknown_event_id = ?, "
+                    "unknown_event_digest = ?, record_digest = ?, updated_ns = ? "
+                    "WHERE root_key = ? AND verification_ref = ? "
+                    "AND status = 'EFFECT_PREPARED' AND record_digest = ? "
+                    "AND request_digest = ? AND effect_owner = ? "
+                    "AND effect_attempt = ? AND effect_epoch = ? "
+                    "AND effect_fence = ? AND effect_nonce = ? "
+                    "AND receipt_ref IS NULL AND terminal_phase IS NULL "
+                    "AND unknown_code IS NULL AND unknown_event_id IS NULL",
+                    (
+                        values["status"],
+                        values["workflow_sequence_after"],
+                        values["workflow_digest_after"],
+                        values["unknown_code"],
+                        values["unknown_evidence_digest"],
+                        values["unknown_event_id"],
+                        values["unknown_event_digest"],
+                        values["record_digest"],
+                        values["updated_ns"],
+                        plan.root_key,
+                        plan.verification_ref,
+                        operation["record_digest"],
+                        plan.request_digest,
+                        operation["effect_owner"],
+                        operation["effect_attempt"],
+                        operation["effect_epoch"],
+                        operation["effect_fence"],
+                        operation["effect_nonce"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkflowStateConflictError(
+                        "verification unknown compare-and-swap was lost"
+                    )
+                self._fault("after_verification_unknown_operation_write")
+                stored = self._verification_operation_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    verification_ref=plan.verification_ref,
+                )
+                stored_task_row = self._review_task_row_tx(
+                    connection,
+                    root_key=plan.root_key,
+                    task_id=operation["task_id"],
+                )
+                stored_checkpoint = self._workflow_load_checkpoint_tx(
+                    connection,
+                    plan.root_key,
+                )
+                stored_event = _workflow_read_one(
+                    connection,
+                    "SELECT * FROM workflow_events WHERE workflow_event_id = ?",
+                    (event["workflow_event_id"],),
+                )
+                if (
+                    stored is None
+                    or stored_task_row is None
+                    or stored_checkpoint is None
+                    or stored_event is None
+                ):
+                    raise StoreIntegrityError(
+                        "verification unknown readback is incomplete"
+                    )
+                self._verification_compare_operation_row(stored, values)
+                stored_task = _task_policy_observation_from_row(stored_task_row)
+                if (
+                    stored_task != current_task
+                    or stored_checkpoint != next_checkpoint
+                    or dict(stored_event) != dict(event)
+                ):
+                    raise StoreIntegrityError("verification unknown changed task state")
+                self._fault("after_verification_unknown_readback")
+                self._fault("before_verification_unknown_commit")
+        except (
+            WorkflowStateConflictError,
+            WorkflowOperationIdentityError,
+            WorkflowRecoveryRequiredError,
+        ):
+            raise
+        except sqlite3.OperationalError as exc:
+            _raise_sqlite_write_error(exc)
+        except sqlite3.DatabaseError as exc:
+            _raise_sqlite_write_error(exc)
+        except StoreError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            _task_ledger.TaskVerificationLedgerError,
+            _verification_store.VerificationStoreError,
+        ) as exc:
+            raise StoreIntegrityError(
+                "verification unknown transaction failed"
+            ) from exc
         return None
 
     @staticmethod
@@ -13764,9 +17777,21 @@ class CoordinationStore:
             "SELECT MAX(fencing_token) AS maximum FROM operation_attempts"
         ).fetchone()
         maximum = 0 if row is None or row["maximum"] is None else row["maximum"]
+        verification_row = connection.execute(
+            "SELECT MAX(effect_fence) AS maximum FROM verification_operations"
+        ).fetchone()
+        verification_maximum = (
+            0
+            if verification_row is None or verification_row["maximum"] is None
+            else verification_row["maximum"]
+        )
         maximum = max(
             floor,
             _require_sqlite_integer(maximum, "fencing_token"),
+            _require_sqlite_integer(
+                verification_maximum,
+                "verification effect_fence",
+            ),
         )
         if maximum >= SQLITE_INTEGER_MAX:
             raise ValueError("fencing_token exceeds supported integer")
@@ -17253,6 +21278,7 @@ class CoordinationStore:
                     _validate_existing_schema(
                         connection,
                         allow_review_task_rows=True,
+                        allow_verification_rows=True,
                     )
                     if wal_size == 0:
                         try:
@@ -17330,6 +21356,7 @@ class CoordinationStore:
         _validate_existing_schema(
             self._require_connection(),
             allow_review_task_rows=True,
+            allow_verification_rows=True,
         )
 
     def _schema_objects(self) -> dict[tuple[str, str], str]:
@@ -17546,6 +21573,47 @@ class CoordinationStore:
         if "locked" in str(error).lower():
             raise StoreBusyError("SQLite busy timeout expired while reading") from error
         raise StoreUnavailableError("SQLite read failed") from error
+
+
+_CANONICAL_VERIFICATION_INTERNAL_GUARD: Final[Callable[[CoordinationStore], None]] = (
+    CoordinationStore._verification_require_internal_methods
+)
+_CANONICAL_VERIFICATION_INTERNAL_METHODS: Final[Mapping[str, object]] = (
+    MappingProxyType(
+        {
+            name: getattr(CoordinationStore, name)
+            for name in (
+                "_review_checkpoint_observation_tx",
+                "_workflow_read_snapshot",
+                "_write_transaction",
+                "_workflow_load_checkpoint_tx",
+                "_review_task_row_tx",
+                "_review_update_task_row",
+                "_review_update_checkpoint",
+                "_workflow_issue_checkpoint",
+                "_workflow_insert_event",
+                "_verification_operation_row_tx",
+                "_verification_insert_operation",
+                "_verification_insert_receipt",
+                "_verification_compare_operation_row",
+                "_verification_effect_current_pair_tx",
+                "_verification_effect_values",
+                "_verification_lifecycle_revision_tx",
+                "_verification_prepare_replay",
+                "_verification_prepare_values",
+                "_verification_read_revision_tx",
+                "_verification_receipt_from_plan",
+                "_verification_receipt_operation_values",
+                "_verification_receipt_replay",
+                "_verification_terminal_replay",
+                "_verification_unknown_replay",
+                "_record_clock",
+                "_next_value",
+                "_metadata_integer",
+            )
+        }
+    )
+)
 
 
 class RestoreStoreAuthority:

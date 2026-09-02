@@ -37,7 +37,7 @@ transportable as a bounded identifier, but it is authority only when it resolves
 to the exact approval and both exact owner records in the injected contract
 registry.
 
-## Current status: #74 handoff and #81 review producer are implemented; #80 provides the foundation
+## Current status: #74, #81, and #82 are implemented on the schema-4 path
 
 The current #74 code provides the private handoff module,
 `PolicyVerificationHandoff`, and an injected package-private contract registry.
@@ -52,6 +52,7 @@ SQLite implementation or a durable codec for these private records.
 | Composition | Resolve and revalidate both owner records, compare only their overlap, retain #49-only fields as #49 provenance, and save/read back the bound approval. | A claim that #50 owns or verified #49-only runtime fields. |
 | Verification entry | Preserve `VerificationGate.start(ApprovalRef)`, `resume(VerificationHandle)`, and the six existing state-port operations. | SQLite durability, fresh-process replay, `mark_unknown`, or provider exactly-once. |
 | Schema-4 review checkpoint | #81 consumes the actual #49 update plus its bound `ReviewAuthorityRef` and commits the closed three-edge task/workflow suffix through the normal Store. | `CompletionAdmissionRef`, `ApprovalRef`, verification rows, external effects, or image/restore authority. |
+| Store-backed verification | #82 consumes the #81 current pair and retained #50/#74 owner refs, captures a Store-issued context, and writes the verification operation/receipt lifecycle through the private `agent_team.verification_store` adapter. | Full non-empty image inspection, backup/restore, verification-aware Doctor, and provider-side exactly-once. |
 
 The focused suite proves the handoff contract and a deterministic fake state
 model. It does not turn that fake into production persistence.
@@ -60,12 +61,12 @@ The [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/iss
 fixes the physical twelve-table image and pure task/verification codecs, but it
 does not change the #74 handoff into a durable authority. The normal Store's
 [#81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)
-now writes only the full `task_policy_states` row and its three policy-event
-suffix entries. `verification_operations` and `verification_receipts` remain
-empty, and backup, inspect, restore, and Doctor still reject this non-empty
-task-row image until #83 supplies the image-evidence contract. Actual
-completion admission, capture/context, verification lifecycle, and durable
-verification records remain downstream work in #82.
+now writes the full `task_policy_states` row and its three policy-event suffix
+entries. The implemented [#82 verification path](https://github.com/iamtatsuki05/dotfiles/issues/82)
+uses that current pair and retained owner refs to capture context, hydrate the
+Gate, and persist `verification_operations` and `verification_receipts` across
+the prepare/effect/receipt/terminal/unknown lifecycle. Backup, inspect,
+restore, and Doctor for full non-empty images remain #83 work.
 
 ## #49 issues review authority from the actual update and policy
 
@@ -163,10 +164,8 @@ those fields as raw arguments or guesses them from task text, path names, or a
 reservation ID. The #81 review producer consumes this #49 evidence through
 its process-local binding seam, but it does not accept a #50
 `CompletionAdmissionRef`, create an `ApprovalRef`, or persist owner-private
-records. The full runtime join remains downstream of the [Issue #80
-foundation](https://github.com/iamtatsuki05/dotfiles/issues/80) and belongs to
-the verification work in [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
-and image work in [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
+records. The implemented #82 Store-backed capture path consumes the retained
+owner refs after the #81 current-pair read. Full image work remains in [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 Each review ref is bound to the exact `PolicyVerificationHandoff` and registry
 that issued it. A text-identical ref from another handoff is foreign and is
 rejected before the #81 Store transaction.
@@ -210,8 +209,8 @@ The record shape contains primitive identity and domain-separated digests only.
 Raw request/result/receipt bodies, task or reviewer text, paths as authority
 payload, reservation objects, provider output, secrets, and tokens do not
 cross this boundary. These module-local record classes and issuer sentinels are
-not the durable hydration API for #80 or its downstream consumers. The #80
-projection codecs remain pure; Store-issued hydration belongs to [#82](https://github.com/iamtatsuki05/dotfiles/issues/82).
+not the durable hydration API for #80. The #80 projection codecs remain pure;
+Store-issued hydration is implemented by [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)'s private adapter.
 
 ## #51 keeps both Gate entrances and all six state operations
 
@@ -239,6 +238,36 @@ checking that all six methods are present. It does not add a public
 continues to own fixed-request, snapshot, receipt, and terminal validation;
 the handoff only supplies the owner-bound approval and shared port.
 
+## Issue #82 consumes the handoff through a private Store adapter
+
+The package-private `agent_team.verification_store` module consumes the #81
+Store-issued current pair and the retained #50/#74 owner refs. Its
+`capture_approval_binding` path reads context at one revision, calls the
+handoff's `compose` and `resolve` exactly once each, and stages the resulting
+approval for the first Gate start. The exact adapter factories are:
+
+```python
+StoreVerificationAdapter.from_capture(
+    store, snapshot, staged_admission, profile_resolver
+)
+StoreVerificationAdapter.from_store(
+    store, root_key, verification_ref, owner_id, profile_resolver
+)
+```
+
+The adapter implements the unchanged six-method state port and connects the
+private `_read_with_status` and `_mark_unknown` hooks without exposing them in
+the public Gate, CLI, MCP, or Protocol surface. It persists and rehydrates
+`PREPARED`, `EFFECT_PREPARED`, `RECEIPTED`, `TERMINAL`, and `UNKNOWN_EFFECT`.
+Fresh `RECEIPTED`/`TERMINAL` re-entry performs exact replay with zero
+runner/effect calls; an already armed or unknown effect stops for explicit
+recovery. Store commit-outcome ambiguity returns `RecoveryRequired` with the
+available cleanup capability, so cleanup can be retried without blindly
+retrying the transaction. The #82 unknown boundary has eight fixed reason
+codes; `restore_invalidation` and full non-empty image inspection,
+backup/restore, and Doctor remain #83 responsibilities. Provider-side
+exactly-once is not claimed.
+
 ## The deterministic fake is test evidence, not SQLite evidence
 
 The focused handoff tests inject one in-process fake object for the owner
@@ -250,9 +279,9 @@ the real Gate with the handoff and the same injected state port. Rejected or
 mismatched refs leave state and effects unchanged.
 
 Those tests establish call order, call counts, issuer checks, overlap checks,
-and the handoff's rejection behavior. They do not establish SQLite schema,
-transaction durability, process restart/reopen, crash recovery, cross-process
-atomicity, or provider-side exactly-once execution.
+and the handoff's rejection behavior. They do not establish the #82 SQLite
+transaction/reopen contract; that evidence lives in the Store-backed tests.
+Neither suite establishes provider-side exactly-once execution.
 
 ## Schema-4 work is split across Issues #80–#83
 
@@ -267,13 +296,13 @@ closed. #80 proves only the empty schema-4 backup/restore round trip.
 The [#81 task and review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)
 now owns the normal-Store task row and closed three-event review suffix. It
 does not create verification rows or consume a #50 completion admission. The
-downstream [#82 verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)
-owns actual completion admission, owner capture/context, snapshot hydration,
-the 58-field operation-row digest, and verification lifecycle. [#83 image
-evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)
-owns non-empty image semantics and those image boundaries. Exact schema-2 and
-schema-3 images remain `StoreMigrationRequiredError` to target schema `4`;
-#80 does not migrate them.
+implemented [#82 verification transactions and adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)
+consumes the retained completion admission and owns owner capture/context,
+snapshot hydration, the 58-field operation-row digest, and the verification
+lifecycle. [#83 image evidence, backup/restore, and Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)
+owns full non-empty image semantics and those image boundaries. Exact
+schema-2 and schema-3 images remain `StoreMigrationRequiredError` to target
+schema `4`; #80 does not migrate them.
 
 The schema-4 children define their own canonical payload and decoder boundaries.
 They consume the #74 owner-ref/approval contract; they must not reconstruct
@@ -321,7 +350,6 @@ behavior, and the existing Gate's effect-once/replay behavior through the
 handoff.
 
 SQLite reopen, crash injection, provider login/effect tests, schema-4
-validation, durable `mark_unknown`, and production migration remain outside
-#74. The #80 foundation and #81 review producer have their own Store evidence;
-verification lifecycle and non-empty image evidence remain acceptance work for
-#82 and #83.
+validation, and production migration remain outside #74. The #80 foundation,
+#81 review producer, and #82 Store-backed verification path have their own
+evidence. Full non-empty image evidence remains acceptance work for #83.

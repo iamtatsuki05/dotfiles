@@ -34,7 +34,9 @@ linked reference documents when changing the implementation or configuration.
   empty-ledger and non-empty fail-closed boundary is explicit there. The
   normal Store's [Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)
   now persists the full task row and the closed three-event review suffix;
-  verification rows and non-empty image evidence remain downstream.
+  the #82 Store-backed verification path now persists its operation/receipt
+  lifecycle and minimal semantic reopen evidence. Full non-empty image
+  inspection, backup/restore, and Doctor evidence remain #83 work.
 - [Task policy schema v4](docs/task-policy-v4.md) defines the immutable
   `TaskSpec`, dependency order, and state observation contract without storage
   or workflow execution.
@@ -239,11 +241,11 @@ agent-team status \
 - Version-1 backup/inspect keeps its exact ten-field, two-file manifest shape.
   The schema-4 foundation records `store_schema=4`,
   `event_schema_version=2`, and `sqlite_user_version=4` (`4/2/4`). The #80
-  foundation path writes no row to the three new tables. The normal Store
-  admits only the #81 full `task_policy_states` row and its closed review
-  suffix; `verification_operations` and `verification_receipts` remain empty.
-  Other non-empty images fail closed; #80 does not claim non-empty verification
-  image inspection or backup/restore success.
+  foundation path writes no row to the three new tables. The #81 producer
+  admits its full `task_policy_states` row and closed review suffix, while the
+  #82 Store-backed path writes and validates its verification lifecycle rows.
+  Other non-empty images fail closed; #80 does not claim non-empty image
+  inspection or backup/restore success.
 - The established image is classified before root mutation through a
   read-only, WAL/SHM-aware pre-gate. Structural WAL is copied with the image;
   SQLite reconstructs the ephemeral SHM cache only in a private temporary
@@ -255,9 +257,11 @@ agent-team status \
   receipt. They exclude raw argv/environment values and raw bodies, and check
   value consistency only; they do not capture owner authority or hydrate a
   Gate value. Issue #81 owns only normal-Store task/review transactions and
-  full task-row projection. Live capture/context, Store adapter, lifecycle
-  transactions, logical record digest, non-empty image semantics, and
-  verification-aware Doctor/restore remain downstream work in #82 and #83.
+  full task-row projection. Issue #82 now owns live capture/context, the
+  private Store adapter, snapshot hydration, the 58-field logical record
+  digest, and verification lifecycle transactions with minimal normal-Store
+  semantic reopen validation. Full non-empty image semantics, backup/restore,
+  and verification-aware Doctor remain #83 work.
 - Provider-only restore remains candidate-first and provider-free under its
   historical contract. The #80 foundation proves only the empty-new-ledger
   schema-4 backup/restore round trip; it does not silently repair logs,
@@ -313,9 +317,11 @@ use a deterministic fake, which is not evidence of SQLite, restart, or
 provider exactly-once behavior. [Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)
 is split into the [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80),
 the [#81](https://github.com/iamtatsuki05/dotfiles/issues/81) task/review
-producer, and the downstream [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
-and [#83](https://github.com/iamtatsuki05/dotfiles/issues/83) work. The full ledger,
-restart/replay, `mark_unknown`, and non-empty image claims are outside #80.
+producer, the implemented [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)
+verification transaction/adapter, and [#83](https://github.com/iamtatsuki05/dotfiles/issues/83)
+image-evidence work. #82 owns the verification operation lifecycle, fresh
+Gate hydration/replay, and `mark_unknown`; full non-empty image inspection,
+backup/restore, and Doctor claims remain outside #82.
 There is no raw-body/action alias/payload path or retry/fallback.
 
 See [Architecture](docs/architecture.md) for the complete boundary and failure

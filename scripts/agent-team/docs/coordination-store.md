@@ -207,8 +207,8 @@ unchanged task-policy reference exactly. The generic P0 transition also
 preserves workflow state. Issue #74 provides the typed owner evidence and
 composition contract, but this generic v3 transition still cannot accept a
 review/verification state edge. The historical plan assigned the full
-task/verification ledger and atomic state transition to Issue #78; current work
-is split across the downstream schema-4 children below.
+task/verification ledger and atomic state transition to Issue #78; current
+schema-4 work is split across the children below.
 
 A Delivery produced by `wait` always begins as `PENDING` with no ACK operation.
 Only the matching ACK begin transaction may change it to
@@ -374,12 +374,14 @@ An exact schema-4 image whose three new tables are empty is the structural
 open baseline for the #80 foundation writer. If a foundation-only path finds
 any new-table row, it fails closed because its non-empty semantic validator is
 not provided. The normal Store's #81 path is a narrow exception for a full
-`task_policy_states` row and its closed three-event review suffix; it does not
-admit rows in `verification_operations` or `verification_receipts`. It does
-not report successful non-empty verification open, inspection, backup,
-restore, or three-layer image evidence. The historical nine-table
-provider/workflow contract remains separate and is not silently reinterpreted
-as verification evidence.
+`task_policy_states` row and its closed three-event review suffix. The #82
+Store-backed verification path is the separate first writer for
+`verification_operations` and `verification_receipts`; it validates the
+non-empty lifecycle rows and their closed workflow-event suffix on normal
+reopen. Neither #80 nor #82 claims #83's full non-empty image inspection,
+backup/restore, or verification-aware Doctor evidence. The historical
+nine-table provider/workflow contract remains separate and is not silently
+reinterpreted as verification evidence.
 
 After the exact object, integrity, and foreign-key checks, the schema-4
 empty-ledger gate runs before workflow transition and high-water semantics.
@@ -409,15 +411,14 @@ digests and environment names, not argv or environment values; raw bodies and
 secrets are not stored.
 
 The codecs validate internal value consistency only. They do not capture live
-owner authority, resolve a context, issue a Store adapter, hydrate a Gate
-value, or implement the 58-field operation-row digest. SQL
-`record_version=1` is only a row discriminator. The #81 producer owns the
-normal-Store task/review transactions and full task-row projection described
-below. Live capture/context, Store adapter, snapshot hydration, the
-58-field operation-row digest, verification lifecycle transactions, semantic
-image validation, verification-aware Doctor, and non-empty backup/restore
-belong to [#82](https://github.com/iamtatsuki05/dotfiles/issues/82) and
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
+owner authority, resolve a context, issue a Store adapter, or hydrate a Gate
+value. SQL `record_version=1` is only a row discriminator. The #81 producer
+owns the normal-Store task/review transactions and full task-row projection
+described below. Issue #82 now owns live capture/context, the private Store
+adapter, snapshot hydration, the 58-field operation-row digest, and
+verification lifecycle transactions. #82's normal-reopen validator is limited
+to the lifecycle it writes; full non-empty image semantics, backup/restore,
+and verification-aware Doctor remain [#83](https://github.com/iamtatsuki05/dotfiles/issues/83).
 
 For #80, backup and restore evidence is limited to the version-1
 two-file-manifest round trip for an exact schema-4 image with an empty new
@@ -492,10 +493,10 @@ digest as well as every later request digest. Those predecessor bytes are
 Store-read evidence, not another caller input.
 After the three commits, a fresh reopen returns a workflow
 `REVIEW_PENDING` checkpoint with `W0 >= 2` and a task row at policy phase
-`APPROVED`. `verification_operations` and `verification_receipts` remain
-empty. The returned `ReviewerAssignment` is a post-commit intent only; no
-backend, runner, reviewer process, reservation, or external effect is
-called.
+`APPROVED`. At this producer stage, `verification_operations` and
+`verification_receipts` remain empty. The returned `ReviewerAssignment` is a
+post-commit intent only; no backend, runner, reviewer process, reservation, or
+external effect is called.
 
 The generic `commit_transition()` remains state-preserving for the historical
 row-empty workflow boundary. Once a schema-4 root has a task-ledger row, only
@@ -509,7 +510,61 @@ provides its non-empty image-evidence contract. A pre-issued #50
 `CompletionAdmissionRef` is retained only by the trusted composition root;
 #81 neither receives nor persists it. #81 also does not compose or resolve a
 #74 `ApprovalRef` or create verification authority. Those operations belong to
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82).
+the #82 capture path described below.
+
+## Schema-4 verification transactions and adapter (Issue #82)
+
+`agent_team.verification_store` is the package-private first writer for the
+verification lifecycle. It starts only from the fresh #81 pair:
+`REVIEW_PENDING(W0 >= 2)` plus `APPROVED(n)`, with the complete event prefix and
+Store-issued context. `capture_approval_binding` reads that context at one
+revision, verifies the retained #74 owner refs, calls `compose` and `resolve`
+once each, and stages an immutable approval binding without changing the
+Store. The exact durable factories are:
+
+```python
+StoreVerificationAdapter.from_capture(
+    store, snapshot, staged_admission, profile_resolver
+)
+StoreVerificationAdapter.from_store(
+    store, root_key, verification_ref, owner_id, profile_resolver
+)
+```
+
+The same private adapter implements the existing six-method
+`VerificationStatePort`: `prepare_once`, `begin_effect_once`, `read`,
+`status`, `record_receipt_once`, and `apply_terminal_once`. The Gate's private
+`_read_with_status` and `_mark_unknown` hooks are connected without extending
+the public Gate, CLI, MCP, or Protocol surface. Fresh re-entry hydrates the
+bound request, owner, effect, and receipt from canonical Store rows; it does
+not call the live #74 owner refs again.
+
+The Store commits each lifecycle edge with task/workflow dual-CAS, full row
+readback, event pointers, and the fixed 58-field operation `record_digest`:
+
+| Status | Durable edge | Re-entry behavior |
+| --- | --- | --- |
+| `PREPARED` | `REVIEW_PENDING(W0) + APPROVED(n)` → `VERIFYING(W1) + VERIFYING(n+1)` | An unarmed operation may be armed after a fresh precondition check. |
+| `EFFECT_PREPARED` | Store-owned effect owner, epoch, fence, and nonce are recorded; no workflow event is added. | Never execute the runner again; stop for recovery. |
+| `RECEIPTED` | Immutable receipt, task/workflow step, and receipt event commit together. | Exact receipt replay calls neither runner nor effect. |
+| `TERMINAL` | Task becomes `COMPLETED` or `VERIFICATION_FAILED(n+3)` while workflow remains `VERIFYING(W3)`. | Exact terminal replay calls neither runner nor effect. |
+| `UNKNOWN_EFFECT` | Workflow becomes `RECOVERY_REQUIRED(W2)` while task stays `VERIFYING(n+1)`. | Return `RecoveryRequired`; never retry or fall back. |
+
+The #82 unknown marker accepts exactly eight durable reason codes:
+`effect-response-loss`, `runner-response-loss`, `runner-response-invalid`,
+`cleanup-unknown`, `snapshot-drift`, `receipt-response-loss`,
+`receipt-commit-unknown`, and `effect-fence-unknown`. `restore_invalidation` is
+#83-only. If a SQLite commit outcome is unknown, the Gate preserves the Store
+cleanup capability on `RecoveryRequired` when one exists; cleanup may be
+retried explicitly, while the transaction itself is not blindly retried.
+
+Normal Store reopen validates the lifecycle rows it writes: nested codec
+decode/re-encode, owner/request/receipt bindings, status/null matrix, effect
+epoch/fence/floor, task/workflow observations, event evidence/pointers, and
+the operation digest. This is a local lifecycle validator, not #83's full
+non-empty image inspection. Full image semantics, backup/restore, and
+verification-aware Doctor remain #83 work. The local tests also do not prove
+provider-side exactly-once execution.
 
 ## Additional environment validation
 

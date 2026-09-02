@@ -71,11 +71,11 @@ provenance ではありません。authority は trusted `ApprovalAdmissionPort`
 
 `VerificationStatePort` は gate の生成時に必須です。production implementationがCAS、
 persistence、idempotence、effect fencing、restart recoveryを担当します。Issue #74は既存6操作の
-shapeを凍結し、deterministic fakeで確認しますが、SQLite implementationやfresh processでの
-recovery proofは提供しません。[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)が提供するのは
-schema-4の物理foundationとpure codecだけです。production adapter、non-empty lifecycle、restart proofは
-含まれず、durableな後続責務は[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)へ分かれます。
+shapeを凍結し、deterministic fakeで確認しますが、SQLite implementationは提供しません。#82の
+Store-backed adapterがこの6操作を実装し、non-empty lifecycleと最小限のfresh Store reopen/replay coverageを
+提供する構成です。[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)はschema-4の物理foundationと
+pure codecを引き続き担当します。[Issue #83](https://github.com/iamtatsuki05/dotfiles/issues/83)はfullな
+non-empty imageのinspect、backup/restore、verification-aware Doctor evidenceを担当します。
 
 ```python
 class VerificationStatePort(Protocol):
@@ -92,11 +92,11 @@ before snapshot を取得して fixed request を構成し、`prepare_once` を�
 する prepared result と approved→verifying CAS が成功した後だけ handle を返します。in-memory
 state は authority ではありません。
 
-`resume(handle)` は record と status を読みます。durable state implementationがあれば、durable
-reference、approval reference、request digestだけを持つhandleでprocess restart後のreplayを
-支えられます。ただし#74のfakeが示すのはprocess内のcall orderとreplay contractだけで、SQLite
-reopenやfresh process recoveryの証拠ではありません。`begin_effect_once` はopaqueなeffect nonce、
-lease epoch、fencing tokenと、次のstatusのいずれかを返します。
+`resume(handle)` は record と status を読みます。durable reference、approval reference、request digest
+だけを持つhandleでprocess restart後のreplayを、#82のStore-backed implementationで支えられます。
+#74のfakeが示すのはprocess内のcall orderだけです。#82のadapterはpersisted snapshotとlifecycle
+projectionからfresh Gateをhydrateします。`begin_effect_once` はopaqueなeffect nonce、lease epoch、
+fencing tokenと、次のstatusのいずれかを返します。
 
 | Effect status | gate の動作 |
 | --- | --- |
@@ -107,6 +107,47 @@ lease epoch、fencing tokenと、次のstatusのいずれかを返します。
 
 durable authority が concurrent/repeated call を判定します。prepared response loss や
 unknown effect を absent と解釈せず、runner を二度呼びません。
+
+## Store-backed lifecycle（Issue #82）
+
+package-privateな`agent_team.verification_store` moduleは、#81のcurrent pairと同じschema-4
+`CoordinationStore` imageへGateを接続します。live captureはfreshなStore context readの後に
+`capture_approval_binding`を呼び、保持している#74の`compose`と`resolve`を各1回だけ実行します。
+結果のapprovalは最初の`Gate.start()`用にstageされ、capture自体はStoreを変更しません。正確なadapter
+factoryは次のとおりです。
+
+```python
+StoreVerificationAdapter.from_capture(
+    store, snapshot, staged_admission, profile_resolver
+)
+StoreVerificationAdapter.from_store(
+    store, root_key, verification_ref, owner_id, profile_resolver
+)
+```
+
+両factoryは同じprivate adapterを返します。このadapterは既存の6操作の
+`VerificationStatePort`を実装し、`_read_with_status`と`_mark_unknown`はGateだけが使う
+package-private hookです。Storeは#80 nested codec、owner/provenance binding、request/receipt digest、
+固定58-field operation digest、task/workflow dual-CAS、event pointer、effect epoch/fenceを検証し、
+normal reopenでも生成したrowを再検証します。
+
+workflow-visibleなlifecycleは次のとおりです。
+
+| durable status | Store transition | Gateの動作 |
+| --- | --- | --- |
+| `PREPARED` | `REVIEW_PENDING(W0) + APPROVED(n)` → `VERIFYING(W1) + VERIFYING(n+1)` | fresh processでは未arm operationだけをarmできます。 |
+| `EFFECT_PREPARED` | Store-ownedのeffect fence/nonceを記録し、eventとsequenceは追加しません。 | re-entryはrecoveryに止まり、arm済みeffectを再実行しません。 |
+| `RECEIPTED` | receipt、task/workflow step、receipt eventを同じcommitで保存します。 | exact receipt replayはrunner/effectを呼びません。 |
+| `TERMINAL` | taskを`COMPLETED`または`VERIFICATION_FAILED(n+3)`にし、workflowは`VERIFYING(W3)`に留めます。 | exact terminal replayはrunner/effectを呼びません。 |
+| `UNKNOWN_EFFECT` | workflowを`RECOVERY_REQUIRED(W2)`へ進め、taskは`VERIFYING(n+1)`に留めます。 | `RecoveryRequired`としてretry/fallbackしません。 |
+
+#82のunknown boundaryが発行するdurable reason codeは、次の8つに固定されています。
+`effect-response-loss`、`runner-response-loss`、`runner-response-invalid`、`cleanup-unknown`、
+`snapshot-drift`、`receipt-response-loss`、`receipt-commit-unknown`、`effect-fence-unknown`です。
+`restore_invalidation`は#83の責務であり、このadapterは発行しません。Store commitの結果が不明な場合、
+Gateは利用可能ならStoreのcleanup capability付きで`RecoveryRequired`を返します。cleanupは明示的に
+再試行できますが、mutation自体はblind retryしません。fullなnon-empty imageのinspect、backup/restore、
+verification-aware Doctor、provider-side exactly-onceは#82の範囲外です。
 
 ## runner と snapshot の順序
 
@@ -140,10 +181,10 @@ binding、executable before/after、effect nonce/epoch/fencing、argv/cwd/env/sc
 validation でも同じ receipt/result validator を再実行し、同じ ref の別 digest は replay として
 受け付けません。
 
-ここでいう`VerificationReceipt`は#51 Gate内のruntime valueであり、schema-4の永続operation
-recordではありません。#80が定めるのはSQLの`record_version=1` discriminatorとpureな
-request/receipt projectionだけです。58-fieldのoperation-row digestとStore-issued hydrationは
-後続作業です。
+ここでいう`VerificationReceipt`は#51 Gate内のruntime valueであり、#82のStore adapterがschema-4の
+immutableなreceipt projectionとして保存します。#80はSQLの`record_version=1` discriminatorとpureな
+request/receipt codecを引き続き定め、#82は58-fieldのoperation-row digestとStore-issued hydrationを
+担当します。fullなnon-empty imageのinspect、backup/restore、verification-aware Doctorは#83の範囲です。
 
 resume/replay は profile を再解決し、fresh current snapshot を取得し、durable receipt の
 after と比較します。記録済み executable-after も保持するため、古い after 観測だけで task を
@@ -152,14 +193,14 @@ completed にできません。
 ## 責務と制約
 
 #49はreview transitionとapproval provenance、#50はpath/resource admissionとreservation identity、
-#74はtyped owner-ref compositionとdeterministic fakeの境界をそれぞれ所有します。productionの
-durable state/effect/receipt portとterminal CASは#11/#31/#33の責務です。schema-4 workは、
+#74はtyped owner-ref compositionとdeterministic fakeの境界をそれぞれ所有します。#82はschema-4の
+Store-backed verification adapter、lifecycle transaction、最小限のnormal reopen validationを担当します。
+productionのより広いdurable backend/effect integrationは#11/#31/#33の責務です。schema-4 workは、
 [Issue #80 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)、
 [#81 task/review transition](https://github.com/iamtatsuki05/dotfiles/issues/81)、
 [#82 verification transaction/adapter](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-[#83 image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれます。
-#80のproduction pathは新しい3 tableを空のままにし、non-empty image semantics、lifecycle、capture、
-adapter、hydration、logical record digest、verification-aware Doctor/restoreを主張しません。#32が
-recovery handoffを受け取ります。このmoduleが定義するのはverification contractとpureなport orchestrationだけです。
-focused testはfake port・providerなし・実workspaceなしで行うため、SQLite durabilityやprovider
-exactly-once executionは証明しません。
+[#83 image evidence、backup/restore、Doctor](https://github.com/iamtatsuki05/dotfiles/issues/83)に分かれる構成です。
+#80のproduction foundation pathは新しい3 tableを空のまま保持する。fullなnon-empty image semantics、
+backup/restore、verification-aware Doctorは主張せず、#83がそのimage境界を担当します。#32がrecovery
+handoffを受け取ります。focused Gate testはfake port・providerなし・実workspaceなしで行い、#82のStore
+testはlocal SQLite lifecycleを確認しますが、provider-side exactly-once executionは証明しません。
