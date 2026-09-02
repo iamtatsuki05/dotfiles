@@ -21,6 +21,7 @@ include-package-data = true
 agent_team = ["defaults/config.toml", "defaults/prompts/*.md"]
 
 [tool.ruff]
+required-version = "==0.16.5"
 target-version = "py311"
 line-length = 88
 

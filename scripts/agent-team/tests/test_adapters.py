@@ -19,11 +19,11 @@ from agent_team.adapters import (
     ExecutionError,
     FileIdentity,
     OpenCodeReadOnlyAdapter,
-    ProcessRunner,
     ProcessResult,
+    ProcessRunner,
     SnapshotError,
-    _extract_opencode_final,
     _exact_version_present,
+    _extract_opencode_final,
     _safe_source_path,
     create_read_snapshot,
     remove_owned_tree,
@@ -33,12 +33,8 @@ from agent_team.adapters import (
 
 class AdapterSafetyTest(unittest.TestCase):
     def test_exact_version_accepts_banner_punctuation_not_numeric_prefix(self) -> None:
-        self.assertTrue(
-            _exact_version_present("GitHub Copilot CLI 1.0.81.", "1.0.81")
-        )
-        self.assertFalse(
-            _exact_version_present("GitHub Copilot CLI 1.0.810", "1.0.81")
-        )
+        self.assertTrue(_exact_version_present("GitHub Copilot CLI 1.0.81.", "1.0.81"))
+        self.assertFalse(_exact_version_present("GitHub Copilot CLI 1.0.810", "1.0.81"))
 
     def test_safe_environment_has_no_ambient_agent_credentials_or_overrides(
         self,
@@ -151,7 +147,9 @@ class AdapterSafetyTest(unittest.TestCase):
             with (
                 mock.patch(
                     "agent_team.adapters.shutil.which",
-                    side_effect=lambda name: str(executable) if name == "copilot" else None,
+                    side_effect=lambda name: (
+                        str(executable) if name == "copilot" else None
+                    ),
                 ),
                 self.assertRaisesRegex(Exception, "exact 1.0.81"),
             ):
@@ -198,7 +196,7 @@ class AdapterSafetyTest(unittest.TestCase):
                     with (
                         mock.patch(
                             "agent_team.adapters.shutil.which",
-                            side_effect=lambda name: (
+                            side_effect=lambda name, loader=loader: (
                                 str(loader) if name == "copilot" else None
                             ),
                         ),
@@ -241,7 +239,9 @@ class AdapterSafetyTest(unittest.TestCase):
                     mock.patch("agent_team.adapters.sys.platform", "win32"),
                     mock.patch(
                         "agent_team.adapters.os.uname",
-                        side_effect=AssertionError("unsupported platform must not call uname"),
+                        side_effect=AssertionError(
+                            "unsupported platform must not call uname"
+                        ),
                     ),
                     self.assertRaisesRegex(Exception, "exact 1.0.81"),
                 ):
@@ -270,9 +270,7 @@ class AdapterSafetyTest(unittest.TestCase):
             self.assertEqual(settings["remoteExport"], False)
             self.assertEqual(settings["sandbox"]["enabled"], True)
             self.assertEqual(settings["sandbox"]["allowBypass"], False)
-            self.assertEqual(
-                settings["sandbox"]["auth"], {"git": False, "gh": False}
-            )
+            self.assertEqual(settings["sandbox"]["auth"], {"git": False, "gh": False})
             self.assertEqual(
                 settings["sandbox"]["userPolicy"]["deniedPaths"],
                 [
@@ -467,9 +465,7 @@ class AdapterSafetyTest(unittest.TestCase):
             outside.mkdir()
             (outside / "main.py").write_text("outside-secret\n", encoding="utf-8")
             subprocess.run(["git", "init", "-q", str(root)], check=True)
-            subprocess.run(
-                ["git", "-C", str(root), "add", "src/main.py"], check=True
-            )
+            subprocess.run(["git", "-C", str(root), "add", "src/main.py"], check=True)
             swapped = False
 
             def swap_parent(workspace: Path, relative: str) -> Path:
