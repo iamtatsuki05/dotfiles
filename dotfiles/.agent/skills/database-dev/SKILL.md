@@ -118,7 +118,7 @@ description: "Use when the user asks to design or modify database schemas, queri
 - **1 migration は 1 目的に絞る**: 複数テーブル横断の変更は段階分割を検討する。
 - **影響範囲と戻し方を明示**: PR 本文に対象テーブル、想定 lock 時間、データ量、ロールバック手順、必要なら段階的リリース計画を書く。
 
-Small CL、Why の残し方、テスト同梱などの共通原則は `eng-practices` スキルを参照。
+Small CL、Why の残し方、テスト同梱を守る。`eng-practices` は PR description を書く段階でだけ読む。
 
 ## コード品質チェック
 

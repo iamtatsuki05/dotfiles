@@ -11,7 +11,7 @@ This directory contains shared hook scripts used by multiple local AI agents.
 |---|---|
 | `agent_context_reminder.sh` | Emits repository-specific reminder context for supported agent prompt or session hook phases. |
 | `agent_turn_done_notify.sh` | Plays the shared completion sound for agents that support end-of-turn notifications. |
-| `japanese_prose_lint.sh` | Checks Japanese Markdown and text prose, and returns advisory feedback after supported file edits. |
+| `japanese_prose_lint.sh` | Checks Japanese Markdown and text prose, and returns advisory feedback after supported file edits. In-place edits (Edit / MultiEdit / apply_patch) report only lines the edit introduced, so document-wide counts such as repeated terms surface only when their first occurrence is on an edited line; whole-file writes lint everything. Files under `.agent/work/` are skipped. |
 | `jupytext_sync.sh` | Keeps paired Jupyter notebooks synchronized after agents edit paired `.py` files. |
 
 Agent-specific hook registration lives under `../apps/`.
