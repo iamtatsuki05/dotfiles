@@ -88,6 +88,7 @@ An update fails before overwriting local files if a source match count differs f
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied Apache-2.0 license. |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | Strict English AI-pattern checklist; voice matching routes to `humanizer`. |
 | `delegate-skills` | `amElnagdy/delegate-skills` | `codex-delegate/`, `claude-delegate/` | Delegate one bounded coding task to a separate Codex CLI or Claude Code process through a relay that never commits, then review the diff and land it yourself. Local safety overlay pins read-only defaults and forbids permission-bypass flags. |
+| `chatgpt-pro-line` | `pauljunsukhan/codex-chatgpt-pro-plugin` | `chatgpt-pro-line/` | Ask a logged-in ChatGPT Pro browser profile (dedicated Chrome, CDP on 127.0.0.1) for architecture, design, research, and debugging judgment with receipts and transcripts. Runtime only (no self-tests, no Codex MCP config); the local overlay requires an explicit user request, per-call approval for repo-context uploads, and keeps `.devspace/` uncommitted. |
 
 ### Matt Pocock Group
 
