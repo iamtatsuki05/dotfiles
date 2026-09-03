@@ -6,6 +6,7 @@ readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly TEST_RUNNER="$REPO_ROOT/tests/run.sh"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
+readonly TEST_ASSERTIONS_LIB="$REPO_ROOT/tests/lib/assertions.sh"
 readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
@@ -246,6 +247,11 @@ test_mise_tasks_include_nix_migration_flow() {
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh"'
 }
 
+test_assertions_lib_isolates_xdg_base_directories() {
+  assert_contains "$TEST_ASSERTIONS_LIB" 'unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME'
+  [[ -z "${XDG_CONFIG_HOME-}" ]] || fail "expected XDG_CONFIG_HOME to be unset after sourcing tests/lib/assertions.sh"
+}
+
 test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
   assert_contains "$CI_WORKFLOW" "ubuntu-latest"
   assert_contains "$CI_WORKFLOW" "macos-latest"
@@ -260,6 +266,7 @@ main() {
   test_test_runner_skip_chezmoi_keeps_fast_checks
   test_mise_task_runs_test_runner_from_repo_root
   test_mise_tasks_include_nix_migration_flow
+  test_assertions_lib_isolates_xdg_base_directories
   test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu
   echo "dotfiles test runner tests passed"
 }
