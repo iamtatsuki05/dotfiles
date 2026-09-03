@@ -18,6 +18,7 @@ description: Use when Git or GitHub work involves authentication, repositories, 
 
 - 最初にauth、status、repo規約、dirty state、base、template、重複、labels、履歴を確認し、並列作業はworktreeへ分離する。
 - write操作は明示範囲だけ。
+- owner/repo は推測せず `gh repo view --json nameWithOwner -q .nameWithOwner` か `git remote -v` から取る。
 - Issue/PRのassigneeは`@me`を使わず認証loginを明示する。既存labelsもreadbackし、欠落は補正、確認不能なら未完了。
 - 新規PRは必ずDraft。期待CIが未登録・pending・failureの間はReady禁止。全成功後だけReadyにする。
 - 既存IssueだけをDevelopment linkし、PRのためのIssueは作らない。commit/PR title・PR見出しは英語、本文は指示→最近のPR→日本語。

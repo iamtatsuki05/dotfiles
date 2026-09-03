@@ -35,6 +35,7 @@ description: コマンドが見つからない、shell が command not found を
 ## Troubleshooting
 
 - 全 fallback が失敗したら、試した wrapper と最小の永続 install 変更を報告する。
+- 解決した実行形(例: `mise exec uv -- uv run lint.py`)は session の `checkpoint.md` に 1 行記録し、以後は本 skill を再読せずその実行形を使う。
 
 ## Examples
 

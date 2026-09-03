@@ -1,13 +1,13 @@
 ---
 name: eng-practices
-description: "Use when the user asks about engineering practices, code review standards, CL/PR description writing, keeping CLs/PRs small, handling reviewer comments or pushback, review speed and etiquette, the Standard of Code Review, or any topic derived from Google eng-practices (review/reviewer/* and review/developer/*). Other dev skills link here for shared review and CL standards."
+description: "Use when writing a CL/PR title and description, splitting a change into small CLs, handling reviewer comments or pushback, or when the user asks about Google eng-practices review standards (review/reviewer/* and review/developer/*). Not needed just to perform a code review; the review output format comes from the request."
 ---
 
 # Engineering Practices スキル
 
 Google の公開ドキュメント [eng-practices](https://github.com/google/eng-practices)（Reviewer Guide + CL Author Guide）の要点を、Claude Code エージェントが「自分で実装するとき」「PR をレビューするとき」「PR 説明を書くとき」「指摘を受けたとき」にすぐ使える行動規範に翻訳したスキル。
 
-他の開発系スキル（`git-github-flow` / `python-dev` / `go-dev` / `typescript-dev` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `auto-debugger` / `markdown-docs`）から共通参照される。
+他の開発系スキル（`git-github-flow` / `python-dev` / `go-dev` / `typescript-dev` / `database-dev` / `terraform-dev` / `ci-cd` / `security-check` / `auto-debugger` / `markdown-docs`）からは、PR / CL description を書く段階でだけ参照される。
 
 ## 目的・適用範囲
 

@@ -54,6 +54,8 @@ Before provisioning, confirm account, accelerator, duration, Drive/GCP exposure,
 ```bash
 colab --auth=oauth2 new -s work --gpu T4
 colab --auth=oauth2 exec -s work -f script.py
+colab --auth=oauth2 upload -s work ./data.csv /content/data.csv
+colab --auth=oauth2 download -s work /content/out.txt ./out.txt
 colab --auth=oauth2 stop -s work
 ```
 
