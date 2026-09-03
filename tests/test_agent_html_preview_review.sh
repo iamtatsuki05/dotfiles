@@ -161,7 +161,7 @@ test_skill_contract_exists() {
   assert_contains "$SKILL_FILE" 'references/presenters/playwright-mcp.md'
   assert_contains "$SKILL_FILE" 'Do not start the helper until the selected presenter readiness checks pass'
   assert_contains "$SKILL_FILE" 'Do not switch presenters after a readiness, navigation, or verification failure'
-  assert_contains "$SKILL_FILE" 'If no supported presenter is available, report the limitation and local artifact path, then stop before starting the helper'
+  assert_contains "$SKILL_FILE" 'If the presenter confirmed in step 0 is no longer available, report the limitation and local artifact path, then stop before starting the helper'
   assert_contains "$SKILL_FILE" 'navigate the selected presenter to the exact URL'
   assert_contains "$SKILL_FILE" 'wait for the helper to exit and require status `0`'
   assert_contains "$SKILL_FILE" 'If navigation fails or the helper does not exit cleanly, terminate it if needed and report the limitation'
@@ -219,7 +219,7 @@ if positions != sorted(positions):
 routing_contract = [
     "Codex controls plus its sub-skill",
     "Otherwise, configured Playwright MCP tools",
-    "If no supported presenter is available",
+    "If the presenter confirmed in step 0 is no longer available",
 ]
 routing_positions = [content.index(item) for item in routing_contract]
 if routing_positions != sorted(routing_positions):

@@ -40,13 +40,13 @@ skills/
 | `ci-cd` | GitHub Actions などの CI/CD 設計・修正・調査。 | workflow YAML とログ調査向け。 |
 | `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
 | `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |
-| `eng-practices` | code review、CL/PR 説明、small CL、review comment 作法。 | Google eng-practices を repo 向けに要約した共通 skill。 |
+| `eng-practices` | CL/PR 説明、small CL、review comment への対応。 | Google eng-practices を repo 向けに要約した共通 skill。PR 説明を書く段階で読むもので、review のたびに読む必要はない。 |
 | `go-dev` | Go 実装、テスト、並行処理、interface、module 周り。 | `eng-practices` と連携。 |
 | `git-github-flow` | Git/GitHub作業を認証・branch構造からIssue、PR、review、CI、merge、復旧まで一元管理する。 | `gh`と専用worktreeを使い、外部writeを操作ごとに制御する。 |
 | `goal-prompt-builder` | Codex `/goal` 用の長期作業 prompt を作る。 | durable objective と検証条件を固める。 |
 | `gws` | Google Calendar / Drive / Gmail / Tasks を `gws` CLI で扱う。 | 外部操作は確認を重視。 |
 | `html-preview-review` | 検証済みの Agent 実行結果を、安全な自己完結型 local HTML にして視覚レビューする。 | 必要な独立レビュー後、main agent が成果物を提示する。 |
-| `markdown-docs` | README、技術文書、校閲、Markdown 整形。 | この README もこの skill の対象。 |
+| `markdown-docs` | README、技術文書の構成と Markdown 記法の作成・整形・レビュー。 | この README もこの skill の対象。日本語の自然さは `natural-japanese`。 |
 | `markitdown` | PDF / Word / PowerPoint / Excel / HTML などを Markdown に変換。 | MarkItDown CLI 用。 |
 | `missing-tools` | 見つからないコマンドを global install なしで解決する。 | project env、mise、comma、Nix fallback を優先。 |
 | `prompt-tuner` | LLM prompt / system prompt / template の改善・評価。 | prompt tuning 作業用。 |

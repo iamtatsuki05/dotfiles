@@ -110,7 +110,7 @@ Secrets Manager 連携・S3 暗号化・パブリックアクセスブロック�
 
 ## CL/PR 運用（eng-practices）
 
-Small CL、Why の残し方などの共通原則は `eng-practices` スキル参照。Terraform 固有には以下を徹底する。
+Small CL、Why の残し方を守る。`eng-practices` は PR description を書く段階でだけ読む。Terraform 固有には以下を徹底する。
 
 - **Blast radius を明示**: PR 本文に対象 workspace、影響リソース、`plan` 要約（add/change/destroy 件数）、特に destroy/replace の対象、権限変更、公開設定変更を必ず書く。
 - **段階適用**: production の変更は dev → staging → production の順で適用し、CL を分けるか、同一 CL なら適用順を明記する。

@@ -70,7 +70,7 @@ function isDog(pet: Pet): pet is Dog {
 
 ## エンジニアリング作法（共通）
 
-Small CL、テスト同梱、Why コメント、PR description の共通規範は `eng-practices` スキルを参照する。
+Small CL、テスト同梱、Why コメントを守る。`eng-practices` は PR description を書く段階でだけ読む。
 TypeScript では特に、`any` や型アサーションを使う箇所に理由を残し、公開 API の型変更は PR の影響範囲に明記する。
 
 ## コード品質チェック

@@ -1,6 +1,6 @@
 ---
 name: security-check
-description: "Use when the user asks for a security review, vulnerability scan, secure coding check, OWASP-style audit, secret leak detection, injection/auth/access-control review, or penetration-test preparation."
+description: "Use when the user asks for a security review, vulnerability scan, secure coding check, OWASP-style audit, secret leak detection, injection/auth/access-control review, or penetration-test preparation. Do not use for general safety reviews of destructive operations, fail-closed checks of job launchers or production rollouts, data-loss or rollback verification, or ordinary code review; use a normal review for those, and compatibility-safety only when the concern is an alias, fallback, or legacy path."
 ---
 
 # Security Check

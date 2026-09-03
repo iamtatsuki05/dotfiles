@@ -107,7 +107,7 @@ description: "Use when the user provides an error, failing test, stack trace, bu
 
 ## 修正を PR として提出する場合
 
-最小 CL、具体的なタイトル、Why・再現条件を書く description などの共通原則は `eng-practices` スキルを参照。Phase 4 で作ったリグレッションテストは必ず同じ PR に含める。
+最小 CL、具体的なタイトル、Why・再現条件を書く description を守る。`eng-practices` は PR description を書く段階でだけ読む。Phase 4 で作ったリグレッションテストは必ず同じ PR に含める。
 
 ## 自律デバッグのガイドライン
 

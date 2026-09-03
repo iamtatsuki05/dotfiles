@@ -41,13 +41,13 @@ Do not manually copy external skill trees without recording provenance and revie
 | `ci-cd` | Design, edit, and debug CI/CD workflows such as GitHub Actions. | Workflow YAML and log investigation. |
 | `compatibility-safety` | Avoid unrequested compatibility layers, aliases, silent fallbacks, and default-value fallbacks. | Use before adding compatibility behavior or legacy paths. |
 | `database-dev` | Design and review schemas, queries, indexes, migrations, and database performance. | Covers SQL and NoSQL work. |
-| `eng-practices` | Code review standards, CL/PR descriptions, small CLs, and review comment etiquette. | Repo-oriented summary of Google eng-practices. |
+| `eng-practices` | CL/PR descriptions, small CLs, and handling reviewer comments. | Repo-oriented summary of Google eng-practices. Read when writing a PR description, not for every review. |
 | `go-dev` | Implement, test, and review Go code, modules, concurrency, and interfaces. | Links to `eng-practices`. |
 | `git-github-flow` | Organize Git/GitHub work from authentication and branch topology through Issues, PRs, review, CI, merge, and recovery. | Uses `gh`, prefers isolated worktrees, and gates every external mutation. |
 | `goal-prompt-builder` | Create durable Codex `/goal` prompts. | Clarifies durable objectives and verification conditions. |
 | `gws` | Operate Google Calendar, Drive, Gmail, and Tasks through the `gws` CLI. | Be conservative around external actions. |
 | `html-preview-review` | Render verified agent results as safe, self-contained local HTML for visual review. | The main agent presents the artifact after required independent review. |
-| `markdown-docs` | Create, edit, review, and lint README and Markdown documentation. | This README is also covered by this skill. |
+| `markdown-docs` | Create, edit, review, and lint the structure and syntax of README and Markdown documentation. | This README is also covered by this skill. Japanese naturalness belongs to `natural-japanese`. |
 | `markitdown` | Convert PDF, Word, PowerPoint, Excel, HTML, and other sources into Markdown. | MarkItDown CLI workflow. |
 | `missing-tools` | Resolve unavailable commands without changing global machine state. | Prefers project env, mise, comma, and Nix fallbacks. |
 | `prompt-tuner` | Improve, evaluate, and rewrite LLM prompts and templates. | Prompt tuning workflow. |

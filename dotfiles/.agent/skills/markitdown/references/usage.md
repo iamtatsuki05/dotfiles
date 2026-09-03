@@ -84,8 +84,9 @@ done
 
 ## トラブルシューティング
 
-- **`markitdown: command not found`** → まず `mise exec 'pipx:markitdown' -- markitdown` などの ad-hoc 実行（SKILL.md 冒頭参照）。永続インストール（`pip install markitdown`）はユーザー確認後に行う（`python3 -m markitdown` でも実行可能）。
+- **`markitdown: command not found`** → まず `mise exec 'pipx:markitdown' -- markitdown` などの ad-hoc 実行（SKILL.md 冒頭参照）。永続インストール（`pip install markitdown`）はユーザー確認後に行う。`python3 -m markitdown` は markitdown を import できる interpreter（pipx / uvx の python）でだけ動き、system の `python3` では `No module named 'markitdown'` になる。
 - **PDF の変換結果が空** → スキャン PDF（画像ベース）の場合は `markitdown[all]` で OCR を有効化する。
+- **`FileConversionException: File conversion failed after 1 attempts`（PDF）** → 同じ PDF を再試行しない。`markitdown[pdf]` extra 入りの ad-hoc 実行（`uvx --from 'markitdown[pdf]' markitdown <file>`）に切り替えるか、`pdftotext -layout <file> -`（poppler、無ければ `missing-tools`）で本文を取り出して Markdown 化する。
 - **音声・画像が変換できない** → `pip install 'markitdown[all]'` で追加依存をインストール。
 - **文字化け** → 出力は UTF-8 。ターミナルのエンコーディングを確認するか `-o` でファイルに保存する。
 

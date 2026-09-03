@@ -119,7 +119,7 @@ jobs:
 
 ## PR 運用（eng-practices）
 
-Small CL、PR 説明の書き方などの共通原則は `eng-practices` スキル参照。CI/CD 固有には以下を徹底する。
+Small CL を守る。`eng-practices` は PR 説明を書く段階でだけ読む。CI/CD 固有には以下を徹底する。
 
 - **意図と影響を PR に書く**: trigger 変更、`permissions` の昇格、secret 追加、外部サービス連携、deploy 影響、cache key 変更を本文で明示する。
 - **Why を YAML コメントに残す**: `if:` 条件、`continue-on-error: true`、独自 retry など読みにくい分岐には理由コメントを 1 行残す。

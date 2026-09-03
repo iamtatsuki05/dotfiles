@@ -1,11 +1,13 @@
 ---
 name: markdown-docs
-description: "Use when the user asks to create, edit, review, proofread, restructure, lint, or improve Markdown documents such as README, technical docs, API docs, guides, release notes, or Japanese/English writing."
+description: "Use when the user asks to create, edit, review, restructure, or lint a Markdown document itself (README, docs/, guides, API docs, release notes): structure, headings, links, tables, and Markdown syntax. Do not use for small README edits that ride along with a code change, slides/PDF/LaTeX, Japanese naturalness (use natural-japanese), work logs under .agent/work, or checking numbers and sources."
 ---
 
 # Markdown Document Skill
 
 マークダウン形式のドキュメント作成、編集、校閲、レビューを支援するスキル。
+
+対象は Markdown 文書そのものの構成・記法・リンク・表。コード変更に付随する README の小修正、スライド・PDF・LaTeX、日本語の自然さ(`natural-japanese`)、`.agent/work` 配下の作業記録、数値・出典の照合には使わない。project に同名の skill があればそちらだけを読む。
 
 依頼内容に応じて「作成」「編集」「レビュー」のワークフローを使い分ける。依頼が「レビュー」「校閲」だけなら、直接編集するかレビューコメントだけ返すかを確認する。既存ファイル編集の依頼なら、対象読者、言語、文体、変更範囲を既存内容から読み取り、不足時だけ確認する。
 
@@ -100,7 +102,7 @@ description: "Use when the user asks to create, edit, review, proofread, restruc
 
 ## エンジニアリング文書の Why（eng-practices）
 
-エンジニアリング向けドキュメント（README、設計メモ、リリースノート、ADR、運用 runbook 等）では、`eng-practices` スキルの「Why を残す」原則を併用する。
+エンジニアリング向けドキュメント（README、設計メモ、リリースノート、ADR、運用 runbook 等）では「Why を残す」原則(理由、トレードオフ、未検証事項を書く)に従う。`eng-practices` は PR description のテンプレートが必要なときだけ読む。
 
 - **Why と What を分ける**: なぜそうしたか（背景・動機・捨てた代替案）と、何をしたか（変更・現状）を別段落に書く。
 - **命令形タイトル**: PR/CL/RFC のタイトル相当には命令形を使う（`Add ...` / `Fix ...` / `Switch ...`）。`改善` `更新` だけの曖昧タイトルは避ける。

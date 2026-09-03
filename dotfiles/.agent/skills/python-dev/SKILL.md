@@ -112,7 +112,7 @@ class Settings(BaseSettings):
 
 ## エンジニアリング作法（共通）
 
-Small CL、テスト同梱、Why コメント、PR description の共通規範は `eng-practices` スキルを参照する。
+Small CL、テスト同梱、Why コメントを守る。`eng-practices` は PR description を書く段階でだけ読む。
 Python では特に、機能変更に対応する pytest の追加・更新を同じ PR に含めることを徹底する。
 
 ## コード品質チェック
