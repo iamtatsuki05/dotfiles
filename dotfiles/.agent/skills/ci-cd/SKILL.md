@@ -1,142 +1,56 @@
 ---
 name: ci-cd
-description: "Use when the user asks to create, edit, debug, or optimize CI/CD pipelines, workflow YAML, build/test jobs, deployment automation, matrix builds, caches, permissions, or secrets in GitHub Actions, GitLab CI, CircleCI, Jenkins, or similar systems."
+description: "Use when the user asks to create, edit, debug, or optimize CI/CD pipelines: workflow YAML, build/test jobs, matrix builds, caches, permissions, secrets, or deployment automation in GitHub Actions, GitLab CI, CircleCI, or Jenkins. Not for application code that merely fails in CI (use auto-debugger) or for branch/PR operations (use git-github-flow)."
 ---
 
-# CI/CDスキル
+# CI/CD
 
-CI/CDパイプラインの設計、実装、デバッグ、最適化を効率的に行うためのガイド。
+CI/CD workflow の作成・修正・デバッグを、本番影響と権限を確認したうえで最小差分で行い、実際の CI 実行まで確認して報告する。
 
-## 実装前の必須確認
+## 着手前に確認すること
 
-1. **既存のCI/CD設定を確認**: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`
-2. **プロジェクト構成を確認**: 言語、フレームワーク、ビルドツール、テストフレームワーク
-3. **デプロイ先を確認**: クラウドプロバイダー、コンテナレジストリ、Kubernetes等
-4. **本番影響を確認**: push / pull_request / schedule / workflow_dispatch のどれで動くか、deploy job が本番に触れるか
-5. **権限とsecretを確認**: `permissions` は最小権限にし、secret 名は参照だけに留め、値を出力しない
-6. **既存workflowの意図を確認**: 無関係な job、branch 条件、cache key、artifact retention を変更しない
+1. 既存設定: `.github/workflows/`、`.gitlab-ci.yml`、`.circleci/config.yml`、`Jenkinsfile` と、周囲の action ピン方針(タグ / commit SHA)。
+2. プロジェクト構成: 言語、ビルドツール、テストコマンド、lockfile。
+3. trigger と本番影響: push / pull_request / schedule / workflow_dispatch のどれで動くか、deploy job が本番環境に触れるか。
+4. 権限と secret: `permissions` の現状と、参照している secret 名(値は出力しない)。
+5. 変更対象外の job、branch 条件、cache key、artifact retention は触らない。
 
-## プラットフォーム別クイックスタート
+## 書き方の規則
 
-### GitHub Actions
+- **action のバージョン**: 既存 repo ではピン方針に合わせる。新規なら各 action の最新 major を確認して選び、`@master` / `@main` は使わない。
+- **permissions**: workflow または job 単位で最小権限を明示する(例: `contents: read`)。cloud 認証は長期キーでなく OIDC(`id-token: write`)を優先する。
+- **secret**: 環境ごとに分け、deploy job は `environment:` に紐付けて保護ルール(承認、branch 制限)を効かせる。値をログに出さない。
+- **cache**: `actions/setup-node` などの built-in cache(`cache: 'npm'`)を優先する。`actions/cache` を直接使うなら key は lockfile の `hashFiles()`、`restore-keys` で prefix fallback を用意する。cache key を変えるときは他 workflow への影響を確認する。
+- **matrix**: サポート対象バージョンだけを列挙し、EOL バージョンを入れない。組み合わせは `exclude` / `include` で絞る。
+- **条件付き実行**: `paths` / `paths-ignore` で不要な実行を減らす。deploy job は branch と event の両方で限定する(例: `github.ref == 'refs/heads/main' && github.event_name == 'push'`)。
+- **concurrency**: 同一 ref の重複実行は `concurrency` + `cancel-in-progress: true` で止める。deploy job には `cancel-in-progress` を付けない。
+- **YAML コメント**: `if:` 条件、`continue-on-error: true`、独自 retry など読みにくい分岐には理由を 1 行残す。
 
-完全なワークフロー例（lint → test → build → deploy）は [references/github-actions.md](references/github-actions.md) の「ワークフロー構文」を参照。書くときの注意:
+## プラットフォーム別
 
-- action のバージョン（`actions/checkout@v4` など）は執筆時点のもの。major は各 action の最新安定版を確認して選び、既存 repo では周囲のピン方針（タグ / commit SHA）に合わせる。
+GitHub Actions を基準に差分だけ押さえる。完全な YAML を書く段階でだけ reference を読む。
 
-### 他プラットフォームとの差分
+- **GitHub Actions**: lint → test → build → deploy の完全例、reusable workflow、composite action、service container は [references/github-actions.md](references/github-actions.md)。
+- **GitLab CI**(`.gitlab-ci.yml`): job を `stages` で順序付け、step の代わりに `image` + `script` を書く。再利用は `include` / `extends`、条件は `rules`。詳細は [references/gitlab-ci.md](references/gitlab-ci.md)。
+- **CircleCI**(`.circleci/config.yml`): 再利用単位は orbs。`jobs` を `workflows` で組み合わせ、依存は `requires` で宣言する。最小例は [references/circleci.md](references/circleci.md)。
+- **デプロイ**(Docker build & push、Kubernetes、AWS ECS / Lambda、Cloud Run、静的サイト): 承認フロー、environment protection rules、ロールバック手段を先に確認してから [references/deploy-patterns.md](references/deploy-patterns.md) の例を使う。
 
-GitHub Actions の骨子（trigger → job → step）を基準に、主な対応関係だけ押さえる。
+## セキュリティスキャンを足すとき
 
-- **GitLab CI**（`.gitlab-ci.yml`）: job を `stages` で順序付けし、step の代わりに `image` + `script` を書く。action の代わりに `include` / `extends` でテンプレートを再利用し、cache / artifacts はキーワードで宣言する。完全な YAML 例と rules・親子パイプライン等は [references/gitlab-ci.md](references/gitlab-ci.md) 参照。
-- **CircleCI**（`.circleci/config.yml`）: 再利用単位は orbs。`jobs` を `workflows` で組み合わせ、依存は `requires` で宣言する。実行環境は `docker` / `machine` / `macos` の executor で指定する。最小構成例は [references/circleci.md](references/circleci.md) 参照。
+- 依存・コンテナ: `aquasecurity/trivy-action`(release tag にピン、`severity: 'CRITICAL,HIGH'`)。
+- SAST: `github/codeql-action/init` → `github/codeql-action/analyze`(job に `security-events: write` が必要)。
+- Semgrep: `returntocorp/semgrep-action` は廃止済み。`container: { image: semgrep/semgrep }` の job で `semgrep ci`(Semgrep AppSec Platform 連携なしなら `semgrep scan --config auto`)を実行する。
 
-## ベストプラクティス
+## 失敗の調査
 
-- **キャッシュ**: `actions/setup-node` 等の built-in cache（`cache: 'npm'`）を優先する。`actions/cache` を直接使う場合は lockfile の `hashFiles()` を key にし、`restore-keys` で prefix fallback を用意する。cache key の変更は既存 workflow への影響を確認する。
-- **マトリックス**: サポート対象バージョンだけを列挙し、EOL バージョンを matrix に入れない（最新の LTS 状況を確認）。組み合わせ爆発は `exclude` / `include` で制御する。
-- **permissions**: workflow / job 単位で最小権限を明示し（例: `contents: read`）、デフォルトの広い権限に依存しない。クラウド認証は長期キーでなく OIDC（`id-token: write`）を優先する。
-- **シークレット**: 環境ごとに分離し、deploy job は `environment:` に紐付けて保護ルール（承認、branch 制限）を効かせる。値をログに出力しない。
-- **条件付き実行**: `paths` / `paths-ignore` で不要な実行を減らし、deploy job は branch + event の条件（例: `github.ref == 'refs/heads/main' && github.event_name == 'push'`）で限定する。
+- ログは `gh run view <run-id> --log-failed` で失敗 step だけ取る。step debug が必要なら `gh run rerun <run-id> --debug` を使う。workflow の `env:` に `ACTIONS_STEP_DEBUG` を書いても有効にならない(repository の secret / variable か再実行時の指定が必要)。
+- 失敗が app コードやテスト自体の問題なら、workflow ではなくコードを直す(`auto-debugger`)。workflow 側の原因は、runner 環境差(OS、ツールバージョン)、stale な cache、権限不足、secret 未設定、`if:` 条件の順に疑う。
 
-YAML の具体例は [references/github-actions.md](references/github-actions.md) を参照。
+## 検証と報告
 
-## デプロイパターン
-
-デプロイ系の変更は、承認フロー・環境保護ルール（environment protection rules）・ロールバック手段を先に確認する。Docker build & push、Kubernetes（kubectl / Helm / Kustomize / ArgoCD）、AWS ECS / Lambda などのパターン例は [references/deploy-patterns.md](references/deploy-patterns.md) を参照。
-
-## デバッグ
-
-### ログ出力
-
-```yaml
-# デバッグモード有効化
-env:
-  ACTIONS_STEP_DEBUG: true
-
-# 手動デバッグ出力
-- name: Debug info
-  run: |
-    echo "Event: ${{ github.event_name }}"
-    echo "Ref: ${{ github.ref }}"
-    echo "SHA: ${{ github.sha }}"
-```
-
-### 失敗時の対応
-
-```yaml
-- name: Upload logs on failure
-  if: failure()
-  uses: actions/upload-artifact@v4
-  with:
-    name: logs
-    path: |
-      *.log
-      test-results/
-```
-
-## セキュリティ
-
-### 依存関係スキャン
-
-```yaml
-jobs:
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
-```
-
-### SAST（静的解析）
-
-```yaml
-- name: Run CodeQL
-  uses: github/codeql-action/analyze@v3
-```
-
-Semgrep は `returntocorp/semgrep-action` が廃止済みのため、公式コンテナで `semgrep ci` を実行する。
-
-```yaml
-jobs:
-  semgrep:
-    runs-on: ubuntu-latest
-    container:
-      image: semgrep/semgrep
-    steps:
-      - uses: actions/checkout@v4
-      # Semgrep AppSec Platform 連携なしなら `semgrep scan --config auto`
-      - run: semgrep ci
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
-```
-
-## PR 運用（eng-practices）
-
-Small CL を守る。`eng-practices` は PR 説明を書く段階でだけ読む。CI/CD 固有には以下を徹底する。
-
-- **意図と影響を PR に書く**: trigger 変更、`permissions` の昇格、secret 追加、外部サービス連携、deploy 影響、cache key 変更を本文で明示する。
-- **Why を YAML コメントに残す**: `if:` 条件、`continue-on-error: true`、独自 retry など読みにくい分岐には理由コメントを 1 行残す。
-
-## 実装後の検証と報告
-
-- YAML 構文検証、既存の lint に加え、プラットフォームに合う検証を実行する: GitHub Actions は `actionlint`、GitLab CI は CI Lint（Web UI の Pipeline Editor、または `POST /projects/:id/ci/lint` API）、CircleCI は `circleci config validate`。`actionlint` や `circleci` CLI が未導入の場合は `missing-tools` skill で一時実行する。
-- 可能ならローカルで同等の build/test コマンドを実行する。CI 上でしか確認できない場合は、その前提を報告する。
-- workflow 修正が push 済みの場合は、`gh run watch` / `gh run view`（または各プラットフォームの実行履歴）で実際の CI 実行が成功するまで確認してから完了報告する。ローカル成功だけで「直った」と報告しない。
-- デプロイ、権限拡大、secret 追加、外部サービス更新を伴う変更は、対象環境と影響を明示してユーザー承認を取る。
-- 最終報告には、変更した workflow/job、trigger、権限、secret 参照、実行した検証、残るリスクを含める。
-
-## リファレンス
-
-詳細なガイドは以下を参照:
-
-- **GitHub Actions詳細**: [references/github-actions.md](references/github-actions.md)
-- **GitLab CI詳細**: [references/gitlab-ci.md](references/gitlab-ci.md)
-- **CircleCI最小構成**: [references/circleci.md](references/circleci.md)
-- **デプロイパターン集**: [references/deploy-patterns.md](references/deploy-patterns.md)
+- プラットフォームの lint を実行する: GitHub Actions は `actionlint`、GitLab CI は Pipeline Editor の CI Lint か `POST /projects/:id/ci/lint` API、CircleCI は `circleci config validate`。未導入なら `missing-tools` skill で一時実行する。
+- 可能ならローカルで同等の build / test コマンドを実行する。CI 上でしか確認できない場合はその前提を報告する。
+- push 済みなら `gh run watch` / `gh run view` で実際の CI 実行が成功するまで確認してから完了報告する。ローカル成功だけで「直った」と報告しない。
+- デプロイ、`permissions` の昇格、secret 追加、外部サービス連携を伴う変更は、対象環境と影響を明示してユーザー承認を取ってから進める。
+- PR description には trigger 変更、`permissions` の変更、secret 追加、cache key 変更、deploy 影響を明示する。`eng-practices` は PR description を書く段階でだけ読む。
+- 最終報告には、変更した workflow / job、trigger、権限、secret 参照、実行した検証(lint、ローカル実行、CI run の URL または ID)、残るリスクを含める。

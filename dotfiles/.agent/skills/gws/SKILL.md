@@ -1,238 +1,95 @@
 ---
 name: gws
-description: "Use when the user asks to inspect or operate Google Calendar, Drive, Gmail, or Tasks through the gws CLI, including calendar agendas, event creation, Drive search/upload/download, Gmail triage/read/send/reply, or task list requests."
+description: "Use when the user asks to inspect or operate Google Calendar, Drive, Gmail, or Tasks through the gws CLI: agendas, event creation, Drive search/upload/download, Gmail triage/read/send/reply, task lists. Do not use for other Google services, for browser UI work, or when the user has not asked to touch their Google account."
 ---
 
 # Google Workspace CLI (gws)
 
-## Overview
+`gws`(0.22.5 で確認)で Google Calendar・Drive・Gmail・Tasks を操作する。helper(`+agenda` など)を第一選択にし、helper が無い操作は低レベル API(`gws <service> <resource> <method> --params '<JSON>'`)を使う。
 
-`gws` コマンドを使って Google Calendar・Drive・Gmail・Tasks などの Google Workspace サービスをターミナルから操作するスキル。
-
-## 前提条件：認証状態の確認
-
-作業前に `gws` コマンドの存在と認証状態を確認する。
+## 事前確認
 
 ```bash
-command -v gws
-```
-
-`gws` が見つからない場合は、`missing-tools` skill の手順で一時実行または導入を確認する。
-
-```bash
+command -v gws     # 無ければ missing-tools skill
 gws auth status
 ```
 
-未認証またはトークン切れの場合:
+未認証や `invalid_grant`(token 失効)は `gws auth login`(ブラウザが開く)をユーザーに案内し、勝手に実行しない。
 
-```bash
-gws auth login   # ブラウザが開いて OAuth2 認証
-```
+## コマンドの調べ方
+
+- option を探す順は、このファイル → [references/commands.md](references/commands.md)(全 option 表、検索クエリ、低レベル API、環境変数)→ 最後に help。
+- helper の help は `gws <service> help +<name>`(例: `gws gmail help +send`)。`gws gmail +send --help` の形は `Unknown service` エラーになる。
+- `--dry-run` はリクエストを送らずに内容を表示する。ただし token 取得は走るので認証は必要。
+- `--output <PATH>` は current directory 配下しか指定できない。
+- 表示は `--format table`(一覧)か `--format json | jq`(絞り込み)を使う。
 
 ## 安全弁
 
-- 書き込み系操作（予定作成、メール送信・返信、Drive upload、共有・削除、Tasks 変更）は、対象アカウント、宛先/参加者、日時、本文、ファイル名、実行コマンドを提示してからユーザー承認を取る。
-- `--dry-run` がある操作は先に dry-run を実行し、確認結果を提示してから本実行する。
-- 「今日」「明日」「来週」などの相対日付は、現在日付とタイムゾーンを踏まえて絶対日付に直して確認する。
-- メール本文・カレンダー詳細・Drive ファイル名には個人情報が含まれるため、最終報告では必要な範囲だけ要約し、秘密情報や長い本文を不用意に再掲しない。
-
----
+- 書き込み(予定作成、送信・返信、upload、削除、Tasks 変更)は、対象アカウント、宛先・参加者、日時、本文、ファイル名、実行コマンドを提示してユーザー承認を得てから実行する。`--dry-run` がある操作は先に dry-run 結果を見せる。
+- メールは `--draft` で下書き保存できる場合はそちらを優先する。
+- 「今日」「明日」「来週」は現在日付とタイムゾーンで絶対日付に直して確認する。
+- メール本文、予定詳細、ファイル名は個人情報を含むため、報告では必要な範囲だけ要約する。
 
 ## Calendar
 
-### 予定の確認（+agenda）
-
 ```bash
-# 直近の予定（デフォルト）
-gws calendar +agenda
-
-# 今日の予定
-gws calendar +agenda --today
-
-# 明日の予定
+gws calendar +agenda                          # 直近の予定(全カレンダー、read-only)
+gws calendar +agenda --today --format table
 gws calendar +agenda --tomorrow
-
-# 今週の予定（表形式）
 gws calendar +agenda --week --format table
+gws calendar +agenda --days 3 --calendar 'Work' --timezone Asia/Tokyo
+
+gws calendar +insert --summary 'レビュー' \
+  --start '2026-04-14T14:00:00+09:00' --end '2026-04-14T15:00:00+09:00' \
+  --location '会議室A' --description '週次レビュー' \
+  --attendee alice@example.com --attendee bob@example.com --meet --dry-run
 ```
 
-`--days`・`--calendar`・`--timezone` などの絞り込みは [references/commands.md](references/commands.md) の +agenda オプション表を参照。
-
-### 予定の作成（+insert）
-
-```bash
-# 基本
-gws calendar +insert \
-  --summary 'ミーティング' \
-  --start '2026-04-14T10:00:00+09:00' \
-  --end '2026-04-14T11:00:00+09:00'
-
-# 場所・説明・参加者付き
-gws calendar +insert \
-  --summary 'レビュー' \
-  --start '2026-04-14T14:00:00+09:00' \
-  --end '2026-04-14T15:00:00+09:00' \
-  --location '会議室A' \
-  --description '週次レビュー' \
-  --attendee alice@example.com \
-  --attendee bob@example.com
-
-# Google Meet リンク付き
-gws calendar +insert \
-  --summary 'オンライン打ち合わせ' \
-  --start '2026-04-15T09:00:00+09:00' \
-  --end '2026-04-15T09:30:00+09:00' \
-  --meet
-
-# 実行前に確認（dry-run）
-gws calendar +insert --summary 'Test' \
-  --start '2026-04-14T10:00:00+09:00' \
-  --end '2026-04-14T11:00:00+09:00' --dry-run
-```
-
-> 時刻は ISO 8601 / RFC3339 形式（例: `2026-04-14T10:00:00+09:00`）で指定する。
-
----
+`--start` / `--end` は RFC3339(`2026-04-14T10:00:00+09:00`)。`--calendar <ID>` の既定は `primary`。承認後に `--dry-run` を外して実行する。
 
 ## Drive
 
-### ファイル一覧
-
 ```bash
-# 直近ファイルを10件
-gws drive files list --params '{"pageSize": 10}'
-
-# 名前で検索
-gws drive files list --params '{"q": "name contains '\''報告書'\''"}'
-
-# 特定フォルダ内
+gws drive files list --params '{"pageSize": 10}' --format table
+gws drive files list --params '{"q": "name contains '\''報告書'\'' and trashed = false"}' --format table
 gws drive files list --params '{"q": "'\''FOLDER_ID'\'' in parents"}'
+gws drive files list --page-all                                    # 全ページ(NDJSON)
 
-# 表形式で表示
-gws drive files list --params '{"pageSize": 20}' --format table
-
-# 全件取得（ページネーション自動）
-gws drive files list --page-all
-```
-
-### ファイルのアップロード（+upload）
-
-```bash
-# 基本
-gws drive +upload ./report.pdf
-
-# フォルダ指定
-gws drive +upload ./report.pdf --parent FOLDER_ID
-
-# ファイル名を変えてアップロード
-gws drive +upload ./data.csv --name '2026年4月_データ.csv'
-```
-
-### ファイルのダウンロード
-
-```bash
-# ファイルを取得（バイナリ）
 gws drive files get --params '{"fileId": "FILE_ID", "alt": "media"}' --output ./downloaded.pdf
-```
 
----
+gws drive +upload ./report.pdf --parent FOLDER_ID --name '2026-04_report.pdf'
+```
 
 ## Gmail
 
-### 受信トレイの確認（+triage）
-
 ```bash
-# 未読メールの一覧（デフォルト20件）
-gws gmail +triage
-
-# 件数を絞る
-gws gmail +triage --max 10
-
-# 検索クエリ指定
-gws gmail +triage --query 'from:boss@example.com'
-
-# JSON で取得して jq で絞り込む
+gws gmail +triage                                  # 未読 20 件(read-only)
+gws gmail +triage --max 10 --query 'from:boss@example.com' --labels
 gws gmail +triage --format json | jq '.[].subject'
 
-# ラベルも表示
-gws gmail +triage --labels
+gws gmail +read --id MESSAGE_ID --headers          # 本文 + From/To/Subject/Date
+gws gmail +read --id MESSAGE_ID --format json | jq '.body'
+
+gws gmail +send --to alice@example.com --subject 'ご連絡' --body 'お世話になっております。' --draft
+gws gmail +send --to alice@example.com --cc bob@example.com --subject 'Report' --body 'See attached' -a report.pdf
+
+gws gmail +reply --message-id MESSAGE_ID --body '承知いたしました。' --draft
 ```
 
-### メールを読む（+read）
-
-```bash
-gws gmail +read --id MESSAGE_ID
-```
-
-### メール送信（+send）
-
-```bash
-# 基本
-gws gmail +send \
-  --to alice@example.com \
-  --subject 'ご連絡' \
-  --body 'お世話になっております。'
-
-# 下書き保存（送信前確認に有効）
-gws gmail +send \
-  --to alice@example.com \
-  --subject '下書き' \
-  --body '確認後に送信予定' \
-  --draft
-```
-
-CC/BCC・添付（`-a`）・HTML メールなどのオプションは [references/commands.md](references/commands.md) の +send オプション表を参照。
-
-### 返信（+reply）
-
-```bash
-gws gmail +reply --id MESSAGE_ID --body '承知いたしました。'
-```
-
----
+`+reply` の ID 指定は `--message-id`(`--id` ではない)。`+reply-all` / `+forward` も同じ形。`--draft` を外すと即送信になる。
 
 ## Tasks
 
-### タスク一覧
-
 ```bash
-# タスクリストの確認
-gws tasks tasklists list
-
-# 特定タスクリストのタスク一覧
-gws tasks tasks list --params '{"tasklist": "TASKLIST_ID"}'
+gws tasks tasklists list --format table
+gws tasks tasks list --params '{"tasklist": "TASKLIST_ID"}' --format table
 ```
 
----
+作成・完了は低レベル API(`tasks insert` / `tasks patch`)。形は commands.md の Tasks 節。
 
-## ワークフロー
+## 手順
 
-### 今日のスケジュールを確認する
-
-1. 認証状態を確認: `gws auth status`
-2. 予定を取得: `gws calendar +agenda --today --format table`
-3. 内容をユーザーにわかりやすく整理して報告する
-
-### 予定を作成する
-
-1. ユーザーから日時・件名・参加者などを確認する
-2. 必要なら `gws calendar +agenda` で空き時間を確認する
-3. `--dry-run` で確認してからユーザーに提示する
-4. ユーザーの承認後に `--dry-run` なしで実行する
-
-### メールを送信・返信する
-
-1. 宛先、件名、本文、添付、CC/BCC をユーザーに提示する
-2. 下書きでよい場合は `--draft` を優先する
-3. 送信・返信はユーザー承認後に実行する
-4. 実行後は message id、宛先、件名を報告する
-
-### Drive でファイルを探す
-
-1. `gws drive files list --params '{"q": "name contains '\''キーワード'\''"}' --format table` で検索する
-2. 必要なら `fileId` を取得してダウンロードする
-3. upload/download は対象ファイル、出力先、上書き有無を確認してから実行する
-
-## 詳細リファレンス
-
-コマンドオプションの全一覧は [references/commands.md](references/commands.md) を参照。
+1. `gws auth status` で認証を確認する。
+2. 読み取り(`+agenda`、`+triage`、`+read`、`files list`、`tasks list`)は即実行し、結果を整理して報告する。
+3. 書き込みは内容を提示し、`--dry-run` か `--draft` で確認してから承認後に実行する。実行後は message id、event id、fileId など識別子と対象を報告する。

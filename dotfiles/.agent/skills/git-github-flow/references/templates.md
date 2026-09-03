@@ -1,6 +1,6 @@
 # Fallback Issue and Pull Request Templates
 
-リポジトリに該当テンプレートが無い場合だけ使う。Issue本文は同じリポジトリの最近のIssueに合わせる。以下のPR言語規則はReady/Draft PRだけに適用し、Issue見出しには適用しない。PRの見出し名は下記の英語表記を維持し、日本語見出しを過去PRからコピーしない。PRの説明文・箇条書き・チェック項目だけを、今回の明示指示、同じリポジトリ・同種作業のhuman-authoredな最近のReady/merged PR、デフォルト日本語の順で決める。言語が混在・不明なら日本語を使う。該当しない節は空欄で残さず削除する。既存Issue・親・依存先がなければ `Links` 節ごと削除し、PRのためにIssueを作らない。関連Issueがある場合は、PRのbaseが既定ブランチでmerge時にIssueを完了させる場合だけ `Closes`、それ以外は `Refs` を残す。
+リポジトリに該当テンプレートが無い場合だけ使う。見出し名と本文の言語は SKILL.md の規則に従い、Issue本文は同じリポジトリの最近のIssueに合わせる。該当しない節は空欄で残さず削除する。既存Issue・親・依存先がなければ `Links` 節ごと削除し、PRのためにIssueを作らない。
 
 ## Work Issue
 

@@ -116,6 +116,4 @@ What:
 
 ## 関連
 
-- レビュアー側の 6 軸: [reviewer-guide.md](reviewer-guide.md)
-- コメント作法と pushback: [comment-writing.md](comment-writing.md)
-- 役割別チェックリスト: [checklists.md](checklists.md)
+- 提出前チェックリスト: [checklists.md](checklists.md)

@@ -1,176 +1,106 @@
 ---
 name: security-check
-description: "Use when the user asks for a security review, vulnerability scan, secure coding check, OWASP-style audit, secret leak detection, injection/auth/access-control review, or penetration-test preparation. Do not use for general safety reviews of destructive operations, fail-closed checks of job launchers or production rollouts, data-loss or rollback verification, or ordinary code review; use a normal review for those, and compatibility-safety only when the concern is an alias, fallback, or legacy path."
+description: "Use when the user explicitly asks for a security review, vulnerability scan, secret-leak detection, OWASP-style audit, dependency audit, or injection/auth/access-control review. Not for 'safety' reviews of destructive operations, job launchers, rollouts, or rollback logic, nor ordinary code review; do those as normal reviews."
 ---
 
 # Security Check
 
-コードベースのセキュリティ脆弱性を体系的に検出・分析する。
+攻撃者視点でコードベースの脆弱性(secret 露出、injection、認証・認可の欠落、脆弱な依存)を検出し、深刻度付きで報告する。
 
-## ワークフロー
+## 対象外
 
-```
-セキュリティチェック依頼
-    │
-    ├─ 特定ファイル/PR → 対象コードを読み取り、直接分析
-    │
-    └─ プロジェクト全体 → 以下のフェーズを順に実行
-         │
-         ├─ Phase 1: シークレット・機密情報スキャン
-         ├─ Phase 2: インジェクション脆弱性スキャン
-         ├─ Phase 3: 認証・認可チェック
-         ├─ Phase 4: 依存関係チェック
-         └─ Phase 5: レポート生成
-```
+「safety review」「production-safety」「destructive-operation safety」と書かれた依頼は、この skill の対象ではない。Slurm launcher や削除 script の fail-closed 境界、TOCTOU、rollback、data-loss の検証は依頼文の形式に従う通常のレビューで行い、alias / fallback / legacy path の判断は `compatibility-safety` を使う。この skill を読むのは、依頼が攻撃面(secret、injection、auth、依存)を明示したときだけにする。
 
-## Phase 1: シークレット・機密情報スキャン
+## 進め方
 
-Grepで以下のパターンを検索:
+- 特定ファイル / PR が対象: 対象コードを読み、Phase 1 の grep を対象範囲に実行し、Phase 2〜3 の観点で直接分析する。Phase 4 は依存ファイルが差分に含まれるときだけ行う。
+- project 全体または未知範囲が対象: Phase 1〜5 を順に実行する。
+- 文書や設定ファイルの漏洩チェックだけなら Phase 1 だけで終える。
+
+## Phase 1: secret スキャン(単独利用可)
 
 ```bash
-# APIキー・シークレット
-rg -i "(api[_-]?key|secret|password|token|credential)\s*[:=]\s*['\"][^'\"]+['\"]"
-
-# AWSキー
-rg "AKIA[0-9A-Z]{16}"
-
-# プライベートキー
-rg "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-
-# 環境変数の直接埋め込み
-rg -i "(DB_PASSWORD|JWT_SECRET|STRIPE_KEY)\s*="
+rg -n -i "(api[_-]?key|secret|password|token|credential)\s*[:=]\s*['\"][^'\"]+['\"]" \
+  -g '!*.example' -g '!*.test.*' -g '!*_test.go' -g '!mock*' -g '!*.lock'
+rg -n "AKIA[0-9A-Z]{16}"
+rg -n "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+rg -n -i "(DB_PASSWORD|JWT_SECRET|STRIPE_KEY|GITHUB_TOKEN|OPENAI_API_KEY)\s*="
+rg -n "(ghp|gho|ghu|ghs)_[A-Za-z0-9]{36}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]+"
 ```
 
-**除外対象**: `.env.example`, `*.test.*`, `*_test.go`, `mock*`
+検出した候補は値を再掲しない(先頭 / 末尾数文字もマスクする)。ファイル、行、種類、露出の疑い(実害あり / 要確認 / 誤検知)を示す。`.env.example` やテスト fixture でも実在形式のキーに見えるものは要確認に入れる。
 
-検出した secret 候補は値を再掲しない。ファイル、行、種類、露出の疑いを示し、値は先頭/末尾数文字も含めて原則マスクする。明らかなテスト fixture や `.env.example` でも、実在する形式のキーに見える場合は誤検知候補として分類する。
+## Phase 2: injection スキャン
 
-## Phase 2: インジェクション脆弱性スキャン
-
-### SQLインジェクション
 ```bash
-# 文字列連結によるSQL構築
-rg "SELECT.*FROM.*WHERE.*\+|f['\"]SELECT|format.*SELECT"
-rg "execute\(.*\+|query\(.*\+"
+# SQL: 文字列連結・f-string・format による組み立て
+rg -n "SELECT.*FROM.*WHERE.*\+|f['\"]SELECT|format.*SELECT|execute\(.*\+|query\(.*\+"
+# コマンド実行
+rg -n "os\.system\(|subprocess.*shell=True|exec\(|eval\(|child_process\.exec\(|spawn.*shell:|Runtime\.getRuntime\(\)\.exec\("
+# XSS
+rg -n "innerHTML\s*=|dangerouslySetInnerHTML|v-html=|\.html\(.*\$|document\.write\("
+# デシリアライゼーション(yaml.load の look-ahead には -P が必要。ヒット後に SafeLoader 指定を目視確認)
+rg -n -P "pickle\.load|yaml\.load\((?!.*SafeLoader)|unserialize\(|ObjectInputStream"
 ```
 
-### コマンドインジェクション
+ヒット行は、入力元がユーザー制御かどうかと、サニタイズ / パラメータ化の有無を目視で確認してから findings にする。対象言語が Python / JavaScript / TypeScript 以外(Go、Java、Ruby、PHP)なら [references/language-specific.md](references/language-specific.md) の pattern を足す。
+
+## Phase 3: 認証・認可
+
+- 認証: パスワードハッシュ(bcrypt / Argon2 以外は指摘)、セッション管理、JWT の署名検証と有効期限。
+- 認可: ルート定義を列挙し、各エンドポイントで認可チェックが行われているか確認する。
+
 ```bash
-# シェルコマンド実行
-rg "os\.system\(|subprocess.*shell=True|exec\(|eval\("
-rg "child_process\.exec\(|spawn.*shell:"
-rg "Runtime\.getRuntime\(\)\.exec\("
+rg -n "@app\.(get|post|put|delete).*def \w+\(" --type py
+rg -n "router\.(get|post|put|delete)" --type ts
 ```
 
-### XSS
-```bash
-# 安全でないHTML出力
-rg "innerHTML\s*=|dangerouslySetInnerHTML|v-html="
-rg "\.html\(.*\$|document\.write\("
-```
+## Phase 4: 依存関係
 
-### デシリアライゼーション
-```bash
-# yaml.load の look-ahead には PCRE2 (-P) が必要。ヒット後に SafeLoader 指定の有無を目視確認する
-rg -P "pickle\.load|yaml\.load\((?!.*SafeLoader)|unserialize\(|ObjectInputStream"
-```
-
-## Phase 3: 認証・認可チェック
-
-### 認証の確認事項
-- パスワードハッシュアルゴリズム（bcrypt/Argon2推奨）
-- セッション管理の安全性
-- JWTの署名検証と有効期限
-
-### 認可の確認事項
-```bash
-# 認可チェックの欠如を探す
-rg "@app\.(get|post|put|delete).*def \w+\(" --type py
-rg "router\.(get|post|put|delete)" --type ts
-```
-
-各エンドポイントで適切な認可チェックが行われているか確認。
-
-## Phase 4: 依存関係チェック
-
-対象ファイルを確認:
-- `package.json` / `package-lock.json`
-- `requirements.txt` / `Pipfile.lock`
-- `go.mod` / `go.sum`
-- `Gemfile.lock`
-- `pom.xml` / `build.gradle`
-
-既知の脆弱性がないかバージョンを確認。
-
-利用可能なら以下を優先する:
+`package-lock.json` / `requirements.txt` / `Pipfile.lock` / `go.sum` / `Gemfile.lock` / `pom.xml` / `build.gradle` を対象に、利用可能なツールで監査する。
 
 ```bash
 npm audit --audit-level=high
-pip-audit
-uv run pip-audit
+pip-audit            # uv 環境なら uv run pip-audit
 govulncheck ./...
 bundle audit
 ```
 
-導入されていないツールは勝手に追加せず、利用不可として報告するか、必要性を説明して確認する。
+未導入のツールは勝手に追加せず、実行できなかったことを報告するか、必要性を説明して確認する。
 
-## Phase 5: レポート生成
+## Phase 5: レポート
 
-### レポートフォーマット
+OWASP Top 10 での網羅を求められた場合は、書く前に [references/owasp-checklist.md](references/owasp-checklist.md) の A01〜A10 を順に確認する。
 
 ```markdown
 # セキュリティチェックレポート
-
-**対象**: [プロジェクト名/ファイル名]
-**日時**: [YYYY-MM-DD]
+**対象**: [project / file]  **日時**: [YYYY-MM-DD]
 
 ## サマリー
-- 🔴 Critical: X件
-- 🟠 High: X件
-- 🟡 Medium: X件
-- 🔵 Low: X件
+Critical: X件 / High: X件 / Medium: X件 / Low: X件
 
 ## 検出された脆弱性
-
 ### [Critical] タイトル
 - **ファイル**: `path/to/file.py:123`
-- **種類**: SQLインジェクション
-- **説明**: ユーザー入力が直接SQLクエリに連結されている
-- **影響**: データベースの不正アクセス、データ漏洩
-- **修正案**:
-  ```python
-  # Before
-  query = f"SELECT * FROM users WHERE id = {user_id}"
-
-  # After
-  cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-  ```
+- **種類**: SQL injection
+- **説明**: ユーザー入力が直接 SQL に連結されている
+- **影響**: DB の不正アクセス、データ漏洩
+- **修正案**: `cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))`
 
 ## 推奨事項
 1. [優先度高] ...
-2. [優先度中] ...
 ```
-
-## 深刻度の判定基準
 
 | 深刻度 | 基準 |
 |--------|------|
 | Critical | リモートコード実行、認証バイパス、機密データ漏洩 |
-| High | SQLインジェクション、XSS、SSRF |
+| High | SQL injection、XSS、SSRF |
 | Medium | 弱い暗号化、セッション管理の不備 |
-| Low | 情報漏洩（バージョン情報等）、ベストプラクティス違反 |
+| Low | 情報漏洩(バージョン情報など)、ベストプラクティス違反 |
 
 ## 報告ルール
 
-- レビュー専用依頼では、勝手に修正しない。修正まで求められた場合だけ最小変更で対応する。
+- レビュー専用依頼では修正しない。修正まで求められた場合だけ最小変更で対応する。
 - 誤検知、要確認、実害ありを分けて記載する。
-- 最終報告には対象範囲、実行した検索/ツール、検出件数、値をマスクした findings、未確認範囲を含める。
-- severity と eng-practices ラベルの対応: Critical/High → `Critical:`（修正必須）、Medium → `Warning:`（修正または理由の説明が必要）、Low → `Nit:` / `Optional:`。GitHub PR reviewでも同じ対応を使う。
-- 指摘の書き方（理由を添える、人ではなくコードに焦点を当てる、コード自体で直せる場合は説明より修正を優先する）は `eng-practices` スキル参照。
-
-## リファレンス
-
-詳細なチェックリストが必要な場合:
-
-- **OWASP Top 10 チェックリスト**（2021 版ベース。最新版のカテゴリ変更にも注意）: [references/owasp-checklist.md](references/owasp-checklist.md)
-- **言語別パターン**: [references/language-specific.md](references/language-specific.md)
+- 出力形式は依頼文の指定を優先する(reviewer 依頼なら重大 / 中 / 軽微 + file:line、問題がなければ「重大な問題なし」)。指定がなければ Phase 5 の形式を使う。
+- 最終報告には、対象範囲、実行した grep / ツール(未導入で実行できなかったものも)、検出件数、値をマスクした findings、未確認範囲を含める。
