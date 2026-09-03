@@ -20,13 +20,14 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 7"
+  assert_contains_text "$output" "registered upstream skills: 8"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
   assert_contains_text "$output" "modern-web-guidance"
   assert_contains_text "$output" "herdr"
   assert_contains_text "$output" "stop-slop"
+  assert_contains_text "$output" "delegate-skills"
 }
 
 test_tree_hash_ignores_generated_python_bytecode() {
@@ -326,7 +327,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit modern-web-guidance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
       --latest-commit natural-japanese=cccccccccccccccccccccccccccccccccccccccc \
       --latest-commit herdr=7777777777777777777777777777777777777777 \
-      --latest-commit stop-slop=1212121212121212121212121212121212121212
+      --latest-commit stop-slop=1212121212121212121212121212121212121212 \
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -343,6 +345,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 7777777777777777777777777777777777777777"
   assert_contains_text "$output" "Skill ID: stop-slop"
   assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
+  assert_contains_text "$output" "Skill ID: delegate-skills"
+  assert_contains_text "$output" "candidate_commit: 1515151515151515151515151515151515151515"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -357,6 +361,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed natural-japanese" > "$report_dir/natural-japanese.md"
   print -r -- "reviewed herdr" > "$report_dir/herdr.md"
   print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
+  print -r -- "reviewed delegate-skills" > "$report_dir/delegate-skills.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -371,7 +376,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit modern-web-guidance=3333333333333333333333333333333333333333 \
       --latest-commit natural-japanese=4444444444444444444444444444444444444444 \
       --latest-commit herdr=6666666666666666666666666666666666666666 \
-      --latest-commit stop-slop=1212121212121212121212121212121212121212
+      --latest-commit stop-slop=1212121212121212121212121212121212121212 \
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -580,7 +586,8 @@ EOF'
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
-      --latest-commit stop-slop=1212121212121212121212121212121212121212
+      --latest-commit stop-slop=1212121212121212121212121212121212121212 \
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -640,7 +647,8 @@ PY
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
-      --latest-commit stop-slop=1212121212121212121212121212121212121212
+      --latest-commit stop-slop=1212121212121212121212121212121212121212 \
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -695,7 +703,8 @@ EOF'
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
-      --latest-commit stop-slop=1212121212121212121212121212121212121212 2>&1
+      --latest-commit stop-slop=1212121212121212121212121212121212121212 \
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515 2>&1
   )"
   local exit_status=$?
   set -e

@@ -87,6 +87,7 @@ An update fails before overwriting local files if a source match count differs f
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr pane/workspace control skill with a local safety overlay and copied Apache-2.0 license. |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | Strict English AI-pattern checklist; voice matching routes to `humanizer`. |
+| `delegate-skills` | `amElnagdy/delegate-skills` | `codex-delegate/`, `claude-delegate/` | Delegate one bounded coding task to a separate Codex CLI or Claude Code process through a relay that never commits, then review the diff and land it yourself. Local safety overlay pins read-only defaults and forbids permission-bypass flags. |
 
 ### Matt Pocock Group
 
