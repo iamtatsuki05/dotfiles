@@ -74,11 +74,7 @@ git merge-base --is-ancestor "$base_oid" "$head_remote/$branch"
 
 ## 履歴変更とstacked PR
 
-直接の `git push --force` / `--force-with-lease` だけでなく、内部でforce-pushし得るコマンドも、対象branchを含む明示指示がない限り実行しない。merge済み・共有済みの変更を取り消すときは履歴を書き換えずrevert commitとrevert PRを使う。進行中のlocal rebase/revertが失敗しただけなら、共有履歴をrevertせず対応する `--abort` で元へ戻す。
-
-未公開branchでcommitが散らかった場合は、PR作成前に論理単位へsquash/rebaseし、変更後のtreeが同じこととテスト結果を確認する。公開済みbranchのsquash/rebaseはremote更新にforce-pushが必要になるため、明示許可なしでは行わない。
-
-2件以上の変更が直線状に依存し、各layerを独立してレビューできる場合はgh-stackを候補にする。独立作業、branching DAG、1件のPRで十分な変更には使わない。gh-stackを使う、commitを整理する、merge済み変更を戻す、または失敗した履歴操作を復旧するときは [history-and-stacks.md](history-and-stacks.md) を読む。
+force-push境界、commit整理、merge済み変更のrevert、失敗した履歴操作の復旧、gh-stackの判断と操作は [history-and-stacks.md](history-and-stacks.md) に従う。2件以上の変更が直線状に依存し、各layerを独立してレビューできる場合だけgh-stackを候補にする。
 
 ## GitHub metadata と Development
 

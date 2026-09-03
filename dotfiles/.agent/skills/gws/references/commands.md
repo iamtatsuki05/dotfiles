@@ -1,16 +1,6 @@
 # gws コマンドリファレンス
 
-gws 0.22.5 時点のコマンドリファレンス。
-
-## 目次
-
-- [グローバルフラグ](#グローバルフラグ)
-- [認証](#認証)
-- [Calendar](#calendar)
-- [Drive](#drive)
-- [Gmail](#gmail)
-- [Tasks](#tasks)
-- [環境変数](#環境変数)
+gws 0.22.5 時点。helper の help は `gws <service> help +<name>` で表示できる。
 
 ## グローバルフラグ
 
@@ -20,18 +10,18 @@ gws 0.22.5 時点のコマンドリファレンス。
 | `--json <JSON>` | リクエストボディを JSON で指定（POST/PATCH/PUT） |
 | `--upload <PATH>` | アップロードするローカルファイル |
 | `--upload-content-type <MIME>` | アップロードファイルの MIME type（省略時は拡張子から自動判定） |
-| `--output <PATH>` | バイナリレスポンスの保存先 |
+| `--output <PATH>` | バイナリレスポンスの保存先（current directory 配下のみ） |
 | `--format <FMT>` | 出力形式: `json`（デフォルト）/ `table` / `yaml` / `csv` |
 | `--api-version <VER>` | API バージョンの上書き |
 | `--page-all` | 全ページを自動取得（NDJSON） |
 | `--page-limit <N>` | `--page-all` 時の最大ページ数（デフォルト: 10） |
 | `--page-delay <MS>` | ページ取得間の待機 ms（デフォルト: 100） |
-| `--dry-run` | API に送信せずにリクエスト内容を検証 |
+| `--dry-run` | API に送信せずにリクエスト内容を表示（token 取得は行う） |
 
 ## 認証
 
 ```bash
-gws auth setup     # GCP プロジェクト + OAuth クライアントの初期設定
+gws auth setup     # GCP プロジェクト + OAuth クライアントの初期設定（gcloud が必要）
 gws auth login     # OAuth2 認証（ブラウザが開く）
 gws auth status    # 現在の認証状態を表示
 gws auth logout    # 認証情報とトークンキャッシュをクリア
@@ -39,14 +29,7 @@ gws auth logout    # 認証情報とトークンキャッシュをクリア
 
 ## Calendar
 
-### ヘルパーコマンド
-
-| コマンド | 説明 |
-|---------|------|
-| `gws calendar +agenda` | 全カレンダーの今後の予定を表示 |
-| `gws calendar +insert` | 新しいイベントを作成 |
-
-#### +agenda オプション
+### +agenda オプション
 
 | オプション | 説明 |
 |-----------|------|
@@ -54,16 +37,16 @@ gws auth logout    # 認証情報とトークンキャッシュをクリア
 | `--tomorrow` | 明日の予定 |
 | `--week` | 今週の予定 |
 | `--days <N>` | N日分の予定 |
-| `--calendar <NAME>` | カレンダー名または ID で絞り込み |
-| `--timezone <TZ>` | タイムゾーン指定（例: `Asia/Tokyo`） |
+| `--calendar <NAME>` | カレンダー名または ID で絞り込み（既定は全カレンダー） |
+| `--timezone <TZ>` | IANA タイムゾーン（例: `Asia/Tokyo`。既定は Google アカウントの設定） |
 
-#### +insert オプション
+### +insert オプション
 
 | オプション | 説明 |
 |-----------|------|
 | `--summary <TEXT>` | イベントタイトル（必須） |
-| `--start <TIME>` | 開始日時 ISO 8601（必須） |
-| `--end <TIME>` | 終了日時 ISO 8601（必須） |
+| `--start <TIME>` | 開始日時 RFC3339（必須） |
+| `--end <TIME>` | 終了日時 RFC3339（必須） |
 | `--calendar <ID>` | カレンダー ID（デフォルト: primary） |
 | `--location <TEXT>` | 場所 |
 | `--description <TEXT>` | 説明 |
@@ -73,7 +56,7 @@ gws auth logout    # 認証情報とトークンキャッシュをクリア
 ### 低レベル API
 
 ```bash
-# イベント一覧（今後7日間）
+# イベント一覧（期間指定）
 gws calendar events list --params '{
   "calendarId": "primary",
   "timeMin": "2026-04-13T00:00:00+09:00",
@@ -82,10 +65,8 @@ gws calendar events list --params '{
   "orderBy": "startTime"
 }'
 
-# イベント取得
+# イベント取得 / 削除
 gws calendar events get --params '{"calendarId": "primary", "eventId": "EVENT_ID"}'
-
-# イベント削除
 gws calendar events delete --params '{"calendarId": "primary", "eventId": "EVENT_ID"}'
 
 # カレンダー一覧
@@ -94,13 +75,7 @@ gws calendar calendarList list
 
 ## Drive
 
-### ヘルパーコマンド
-
-| コマンド | 説明 |
-|---------|------|
-| `gws drive +upload <file>` | ファイルをアップロード（MIME タイプ自動検出） |
-
-#### +upload オプション
+### +upload オプション
 
 | オプション | 説明 |
 |-----------|------|
@@ -121,34 +96,27 @@ gws calendar calendarList list
 ### 低レベル API
 
 ```bash
-# ファイル一覧
 gws drive files list --params '{"pageSize": 20, "fields": "files(id,name,mimeType,modifiedTime)"}'
-
-# ファイル情報取得
 gws drive files get --params '{"fileId": "FILE_ID"}'
-
-# バイナリダウンロード
 gws drive files get --params '{"fileId": "FILE_ID", "alt": "media"}' --output ./file.pdf
-
-# ファイル削除（ゴミ箱へ）
-gws drive files delete --params '{"fileId": "FILE_ID"}'
+gws drive files delete --params '{"fileId": "FILE_ID"}'     # ゴミ箱へ
 ```
 
 ## Gmail
 
-### ヘルパーコマンド
+### ヘルパー一覧
 
 | コマンド | 説明 |
 |---------|------|
-| `gws gmail +triage` | 未読メールの一覧表示 |
-| `gws gmail +read` | メール本文の読み取り |
+| `gws gmail +triage` | 未読メールの一覧表示（read-only） |
+| `gws gmail +read --id <ID>` | メール本文の読み取り |
 | `gws gmail +send` | メール送信 |
-| `gws gmail +reply` | メール返信 |
-| `gws gmail +reply-all` | 全員返信 |
-| `gws gmail +forward` | 転送 |
+| `gws gmail +reply --message-id <ID>` | 返信（スレッド処理は自動） |
+| `gws gmail +reply-all --message-id <ID>` | 全員返信 |
+| `gws gmail +forward --message-id <ID> --to <EMAILS>` | 転送 |
 | `gws gmail +watch` | 新着メールをリアルタイム監視（NDJSON） |
 
-#### +triage オプション
+### +triage オプション
 
 | オプション | 説明 |
 |-----------|------|
@@ -156,19 +124,29 @@ gws drive files delete --params '{"fileId": "FILE_ID"}'
 | `--query <QUERY>` | Gmail 検索クエリ（デフォルト: `is:unread`） |
 | `--labels` | ラベル名を含めて表示 |
 
-#### +send オプション
+### +read オプション
 
 | オプション | 説明 |
 |-----------|------|
-| `--to <EMAILS>` | 宛先（カンマ区切りで複数指定可）（必須） |
-| `--subject <SUBJECT>` | 件名（必須） |
+| `--id <ID>` | メッセージ ID（必須） |
+| `--headers` | From / To / Subject / Date を含める |
+| `--format <text\|json>` | 出力形式（デフォルト: text） |
+| `--html` | HTML 本文をそのまま返す |
+
+### +send / +reply オプション
+
+| オプション | 説明 |
+|-----------|------|
+| `--to <EMAILS>` | 宛先（カンマ区切り。`+send` では必須、`+reply` では追加宛先） |
+| `--subject <SUBJECT>` | 件名（`+send` のみ、必須） |
 | `--body <TEXT>` | 本文（必須） |
-| `--cc <EMAILS>` | CC |
-| `--bcc <EMAILS>` | BCC |
-| `--from <EMAIL>` | 送信元（エイリアス用） |
-| `-a <PATH>` | 添付ファイル（複数指定可、合計 25MB まで） |
-| `--html` | HTML メールとして送信 |
-| `--draft` | 下書きとして保存 |
+| `--message-id <ID>` | 返信元メッセージ ID（`+reply` / `+reply-all` / `+forward` で必須） |
+| `--cc <EMAILS>` / `--bcc <EMAILS>` | CC / BCC |
+| `--from <EMAIL>` | 送信元（send-as エイリアス） |
+| `-a, --attach <PATH>` | 添付ファイル（複数指定可、合計 25MB まで） |
+| `--html` | 本文を HTML として送信（`<p>` などの断片で書く） |
+| `--draft` | 送信せず下書きとして保存 |
+| `--dry-run` | 送信内容を表示して終了 |
 
 ### Gmail 検索クエリ例
 
@@ -181,13 +159,18 @@ gws drive files delete --params '{"fileId": "FILE_ID"}'
 | 期間指定 | `after:2026/04/01 before:2026/04/14` |
 | スター付き | `is:starred` |
 
+### 低レベル API
+
+```bash
+gws gmail users messages list --params '{"userId": "me", "q": "is:unread", "maxResults": 10}'
+gws gmail users messages get --params '{"userId": "me", "id": "MESSAGE_ID", "format": "metadata"}'
+```
+
 ## Tasks
 
 ```bash
-# タスクリスト一覧
+# タスクリスト一覧 / タスク一覧
 gws tasks tasklists list
-
-# タスク一覧
 gws tasks tasks list --params '{"tasklist": "TASKLIST_ID"}'
 
 # タスク作成

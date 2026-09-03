@@ -1,93 +1,68 @@
 ---
 name: typescript-dev
-description: "Use when the user asks to implement, refactor, test, debug, or review TypeScript/TSX code, type definitions, Jest/Vitest tests, ESLint/Biome/Prettier issues, Zod validation, or TypeScript build errors."
+description: "Use when the user asks to implement, refactor, test, debug, or review TypeScript/TSX code, type definitions, Jest/Vitest tests, ESLint/Biome/Prettier findings, Zod validation, or tsc build errors. Read once per session. Do not use for HTML/CSS layout questions (modern-web-guidance), CI YAML, or Markdown docs."
 ---
 
-# TypeScript開発スキル
+# TypeScript 開発スキル
 
-TypeScriptコードの実装、テスト、デバッグ、リファクタリングを効率的に行うためのガイド。
+TypeScript / TSX の実装、テスト、デバッグ、リファクタリングを、対象プロジェクトの `tsconfig` とツール構成に合わせて進めるための手順と判断基準。テスト先行と互換レイヤの扱いも本文に含む。
 
-## 実装前の必須確認
+この skill は session につき 1 回だけ読む。compaction 後は `checkpoint.md` の「適用中の skill と解決済みの実行形」を見て続け、SKILL.md を読み直さない。`$typescript-dev` で本文が注入済みの場合も再読しない。
 
-**tsconfig.json/package.jsonを必ず確認する。** プロジェクトの設定に従う。
+## 着手前の確認
 
-確認項目:
-- `tsconfig.json`: target, module, strict, paths, baseUrl
-- `package.json`: type（"module"/"commonjs"）, scripts
-- `.eslintrc`/`eslint.config.js`: ESLint設定（ESLint 9+ は flat config（`eslint.config.js`）が既定。`.eslintrc` は legacy 形式）
-- `.prettierrc`: フォーマット設定
-- `biome.json`: Biome使用時の設定
-- 既存のテストランナー（Jest / Vitest / Playwright 等）と `package.json` scripts
-- React / Node / library / CLI など実行環境
-- 既存の型設計、validation、DI、エラー処理のパターン
+次の順に読み、決めた内容を `checkpoint.md` に 1〜2 行で残す。repo が無く相談だけの依頼では設定ファイルを探さず、前提にしたバージョンや設定を回答に明記する。
 
-ESLint、Biome、Prettier が併存する場合は、`package.json` scripts と既存CIで使われるものを優先する。`any` や型アサーションは既存方針に従い、必要な場合は理由を明確にする。
+1. `package.json`: `type`(`module` / `commonjs`)、`scripts`(lint / test / typecheck / build の実行形)、package manager(`packageManager` フィールドか lockfile: `pnpm-lock.yaml` / `yarn.lock` / `package-lock.json` / `bun.lock`(旧 `bun.lockb`))。scripts にあるコマンドをそのまま実行形にする。
+2. `tsconfig.json`: `strict`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`module` / `moduleResolution`、`paths`。`verbatimModuleSyntax` が有効なら `import type` を使う。
+3. lint / format: `eslint.config.*`(ESLint 9+ の flat config)、`.eslintrc*`(legacy)、`biome.json`、`.prettierrc`。併存する場合は `scripts` と CI で実際に使われているものだけを使う。
+4. テストランナー: `vitest.config.*` / `jest.config.*` / `playwright.config.*`。新規導入せず既存のものに従う。
+5. 変更対象の周辺コード: 実行環境(React / Node / library / CLI)、エラー処理(例外か Result 型か)、validation(Zod のバージョン)、DI の有無、`any` と型アサーションの扱い。既存パターンはこの skill の既定より優先する。
 
-## 型定義
+## 進め方
 
-既存の型から派生型を作るときは、手書きで再定義せず組み込みユーティリティ型を使う。
+1. 振る舞いの変更ごとに、失敗するテストを先に書き、`<runner> <file>`(例: `pnpm vitest run src/foo.test.ts`)で失敗を確認してから最小の実装で通し、その後に整理する。
+   - 対象外: config / CI の修正、生成コード、型のみの変更で既存テストが型検査に含まれる場合。これらは既存の check を回すだけにする。
+2. alias、silent fallback、default 値補完、legacy path、非等価な代替経路は、明示要件か既存契約がなければ追加せず、明確なエラーを投げる。実際に書きそうになった時点でだけ `compatibility-safety` を読む。
+3. lint・型エラーはコード側を直す。`any`、`as`、`!`、`eslint-disable`、`@ts-expect-error` は理由をコメントに残せる場合だけ使い、設定の緩和で通さない。
+4. 公開 API、Props、export した型を変えたら、呼び出し元、stories、unit / e2e テストを同じ変更で同期する。同期漏れは `tsc --noEmit` の全体実行で連鎖エラーとして出る。
 
-- `Partial<T>` / `Required<T>`: 全プロパティをオプショナル / 必須に
-- `Pick<T, K>` / `Omit<T, K>`: 特定プロパティの抽出 / 除外
-- `Record<K, V>`: キーと値の型を指定したオブジェクト型
-- `Readonly<T>`: 全プロパティを読み取り専用に
+## 規約と判断基準
 
-使用例は [references/common-patterns.md](references/common-patterns.md) を参照。
+プロジェクトに規約や既存パターンがあればそれに従う。無い場合の既定:
 
-## エラーハンドリング
+- 既存の型から派生型を作るときは手書きで再定義せず、`Partial` / `Required` / `Pick` / `Omit` / `Record` / `Readonly` を使う。
+- union の絞り込みは型アサーションでなく、型述語(`pet is Dog`)か判別可能 union(`kind` フィールド)で行う。
+- カスタムエラーは `Error` を継承し `this.name` にクラス名を設定する。`fetch` などの外部呼び出しの失敗は握りつぶさず、URL やステータスを付けて再 throw する。Result / Option 型は既存方針がある場合だけ導入し、無ければ例外ベース。実装例は [references/common-patterns.md](references/common-patterns.md) の「エラーハンドリングパターン」と「関数型パターン」。
+- 外部入力(API レスポンス、環境変数、フォーム)の検証は Zod を使い、型は `z.infer` から導く。v3 と v4 で API が一部異なるので、依存バージョンを確認してから書く。実装例は同ファイルの「バリデーション」。
+- DI コンテナ(tsyringe など)はプロジェクトが採用済みの場合だけ使い、小規模ならファクトリ関数による手動 DI で足りる。
+- `interface` と `type` の使い分け、アクセス修飾子、抽象クラス、ESLint / Biome の個別ルール(`no-explicit-any`、`no-floating-promises`、`prefer-nullish-coalescing` など)の直し方は [references/coding-standards.md](references/coding-standards.md) を見る。
 
-- カスタムエラーは `Error` を継承し、`this.name` にクラス名を設定する（instanceof 判定とログの識別のため）。
-- Result 型パターンを導入するかは既存プロジェクトの方針に従う。方針がなければ例外ベースを既定とする。
-- `fetch` 等の外部呼び出しの失敗は握りつぶさず、URL やステータスなど失敗時の文脈を付けて再 throw する。
-- 詳細例（カスタムエラー、Result/Option 型）は [references/common-patterns.md](references/common-patterns.md) を参照。
+テストの既定:
 
-## クラス設計
+- モックは `beforeEach` で `vi.resetAllMocks()` / `jest.resetAllMocks()`(または config の `mockReset: true`)によりリセットし、テスト間の状態共有を避ける。`restoreAllMocks` は `spyOn` の復元だけで `vi.fn` の状態は戻らない。
+- 類似ケースは `test.each` / `it.each` にまとめる。
+- 非同期は `await expect(promise).rejects.toThrow(...)` の形で検証し、未 await の Promise を残さない。
+- モジュールモック、スパイ、カスタムマッチャー、フィクスチャの書き方は [references/testing-guide.md](references/testing-guide.md) を見る。
 
-アクセス修飾子、コンストラクタパラメータプロパティ、インターフェース実装・抽象クラスの例は [references/coding-standards.md](references/coding-standards.md) の「クラス設計」を参照。シングルトン等のデザインパターンは [references/common-patterns.md](references/common-patterns.md) を参照。
+## 完了前の確認
 
-## テスト
+`package.json` の scripts を優先し、無ければ次を実行する(`pnpm` の例。package manager は lockfile に合わせる)。
 
-- Vitest / Jest の基本、モック、スパイ、非同期テスト、パラメータ化の例は [references/testing-guide.md](references/testing-guide.md) を参照。
-- テストランナーは新規導入せず、プロジェクト既存のもの（`package.json` scripts）に従う。モックは `beforeEach` でリセットし、テスト間の状態共有を避ける。
-
-## 高度なパターン
-
-詳細なコード例（型ガード、Zod、tsyringe / 手動 DI、Result/Option 型、リトライ等）は [references/common-patterns.md](references/common-patterns.md) を参照。判断基準:
-
-- **型ガード**: union 型の絞り込みには型アサーションではなく型述語（`pet is Dog`）や判別可能 union（`kind` フィールド）を使う。
-- **Zod**: 外部入力（API レスポンス、環境変数、フォーム）の検証と型推論（`z.infer`）に使う。v3 と v4 で API が一部異なるため、プロジェクトの依存バージョンを確認してから書く。
-- **DI**: tsyringe 等のコンテナはプロジェクトで既に採用されている場合に使い、小規模ならファクトリ関数による手動 DI で十分。
-
-最小例（型述語）:
-
-```typescript
-type Pet = Dog | Cat; // 各型は kind: 'dog' | 'cat' で判別
-
-function isDog(pet: Pet): pet is Dog {
-  return pet.kind === 'dog';
-}
+```bash
+pnpm tsc --noEmit
+pnpm eslint .            # Biome なら pnpm biome check .
+pnpm prettier --check .  # Prettier を使う場合
+pnpm vitest run <変更に近い test>   # 通ったら全体。Jest なら pnpm jest
 ```
 
-## エンジニアリング作法（共通）
+- 変更した振る舞いに対応する unit / component テストを追加・更新したか。難しい場合は理由と代替の検証を報告に書く。
+- 実行できない検証は、コマンド、失敗理由、残るリスクを報告に回す。
 
-Small CL、テスト同梱、Why コメントを守る。`eng-practices` は PR description を書く段階でだけ読む。
-TypeScript では特に、`any` や型アサーションを使う箇所に理由を残し、公開 API の型変更は PR の影響範囲に明記する。
+## 報告に含めること
 
-## コード品質チェック
-
-実装後に確認:
-- 公開 API・Props・型を変更した場合、呼び出し元、stories、unit/e2e テストを同じ変更で同期したか（同期漏れは tsc の全体実行で連鎖エラーとして現れる）
-- tsc --noEmit を通過するか（型チェック）
-- eslint / biome check を通過するか
-- prettier --check を通過するか（フォーマット）
-- テストが通過するか
-- 変更に対応する単体テストまたはコンポーネントテストを追加・更新したか。難しい場合は理由と代替検証を報告する
-- 実行不能な検証があれば、コマンド、失敗理由、未確認リスクを最終報告に含める
-
-## リファレンス
-
-詳細なガイドは以下を参照:
-
-- **コーディング規約詳細**: [references/coding-standards.md](references/coding-standards.md) — 命名規則、interface vs type、クラス設計、ESLint/Biome ルール（no-explicit-any 等）への対応方法が必要なとき
-- **テストガイド**: [references/testing-guide.md](references/testing-guide.md) — Vitest/Jest の基本、モック、非同期テスト、フィクスチャの実装例が必要なとき
-- **よく使うパターン集**: [references/common-patterns.md](references/common-patterns.md) — 型ガード、Zod、DI、Result/Option 型、リトライ、デザインパターンの実装例が必要なとき
+- 変更ファイルと目的。規約の根拠(`tsconfig` / lint 設定か、この skill の既定か)。
+- 実行した検証コマンドと結果(失敗 0 件、テスト件数など)。未実行の検証とその理由。
+- 追加・更新したテスト。公開 API や型を変えた場合は影響範囲。
+- `any`、型アサーション、互換レイヤを入れた場合は、その根拠と削除条件。
+- PR description を書く段階になったら `eng-practices` を読む。それ以外の場面では読まない。

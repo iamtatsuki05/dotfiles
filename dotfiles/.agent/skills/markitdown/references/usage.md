@@ -1,95 +1,73 @@
 # MarkItDown 詳細リファレンス
 
+markitdown 0.1.7 時点。
+
 ## CLI オプション
 
 ```
-markitdown [OPTIONS] [INPUT]
+markitdown [OPTIONS] [FILENAME]
 
 引数:
-  INPUT           変換対象のファイルパス or URL（省略時は stdin から読み込み）
+  FILENAME        変換対象のファイルパス or URL(省略時は stdin から読み込み)
 
 オプション:
-  -o, --output    出力ファイルパス（省略時は stdout）
-  -x, --extension 入力の拡張子を明示指定（自動判定を上書き）
-  --version       バージョン表示
-  -h, --help      ヘルプ表示
+  -o, --output    出力ファイルパス(省略時は stdout)
+  -x, --extension 入力の拡張子ヒント(stdin 入力時に必須級)
+  -m, --mime-type MIME type ヒント
+  -c, --charset   文字コードヒント(例: UTF-8)
+  --keep-data-uris  base64 画像などの data URI を切り詰めずに残す
+  -p, --use-plugins / --list-plugins  サードパーティ plugin の利用・一覧
+  -d, --use-docintel -e <ENDPOINT>    Azure Document Intelligence で抽出(外部送信)
+  -v, --version / -h, --help
 ```
 
-## 使用例集
-
-### ファイル変換
+## 使用例
 
 ```bash
-# PDF → Markdown
 markitdown report.pdf -o report.md
-
-# Word → Markdown
 markitdown document.docx -o document.md
-
-# PowerPoint → Markdown
 markitdown slides.pptx -o slides.md
-
-# Excel → Markdown（テーブル形式）
-markitdown data.xlsx -o data.md
-
-# CSV → Markdown
+markitdown data.xlsx -o data.md            # シートごとに Markdown table
 markitdown data.csv -o data.md
-
-# Jupyter Notebook → Markdown
-markitdown notebook.ipynb -o notebook.md
-```
-
-### URL / HTML 変換
-
-```bash
-# Web ページを Markdown に変換
 markitdown https://example.com -o page.md
-
-# ローカル HTML ファイル
 markitdown index.html -o index.md
+markitdown archive.zip -o archive.md       # 内包ファイルを一括変換
+
+# 一括変換
+for f in *.pdf; do markitdown "$f" -o "${f%.pdf}.md"; done
+
+# markitdown[all] が必要
+markitdown screenshot.png -o text.md       # 画像 OCR
+markitdown interview.mp3 -o transcript.md  # 音声文字起こし
 ```
 
-### 画像・音声（`markitdown[all]` が必要）
+Python API(markitdown を import できる interpreter で実行する):
 
-```bash
-# 画像内テキストを OCR で抽出
-markitdown screenshot.png -o text.md
+```python
+from markitdown import MarkItDown
 
-# 音声を文字起こし
-markitdown interview.mp3 -o transcript.md
+result = MarkItDown().convert("input.xlsx")   # URL も同じ形で渡せる
+print(result.text_content)
 ```
-
-### 一括変換（シェルスクリプト例）
-
-```bash
-# カレントディレクトリの全 PDF を変換
-for f in *.pdf; do
-  markitdown "$f" -o "${f%.pdf}.md"
-done
-```
-
-### Python API
-
-基本例は SKILL.md の「Python API での変換」を参照。URL もファイルパスと同様に `md.convert("https://example.com")` で変換でき、結果は `result.text_content` から取り出す。
 
 ## インストールバリアント
 
-| コマンド                           | 用途                                          |
-|------------------------------------|-----------------------------------------------|
-| `pip install markitdown`           | 標準（PDF・Office・HTML等）                   |
-| `pip install 'markitdown[all]'`    | 全機能（OCR・音声文字起こし等）               |
-| `pip install 'markitdown[pdf]'`    | PDF サポートのみ追加                          |
-| `pip install 'markitdown[docx]'`   | Word サポートのみ追加                         |
-| `pip install 'markitdown[pptx]'`   | PowerPoint サポートのみ追加                   |
+| コマンド | 用途 |
+|---|---|
+| `uvx --from 'markitdown[pdf]' markitdown <args>` | PDF 込みの ad-hoc 実行(install しない) |
+| `pip install markitdown` | 標準(Office・HTML など。PDF は含まない) |
+| `pip install 'markitdown[pdf]'` | PDF サポートを追加 |
+| `pip install 'markitdown[docx]'` / `'[pptx]'` | Word / PowerPoint のみ追加 |
+| `pip install 'markitdown[all]'` | 全機能(OCR・音声文字起こしを含む) |
+
+永続 install はユーザー承認後に行う。
 
 ## トラブルシューティング
 
-- **`markitdown: command not found`** → まず `mise exec 'pipx:markitdown' -- markitdown` などの ad-hoc 実行（SKILL.md 冒頭参照）。永続インストール（`pip install markitdown`）はユーザー確認後に行う。`python3 -m markitdown` は markitdown を import できる interpreter（pipx / uvx の python）でだけ動き、system の `python3` では `No module named 'markitdown'` になる。
-- **PDF の変換結果が空** → スキャン PDF（画像ベース）の場合は `markitdown[all]` で OCR を有効化する。
-- **`FileConversionException: File conversion failed after 1 attempts`（PDF）** → 同じ PDF を再試行しない。`markitdown[pdf]` extra 入りの ad-hoc 実行（`uvx --from 'markitdown[pdf]' markitdown <file>`）に切り替えるか、`pdftotext -layout <file> -`（poppler、無ければ `missing-tools`）で本文を取り出して Markdown 化する。
-- **音声・画像が変換できない** → `pip install 'markitdown[all]'` で追加依存をインストール。
-- **文字化け** → 出力は UTF-8 。ターミナルのエンコーディングを確認するか `-o` でファイルに保存する。
+- `markitdown: command not found`: `mise exec 'pipx:markitdown' -- markitdown <args>`。`python3 -m markitdown` は system python では `No module named 'markitdown'` になる。
+- `FileConversionException: File conversion failed after 1 attempts`(PDF): `pdfminer` が無い。`uvx --from 'markitdown[pdf]' markitdown <file>` か `pdftotext -layout <file> -`(poppler、無ければ `nix shell nixpkgs#poppler-utils --command pdftotext ...`)に切り替える。
+- PDF の変換結果が空: スキャン PDF。`markitdown[all]` で OCR を有効化するか、元文書を案内する。
+- 音声・画像が変換できない: `markitdown[all]` の追加依存が必要。
+- 文字化け: 出力は UTF-8。`-c` で入力文字コードを指定するか `-o` でファイルに保存する。
 
-## リポジトリ
-
-https://github.com/microsoft/markitdown
+リポジトリ: https://github.com/microsoft/markitdown
