@@ -198,7 +198,7 @@ vi.mock('./utils', async () => {
 
 describe('with mocked module', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('should use mocked repository', async () => {

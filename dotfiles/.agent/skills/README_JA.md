@@ -33,29 +33,29 @@ skills/
 
 | Skill | 用途 | 備考 |
 |---|---|---|
-| `agent-cli-consult` | 外部 agent CLI（Codex CLI / Claude Code CLI）へのレビュー・調査相談。 | 明示的に CLI 相談を求められた時に使う。 |
-| `agent-job-scheduler` | 複数 agent CLI の長時間・非対話ジョブを CSV 台帳で queue / retry / cancel する。 | 内部アプリ本体、README、pytest を含む大きめの skill。 |
-| `alphaxiv-paper-lookup` | arXiv / alphaxiv 論文の要約、比較、実装詳細抽出。 | 論文調査用。 |
-| `auto-debugger` | エラー、stack trace、失敗テストの原因調査と修正。 | 実装前に再現・仮説・検証を重視。 |
-| `ci-cd` | GitHub Actions などの CI/CD 設計・修正・調査。 | workflow YAML とログ調査向け。 |
-| `compatibility-safety` | 不要な互換レイヤ、alias、silent fallback、default fallback を避ける。 | 互換動作や legacy path を追加しそうな変更前に使う。 |
-| `database-dev` | DB schema、query、index、migration、性能問題の設計・レビュー。 | SQL / NoSQL 両方を対象。 |
-| `eng-practices` | CL/PR 説明、small CL、review comment への対応。 | Google eng-practices を repo 向けに要約した共通 skill。PR 説明を書く段階で読むもので、review のたびに読む必要はない。 |
-| `go-dev` | Go 実装、テスト、並行処理、interface、module 周り。 | `eng-practices` と連携。 |
-| `git-github-flow` | Git/GitHub作業を認証・branch構造からIssue、PR、review、CI、merge、復旧まで一元管理する。 | `gh`と専用worktreeを使い、外部writeを操作ごとに制御する。 |
-| `goal-prompt-builder` | Codex `/goal` 用の長期作業 prompt を作る。 | durable objective と検証条件を固める。 |
-| `gws` | Google Calendar / Drive / Gmail / Tasks を `gws` CLI で扱う。 | 外部操作は確認を重視。 |
-| `html-preview-review` | 検証済みの Agent 実行結果を、安全な自己完結型 local HTML にして視覚レビューする。 | 必要な独立レビュー後、main agent が成果物を提示する。 |
-| `markdown-docs` | README、技術文書の構成と Markdown 記法の作成・整形・レビュー。 | この README もこの skill の対象。日本語の自然さは `natural-japanese`。 |
-| `markitdown` | PDF / Word / PowerPoint / Excel / HTML などを Markdown に変換。 | MarkItDown CLI 用。 |
-| `missing-tools` | 見つからないコマンドを global install なしで解決する。 | project env、mise、comma、Nix fallback を優先。 |
-| `prompt-tuner` | LLM prompt / system prompt / template の改善・評価。 | prompt tuning 作業用。 |
-| `python-dev` | Python 実装、pytest、typing、Pydantic、packaging。 | `eng-practices` と連携。 |
-| `retrospective-codify` | 作業終盤に学びを rule / skill / lint へ codify する。 | 繰り返しミスの恒久化向け。 |
-| `security-check` | secret leak、injection、auth、OWASP 観点の security review。 | 高リスク変更では明示的に使う。 |
-| `shaping-japanese-longform` | 事実やドラマを作らず、日本語の長文記事、エッセイ、解説の構成を整える。 | 対象についての内容と文書の進行実況を分け、問いと根拠の対応を点検する。 |
-| `terraform-dev` | Terraform / OpenTofu の module、state、plan、security。 | infra 変更向け。 |
-| `typescript-dev` | TypeScript / TSX、Vitest/Jest、Zod、ESLint/Biome。 | frontend / Node 実装向け。 |
+| `agent-cli-consult` | Codex CLI / Claude Code CLI に stdin 経由の prompt で読み取り専用のレビュー・調査を依頼する。 | ユーザーが外部 CLI を明示した時だけ使う。 |
+| `agent-job-scheduler` | 10 種の agent CLI の長時間・非対話ジョブを queue / retry / cancel し、allowlist、stale recovery、launchd も扱う。 | app 本体、README、pytest を同梱。 |
+| `alphaxiv-paper-lookup` | alphaxiv の overview と全文 Markdown で arXiv 論文を要約・比較・実装抽出する。 | 数値は全文で裏取りしてから報告する。 |
+| `auto-debugger` | 1 コマンドで再現するエラー・失敗テストの原因特定と修正、リグレッションテスト追加。 | 再現が作れない、flaky、性能退行の場合は `diagnosing-bugs` に引き継ぐ。 |
+| `ci-cd` | CI/CD workflow(GitHub Actions、GitLab CI、CircleCI)の作成・修正・調査。 | 権限と本番影響を先に確認し、実際の CI 実行を確認してから報告する。CI で落ちる app コード自体は対象外。 |
+| `compatibility-safety` | 根拠のない alias、silent fallback、default 値 fallback、legacy path、runner / backend の黙った差し替えを退ける。 | 書く・レビューする差分にそれらが含まれた時点で読む。実装開始時には読まない。 |
+| `database-dev` | EXPLAIN による実測、expand-contract の migration、共有環境への承認手順を含む schema / index / query / migration の設計・レビュー。 | session で 1 回だけ読む。SQL / NoSQL 両方。 |
+| `eng-practices` | PR/CL のタイトル・説明、small PR への分割、reviewer コメントへの返答。 | PR description を書く段階でだけ読む。review の実施には使わず、出力形式は依頼文で決める。 |
+| `go-dev` | go.mod のバージョンに合わせた Go 実装・テスト・レビュー。テーブル駆動テスト、errgroup / context、-race 確認を含む。 | session で 1 回だけ読む。CI YAML や Go 以外のサービスは対象外。 |
+| `git-github-flow` | Git/GitHub 作業を確認・範囲内 write・readback で進める。owner/repo と login は remote から解決、PR は Draft + 明示 assignee / labels、CI gate 後だけ Ready、force-push 禁止。 | fork PR、review 投稿、履歴整理、gh-stack は references。 |
+| `goal-prompt-builder` | 依頼を、範囲・checkpoint・検証可能な停止条件を持つ Codex `/goal` prompt に変換する。 | `$goal-prompt-builder` で呼ぶ。本番・課金・権限判断を委ねる goal は拒否する。 |
+| `gws` | gws CLI の helper と低レベル API で Google Calendar / Drive / Gmail / Tasks を扱う。 | 読み取りは即実行、書き込みは dry-run か下書きで確認し、承認後に実行する。 |
+| `html-preview-review` | ユーザーが preview を求めたときだけ、検証済み結果を private な local HTML review board にして 1 つの presenter で表示する。 | OS ブラウザへの fallback 禁止。未表示は未達として報告する。 |
+| `markdown-docs` | Markdown 文書そのもの(README、docs/、ガイド、リリースノート)の構成・記法・リンク・表を作成・編集・レビューする。 | コード変更に付随する README 小修正やスライド・PDF・LaTeX には使わない。日本語の自然さは `natural-japanese`。 |
+| `markitdown` | markitdown CLI で PDF / Office / HTML / URL を Markdown に変換する。PDF 失敗時は uvx 経由の fallback。 | 失敗した PDF は再試行せず markitdown[pdf] か pdftotext に切り替える。 |
+| `missing-tools` | 未導入コマンドを project env、mise、Nix、comma 経由で global install なしに実行する。 | 解決した実行形は checkpoint.md に記録する。 |
+| `prompt-tuner` | モデル API に送る prompt(system prompt、template、few-shot)を実行・評価・診断・修正の反復で改善する。 | agent 向け指示は `empirical-prompt-tuning`、Codex `/goal` は `goal-prompt-builder`。 |
+| `python-dev` | pyproject / ruff / mypy / pytest の規約に合わせた Python 実装・テスト・デバッグ。テスト先行と fail fast の規則を含む。 | session で 1 回だけ読む。notebook、Slurm / env script、文書は対象外。 |
+| `retrospective-codify` | ユーザーの依頼で session の学びを rule / skill / lint に固定する。自発提案は 1 session 1 回・3 行以内。 | agent 発の候補は session 横断の再発確認が条件。 |
+| `security-check` | 攻撃者視点の review(secret 露出、injection、認証・認可、脆弱な依存)。 | security が明示された依頼だけで使う。launcher や破壊的操作の「安全性レビュー」は通常レビュー。Phase 1 の secret grep は単独で使える。 |
+| `shaping-japanese-longform` | 事実・因果・ドラマを作らず、日本語の長文記事、論考、解説の構成を整える。 | 文書進行の実況を削り、主張と根拠をつなぐ。文レベルの自然さは `natural-japanese`。 |
+| `terraform-dev` | plan 優先の手順、moved / import ブロック、state と秘匿値の扱い、apply の承認手順を含む Terraform / OpenTofu の実装・検証・レビュー。 | session で 1 回だけ読む。既定は plan まで。 |
+| `typescript-dev` | tsconfig、lint、テストランナーに合わせた TypeScript / TSX の実装・テスト・デバッグ。Zod、型ガード、公開 API 変更時の同期を含む。 | session で 1 回だけ読む。HTML / CSS レイアウトは `modern-web-guidance`。 |
 
 ## system skill
 
@@ -103,7 +103,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 
 | Skill | 用途 |
 |---|---|
-| `brainstorming` | feasibility probe、bounded change、architectural work を分類する。自動承認 gate、server、telemetry は追加しない。 |
+| `brainstorming` | software の依頼を spike、bounded change、architectural design に振り分け、path ごとの次のユーザー判断と durable artifact を示す。承認 gate、server、telemetry は追加しない。 |
 | `dispatching-parallel-agents` | 独立した複数タスクを並列 agent に分ける判断を助ける。 |
 | `systematic-debugging` | 既存の root-cause workflow を維持し、flaky な非同期テストでは固定 upstream の条件待ち資料を読む。 |
 | `test-driven-development` | feature / bugfix 実装前に TDD の進め方を固定する。 |

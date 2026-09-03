@@ -6,7 +6,6 @@
 - [MySQL](#mysql)
 - [SQLite](#sqlite)
 - [MongoDB](#mongodb)
-- [Redis（キャッシュ/セッション）](#redisキャッシュセッション)
 
 ## PostgreSQL
 
@@ -390,43 +389,3 @@ changeStream.on("change", (change) => {
 });
 ```
 
-## Redis（キャッシュ/セッション）
-
-### データ構造選択
-
-```redis
-# String（単純なキャッシュ）
-SET user:1:profile "{...}" EX 3600
-
-# Hash（オブジェクト）
-HSET user:1 name "John" email "john@example.com"
-HGET user:1 name
-HGETALL user:1
-
-# List（キュー）
-LPUSH queue:jobs "job1"
-RPOP queue:jobs
-
-# Set（ユニークな集合）
-SADD user:1:tags "tech" "ai"
-SMEMBERS user:1:tags
-
-# Sorted Set（スコア付きランキング）
-ZADD leaderboard 100 "user:1" 200 "user:2"
-ZREVRANGE leaderboard 0 9 WITHSCORES
-```
-
-### パターン
-
-```redis
-# キャッシュアサイドパターン
-# 1. キャッシュ確認 → 2. なければDBから取得 → 3. キャッシュに保存
-
-# 分散ロック
-SET lock:resource "owner" NX EX 30
-# 処理後
-DEL lock:resource
-
-# レートリミッティング（スライディングウィンドウ）
-# Luaスクリプトで原子的に実行
-```
