@@ -86,6 +86,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語の AI pattern を strict checklist で除く。voice matching は `humanizer`。 |
+| `delegate-skills` | `amElnagdy/delegate-skills` | `codex-delegate/`、`claude-delegate/` | 1 つの bounded なコーディング作業を別 process の Codex CLI / Claude Code に relay 経由で任せ、diff を自分で review して commit する。relay は commit しない。local safety overlay で read-only 既定と権限 bypass flag の禁止を固定。 |
 
 ### mattpocock group
 
