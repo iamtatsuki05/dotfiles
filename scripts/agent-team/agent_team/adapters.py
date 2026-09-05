@@ -7,8 +7,10 @@ turn-scoped read snapshot with a bounded process runner.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import math
 import os
 import re
 import selectors
@@ -34,6 +36,8 @@ SNAPSHOT_PATH_INSTRUCTION = (
     "Resolve every repository path relative to the current working directory; "
     "do not use an absolute path from the original workspace.\n\n"
 )
+
+_STDIN_EAGAIN_RETRY_SECONDS = 0.01
 
 SAFE_ENV_KEYS = frozenset(
     {"PATH", "HOME", "TMPDIR", "SHELL", "USER", "LOGNAME", "LANG", "TERM"}
@@ -168,9 +172,16 @@ class ProcessRunner:
     ) -> ProcessResult:
         if not argv or any(not isinstance(item, str) or not item for item in argv):
             raise ExecutionError("provider argv must be non-empty strings")
-        if timeout_seconds <= 0:
-            raise ExecutionError("provider timeout must be positive")
+        if os.name == "nt":
+            raise ExecutionError("provider process runner requires a POSIX runtime")
+        if timeout_seconds <= 0 or not math.isfinite(timeout_seconds):
+            raise ExecutionError("provider timeout must be finite and positive")
+        try:
+            input_bytes = None if input_text is None else input_text.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ExecutionError("provider input is not valid UTF-8") from exc
         process: subprocess.Popen[bytes] | None = None
+        process_group_id: int | None = None
         try:
             process = subprocess.Popen(
                 tuple(argv),
@@ -182,7 +193,11 @@ class ProcessRunner:
                 shell=False,
                 start_new_session=True,
             )
-            input_bytes = None if input_text is None else input_text.encode("utf-8")
+            if os.name != "nt":
+                try:
+                    process_group_id = os.getpgid(process.pid)
+                except OSError:
+                    process_group_id = process.pid
             stdout_data, stderr_data = _bounded_communicate(
                 process,
                 input_bytes,
@@ -191,21 +206,23 @@ class ProcessRunner:
             )
         except _ProcessTimeout as exc:
             assert process is not None
-            _terminate_process_group(process)
+            _terminate_process_group(process, process_group_id)
             raise ExecutionError(
                 f"provider process timed out after {timeout_seconds:g}s"
             ) from exc
         except _ProcessOutputLimit as exc:
             assert process is not None
-            _terminate_process_group(process)
+            _terminate_process_group(process, process_group_id)
             raise ExecutionError(
                 "provider output exceeds the configured limit"
             ) from exc
-        except (OSError, UnicodeEncodeError) as exc:
-            if process is not None and process.poll() is None:
-                _terminate_process_group(process)
+        except (OSError, UnicodeEncodeError, ValueError, RuntimeError) as exc:
+            if process is not None:
+                _terminate_process_group(process, process_group_id)
             raise ExecutionError(f"provider process could not start: {exc}") from exc
         assert process is not None
+        if process_group_id is not None and not _process_group_exited(process_group_id):
+            _terminate_process_group(process, process_group_id)
         try:
             decoded_stdout = bytes(stdout_data).decode("utf-8")
             decoded_stderr = bytes(stderr_data).decode("utf-8")
@@ -232,82 +249,226 @@ def _bounded_communicate(
     """Drain both pipes without retaining more than the configured bound."""
 
     assert process.stdout is not None and process.stderr is not None
-    selector = selectors.DefaultSelector()
-    stdout_fd = process.stdout.fileno()
-    stderr_fd = process.stderr.fileno()
-    os.set_blocking(stdout_fd, False)
-    os.set_blocking(stderr_fd, False)
-    selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
-    selector.register(stderr_fd, selectors.EVENT_READ, "stderr")
-    if process.stdin is not None:
-        stdin_fd = process.stdin.fileno()
-        os.set_blocking(stdin_fd, False)
-        if input_bytes:
-            selector.register(stdin_fd, selectors.EVENT_WRITE, input_bytes)
-        else:
-            process.stdin.close()
     stdout_data = bytearray()
     stderr_data = bytearray()
     input_offset = 0
-    deadline = time.monotonic() + timeout_seconds
+    selector: selectors.BaseSelector | None = None
+    stdin_fd: int | None = None
+    stdin_payload: bytes | None = None
+    stdin_retry_deadline: float | None = None
     try:
+        # Poll reports pipe EOF reliably on macOS; kqueue can leave a completed
+        # child with an empty readiness set while its descriptors remain mapped.
+        selector_type = getattr(selectors, "PollSelector", None)
+        selector = (selector_type or selectors.DefaultSelector)()
+        stdout_fd = process.stdout.fileno()
+        stderr_fd = process.stderr.fileno()
+        os.set_blocking(stdout_fd, False)
+        os.set_blocking(stderr_fd, False)
+        selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
+        selector.register(stderr_fd, selectors.EVENT_READ, "stderr")
+        if process.stdin is not None:
+            stdin_fd = process.stdin.fileno()
+            os.set_blocking(stdin_fd, False)
+            if input_bytes:
+                stdin_payload = input_bytes
+                selector.register(stdin_fd, selectors.EVENT_WRITE, stdin_payload)
+            else:
+                process.stdin.close()
+        deadline = time.monotonic() + timeout_seconds
+
+        def drain_output(key: selectors.SelectorKey) -> None:
+            while True:
+                try:
+                    chunk = os.read(key.fd, 65_536)
+                except BlockingIOError:
+                    break
+                if not chunk:
+                    selector.unregister(key.fd)
+                    break
+                target = stdout_data if key.data == "stdout" else stderr_data
+                target.extend(chunk)
+                if len(target) > max_output_bytes:
+                    raise _ProcessOutputLimit()
+
         while selector.get_map() or process.poll() is None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise _ProcessTimeout()
-            for key, events in selector.select(remaining):
-                if key.data in {"stdout", "stderr"}:
-                    try:
-                        chunk = os.read(key.fd, 65_536)
-                    except BlockingIOError:
-                        continue
-                    if not chunk:
+            parent_exited = process.poll() is not None
+            select_timeout = 0 if parent_exited else min(remaining, 0.25)
+            if stdin_retry_deadline is not None and not parent_exited:
+                select_timeout = min(
+                    select_timeout,
+                    max(0.0, stdin_retry_deadline - time.monotonic()),
+                )
+            events_ready = selector.select(select_timeout)
+            if parent_exited:
+                # The parent is the only process whose output belongs to this
+                # result.  A descendant may retain inherited pipes forever;
+                # drain bytes already buffered, then let the group fence kill
+                # that descendant instead of waiting for EOF.
+                for key in list(selector.get_map().values()):
+                    if key.data in {"stdout", "stderr"}:
+                        drain_output(key)
+                    else:
                         selector.unregister(key.fd)
-                        continue
-                    target = stdout_data if key.data == "stdout" else stderr_data
-                    target.extend(chunk)
-                    if len(target) > max_output_bytes:
-                        raise _ProcessOutputLimit()
+                        if process.stdin is not None and not process.stdin.closed:
+                            process.stdin.close()
+                break
+            if (
+                stdin_retry_deadline is not None
+                and time.monotonic() >= stdin_retry_deadline
+            ):
+                assert stdin_fd is not None and stdin_payload is not None
+                selector.register(stdin_fd, selectors.EVENT_WRITE, stdin_payload)
+                stdin_retry_deadline = None
+            for key, events in events_ready:
+                if key.data in {"stdout", "stderr"}:
+                    drain_output(key)
                     continue
                 if events & selectors.EVENT_WRITE:
                     payload = key.data
                     assert isinstance(payload, bytes)
-                    written = os.write(key.fd, payload[input_offset:])
+                    try:
+                        written = os.write(key.fd, payload[input_offset:])
+                    except BlockingIOError as exc:
+                        if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                            raise
+                        selector.unregister(key.fd)
+                        stdin_retry_deadline = min(
+                            deadline,
+                            time.monotonic() + _STDIN_EAGAIN_RETRY_SECONDS,
+                        )
+                        continue
+                    except BrokenPipeError:
+                        selector.unregister(key.fd)
+                        if process.stdin is not None and not process.stdin.closed:
+                            process.stdin.close()
+                        continue
                     input_offset += written
                     if input_offset == len(payload):
                         selector.unregister(key.fd)
                         assert process.stdin is not None
                         process.stdin.close()
     finally:
-        selector.close()
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
-        process.stdout.close()
-        process.stderr.close()
+        if selector is not None:
+            try:
+                selector.close()
+            except (OSError, RuntimeError, ValueError):
+                pass
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except (OSError, RuntimeError, ValueError):
+                    pass
     process.wait()
     return stdout_data, stderr_data
 
 
-def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
+def _terminate_process_group(
+    process: subprocess.Popen[bytes], process_group_id: int | None = None
+) -> None:
+    if os.name == "nt":
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=2.0)
+            return
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired as exc:
+                raise ExecutionError("provider process could not be reaped") from exc
         return
+
+    group_id = process_group_id or process.pid
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(group_id, signal.SIGTERM)
     except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=2.0)
-        return
-    except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except PermissionError:
+        if process.poll() is None:
+            process.terminate()
+    if _wait_for_process_group_exit(group_id, timeout_seconds=2.0, process=process):
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired as exc:
+            raise ExecutionError("provider process could not be reaped") from exc
         return
+    try:
+        os.killpg(group_id, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if process.poll() is None:
+            process.kill()
     try:
         process.wait(timeout=2.0)
     except subprocess.TimeoutExpired as exc:
         raise ExecutionError("provider process group could not be reaped") from exc
+    if not _wait_for_process_group_exit(group_id, timeout_seconds=2.0, process=process):
+        raise ExecutionError("provider process group could not be reaped")
+
+
+def _wait_for_process_group_exit(
+    group_id: int,
+    *,
+    timeout_seconds: float,
+    process: subprocess.Popen[bytes] | None = None,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while _process_group_exited(group_id) is False:
+        if process is not None and process.poll() is not None:
+            try:
+                process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                pass
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(remaining, 0.05))
+    return True
+
+
+def _process_group_exited(group_id: int) -> bool:
+    try:
+        os.killpg(group_id, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    if sys.platform.startswith("linux"):
+        live_member = _linux_process_group_has_live_member(group_id)
+        if live_member is False:
+            return True
+    return False
+
+
+def _linux_process_group_has_live_member(group_id: int) -> bool | None:
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return None
+    try:
+        entries = tuple(proc_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat_line = (entry / "stat").read_text(encoding="ascii")
+            closing_paren = stat_line.rfind(")")
+            fields = stat_line[closing_paren + 2 :].split()
+            if len(fields) < 3 or int(fields[2]) != group_id:
+                continue
+            if fields[0] != "Z":
+                return True
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+    return False
 
 
 def safe_environment(

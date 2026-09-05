@@ -19,6 +19,8 @@ from .adapters import (
     create_read_snapshot,
     remove_owned_tree,
 )
+from .contracts import ErrorCode, RuntimeFailure
+from .orca import _LifecycleReservation, orca_executable
 from .runtime import (
     MAX_PROMPT_CHARS,
     RuntimeValidationError,
@@ -42,6 +44,7 @@ from .runtime import (
 )
 
 ROLES: Final = ("planner", "worker", "reviewer")
+StateGeneration = tuple[str, str, str, str, str, str, str]
 MAX_REPLY_CHARS: Final = 20_000
 MIN_TIMEOUT_MS: Final = 1_000
 MAX_TIMEOUT_MS: Final = 900_000
@@ -196,11 +199,82 @@ def load_state() -> tuple[Path, dict[str, object]]:
         raise ToolInputError(str(exc)) from exc
 
 
-def save_state(path: Path, state: dict[str, object]) -> None:
+def _state_generation(state: dict[str, object]) -> StateGeneration:
+    generation: dict[str, str] = {}
+    for key in ("team_id", "run_id", "worktree_id", "main_terminal"):
+        value = state.get(key)
+        if not isinstance(value, str) or not value:
+            raise ToolInputError(f"agent-team state is missing {key}")
+        generation[key] = value
+    for key in ("workspace", "config_path", "state_path"):
+        value = state.get(key)
+        if not isinstance(value, str) or not value:
+            raise ToolInputError(f"agent-team state is missing {key}")
+        generation[key] = str(Path(value).expanduser().resolve(strict=False))
+    return (
+        generation["team_id"],
+        generation["workspace"],
+        generation["config_path"],
+        generation["state_path"],
+        generation["run_id"],
+        generation["worktree_id"],
+        generation["main_terminal"],
+    )
+
+
+def _assert_state_generation(path: Path, expected: StateGeneration) -> None:
     try:
-        runtime_write_state(path, state, require_existing=True)
+        current = runtime_read_state(path)
+    except RuntimeValidationError as exc:
+        if str(exc).startswith("agent-team is not running:"):
+            raise ToolInputError(
+                "agent-team state disappeared during operation"
+            ) from exc
+        raise ToolInputError("agent-team state is invalid during operation") from exc
+    if _state_generation(current) != expected:
+        raise ToolInputError("agent-team state generation changed during operation")
+
+
+def _reservation_error(exc: RuntimeFailure) -> ToolInputError:
+    message = (
+        "agent-team state disappeared before save"
+        if exc.code is ErrorCode.TEAM_NOT_RUNNING
+        else "agent-team state reservation is unavailable"
+    )
+    return ToolInputError(message)
+
+
+def save_state(
+    path: Path,
+    state: dict[str, object],
+    *,
+    expected_generation: StateGeneration | None = None,
+    reservation_held: bool = False,
+) -> None:
+    if reservation_held:
+        if expected_generation is not None:
+            _assert_state_generation(path, expected_generation)
+        try:
+            runtime_write_state(
+                path, state, require_existing=True, reservation_held=True
+            )
+        except RuntimeValidationError as exc:
+            raise ToolInputError(str(exc)) from exc
+        return
+
+    reservation = _LifecycleReservation(path, create_parent=False)
+    try:
+        reservation.acquire()
+    except RuntimeFailure as exc:
+        raise _reservation_error(exc) from exc
+    try:
+        if expected_generation is not None:
+            _assert_state_generation(path, expected_generation)
+        runtime_write_state(path, state, require_existing=True, reservation_held=True)
     except RuntimeValidationError as exc:
         raise ToolInputError(str(exc)) from exc
+    finally:
+        reservation.release()
 
 
 def require_state_string(state: dict[str, object], key: str) -> str:
@@ -223,7 +297,7 @@ def run_orca(
 ) -> dict[str, object]:
     workspace = Path(require_state_string(state, "workspace"))
     result = subprocess.run(
-        ["orca", *args],
+        [orca_executable(), *args],
         check=False,
         capture_output=True,
         cwd=workspace,
@@ -594,7 +668,13 @@ def _mark_task_failed(state: dict[str, object], task_id: str, result: str) -> No
 
 
 def start_background_role(
-    path: Path, state: dict[str, object], role: str, text: str
+    path: Path,
+    state: dict[str, object],
+    role: str,
+    text: str,
+    *,
+    expected_generation: StateGeneration | None = None,
+    reservation_held: bool = False,
 ) -> dict[str, object]:
     """Start a fixed, non-TUI provider on a private turn snapshot."""
 
@@ -715,7 +795,12 @@ def start_background_role(
             "adapter_snapshot": _adapter_snapshot_dict(adapter_snapshot),
         }
         roles[role] = assignment
-        save_state(path, state)
+        save_state(
+            path,
+            state,
+            expected_generation=expected_generation,
+            reservation_held=reservation_held,
+        )
         persisted = True
         run_orca(
             state,
@@ -743,7 +828,12 @@ def start_background_role(
         roles.pop(role, None)
         if persisted:
             try:
-                save_state(path, state)
+                save_state(
+                    path,
+                    state,
+                    expected_generation=expected_generation,
+                    reservation_held=reservation_held,
+                )
             except (OSError, TypeError, ValueError) as cleanup_error:
                 cleanup_errors.append(f"state rollback failed: {cleanup_error}")
         if dispatch_id is not None:
@@ -822,7 +912,13 @@ def start_background_role(
 
 
 def start_acp_role(
-    path: Path, state: dict[str, object], role: str, text: str
+    path: Path,
+    state: dict[str, object],
+    role: str,
+    text: str,
+    *,
+    expected_generation: StateGeneration | None = None,
+    reservation_held: bool = False,
 ) -> dict[str, object]:
     """Create a tracked bare-shell ACP dispatch and then deliver its runner."""
 
@@ -921,7 +1017,12 @@ def start_acp_role(
             },
         }
         roles[role] = assignment
-        save_state(path, state)
+        save_state(
+            path,
+            state,
+            expected_generation=expected_generation,
+            reservation_held=reservation_held,
+        )
         persisted = True
         run_orca(
             state,
@@ -949,7 +1050,12 @@ def start_acp_role(
         roles.pop(role, None)
         if persisted:
             try:
-                save_state(path, state)
+                save_state(
+                    path,
+                    state,
+                    expected_generation=expected_generation,
+                    reservation_held=reservation_held,
+                )
             except (OSError, TypeError, ValueError) as cleanup_error:
                 cleanup_errors.append(f"state rollback failed: {cleanup_error}")
         if dispatch_id is not None:
@@ -1026,7 +1132,13 @@ def start_acp_role(
 
 
 def start_role(
-    path: Path, state: dict[str, object], role: str, text: str
+    path: Path,
+    state: dict[str, object],
+    role: str,
+    text: str,
+    *,
+    expected_generation: StateGeneration | None = None,
+    reservation_held: bool = False,
 ) -> dict[str, object]:
     roles = state.get("roles")
     if not isinstance(roles, dict):
@@ -1042,10 +1154,31 @@ def start_role(
         )
     if role_execution(state, role) == "background":
         if role_spec(state, role).get("provider") == "claude":
-            return start_acp_role(path, state, role, text)
-        return start_background_role(path, state, role, text)
+            return start_acp_role(
+                path,
+                state,
+                role,
+                text,
+                expected_generation=expected_generation,
+                reservation_held=reservation_held,
+            )
+        return start_background_role(
+            path,
+            state,
+            role,
+            text,
+            expected_generation=expected_generation,
+            reservation_held=reservation_held,
+        )
     if role_transport(state, role) == "acp":
-        return start_acp_role(path, state, role, text)
+        return start_acp_role(
+            path,
+            state,
+            role,
+            text,
+            expected_generation=expected_generation,
+            reservation_held=reservation_held,
+        )
     run_id = require_state_string(state, "run_id")
     main_terminal = require_state_string(state, "main_terminal")
     team_id = require_state_string(state, "team_id")
@@ -1131,7 +1264,12 @@ def start_role(
             "launcher_owned_terminal": True,
         }
         roles[role] = assignment
-        save_state(path, state)
+        save_state(
+            path,
+            state,
+            expected_generation=expected_generation,
+            reservation_held=reservation_held,
+        )
     except BaseException as start_error:
         roles.pop(role, None)
         cleanup_errors: list[str] = []
@@ -1197,7 +1335,28 @@ def start_role(
 
 
 def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
-    path, state = load_state()
+    path = state_path()
+    reservation = _LifecycleReservation(path, create_parent=False)
+    try:
+        reservation.acquire()
+    except RuntimeFailure as exc:
+        raise _reservation_error(exc) from exc
+    try:
+        path, state = load_state()
+        generation = _state_generation(state)
+        _assert_state_generation(path, generation)
+        return _execute_tool_locked(name, arguments, path, state, generation)
+    finally:
+        reservation.release()
+
+
+def _execute_tool_locked(
+    name: str,
+    arguments: dict[str, object],
+    path: Path,
+    state: dict[str, object],
+    generation: StateGeneration,
+) -> dict[str, object]:
     if name == "delivery_ack":
         delivery_id = bounded_text(arguments, "delivery_id", maximum=256)
         pending_delivery_id = state.get("pending_delivery_id")
@@ -1221,12 +1380,17 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
             ],
         )
         state.pop("pending_delivery_id", None)
-        save_state(path, state)
+        save_state(
+            path,
+            state,
+            expected_generation=generation,
+            reservation_held=True,
+        )
         return result
     if name == "message_reply":
         message_id = bounded_text(arguments, "message_id", maximum=256)
         body = bounded_text(arguments, "body", maximum=MAX_REPLY_CHARS)
-        return run_orca(
+        result = run_orca(
             state,
             [
                 "orchestration",
@@ -1242,11 +1406,20 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
                 "--json",
             ],
         )
+        _assert_state_generation(path, generation)
+        return result
 
     role = require_role(arguments)
     if name == "role_prompt":
         text = bounded_text(arguments, "text", maximum=MAX_PROMPT_CHARS)
-        return start_role(path, state, role, text)
+        return start_role(
+            path,
+            state,
+            role,
+            text,
+            expected_generation=generation,
+            reservation_held=True,
+        )
     assignment = role_assignment(state, role)
     dispatch_id = require_nested_string(assignment, ("dispatch_id",), "role assignment")
     if name == "role_get":
@@ -1319,7 +1492,12 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
                     assignment["completion_observed"] = True
                     assignment["outcome"] = payload["outcome"]
         if isinstance(observed_delivery_id, str) and observed_delivery_id:
-            save_state(path, state)
+            save_state(
+                path,
+                state,
+                expected_generation=generation,
+                reservation_held=True,
+            )
         return result
     if name == "role_read":
         if assignment.get("completion_observed") is not True:
@@ -1411,7 +1589,12 @@ def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
         if not isinstance(roles, dict):
             raise ToolInputError("agent-team state has invalid roles")
         del roles[role]
-        save_state(path, state)
+        save_state(
+            path,
+            state,
+            expected_generation=generation,
+            reservation_held=True,
+        )
         return released
     raise ToolInputError(f"unknown tool: {name}")
 

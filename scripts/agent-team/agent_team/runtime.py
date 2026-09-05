@@ -10,6 +10,9 @@ import stat
 from pathlib import Path
 from typing import Final
 
+from .contracts import ErrorCode, RuntimeFailure
+from .orca import _LifecycleReservation
+
 ACP_ROLES: Final = frozenset({"planner", "reviewer"})
 ACP_PACKAGE: Final = "acpx@0.13.2"
 CLAUDE_ACP_PACKAGE: Final = "@agentclientprotocol/claude-agent-acp@0.70.0"
@@ -42,6 +45,10 @@ _STATE_REQUIRED_KEYS: Final = (
 
 class RuntimeValidationError(ValueError):
     """Raised when a shared runtime artifact fails its safety contract."""
+
+
+class StatePublishError(RuntimeValidationError):
+    """State replacement succeeded but directory durability is unconfirmed."""
 
 
 def _absolute(path: Path) -> Path:
@@ -566,8 +573,33 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
 
 
 def write_state(
-    path: Path, state: dict[str, object], *, require_existing: bool = False
+    path: Path,
+    state: dict[str, object],
+    *,
+    require_existing: bool = False,
+    reservation_held: bool = False,
 ) -> None:
+    if not reservation_held:
+        reservation = _LifecycleReservation(path, create_parent=not require_existing)
+        try:
+            reservation.acquire()
+        except RuntimeFailure as exc:
+            message = (
+                "agent-team state disappeared before save"
+                if exc.code is ErrorCode.TEAM_NOT_RUNNING
+                else "agent-team state reservation is unavailable"
+            )
+            raise RuntimeValidationError(message) from exc
+        try:
+            write_state(
+                path,
+                state,
+                require_existing=require_existing,
+                reservation_held=True,
+            )
+        finally:
+            reservation.release()
+        return
     path = _absolute(path)
     if require_existing:
         try:
@@ -601,6 +633,7 @@ def write_state(
         flags |= os.O_NOFOLLOW
     payload = (json.dumps(state, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     fd: int | None = None
+    state_published = False
     try:
         fd = os.open(temporary, flags, 0o600)
         with os.fdopen(fd, "wb") as state_file:
@@ -620,6 +653,12 @@ def write_state(
                     f"agent-team state changed before save: {path}"
                 )
         os.replace(temporary, path)
+        state_published = True
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     except (OSError, RuntimeValidationError) as exc:
         if fd is not None:
             os.close(fd)
@@ -629,6 +668,10 @@ def write_state(
             pass
         if isinstance(exc, RuntimeValidationError):
             raise
+        if state_published:
+            raise StatePublishError(
+                "agent-team state was published but durability is unconfirmed"
+            ) from exc
         raise RuntimeValidationError(
             f"could not write agent-team state: {path}"
         ) from exc
