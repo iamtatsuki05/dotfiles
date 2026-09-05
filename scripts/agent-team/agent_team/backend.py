@@ -50,6 +50,7 @@ from .contracts import (
     StopResult,
     TerminalRef,
 )
+from .locking import _LifecycleReservation
 from .orca import (
     OrcaClient,
     OrcaCommandError,
@@ -63,7 +64,6 @@ from .orca import (
     WorkerStopOwnedVerdict,
     WorkerStopUnknownVerdict,
     WorkerStopVerdict,
-    _LifecycleReservation,
     _required_string,
 )
 from .runtime import (
@@ -609,6 +609,12 @@ class OrcaBackend(BackendPort):
 
     def _stop_locked(self) -> StopResult:
         state = self._reload_state_locked()
+        if "pending_role_start" in state:
+            raise RuntimeFailure(
+                ErrorCode.BUSY,
+                "agent-team role startup cleanup is pending; use status to inspect "
+                "the retained ownership evidence",
+            )
         self._retry_published_startup_marker(state)
         state_path = self._state_path(state)
         state_file_identity = self._state_file_identity(state_path)
@@ -984,6 +990,16 @@ class OrcaBackend(BackendPort):
 
     def _status_locked(self) -> StatusReceipt:
         state = self._reload_state_locked()
+        if "pending_role_start" in state:
+            team_id = state_string(state, "team_id")
+            run_id = state_string(state, "run_id")
+            self.last_status_response = {
+                "status": "cleanup_pending",
+                "team_id": team_id,
+                "run_id": run_id,
+                "pending_role_start": state["pending_role_start"],
+            }
+            return StatusReceipt("cleanup_pending", team_id, RunRef(run_id))
         self._retry_published_startup_marker(state)
         workspace = self._workspace(state)
         run_id = state_string(state, "run_id")
@@ -1472,6 +1488,10 @@ class OrcaBackend(BackendPort):
                 "adapter_id": role_spec.adapter_id,
                 "instructions": role_spec.instructions,
             }
+            if role_spec.acp_executables is not None:
+                role_specs[role.value]["acp_executables"] = dict(
+                    role_spec.acp_executables
+                )
         return {
             "version": STATE_VERSION,
             "runtime": "orca",

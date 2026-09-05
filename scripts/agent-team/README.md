@@ -92,8 +92,8 @@ fallback or environment override:
 
 Before starting a team:
 
-1. Make sure the platform-specific Orca executable above, `claude`, `codex`,
-   Node.js, and `npx` are available.
+1. Make sure the selected backend and harness commands are available. The bundled
+   team uses the Orca executable above, `claude`, `codex`, and the ACP tools below.
 2. Open Orca and confirm that the platform-specific `status --json` command
    reports a ready runtime and graph.
 3. Log in to Claude and Codex with the accounts you intend to use.
@@ -110,9 +110,19 @@ orca-ide status --json
 orca-ide repo add --path "$PWD"
 ```
 
-The ACP Planner uses the exact packages `acpx@0.13.2` and
-`@agentclientprotocol/claude-agent-acp@0.70.0`. The first ACP run can download
-them through `npx`; it does not install them globally.
+The ACP Planner requires Node.js 22.13 or later and the installed commands from
+`acpx@0.13.2` and `@agentclientprotocol/claude-agent-acp@0.70.0`. Install the
+selected tools explicitly, for example into a directory you choose:
+
+```bash
+npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/claude-agent-acp@0.70.0
+export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
+```
+
+Startup records the resolved program paths and fingerprints. Execution uses
+those programs directly and does not run `npm` or `npx`. A missing or changed
+dependency is an error. Teams using only direct transport do not require the
+ACP tools.
 
 If a team created by config version 2 is still running, stop it with the old
 code before switching to version 3. There is no legacy fallback.
@@ -173,8 +183,11 @@ agent-team stop
 `stop` keeps the Orca Run as an audit record. It does not commit, push,
 publish, or delete project files.
 
-All management commands must use the same `--config` and `--cwd` values used by
-`start`:
+Management commands use the saved launch snapshot, even if the original config
+or prompt files have been changed or deleted. Use the same `--cwd` and, when
+specified, `--config` and `--team` values as `start` to select that run. `--config`
+matches the original input path, including a version-4 catalog; it is not read
+again. An omitted selector is allowed only when exactly one saved run matches.
 
 ```bash
 agent-team start \
@@ -185,6 +198,10 @@ agent-team status \
   --config /absolute/path/to/config.toml \
   --cwd /absolute/path/to/project
 ```
+
+`status`, `attach`, and `stop` also accept `--state /absolute/path/to/state.json`
+to select a saved run independently of the current directory. It cannot be
+combined with `--team`; an additional `--config` must match the saved path.
 
 ## Know the safety boundary
 
@@ -218,7 +235,7 @@ The tracked limitation is [#11](https://github.com/iamtatsuki05/dotfiles/issues/
 | `agent-team state already exists` | Use `agent-team status`, `attach`, or `stop`; do not start a second owner. |
 | `role has no active Orca Dispatch` | Main has not started that background role, or it has already been released. |
 | Authentication is required | Run `claude auth status` or `codex login status` outside agent-team. |
-| ACP startup fails on the first run | Check network access for the exact `npx` packages, then retry explicitly. |
+| ACP dependency check fails | Install the pinned ACP packages explicitly and include their `node_modules/.bin` directory and Node >=22.13 in `PATH`. |
 | A role reports `escalation` | Inspect the retained terminal and Run; do not treat escalation as completion. |
 
 ## Prepare a useful failure report
@@ -274,3 +291,15 @@ an out-of-date lock instead of silently updating it. See the
 When changing Orca or ACP integration, repeat a real bounded smoke test and
 confirm that terminals, state, prompt files, sessions, and adapter processes
 are gone after `stop`.
+
+To verify the tmux terminal driver on a machine with tmux installed, explicitly
+run this test from the repository root:
+
+```bash
+uv run --locked --project scripts/agent-team python scripts/agent-team/tests/live_tmux.py
+```
+
+It creates a private tmux server, checks literal arguments and process exit
+status, and reclaims its own resources. Missing tmux is an error in this test.
+The default suite exercises the driver contract without requiring tmux. This
+live test covers terminal operations; it does not prove the full team workflow.

@@ -50,6 +50,10 @@ prompt = "prompts/reviewer.md"
 permission = "read-only"
 ```
 
+The bundled config uses `fable` for Main and Planner and `gpt-6-astra` for
+Worker and Reviewer. The canonical Planner is the Claude read-only ACP role;
+the canonical Worker and Reviewer remain direct Codex roles.
+
 ## Top-level fields define one team contract
 
 | Field | Contract |
@@ -102,6 +106,25 @@ and all workspace-write ACP combinations fail fast.
 Adding a new provider or ACP adapter is not a config-only operation. It requires
 a code change, capability and permission tests, an exact version policy, and a
 real lifecycle/cleanup smoke test.
+
+## ACP dependencies are explicit and selected-only
+
+A config that selects Claude `acp` requires Node.js `22.13.0` or newer and the
+exact packages `acpx@0.13.2` and
+`@agentclientprotocol/claude-agent-acp@0.70.0`. Install them explicitly outside
+`agent-team`, for example:
+
+```bash
+npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/claude-agent-acp@0.70.0
+export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
+```
+
+When an ACP role is selected, startup resolves `node`, `acpx`, and
+`claude-agent-acp`, checks the exact package manifests, and saves absolute file
+paths with SHA-256 fingerprints in the launch snapshot. The runner verifies and
+uses that saved binding. Missing or changed files fail closed. Runtime commands
+never invoke `npm` or `npx`; a direct-only config does not resolve ACP
+dependencies.
 
 ## Effort values are provider-specific
 

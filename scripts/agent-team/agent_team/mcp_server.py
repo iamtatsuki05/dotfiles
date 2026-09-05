@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Final, cast
 
+from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .adapters import (
     AdapterContext,
     AdapterSnapshot,
@@ -20,11 +21,13 @@ from .adapters import (
     remove_owned_tree,
 )
 from .contracts import ErrorCode, RuntimeFailure
+from .harness_launch import build_snapshot_role_command
+from .locking import _LifecycleReservation
 from .orca import (
+    OrcaClient,
     OrcaCommandError,
     OrcaProtocolError,
     OrcaTransportError,
-    _LifecycleReservation,
     orca_executable,
 )
 from .runtime import (
@@ -34,7 +37,6 @@ from .runtime import (
     build_acp_runner_command,
     build_acp_session_name,
     build_background_runner_command,
-    build_role_command,
 )
 from .runtime import (
     create_prompt_file as runtime_create_prompt_file,
@@ -55,6 +57,11 @@ MAX_REPLY_CHARS: Final = 20_000
 MIN_TIMEOUT_MS: Final = 1_000
 MAX_TIMEOUT_MS: Final = 900_000
 MAX_READ_LINES: Final = 2_000
+DELIVERY_MESSAGE_TYPES: Final = frozenset({"worker_done", "question", "escalation"})
+PENDING_DELIVERY_KIND: Final = "pending_delivery_kind"
+PENDING_DELIVERY_STAGE: Final = "pending_delivery_stage"
+PENDING_QUESTION_IDS: Final = "pending_question_ids"
+REPLIED_QUESTION_IDS: Final = "replied_question_ids"
 
 
 class ToolInputError(ValueError):
@@ -420,15 +427,285 @@ def worker_done_sender(message: dict[str, object]) -> str | None:
     return None
 
 
+def _message_payload(message: dict[str, object]) -> dict[str, object] | None:
+    payload = message.get("payload")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _question_message_id(message: dict[str, object]) -> str | None:
+    message_id = message.get("id")
+    if isinstance(message_id, str) and message_id:
+        return message_id
+    return None
+
+
+def _message_matches_assignment(
+    message: dict[str, object],
+    payload: dict[str, object] | None,
+    assignment: dict[str, object],
+) -> bool:
+    terminal_handle = assignment.get("terminal_handle")
+    if not isinstance(terminal_handle, str):
+        return False
+    if worker_done_sender(message) != terminal_handle:
+        return False
+    if payload is None:
+        return True
+    for key, assignment_key in (
+        ("taskId", "task_id"),
+        ("dispatchId", "dispatch_id"),
+    ):
+        observed = payload.get(key)
+        expected = assignment.get(assignment_key)
+        if observed is not None and observed != expected:
+            return False
+    return True
+
+
+def _question_matches_dispatch(
+    message: dict[str, object],
+    payload: dict[str, object] | None,
+    assignment: dict[str, object],
+    dispatch_id: str,
+) -> bool:
+    if message.get("from_handle") != f"dispatch:{dispatch_id}":
+        return False
+    if payload is None:
+        return False
+    return (
+        payload.get("taskId") == assignment.get("task_id")
+        and payload.get("dispatchId") == dispatch_id
+    )
+
+
+def _escalation_matches_dispatch(
+    message: dict[str, object],
+    payload: dict[str, object] | None,
+    assignment: dict[str, object],
+    dispatch_id: str,
+) -> bool:
+    terminal_handle = assignment.get("terminal_handle")
+    if not isinstance(terminal_handle, str):
+        return False
+    if message.get("from_handle") not in {
+        terminal_handle,
+        f"dispatch:{dispatch_id}",
+    }:
+        return False
+    if payload is None:
+        return False
+    return (
+        payload.get("taskId") == assignment.get("task_id")
+        and payload.get("dispatchId") == dispatch_id
+    )
+
+
+def _validate_question_reply(
+    result: dict[str, object],
+    *,
+    message_id: str,
+    body: str,
+    run_id: str,
+    dispatch_id: str,
+) -> None:
+    if not isinstance(result.get("duplicate"), bool):
+        raise TypeError("Orca question reply was missing an answer receipt")
+    message = result.get("message")
+    question = result.get("question")
+    if not isinstance(message, dict) or not isinstance(question, dict):
+        raise TypeError("Orca question reply response was invalid")
+    answer_message_id = require_nested_string(message, ("id",), "question reply")
+    if require_nested_string(message, ("thread_id",), "question reply") != message_id:
+        raise RuntimeError("Orca question reply thread does not match the question")
+    if require_nested_string(message, ("run_id",), "question reply") != run_id:
+        raise RuntimeError("Orca question reply Run does not match the team")
+    if message.get("body") != body:
+        raise RuntimeError("Orca question reply body does not match the request")
+    if require_nested_string(question, ("message_id",), "question reply") != message_id:
+        raise RuntimeError("Orca answered question does not match the request")
+    if require_nested_string(question, ("run_id",), "question reply") != run_id:
+        raise RuntimeError("Orca answered question Run does not match the team")
+    if (
+        require_nested_string(question, ("dispatch_id",), "question reply")
+        != dispatch_id
+    ):
+        raise RuntimeError("Orca answered question Dispatch does not match the role")
+    if question.get("status") != "answered":
+        raise RuntimeError("Orca question reply did not answer the question")
+    if (
+        require_nested_string(question, ("answer_message_id",), "question reply")
+        != answer_message_id
+    ):
+        raise RuntimeError("Orca question answer message does not match the receipt")
+    if question.get("answer_body") != body:
+        raise RuntimeError("Orca question answer body does not match the request")
+
+
+def _validate_worker_read_response(
+    result: dict[str, object], *, dispatch_id: str, terminal_handle: str
+) -> None:
+    if result.get("dispatchId") != dispatch_id:
+        raise RuntimeError("worker-read response Dispatch does not match the role")
+    source_value = result.get("source")
+    if source_value not in {"terminal", "transcript"}:
+        raise TypeError("worker-read response has an invalid output source")
+    source_identity = result.get("sourceIdentity")
+    if not isinstance(source_identity, str) or not source_identity:
+        raise TypeError("worker-read response is missing output source identity")
+    output = result.get(source_value)
+    if not isinstance(output, dict):
+        raise TypeError("worker-read response is missing structured output")
+    if source_value == "terminal":
+        if output.get("handle") != terminal_handle:
+            raise RuntimeError("worker-read terminal handle does not match the role")
+        tail = output.get("tail")
+        if not isinstance(tail, list) or any(
+            not isinstance(line, str) for line in tail
+        ):
+            raise TypeError("worker-read terminal output is invalid")
+    else:
+        messages = output.get("messages")
+        if not isinstance(messages, list):
+            raise TypeError("worker-read transcript output is invalid")
+
+
+def _validate_terminal_close_response(
+    result: dict[str, object], *, terminal_handle: str
+) -> None:
+    close = result.get("close")
+    if not isinstance(close, dict):
+        raise TypeError("terminal close response is missing a close receipt")
+    if close.get("handle") != terminal_handle:
+        raise RuntimeError("terminal close handle does not match the role")
+    tab_id = close.get("tabId")
+    if not isinstance(tab_id, str) or not tab_id:
+        raise TypeError("terminal close response is missing the closed tab")
+    if close.get("closeMode") != "tab":
+        raise RuntimeError("terminal close response did not close the requested tab")
+    if not isinstance(close.get("ptyKilled"), bool):
+        raise TypeError("terminal close response has an invalid process receipt")
+
+
+def _validate_worker_stop_response(
+    result: dict[str, object], *, dispatch_id: str, terminal_handle: str | None
+) -> bool:
+    if not isinstance(terminal_handle, str) or not terminal_handle:
+        raise RuntimeError(
+            "worker-stop response cannot be verified without terminal identity"
+        )
+    if result.get("dispatchId") != dispatch_id:
+        raise RuntimeError("worker-stop response Dispatch does not match the role")
+    state = result.get("state")
+    process_action = result.get("processAction")
+    already_settled = result.get("alreadySettled")
+    if not isinstance(state, str) or not state:
+        raise TypeError("worker-stop response is missing its state")
+    if not isinstance(process_action, str) or not process_action:
+        raise TypeError("worker-stop response is missing its process receipt")
+    if state == "stop_unknown":
+        if (
+            process_action not in {"none", "unknown", "closed_agent_terminal"}
+            or already_settled is not False
+            or "close" in result
+        ):
+            raise RuntimeError("worker-stop response is invalid")
+        raise RuntimeError("worker-stop did not confirm the stop outcome")
+    if process_action == "closed_agent_terminal":
+        if state != "stopped" or not isinstance(already_settled, bool):
+            raise RuntimeError("worker-stop response is invalid")
+        close = result.get("close")
+        if (
+            not isinstance(close, dict)
+            or close.get("handle") != terminal_handle
+            or close.get("ptyKilled") is not True
+        ):
+            raise RuntimeError("worker-stop response has no process stop receipt")
+        return True
+    if process_action != "none" or "close" in result:
+        raise RuntimeError("worker-stop response is invalid")
+    if not isinstance(already_settled, bool):
+        raise TypeError("worker-stop response is missing its settlement receipt")
+    if state == "stopped" and not already_settled:
+        return False
+    if (
+        state
+        in {
+            "succeeded",
+            "failed",
+            "stopped",
+            "abandoned",
+            "completed",
+            "circuit_broken",
+        }
+        and already_settled
+    ):
+        raise RuntimeError("settled Dispatch has no confirmed process stop receipt")
+    raise RuntimeError("worker-stop response is invalid")
+
+
+def _rollback_owned_dispatch(
+    state: dict[str, object], *, dispatch_id: str, terminal_handle: str
+) -> None:
+    stopped = run_orca(
+        state,
+        ["orchestration", "worker-stop", "--dispatch", dispatch_id, "--json"],
+    )
+    process_stopped = _validate_worker_stop_response(
+        stopped, dispatch_id=dispatch_id, terminal_handle=terminal_handle
+    )
+    if process_stopped:
+        return
+    closed = run_orca(
+        state,
+        ["terminal", "close", "--terminal", terminal_handle, "--json"],
+    )
+    verdict = OrcaClient._decode_terminal_close(closed, terminal_id=terminal_handle)
+    if verdict.close_mode is not None or not verdict.pty_killed:
+        raise RuntimeError("terminal rollback did not confirm process stop")
+
+
+def _delivery_kind(result: dict[str, object]) -> str:
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return "unknown"
+    kinds = {
+        message.get("type")
+        for message in messages
+        if isinstance(message, dict)
+        and isinstance(message.get("type"), str)
+        and message.get("type") in DELIVERY_MESSAGE_TYPES
+    }
+    if len(kinds) == 1:
+        return cast(str, next(iter(kinds)))
+    return "unknown"
+
+
+def _stage_invalid_delivery(
+    state: dict[str, object], delivery_id: str, kind: str
+) -> None:
+    state["pending_delivery_id"] = delivery_id
+    state[PENDING_DELIVERY_KIND] = kind
+    state[PENDING_DELIVERY_STAGE] = "invalid"
+    state[PENDING_QUESTION_IDS] = []
+    state[REPLIED_QUESTION_IDS] = []
+
+
+def _clear_pending_delivery(state: dict[str, object]) -> None:
+    state.pop("pending_delivery_id", None)
+    state.pop(PENDING_DELIVERY_KIND, None)
+    state.pop(PENDING_DELIVERY_STAGE, None)
+    state.pop(PENDING_QUESTION_IDS, None)
+    state.pop(REPLIED_QUESTION_IDS, None)
+
+
 def role_command(state: dict[str, object], role: str) -> str:
     try:
-        return build_role_command(
-            require_state_string(state, "launcher_path"),
-            role,
-            require_state_string(state, "config_path"),
-            require_state_string(state, "workspace"),
-            require_state_string(state, "orca_socket"),
-        )
+        return build_snapshot_role_command(state, role)
     except RuntimeValidationError as exc:
         raise ToolInputError(str(exc)) from exc
 
@@ -448,11 +725,45 @@ def role_execution(state: dict[str, object], role: str) -> str:
     return str(execution)
 
 
-def acp_agent_command(team_id: str, role: str, launch_nonce: str) -> str:
+def acp_agent_command(
+    team_id: str,
+    role: str,
+    launch_nonce: str,
+    *,
+    executables: AcpExecutables,
+) -> str:
     try:
-        return build_acp_agent_command(team_id, role, launch_nonce)
+        return build_acp_agent_command(
+            team_id, role, launch_nonce, executables=executables
+        )
     except RuntimeValidationError as exc:
         raise ToolInputError(str(exc)) from exc
+
+
+def _saved_acp_executables(spec: dict[str, object]) -> AcpExecutables:
+    try:
+        executables = AcpExecutables.from_dict(spec.get("acp_executables"))
+        executables.verify()
+    except AcpDependencyError as exc:
+        raise ToolInputError(str(exc)) from exc
+    return executables
+
+
+def _acp_adapter_snapshot(executables: AcpExecutables) -> dict[str, object]:
+    identity = executables.client.stat()
+    return {
+        "adapter_id": "claude-acp-0.70.0",
+        "revision": "acpx@0.13.2",
+        "executable": str(executables.client),
+        "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
+        "identity": {
+            "device": identity.st_dev,
+            "inode": identity.st_ino,
+            "size": identity.st_size,
+            "mtime_ns": identity.st_mtime_ns,
+            "sha256": executables.client_sha256,
+        },
+    }
 
 
 def acp_session_name(role: str, launch_nonce: str) -> str:
@@ -674,6 +985,36 @@ def _mark_task_failed(state: dict[str, object], task_id: str, result: str) -> No
     )
 
 
+def _retain_failed_role_start(
+    path: Path,
+    state: dict[str, object],
+    role: str,
+    known_resources: dict[str, object],
+    *,
+    expected_generation: StateGeneration | None,
+    reservation_held: bool,
+) -> None:
+    roles = state.get("roles")
+    if not isinstance(roles, dict):
+        raise ToolInputError("agent-team state has invalid roles")
+    if role not in roles:
+        state["pending_role_start"] = {
+            "role": role,
+            "reason": "role startup rollback could not confirm cleanup",
+            **{
+                key: str(value) if isinstance(value, Path) else value
+                for key, value in known_resources.items()
+                if value is not None
+            },
+        }
+    save_state(
+        path,
+        state,
+        expected_generation=expected_generation,
+        reservation_held=reservation_held,
+    )
+
+
 def start_background_role(
     path: Path,
     state: dict[str, object],
@@ -720,6 +1061,7 @@ def start_background_role(
     terminal_handle: str | None = None
     dispatch_id: str | None = None
     persisted = False
+    terminal_creation_attempted = False
     cleanup_errors: list[str] = []
     try:
         # These checks intentionally precede task creation so a bad provider
@@ -740,6 +1082,7 @@ def start_background_role(
         prompt_path = create_prompt_file(
             path.parent, role, launch_nonce, combined_prompt
         )
+        terminal_creation_attempted = True
         terminal = run_orca(
             state,
             [
@@ -771,22 +1114,13 @@ def start_background_role(
                 "--json",
             ],
         )
-        try:
-            dispatch_id = validate_acp_dispatch_response(
-                dispatch,
-                task_id=task_id,
-                terminal_handle=terminal_handle,
-                run_id=run_id,
-                context="dispatch",
-            )
-        except (RuntimeError, TypeError):
-            dispatch_record = dispatch.get("dispatch")
-            candidate = (
-                dispatch_record.get("id") if isinstance(dispatch_record, dict) else None
-            )
-            if isinstance(candidate, str) and candidate:
-                dispatch_id = candidate
-            raise
+        dispatch_id = validate_acp_dispatch_response(
+            dispatch,
+            task_id=task_id,
+            terminal_handle=terminal_handle,
+            run_id=run_id,
+            context="dispatch",
+        )
         assignment: dict[str, object] = {
             "task_id": task_id,
             "dispatch_id": dispatch_id,
@@ -832,72 +1166,37 @@ def start_background_role(
         )
         return assignment
     except BaseException as exc:
-        roles.pop(role, None)
-        if persisted:
+        local_cleanup_allowed = not terminal_creation_attempted
+        if dispatch_id is not None and terminal_handle is not None:
             try:
-                save_state(
-                    path,
-                    state,
-                    expected_generation=expected_generation,
-                    reservation_held=reservation_held,
+                _rollback_owned_dispatch(
+                    state, dispatch_id=dispatch_id, terminal_handle=terminal_handle
                 )
-            except (OSError, TypeError, ValueError) as cleanup_error:
-                cleanup_errors.append(f"state rollback failed: {cleanup_error}")
-        if dispatch_id is not None:
-            try:
-                run_orca(
-                    state,
-                    [
-                        "orchestration",
-                        "worker-stop",
-                        "--dispatch",
-                        dispatch_id,
-                        "--json",
-                    ],
-                )
+                local_cleanup_allowed = True
             except (
                 RuntimeError,
                 TypeError,
                 OSError,
                 subprocess.TimeoutExpired,
             ) as cleanup_error:
-                cleanup_errors.append(f"Dispatch cleanup failed: {cleanup_error}")
-        if terminal_handle is not None:
+                cleanup_errors.append(f"Dispatch rollback failed: {cleanup_error}")
+        if local_cleanup_allowed:
+            if prompt_path is not None:
+                try:
+                    remove_prompt_file(
+                        prompt_path, path.parent, role=role, launch_nonce=launch_nonce
+                    )
+                except (RuntimeError, ToolInputError) as cleanup_error:
+                    cleanup_errors.append(f"prompt cleanup failed: {cleanup_error}")
+            if snapshot is not None:
+                try:
+                    snapshot.cleanup()
+                except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
+                    cleanup_errors.append(f"snapshot cleanup failed: {cleanup_error}")
             try:
-                run_orca(
-                    state,
-                    [
-                        "terminal",
-                        "close",
-                        "--terminal",
-                        terminal_handle,
-                        "--tab",
-                        "--json",
-                    ],
-                )
-            except (
-                RuntimeError,
-                TypeError,
-                OSError,
-                subprocess.TimeoutExpired,
-            ) as cleanup_error:
-                cleanup_errors.append(f"terminal cleanup failed: {cleanup_error}")
-        if prompt_path is not None:
-            try:
-                remove_prompt_file(
-                    prompt_path, path.parent, role=role, launch_nonce=launch_nonce
-                )
-            except (RuntimeError, ToolInputError) as cleanup_error:
-                cleanup_errors.append(f"prompt cleanup failed: {cleanup_error}")
-        if snapshot is not None:
-            try:
-                snapshot.cleanup()
+                remove_owned_tree(private_root)
             except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
-                cleanup_errors.append(f"snapshot cleanup failed: {cleanup_error}")
-        try:
-            remove_owned_tree(private_root)
-        except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
-            cleanup_errors.append(f"provider cleanup failed: {cleanup_error}")
+                cleanup_errors.append(f"provider cleanup failed: {cleanup_error}")
         if task_id is not None:
             try:
                 _mark_task_failed(
@@ -910,6 +1209,45 @@ def start_background_role(
                 subprocess.TimeoutExpired,
             ) as cleanup_error:
                 cleanup_errors.append(f"task cleanup failed: {cleanup_error}")
+        if local_cleanup_allowed and not cleanup_errors:
+            roles.pop(role, None)
+            if persisted:
+                try:
+                    save_state(
+                        path,
+                        state,
+                        expected_generation=expected_generation,
+                        reservation_held=reservation_held,
+                    )
+                except (OSError, TypeError, ValueError) as cleanup_error:
+                    cleanup_errors.append(f"state rollback failed: {cleanup_error}")
+        if not local_cleanup_allowed or cleanup_errors:
+            try:
+                _retain_failed_role_start(
+                    path,
+                    state,
+                    role,
+                    {
+                        "task_id": task_id,
+                        "dispatch_id": dispatch_id,
+                        "terminal_handle": terminal_handle,
+                        "launch_nonce": launch_nonce,
+                        "prompt_path": prompt_path,
+                        "provider_private_root": private_root,
+                        "terminal_creation_attempted": terminal_creation_attempted,
+                        "snapshot_root": snapshot.root
+                        if snapshot is not None
+                        else None,
+                    },
+                    expected_generation=expected_generation,
+                    reservation_held=reservation_held,
+                )
+            except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
+                cleanup_errors.append(
+                    f"ownership evidence save failed: {cleanup_error}"
+                )
+            if not local_cleanup_allowed:
+                cleanup_errors.append("role resources retained; cleanup is unconfirmed")
         if cleanup_errors:
             raise RuntimeError(
                 f"background role startup failed: {exc}; cleanup also failed: "
@@ -936,17 +1274,40 @@ def start_acp_role(
     main_terminal = require_state_string(state, "main_terminal")
     team_id = require_state_string(state, "team_id")
     worktree_id = require_state_string(state, "worktree_id")
-    task_id = _create_task(state, role, text)
+    spec = role_spec(state, role)
+    if (
+        spec.get("transport") != "acp"
+        or spec.get("provider") != "claude"
+        or spec.get("execution") != "background"
+        or spec.get("adapter_id") != "claude-acp-0.70.0"
+        or spec.get("permission") != "read-only"
+    ):
+        raise ToolInputError(
+            "ACP role does not satisfy the Claude read-only capability"
+        )
+    executables = _saved_acp_executables(spec)
     launch_nonce = secrets.token_hex(16)
     prompt_path: Path | None = None
-    provider_private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
-    snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
+    task_id: str | None = None
+    provider_private_root: Path | None = None
+    snapshot_root: Path | None = None
     terminal_handle: str | None = None
     dispatch_id: str | None = None
     persisted = False
+    terminal_creation_attempted = False
     cleanup_errors: list[str] = []
     try:
+        agent_command = acp_agent_command(
+            team_id,
+            role,
+            launch_nonce,
+            executables=executables,
+        )
+        task_id = _create_task(state, role, text)
+        provider_private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
+        snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
         prompt_path = create_prompt_file(Path(path).parent, role, launch_nonce, text)
+        terminal_creation_attempted = True
         terminal = run_orca(
             state,
             [
@@ -978,23 +1339,15 @@ def start_acp_role(
                 "--json",
             ],
         )
-        try:
-            dispatch_id = validate_acp_dispatch_response(
-                dispatch,
-                task_id=task_id,
-                terminal_handle=terminal_handle,
-                run_id=run_id,
-                context="dispatch",
-            )
-        except (RuntimeError, TypeError):
-            dispatch_record = dispatch.get("dispatch")
-            candidate = (
-                dispatch_record.get("id") if isinstance(dispatch_record, dict) else None
-            )
-            if isinstance(candidate, str) and candidate:
-                dispatch_id = candidate
-            raise
-        agent_command = acp_agent_command(team_id, role, launch_nonce)
+        dispatch_id = validate_acp_dispatch_response(
+            dispatch,
+            task_id=task_id,
+            terminal_handle=terminal_handle,
+            run_id=run_id,
+            context="dispatch",
+        )
+        if task_id is None or provider_private_root is None or snapshot_root is None:
+            raise RuntimeError("ACP role startup did not allocate its private roots")
         assignment: dict[str, object] = {
             "task_id": task_id,
             "dispatch_id": dispatch_id,
@@ -1006,22 +1359,10 @@ def start_acp_role(
             "agent_command": agent_command,
             "session_name": acp_session_name(role, launch_nonce),
             "execution": "background",
-            "adapter_id": role_spec(state, role).get("adapter_id"),
+            "adapter_id": spec.get("adapter_id"),
             "provider_private_root": str(provider_private_root),
             "snapshot_root": str(snapshot_root),
-            "adapter_snapshot": {
-                "adapter_id": role_spec(state, role).get("adapter_id"),
-                "revision": "acpx@0.13.2",
-                "executable": "npx",
-                "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
-                "identity": {
-                    "device": 0,
-                    "inode": 0,
-                    "size": 0,
-                    "mtime_ns": 0,
-                    "sha256": "acpx-managed",
-                },
-            },
+            "adapter_snapshot": _acp_adapter_snapshot(executables),
         }
         roles[role] = assignment
         save_state(
@@ -1054,82 +1395,87 @@ def start_acp_role(
         )
         return assignment
     except BaseException as exc:
-        roles.pop(role, None)
-        if persisted:
+        local_cleanup_allowed = not terminal_creation_attempted
+        if dispatch_id is not None and terminal_handle is not None:
             try:
-                save_state(
+                _rollback_owned_dispatch(
+                    state, dispatch_id=dispatch_id, terminal_handle=terminal_handle
+                )
+                local_cleanup_allowed = True
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
+                cleanup_errors.append(f"Dispatch rollback failed: {cleanup_error}")
+        if local_cleanup_allowed:
+            if prompt_path is not None:
+                try:
+                    remove_prompt_file(
+                        prompt_path,
+                        path.parent,
+                        role=role,
+                        launch_nonce=launch_nonce,
+                    )
+                except (RuntimeError, ToolInputError) as cleanup_error:
+                    cleanup_errors.append(f"prompt cleanup failed: {cleanup_error}")
+            for root in (provider_private_root, snapshot_root):
+                if root is None:
+                    continue
+                try:
+                    remove_owned_tree(root)
+                except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
+                    cleanup_errors.append(
+                        f"background resource cleanup failed: {cleanup_error}"
+                    )
+        if task_id is not None:
+            try:
+                _mark_task_failed(state, task_id, "agent-team ACP role startup failed")
+            except (
+                RuntimeError,
+                TypeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as cleanup_error:
+                cleanup_errors.append(f"task cleanup failed: {cleanup_error}")
+        if local_cleanup_allowed and not cleanup_errors:
+            roles.pop(role, None)
+            if persisted:
+                try:
+                    save_state(
+                        path,
+                        state,
+                        expected_generation=expected_generation,
+                        reservation_held=reservation_held,
+                    )
+                except (OSError, TypeError, ValueError) as cleanup_error:
+                    cleanup_errors.append(f"state rollback failed: {cleanup_error}")
+        if not local_cleanup_allowed or cleanup_errors:
+            try:
+                _retain_failed_role_start(
                     path,
                     state,
+                    role,
+                    {
+                        "task_id": task_id,
+                        "dispatch_id": dispatch_id,
+                        "terminal_handle": terminal_handle,
+                        "launch_nonce": launch_nonce,
+                        "prompt_path": prompt_path,
+                        "provider_private_root": provider_private_root,
+                        "terminal_creation_attempted": terminal_creation_attempted,
+                        "snapshot_root": snapshot_root,
+                    },
                     expected_generation=expected_generation,
                     reservation_held=reservation_held,
                 )
-            except (OSError, TypeError, ValueError) as cleanup_error:
-                cleanup_errors.append(f"state rollback failed: {cleanup_error}")
-        if dispatch_id is not None:
-            try:
-                run_orca(
-                    state,
-                    [
-                        "orchestration",
-                        "worker-stop",
-                        "--dispatch",
-                        dispatch_id,
-                        "--json",
-                    ],
-                )
-            except (
-                RuntimeError,
-                TypeError,
-                OSError,
-                subprocess.TimeoutExpired,
-            ) as cleanup_error:
-                cleanup_errors.append(f"Dispatch cleanup failed: {cleanup_error}")
-        if terminal_handle is not None:
-            try:
-                run_orca(
-                    state,
-                    [
-                        "terminal",
-                        "close",
-                        "--terminal",
-                        terminal_handle,
-                        "--tab",
-                        "--json",
-                    ],
-                )
-            except (
-                RuntimeError,
-                TypeError,
-                OSError,
-                subprocess.TimeoutExpired,
-            ) as cleanup_error:
-                cleanup_errors.append(f"terminal cleanup failed: {cleanup_error}")
-        if prompt_path is not None:
-            try:
-                remove_prompt_file(
-                    prompt_path,
-                    path.parent,
-                    role=role,
-                    launch_nonce=launch_nonce,
-                )
-            except (RuntimeError, ToolInputError) as cleanup_error:
-                cleanup_errors.append(f"prompt cleanup failed: {cleanup_error}")
-        for root in (provider_private_root, snapshot_root):
-            try:
-                remove_owned_tree(root)
             except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
                 cleanup_errors.append(
-                    f"background resource cleanup failed: {cleanup_error}"
+                    f"ownership evidence save failed: {cleanup_error}"
                 )
-        try:
-            _mark_task_failed(state, task_id, "agent-team ACP role startup failed")
-        except (
-            RuntimeError,
-            TypeError,
-            OSError,
-            subprocess.TimeoutExpired,
-        ) as cleanup_error:
-            cleanup_errors.append(f"task cleanup failed: {cleanup_error}")
+            if not local_cleanup_allowed:
+                cleanup_errors.append("role resources retained; cleanup is unconfirmed")
         if cleanup_errors:
             raise RuntimeError(
                 f"ACP role startup failed: {exc}; cleanup also failed: "
@@ -1147,6 +1493,10 @@ def start_role(
     expected_generation: StateGeneration | None = None,
     reservation_held: bool = False,
 ) -> dict[str, object]:
+    if "pending_role_start" in state:
+        raise ToolInputError(
+            "role startup cleanup is pending; inspect the retained ownership evidence"
+        )
     roles = state.get("roles")
     if not isinstance(roles, dict):
         raise ToolInputError("agent-team state has invalid roles")
@@ -1341,6 +1691,81 @@ def start_role(
     return assignment
 
 
+def _observe_delivery(
+    result: dict[str, object],
+    assignment: dict[str, object],
+    dispatch_id: str,
+) -> tuple[str, list[str]] | None:
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return None
+    if any(
+        not isinstance(message, dict)
+        or not isinstance(message.get("type"), str)
+        or message.get("type") not in DELIVERY_MESSAGE_TYPES
+        for message in messages
+    ):
+        raise ToolInputError("an Orca Delivery contains an unknown message")
+    lifecycle_messages = [
+        message
+        for message in messages
+        if isinstance(message, dict)
+        and isinstance(message.get("type"), str)
+        and message.get("type") in DELIVERY_MESSAGE_TYPES
+    ]
+    if not lifecycle_messages:
+        return None
+    kinds = {message.get("type") for message in lifecycle_messages}
+    if len(kinds) != 1:
+        raise ToolInputError(
+            "an Orca Delivery cannot mix worker_done, question, and escalation"
+        )
+    kind = next(iter(kinds))
+    if kind == "worker_done":
+        if len(lifecycle_messages) != 1:
+            raise ToolInputError("an Orca Delivery contains duplicate completions")
+        matching: list[tuple[dict[str, object], dict[str, object]]] = []
+        for message in lifecycle_messages:
+            payload = _message_payload(message)
+            if (
+                payload is not None
+                and payload.get("taskId") == assignment.get("task_id")
+                and payload.get("dispatchId") == dispatch_id
+                and isinstance(payload.get("outcome"), str)
+                and payload.get("outcome") in {"succeeded", "failed"}
+                and _message_matches_assignment(message, payload, assignment)
+            ):
+                matching.append((message, payload))
+        if len(matching) != 1:
+            return None
+        assignment["completion_observed"] = True
+        assignment["outcome"] = matching[0][1]["outcome"]
+        return "worker_done", []
+    if kind == "question":
+        question_ids: list[str] = []
+        for message in lifecycle_messages:
+            payload = _message_payload(message)
+            if not _question_matches_dispatch(
+                message, payload, assignment, dispatch_id
+            ):
+                return None
+            message_id = _question_message_id(message)
+            if message_id is None:
+                raise ToolInputError("question message is missing an id")
+            if message_id in question_ids:
+                raise ToolInputError("an Orca Delivery contains duplicate questions")
+            question_ids.append(message_id)
+        return "question", question_ids
+    if len(lifecycle_messages) != 1:
+        raise ToolInputError("an Orca Delivery contains duplicate escalations")
+    message = lifecycle_messages[0]
+    if not _escalation_matches_dispatch(
+        message, _message_payload(message), assignment, dispatch_id
+    ):
+        return None
+    return "escalation", []
+
+
 def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
     path = state_path()
     reservation = _LifecycleReservation(path, create_parent=False)
@@ -1371,6 +1796,30 @@ def _execute_tool_locked(
             raise ToolInputError(
                 "delivery_id does not match the observed pending Delivery"
             )
+        delivery_kind = state.get(PENDING_DELIVERY_KIND)
+        delivery_stage = state.get(PENDING_DELIVERY_STAGE)
+        if delivery_kind == "worker_done":
+            if delivery_stage != "released":
+                raise ToolInputError(
+                    "read and release the completed role before acknowledging its Delivery"
+                )
+        elif delivery_kind == "question":
+            question_ids = state.get(PENDING_QUESTION_IDS)
+            replied_ids = state.get(REPLIED_QUESTION_IDS)
+            if delivery_stage != "observed" or (
+                not isinstance(question_ids, list)
+                or not isinstance(replied_ids, list)
+                or any(not isinstance(item, str) for item in question_ids)
+                or any(not isinstance(item, str) for item in replied_ids)
+                or not set(question_ids).issubset(replied_ids)
+            ):
+                raise ToolInputError(
+                    "reply to every question before acknowledging its Delivery"
+                )
+        elif delivery_kind == "escalation":
+            raise ToolInputError("escalation must remain pending for user review")
+        else:
+            raise ToolInputError("Delivery has no observed lifecycle event")
         result = run_orca(
             state,
             [
@@ -1386,7 +1835,9 @@ def _execute_tool_locked(
                 "--json",
             ],
         )
-        state.pop("pending_delivery_id", None)
+        if result.get("acknowledged") != delivery_id:
+            raise RuntimeError("Orca did not acknowledge the requested Delivery")
+        _clear_pending_delivery(state)
         save_state(
             path,
             state,
@@ -1397,6 +1848,37 @@ def _execute_tool_locked(
     if name == "message_reply":
         message_id = bounded_text(arguments, "message_id", maximum=256)
         body = bounded_text(arguments, "body", maximum=MAX_REPLY_CHARS)
+        pending_delivery_id = state.get("pending_delivery_id")
+        if (
+            not isinstance(pending_delivery_id, str)
+            or not pending_delivery_id
+            or state.get(PENDING_DELIVERY_KIND) != "question"
+            or state.get(PENDING_DELIVERY_STAGE) != "observed"
+        ):
+            raise ToolInputError("message does not match a pending question")
+        question_ids = state.get(PENDING_QUESTION_IDS)
+        replied_ids = state.get(REPLIED_QUESTION_IDS)
+        if (
+            not isinstance(question_ids, list)
+            or not isinstance(replied_ids, list)
+            or any(not isinstance(item, str) for item in question_ids)
+            or any(not isinstance(item, str) for item in replied_ids)
+        ):
+            raise ToolInputError("pending question state is invalid")
+        if message_id not in question_ids:
+            raise ToolInputError("message does not match a pending question")
+        if message_id in replied_ids:
+            raise ToolInputError("question message has already been replied to")
+        roles = state.get("roles")
+        if not isinstance(roles, dict) or len(roles) != 1:
+            raise ToolInputError("question reply requires one active role assignment")
+        assignment = next(iter(roles.values()))
+        if not isinstance(assignment, dict):
+            raise ToolInputError("question reply requires an active role assignment")
+        dispatch_id = require_nested_string(
+            assignment, ("dispatch_id",), "role assignment"
+        )
+        run_id = require_state_string(state, "run_id")
         result = run_orca(
             state,
             [
@@ -1413,7 +1895,21 @@ def _execute_tool_locked(
                 "--json",
             ],
         )
+        _validate_question_reply(
+            result,
+            message_id=message_id,
+            body=body,
+            run_id=run_id,
+            dispatch_id=dispatch_id,
+        )
         _assert_state_generation(path, generation)
+        state[REPLIED_QUESTION_IDS] = [*replied_ids, message_id]
+        save_state(
+            path,
+            state,
+            expected_generation=generation,
+            reservation_held=True,
+        )
         return result
 
     role = require_role(arguments)
@@ -1471,43 +1967,57 @@ def _execute_tool_locked(
             wait_args,
             timeout_ms=timeout_ms + 5_000,
         )
-        observed_delivery_id = result.get("deliveryId")
-        if isinstance(observed_delivery_id, str) and observed_delivery_id:
-            state["pending_delivery_id"] = observed_delivery_id
-        messages = result.get("messages")
-        if isinstance(messages, list):
-            for message in messages:
-                if (
-                    not isinstance(message, dict)
-                    or message.get("type") != "worker_done"
-                ):
-                    continue
-                payload = message.get("payload")
-                if isinstance(payload, str):
-                    try:
-                        payload = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
-                if not isinstance(payload, dict):
-                    continue
-                if (
-                    payload.get("taskId") == assignment.get("task_id")
-                    and payload.get("dispatchId") == dispatch_id
-                    and payload.get("outcome") in {"succeeded", "failed"}
-                    and worker_done_sender(message) == assignment.get("terminal_handle")
-                ):
-                    assignment["completion_observed"] = True
-                    assignment["outcome"] = payload["outcome"]
-        if isinstance(observed_delivery_id, str) and observed_delivery_id:
+        raw_delivery_id = result.get("deliveryId")
+        if raw_delivery_id is None:
+            messages = result.get("messages")
+            if isinstance(messages, list) and messages:
+                raise ToolInputError("Orca Delivery is missing a valid deliveryId")
+            return result
+        if not isinstance(raw_delivery_id, str) or not raw_delivery_id:
+            raise ToolInputError("Orca Delivery has an invalid deliveryId")
+        delivery_kind = _delivery_kind(result)
+        try:
+            observed = _observe_delivery(result, assignment, dispatch_id)
+        except ToolInputError:
+            _stage_invalid_delivery(state, raw_delivery_id, delivery_kind)
             save_state(
                 path,
                 state,
                 expected_generation=generation,
                 reservation_held=True,
             )
+            raise
+        if observed is None:
+            _stage_invalid_delivery(state, raw_delivery_id, delivery_kind)
+            save_state(
+                path,
+                state,
+                expected_generation=generation,
+                reservation_held=True,
+            )
+            raise ToolInputError(
+                "Orca Delivery could not be validated for the assigned Dispatch"
+            )
+        observed_kind, question_ids = observed
+        state["pending_delivery_id"] = raw_delivery_id
+        state[PENDING_DELIVERY_KIND] = observed_kind
+        state[PENDING_DELIVERY_STAGE] = "observed"
+        state[PENDING_QUESTION_IDS] = question_ids
+        state[REPLIED_QUESTION_IDS] = []
+        save_state(
+            path,
+            state,
+            expected_generation=generation,
+            reservation_held=True,
+        )
         return result
     if name == "role_read":
-        if assignment.get("completion_observed") is not True:
+        if (
+            assignment.get("completion_observed") is not True
+            or not isinstance(state.get("pending_delivery_id"), str)
+            or state.get(PENDING_DELIVERY_KIND) != "worker_done"
+            or state.get(PENDING_DELIVERY_STAGE) != "observed"
+        ):
             raise ToolInputError(
                 "role_read requires an observed worker_done for this Dispatch"
             )
@@ -1518,7 +2028,7 @@ def _execute_tool_locked(
             minimum=1,
             maximum=MAX_READ_LINES,
         )
-        return run_orca(
+        result = run_orca(
             state,
             [
                 "orchestration",
@@ -1530,10 +2040,30 @@ def _execute_tool_locked(
                 "--json",
             ],
         )
+        _validate_worker_read_response(
+            result,
+            dispatch_id=dispatch_id,
+            terminal_handle=require_nested_string(
+                assignment, ("terminal_handle",), "role assignment"
+            ),
+        )
+        state[PENDING_DELIVERY_STAGE] = "read"
+        save_state(
+            path,
+            state,
+            expected_generation=generation,
+            reservation_held=True,
+        )
+        return result
     if name == "role_release":
-        if assignment.get("completion_observed") is not True:
+        if (
+            assignment.get("completion_observed") is not True
+            or not isinstance(state.get("pending_delivery_id"), str)
+            or state.get(PENDING_DELIVERY_KIND) != "worker_done"
+            or state.get(PENDING_DELIVERY_STAGE) != "read"
+        ):
             raise ToolInputError(
-                "role_release requires an observed worker_done for this Dispatch"
+                "role_release requires a successful role_read after worker_done"
             )
         if assignment.get("launcher_owned_terminal") is not True:
             raise ToolInputError(
@@ -1551,18 +2081,44 @@ def _execute_tool_locked(
                 "--json",
             ],
         )
+        if released.get("dispatchId") != dispatch_id:
+            raise RuntimeError("worker release response Dispatch does not match")
         release_state = released.get("state")
         if release_state not in {"retained", "released", "already_released"}:
             raise RuntimeError(f"worker was not released: {release_state or 'unknown'}")
+        process_action = released.get("processAction")
+        if release_state == "released" and process_action not in {
+            "none",
+            "closed_exited_terminal",
+            "closed_agent_terminal",
+        }:
+            raise RuntimeError("worker release response has no process receipt")
+        if release_state == "already_released" and process_action != "none":
+            raise RuntimeError("already released worker has an invalid process receipt")
+        if release_state == "retained":
+            if released.get("processAction") != "none":
+                raise RuntimeError(
+                    "retained worker release has an invalid process action"
+                )
+            reason = released.get("reason")
+            if reason in {
+                "federation_unsupported",
+                "external_terminal",
+                "identity_unproven",
+                "no_owned_resource",
+                "ownership_transferred",
+                "user_requested",
+                "user_takeover",
+            }:
+                raise RuntimeError(f"worker terminal release retained: {reason}")
+            raise RuntimeError(
+                "worker terminal release retained; inspect the assigned terminal"
+            )
         terminal_handle = require_nested_string(
             assignment, ("terminal_handle",), "role assignment"
         )
-        if (
-            execution == "background"
-            or transport == "acp"
-            or release_state == "retained"
-        ):
-            run_orca(
+        if execution == "background" or transport == "acp":
+            closed = run_orca(
                 state,
                 [
                     "terminal",
@@ -1573,6 +2129,7 @@ def _execute_tool_locked(
                     "--json",
                 ],
             )
+            _validate_terminal_close_response(closed, terminal_handle=terminal_handle)
         if execution == "background":
             cleanup_background_resources(
                 assignment,
@@ -1596,6 +2153,7 @@ def _execute_tool_locked(
         if not isinstance(roles, dict):
             raise ToolInputError("agent-team state has invalid roles")
         del roles[role]
+        state[PENDING_DELIVERY_STAGE] = "released"
         save_state(
             path,
             state,

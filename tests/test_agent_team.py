@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import signal
 import stat
 import subprocess
@@ -32,6 +33,58 @@ def _acp_operation(argv: list[str]) -> list[str]:
 
 
 class AgentTeamTestCase(unittest.TestCase):
+    def make_acp_executables(self, root: Path) -> object:
+        acp_bin = root / "acp-bin"
+        acp_bin.mkdir()
+        node = acp_bin / "node"
+        node.write_text(
+            '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v22.23.2; fi\n',
+            encoding="utf-8",
+        )
+        node.chmod(0o700)
+        for package_name, version, command in (
+            ("acpx", "0.13.2", "acpx"),
+            (
+                "@agentclientprotocol/claude-agent-acp",
+                "0.70.0",
+                "claude-agent-acp",
+            ),
+        ):
+            package = root / "node_modules" / package_name
+            (package / "dist").mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": package_name,
+                        "version": version,
+                        "bin": {command: "dist/cli.js"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            entry = package / "dist" / "cli.js"
+            entry.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            entry.chmod(0o755)
+            (acp_bin / command).symlink_to(entry)
+        return agent_team_runtime.AcpExecutables.resolve(path=str(acp_bin))
+
+    def acp_adapter_snapshot(self, executables: object) -> dict[str, object]:
+        assert isinstance(executables, agent_team_runtime.AcpExecutables)
+        identity = executables.client.stat()
+        return {
+            "adapter_id": "claude-acp-0.70.0",
+            "revision": "acpx@0.13.2",
+            "executable": str(executables.client),
+            "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
+            "identity": {
+                "device": identity.st_dev,
+                "inode": identity.st_ino,
+                "size": identity.st_size,
+                "mtime_ns": identity.st_mtime_ns,
+                "sha256": executables.client_sha256,
+            },
+        }
+
     def make_config(self, root: Path, *, worker_provider: str = "codex") -> Path:
         prompts = root / "prompts"
         prompts.mkdir()
@@ -173,16 +226,29 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                 agent_team.load_config(config)
 
     def test_acp_argv_has_exact_adapter_pin_and_read_only_controls(self) -> None:
-        argv = agent_team.acp_argv(
-            workspace=REPO_ROOT,
-            agent_command="env AGENT_TEAM_ACP_MARKER=team-test npx -y @agentclientprotocol/claude-agent-acp@0.70.0",
-            model="fable",
-            instructions="日本語のPlanner指示。",
-            operation=("prompt", "--session", "team-test", "--file", "/tmp/prompt.md"),
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            executables = self.make_acp_executables(Path(temp_dir))
+            agent_command = agent_team.acp_agent_command(
+                "team-test", "planner", "nonce1234", executables=executables
+            )
+            argv = agent_team.acp_argv(
+                workspace=REPO_ROOT,
+                agent_command=agent_command,
+                executables=executables,
+                model="fable",
+                instructions="日本語のPlanner指示。",
+                operation=(
+                    "prompt",
+                    "--session",
+                    "team-test",
+                    "--file",
+                    "/tmp/prompt.md",
+                ),
+            )
 
-        self.assertEqual(argv[:3], ["npx", "-y", "acpx@0.13.2"])
-        self.assertIn("@agentclientprotocol/claude-agent-acp@0.70.0", " ".join(argv))
+        self.assertEqual(argv[:2], [str(executables.node), str(executables.client)])
+        self.assertIn(str(executables.agent), " ".join(argv))
+        self.assertNotIn("npx", " ".join(argv))
         self.assertIn("--auth-policy", argv)
         self.assertIn("fail", argv)
         self.assertIn("--approve-reads", argv)
@@ -210,13 +276,22 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
         )
         for operation in operations:
             with self.subTest(operation=operation):
-                argv = agent_team.acp_argv(
-                    workspace=REPO_ROOT,
-                    agent_command="env AGENT_TEAM_ACP_MARKER=team-test npx -y @agentclientprotocol/claude-agent-acp@0.70.0",
-                    model="fable",
-                    instructions="planner",
-                    operation=operation,
-                )
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    executables = self.make_acp_executables(Path(temp_dir))
+                    agent_command = agent_team.acp_agent_command(
+                        "team-test",
+                        "planner",
+                        "nonce1234",
+                        executables=executables,
+                    )
+                    argv = agent_team.acp_argv(
+                        workspace=REPO_ROOT,
+                        agent_command=agent_command,
+                        executables=executables,
+                        model="fable",
+                        instructions="planner",
+                        operation=operation,
+                    )
                 self.assertEqual(argv[argv.index("--format") + 1], "quiet")
                 self.assertNotIn("--json-strict", argv)
                 self.assertEqual(_acp_operation(argv), list(operation))
@@ -375,6 +450,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             workspace = root / "project"
             workspace.mkdir()
             config_path = self.make_config(root)
+            executables = self.make_acp_executables(root)
             state_path = root / "state" / "state.json"
             prompt_path = agent_team.create_prompt_file(
                 state_path.parent, "planner", "nonce1234", "read the repository"
@@ -390,26 +466,17 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                 "prompt_path": str(prompt_path),
                 "launch_nonce": "nonce1234",
                 "agent_command": agent_team.acp_agent_command(
-                    "agent-team-project-1", "planner", "nonce1234"
+                    "agent-team-project-1",
+                    "planner",
+                    "nonce1234",
+                    executables=executables,
                 ),
                 "session_name": agent_team.acp_session_name("planner", "nonce1234"),
                 "execution": "background",
                 "adapter_id": "claude-acp-0.70.0",
                 "provider_private_root": str(root / "provider-private"),
                 "snapshot_root": str(root / "snapshot"),
-                "adapter_snapshot": {
-                    "adapter_id": "claude-acp-0.70.0",
-                    "revision": "acpx@0.13.2",
-                    "executable": "npx",
-                    "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
-                    "identity": {
-                        "device": 0,
-                        "inode": 0,
-                        "size": 0,
-                        "mtime_ns": 0,
-                        "sha256": "acpx-managed",
-                    },
-                },
+                "adapter_snapshot": self.acp_adapter_snapshot(executables),
             }
             state = {
                 "version": 3,
@@ -433,6 +500,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                         "execution": "background",
                         "adapter_id": "claude-acp-0.70.0",
                         "instructions": "snapshot planner instructions",
+                        "acp_executables": executables.as_dict(),
                     }
                 },
                 "roles": {"planner": assignment},
@@ -536,6 +604,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             workspace = root / "project"
             workspace.mkdir()
             config_path = self.make_config(root)
+            executables = self.make_acp_executables(root)
             with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(root / "state")}):
                 config = agent_team.load_config(config_path)
                 plan = agent_team.build_plan(config, workspace)
@@ -556,26 +625,14 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                     "prompt_path": str(prompt_path),
                     "launch_nonce": nonce,
                     "agent_command": agent_team.acp_agent_command(
-                        team_id, "planner", nonce
+                        team_id, "planner", nonce, executables=executables
                     ),
                     "session_name": agent_team.acp_session_name("planner", nonce),
                     "execution": "background",
                     "adapter_id": "claude-acp-0.70.0",
                     "provider_private_root": str(root / "provider-private"),
                     "snapshot_root": str(root / "snapshot"),
-                    "adapter_snapshot": {
-                        "adapter_id": "claude-acp-0.70.0",
-                        "revision": "acpx@0.13.2",
-                        "executable": "npx",
-                        "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
-                        "identity": {
-                            "device": 0,
-                            "inode": 0,
-                            "size": 0,
-                            "mtime_ns": 0,
-                            "sha256": "acpx-managed",
-                        },
-                    },
+                    "adapter_snapshot": self.acp_adapter_snapshot(executables),
                 }
                 state = {
                     "version": 3,
@@ -599,6 +656,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                             "execution": "background",
                             "adapter_id": "claude-acp-0.70.0",
                             "instructions": "snapshot planner instructions",
+                            "acp_executables": executables.as_dict(),
                         },
                     },
                     "roles": {"planner": assignment},
@@ -686,7 +744,19 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             )
 
     def test_acp_runner_requires_nonempty_bounded_prompt_stdout(self) -> None:
-        state = {"workspace": "/tmp/project", "run_id": "run_1"}
+        state = {
+            "team_id": "agent-team-test",
+            "workspace": "/tmp/project",
+            "run_id": "run_1",
+        }
+        executables = agent_team_runtime.AcpExecutables(
+            Path("/bin/true"),
+            Path("/bin/true"),
+            Path("/bin/true"),
+            "0" * 64,
+            "0" * 64,
+            "0" * 64,
+        )
         assignment = {
             "task_id": "task_1",
             "dispatch_id": "dispatch_1",
@@ -713,13 +783,18 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
                 with (
                     mock.patch.object(agent_team, "read_state", return_value=state),
                     mock.patch.object(
-                        agent_team, "_acp_assignment", return_value=(assignment, spec)
+                        agent_team,
+                        "_acp_assignment",
+                        return_value=(assignment, spec, executables),
                     ),
                     mock.patch.object(
                         agent_team, "read_prompt_file", return_value="prompt"
                     ),
                     mock.patch.object(agent_team, "run_acpx", side_effect=acpx_results),
                     mock.patch.object(agent_team, "_send_worker_done") as send,
+                    mock.patch.object(
+                        agent_team_runtime.AcpExecutables, "verify", return_value=None
+                    ),
                 ):
                     result = agent_team.acp_run(
                         role="planner",
@@ -960,10 +1035,43 @@ class AgentTeamStartTest(AgentTeamTestCase):
             fake_orca.read_text(encoding="utf-8"), encoding="utf-8"
         )
         fake_orca_linux.chmod(0o755)
-        for binary in ("claude", "codex", "npx"):
+        for binary in ("claude", "codex"):
             path = fake_bin / binary
             path.write_text(f"#!{sys.executable}\n", encoding="utf-8")
             path.chmod(0o755)
+        acp_bin = root / "acp-bin"
+        acp_bin.mkdir()
+        node = acp_bin / "node"
+        node.write_text(
+            '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v22.23.2; fi\n',
+            encoding="utf-8",
+        )
+        node.chmod(0o700)
+        for package_name, version, command in (
+            ("acpx", "0.13.2", "acpx"),
+            (
+                "@agentclientprotocol/claude-agent-acp",
+                "0.70.0",
+                "claude-agent-acp",
+            ),
+        ):
+            package = root / "node_modules" / package_name
+            (package / "dist").mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": package_name,
+                        "version": version,
+                        "bin": {command: "dist/cli.js"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            entry = package / "dist" / "cli.js"
+            entry.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            entry.chmod(0o755)
+            (fake_bin / command).symlink_to(entry)
+        (fake_bin / "node").symlink_to(node)
         return fake_bin, log_path
 
     def live_env(
@@ -1179,8 +1287,10 @@ class AgentTeamStartTest(AgentTeamTestCase):
         )
         create = next(row for row in log if row[:2] == ["terminal", "create"])
         command = create[create.index("--command") + 1]
-        self.assertIn("_role-run main", command)
-        self.assertIn("--orca-socket", command)
+        self.assertTrue(shlex.split(command)[0] == "claude")
+        self.assertNotIn("_role-run", shlex.split(command))
+        self.assertNotIn("--config", shlex.split(command))
+        self.assertIn("日本語のmain指示。", command)
         self.assertNotIn("herdr", command.lower())
 
     def test_start_requires_binaries_only_for_direct_roles(self) -> None:
