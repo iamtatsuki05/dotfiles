@@ -32,7 +32,6 @@ from .config_v4 import (
     load_v4_config_data,
     read_config_file,
     render_v4_team,
-    select_v4_team,
     v4_teams_json,
 )
 from .contracts import (
@@ -101,6 +100,18 @@ ROLE_PERMISSIONS: Final = {
     "reviewer": "read-only",
 }
 ALL_ROLES: Final = ("main", "planner", "worker", "reviewer")
+V4_RUNTIME_EDGES: Final = frozenset(
+    {
+        ("main", "planner", "delegates-to"),
+        ("main", "worker", "delegates-to"),
+        ("main", "reviewer", "delegates-to"),
+        ("planner", "reviewer", "reviewed-by"),
+        ("worker", "reviewer", "reviewed-by"),
+        ("planner", "main", "escalates-to"),
+        ("worker", "main", "escalates-to"),
+        ("reviewer", "main", "escalates-to"),
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -697,6 +708,57 @@ def build_plan(
         "orca_socket": str(orca_socket) if orca_socket is not None else None,
         "roles": roles,
     }
+
+
+def _v4_runtime_plan(
+    config: V4Config,
+    workspace: Path,
+    team: str | list[str] | None,
+) -> dict[str, object]:
+    """Bind one selected v4 topology to its explicitly referenced v3 plan."""
+
+    selected = build_v4_launch_plan(config, workspace, team)
+    launch_config = selected.launch_config
+    if launch_config is None:
+        raise V4ConfigError(
+            "config version 4 runtime commands require team.launch_config"
+        )
+    launch = load_config(launch_config)
+    if launch.team_prefix != str(selected.team_id):
+        raise V4ConfigError(
+            "v4 team ID must match the referenced v3 team_prefix before runtime"
+        )
+
+    selected_team = config.team(str(selected.team_id))
+    nodes = selected_team.definition.nodes
+    node_ids = {str(node.node_id) for node in nodes}
+    expected_roles = set(ALL_ROLES)
+    if len(nodes) != len(expected_roles) or node_ids != expected_roles:
+        raise V4ConfigError(
+            "selected v4 topology is not runtime-compatible: expected exactly "
+            "main, planner, worker, and reviewer nodes"
+        )
+    launch_roles = {"main": launch.main, **launch.roles}
+    for role in ALL_ROLES:
+        node = next(node for node in nodes if str(node.node_id) == role)
+        role_config = launch_roles[role]
+        if (
+            node.profile.provider != role_config.provider
+            or node.profile.transport != role_config.transport
+            or node.profile.permission != role_config.permission
+        ):
+            raise V4ConfigError(
+                f"v4 topology profile does not match v3 launch profile for {role}"
+            )
+    edges = {
+        (str(edge.source), str(edge.target), edge.kind.value)
+        for edge in selected_team.definition.edges
+    }
+    if edges != V4_RUNTIME_EDGES:
+        raise V4ConfigError(
+            "selected v4 topology edges do not match the fixed runtime graph"
+        )
+    return build_plan(launch, workspace)
 
 
 def require_binary(binary: str) -> None:
@@ -1619,8 +1681,26 @@ def default_config_path() -> Path:
         ) from exc
 
 
+def _run_v4_runtime_command(args: argparse.Namespace, plan: dict[str, object]) -> int:
+    """Run one v3 lifecycle operation with the CLI runtime error boundary."""
+
+    try:
+        if args.command == "start":
+            result = start_team(plan, attach=not args.no_attach)
+        else:
+            result = manage_team(args.command, plan, getattr(args, "role", None))
+    except RuntimeFailure as exc:
+        print(f"ERROR: {_runtime_failure_message(exc)}", file=sys.stderr)
+        return 1
+    except (ConfigError, RuntimeError, OSError, TypeError, UnicodeDecodeError) as exc:
+        print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
-    """Dispatch pure v4 inspection commands without entering the v3 runtime."""
+    """Dispatch v4 inspection commands and selected v3 runtime operations."""
 
     if args.command == "teams":
         print(v4_teams_json(config), end="")
@@ -1632,23 +1712,27 @@ def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
         )
         return 0
     if args.command == "start":
-        if args.no_attach:
-            raise ConfigError(
-                "config version 4 does not support --no-attach with dry-run"
-            )
         launch_plan = build_v4_launch_plan(config, args.cwd, args.team)
-        if not args.dry_run:
-            raise ConfigError(
-                "config version 4 start currently supports --dry-run only"
-            )
-        print(json.dumps(launch_plan.as_dict(), ensure_ascii=False, indent=2))
-        return 0
+        if launch_plan.launch_config is None:
+            if args.no_attach:
+                raise ConfigError(
+                    "config version 4 does not support --no-attach with dry-run"
+                )
+            if not args.dry_run:
+                raise ConfigError(
+                    "config version 4 start requires team.launch_config for runtime; "
+                    "without it, start supports --dry-run only"
+                )
+            print(json.dumps(launch_plan.as_dict(), ensure_ascii=False, indent=2))
+            return 0
+        plan = _v4_runtime_plan(config, args.cwd, args.team)
+        if args.dry_run:
+            print(json.dumps(plan, ensure_ascii=False, indent=2))
+            return 0
+        return _run_v4_runtime_command(args, plan)
     if args.command in {"status", "attach", "stop"}:
-        config.require_valid()
-        select_v4_team(config, args.team)
-        raise ConfigError(
-            f"config version 4 {args.command} is not available before runtime integration"
-        )
+        plan = _v4_runtime_plan(config, args.cwd, args.team)
+        return _run_v4_runtime_command(args, plan)
     raise ConfigError(f"command {args.command} requires config version 3")
 
 
@@ -1670,13 +1754,26 @@ def render_cli_error(error: BaseException) -> str:
     return json.dumps(message, ensure_ascii=True)
 
 
+def _caller_cwd() -> Path:
+    raw_cwd = os.environ.get("AGENT_TEAM_CALLER_CWD")
+    return Path(raw_cwd).expanduser().resolve(strict=False) if raw_cwd else Path.cwd()
+
+
+def resolve_cli_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return path
+    return (_caller_cwd() / path).resolve(strict=False)
+
+
 def add_context_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", type=Path, default=default_config_path())
-    caller_cwd = os.environ.get("AGENT_TEAM_CALLER_CWD")
+    parser.add_argument(
+        "--config", type=resolve_cli_path, default=default_config_path()
+    )
     parser.add_argument(
         "--cwd",
-        type=Path,
-        default=Path(caller_cwd) if caller_cwd else Path.cwd(),
+        type=resolve_cli_path,
+        default=_caller_cwd(),
     )
 
 

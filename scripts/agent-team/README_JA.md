@@ -17,40 +17,12 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
 - [アーキテクチャ](docs/architecture_JA.md)はruntimeと安全境界を説明します。
 - [設定リファレンス](docs/configuration_JA.md)はconfig version 3と、対応する
   provider/transportの組み合わせを説明します。[Version 4の設定](docs/configuration-v4_JA.md)
-  では、明示的なteam選択とtopologyの確認を説明します。
+  では、team名による選択、graphの確認、起動設定への参照を説明します。
 - [Harness対応matrix](docs/support-matrix_JA.md)は、認識済み・利用可能・実行可能・
   拒否を区別します。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
 - [Direct background adapter](docs/background-adapters_JA.md)はCopilot/OpenCode向けread-only
   adapter実装、snapshot境界、復旧方法を説明します。
-- [Coordination store、recovery、backup、restore](docs/coordination-store_JA.md)は
-  SQLiteのschema境界、stable writer marker、WAL sidecar controller、backup artifact、
-  candidate-first restoreまで扱います。Issue #72のhistorical sectionは、v3 workflow
-  checkpoint/CAS contractと、Storeが外部effectを呼び出さない境界を残した章です。現在の
-  [Issue #80 schema-4 foundation](https://github.com/iamtatsuki05/dotfiles/issues/80)では、
-  12 tableのobject set、read-only image classifier、pure codec、およびledgerが空でない場合の
-  fail-closed境界を定めるものです。通常のStoreの[Issue #81 review checkpoint producer](https://github.com/iamtatsuki05/dotfiles/issues/81)は、
-  fullなtask rowとclosedな3件のreview event suffixを保存します。#82のStore-backed verification pathは、
-  verification operation/receipt lifecycleと、最小限のsemantic reopen evidenceを保存します。fullなnon-empty imageの
-  inspect、backup/restore、Doctor evidenceは#83の範囲です。
-- [Task policy schema v4](docs/task-policy-v4_JA.md)は、不変な`TaskSpec`、依存順、
-  保存やworkflow実行を含まないstate観測契約を説明します。
-- [Serial review policy](docs/review-policy_JA.md)は、backend wiringを含めず、normal laneとIssue #50でadmit済みの
-  express laneで共通する、Workerから独立Reviewerへ進むtyped serial gateを説明します。Issue #81のnormal Store向け
-  checkpoint producerも説明します。
-- [Path/resource policy](docs/path-resource-policy_JA.md)は、filesystemやproviderを操作せず、
-  canonical path admission、明示的なresource mode、reservation port、normal/express/researchの
-  lane matrixを説明します。
-- [Fixed-argv verification gate](docs/verification-gate_JA.md)は、write task を completed に
-  する前提となる typed approval、固定 verification request、before/after snapshot の束縛、
-  normalized receipt を説明します。
-- [Policy/verification handoff](docs/policy-verification-handoff_JA.md)は、#49のreview ref、
-  #50のcompletion ref、approved-only composition、Storeのexact readback、#81のprocess-local review binding、
-  schema-4 workを分ける
-  [Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、
-  [#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、
-  [#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、
-  [#83](https://github.com/iamtatsuki05/dotfiles/issues/83)との境界を説明します。
 
 現在の設定は次のとおりです。
 
@@ -163,6 +135,15 @@ agent-team start --no-attach
 Mainへ開発作業を依頼してください。MainはPlannerが必要か判断し、`agent_team`
 MCP serverを通じてWorkerとReviewerを起動します。ユーザーと対話するroleはMainだけです。
 
+team名で選ぶ場合は、同梱の一覧、またはsync後の`teams.toml`を指定します。
+
+```bash
+agent-team start --config ~/.config/agent-team/teams.toml --team agent-team --dry-run
+```
+
+teamの追加、graphの確認、選択したteamの起動は、[Version 4の設定](docs/configuration-v4_JA.md#名前を指定してteamを起動する)
+を参照してください。
+
 ## teamを確認して停止する
 
 ```bash
@@ -206,89 +187,17 @@ agent-team status \
   identityが一致したときだけlifecycleを進めます。
 - Claude ACPはambientな`claude.ai` loginを使い、API keyをchild processへ
   渡しません。ただしsubscription billing ledgerそのものは未確認です。
-- 現在のStoreは`STORE_SCHEMA=4`とSQLite `user_version=4`を要求します。
-  provider eventは`EVENT_SCHEMA_VERSION=2`のまま、workflow eventは別namespaceの
-  `WORKFLOW_EVENT_SCHEMA_VERSION=1`を使います。schema-4 imageは既存9 tableに
-  `task_policy_states`、`verification_operations`、`verification_receipts`を加えた正確な12 tableです。
-- exactなschema-2とschema-3のStoreは、どちらもsource schemaとtarget `4`を持つ
-  `StoreMigrationRequiredError`として停止し、read-only Doctorは`MIGRATION_REQUIRED`を報告します。
-  malformed、mixed、missing、extra、future imageは別のschema/integrity errorです。Issue #48が
-  明示的なmigration pathを所有し、Storeは暗黙のmigration、default補完、別backendへのfallbackを行いません。
-- backupのdestinationは1つのexactなbasenameに限ります。database/manifest pairのidentityと
-  contentをfinal readbackで確認できた場合だけ成功し、partialやmixedなpairは拒否します。
-  restore candidate namespaceの`.coordination.sqlite3.restore-`は予約済みで、destinationには使えません。
-- version-1 backup/inspectは従来の2-file、exact 10-field manifest shapeを維持します。
-  schema-4 foundationの値は`store_schema=4`、`event_schema_version=2`、
-  `sqlite_user_version=4`（`4/2/4`）です。#80のfoundation pathは新しい3 tableへrowを書きません。
-  #81 producerはfullな`task_policy_states` rowとclosedなreview suffixを受け付け、#82のStore-backed pathは
-  verification lifecycle rowを書いて検証します。それ以外のnon-empty imageはfail-closedであり、#80はnon-empty imageの
-  inspectやbackup/restore成功を主張しません。
-- established imageはrootを変更する前に、read-onlyでWAL/SHM-awareなpre-gateで分類します。
-  structural WALはimageの一部としてcopyし、ephemeralなSHM cacheはSQLiteがprivateな一時copy上だけで
-  再構成します。source、gate、marker、fileset、DB/WAL/SHM bytesは変わらず、checkpoint、truncate、
-  delete、source sidecarの作成も行いません。
-- #80のcodecは、15-fieldの`TaskPolicyStateV4`、approval-binding snapshot、body-free verification
-  request、normalized receipt向けのpure version-1 codecです。argv/environmentのraw valueやraw bodyを
-  保存せず、valueの内部整合性だけを検証します。owner authorityのcaptureやGate valueのhydrationは行いません。
-  #81はnormal Storeのtask/review transactionとfull task-row projectionを担当します。#82はlive capture/context、
-  private Store adapter、snapshot hydration、58-fieldのlogical record digest、verification lifecycle transaction、
-  およびnormal Storeの最小限のsemantic reopen validationを担当します。fullなnon-empty imageのsemantic validation、
-  backup/restore、verification-aware Doctorは#83の範囲です。
-- provider-only restoreは、history上のcontractどおりcandidate-firstかつprovider-freeです。#80が確認するのは
-  新しいledgerが空のschema-4 backup/restore round tripだけであり、logの暗黙修復、external effectのretry、
-  non-empty verification imageの認可は行いません。
-- P0 StoreはWorkflowEngine reducerや外部effect adapterを配線せず、外部effectの
-  exactly-onceも主張しません。
-
-Issue #73では、このStoreと注入されたdurable effect backendの間にprivateな
-`workflow_effect_adapter.py` seamを追加します。publicな`TeamRuntime`と`BackendPort`の
-`start`/`request`/`stop` 3 method、既存のrequest/result type、CLI/MCP envelopeは変えません。
-現行のpublic `BackendPort`とOrca backendは、role effectのmetadata、generation、exactな
-Delivery/read lookup、provider proofを持たないため、effect実行前に
-`DurabilityUnsupported`でfail-fastする。現行OrcaのSTOPもcomposite-stop proofを持たず、
-adapterはCLIやMCPへまだ配線していない。durableな`StartSpec.attach=True`も、focus stageの
-composite proofがないため拒否する。
-
-private pathは、`load → authority → begin → backendを1回だけ呼ぶ → post-effect authorityと
-observationを検証 → Store receipt → projector → commit`です。共通capabilityには、
-effect-key idempotencyまたはpure lookup、attempt/fence enforcement、consumer generationを
-要求する仕様です。WAITにはexact Delivery lookup、READにはexact read lookup、STOPには順序付き
-composite proofとpure lookupをaction-specificに要求します。START/PROMPTはgenerationを含む
-effect割当てのpost-effect identityを束縛し、receiptとobservationはimmutableなfield snapshotを
-保持する設計です。lookupが返すのはcommittedかつdigest検証済みのevidenceだけです。
-`DurableDeliveryLookup`はWAIT originだけを扱い、ACK/reply lifecycleを再構成しません。
-`DurableReadLookup`のoutputはbackendのpure lookupで取得します。committed effectのreplayでは
-backend executeとprojectorは0回です。WAIT/READ/RELEASE/STOPでは、digestに束縛したpure
-lookupを1回実行する場合があります。`INTENT`、`UNKNOWN_EFFECT`、response loss、restart時の曖昧さは
-明示的な#32 recoveryのため`RecoveryRequired`として残ります。raw bodyは1 MiBのUTF-8までに
-制限し、保存せずdigestだけにしますが、低entropy inputの同値性までは隠しません。
-deterministic fake authority/backend/projectorと実Storeが証明するのはadapter contractだけで、
-provider側のexactly-onceや#31のcross-store atomic joinは証明しません。WorkflowEngineの
-reducer wiringは#33、policy/verification handoffは#74の担当です。
-schema-4 foundationは[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)、normal Storeのtask/review production
-transitionは[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)、verification transaction、actual completion admission、
-adapter wiringは[#82](https://github.com/iamtatsuki05/dotfiles/issues/82)、image evidence、backup/restore、Doctorは
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)が担当します。
-
-Issue #74のhandoffは、実際の#49 `ReviewPolicyUpdate`とpolicy、および実際の#50 `route_task()`と
-matchingなreservation resultを受け取ります。各owner refは、owner validationと`save_*`/exact
-`read_*` readbackを通った後に発行します。composerが`ApprovalRef`を作るのは、canonicalな
-`REVIEW_DECISION + APPROVED`のreview authorityだけです。比較するのはoverlap fieldに限ります。
-#49専有の`Run`/`Dispatch`/`Attempt`、terminal、review round、
-target、`claim_ref`は#49 provenanceとして残し、#50と比較済みとは主張しません。Gateの
-`start(ApprovalRef)`、`resume(VerificationHandle)`とstate portの6操作は維持します。handoff testの
-deterministic fakeは、SQLite、restart、provider exactly-onceの証拠ではありません。
-[Issue #78](https://github.com/iamtatsuki05/dotfiles/issues/78)のschema-4 workは、
-[Issue #80](https://github.com/iamtatsuki05/dotfiles/issues/80)のfoundationと
-[#81](https://github.com/iamtatsuki05/dotfiles/issues/81)のtask/review producer、実装済みの
-[#82](https://github.com/iamtatsuki05/dotfiles/issues/82) verification transaction/adapter、
-[#83](https://github.com/iamtatsuki05/dotfiles/issues/83)のimage evidenceに分かれます。#82は
-verification operation lifecycle、fresh Gate hydration/replay、`mark_unknown`を担当します。fullなnon-empty imageの
-inspect、backup/restore、Doctorの主張は#82の範囲外です。raw body/action alias/payloadの経路やretry/fallbackはありません。
-
 詳しい境界と失敗時の流れは、[アーキテクチャ](docs/architecture_JA.md)を参照してください。
 
 ## よくある失敗を調べる
+
+Orca 1.4.190では、非表示の検出済みworktreeに作ったterminalの終了が
+`runtime_error: tab_not_found`で失敗する場合があります。Mainだけでなく、
+単純な`sleep`でも再現しました。この場合は停止失敗を報告し、`state.json`と
+`.cleanup.json`を保持します。一覧からterminalが消えたことだけでは、processの停止を
+確認済みにはしません。teamを再利用する前にOrca側の終了処理を解決してください。
+再起動を通すためにstateを削除しないでください。残件は[#11](https://github.com/iamtatsuki05/dotfiles/issues/11)
+で追跡します。
 
 | 症状 | 確認する内容 |
 |---|---|

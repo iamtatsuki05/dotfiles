@@ -127,8 +127,8 @@ class FakeOrcaClient:
         self.calls.append(("status",))
         return {"runtime": {"state": "ready"}, "graph": {"state": "ready"}}
 
-    def worktree_current(self, cwd: Path) -> dict[str, object]:
-        self.calls.append(("worktree-current",))
+    def worktree_show(self, cwd: Path) -> dict[str, object]:
+        self.calls.append(("worktree-show",))
         return self.worktree_result or {
             "worktree": {"id": "repo::project", "path": str(cwd)}
         }
@@ -363,7 +363,14 @@ class OrcaClientContractTest(unittest.TestCase):
                         ),
                         "",
                     ),
-                    (ORCA_COMMAND, "worktree", "current", "--json"): ProcessResult(
+                    (
+                        ORCA_COMMAND,
+                        "worktree",
+                        "show",
+                        "--worktree",
+                        f"path:{cwd.resolve()}",
+                        "--json",
+                    ): ProcessResult(
                         0,
                         json.dumps(
                             {
@@ -382,7 +389,7 @@ class OrcaClientContractTest(unittest.TestCase):
                 {"runtime": {"state": "ready"}, "graph": {"state": "ready"}},
             )
             self.assertEqual(
-                client.worktree_current(cwd),
+                client.worktree_show(cwd),
                 {"worktree": {"id": "repo::project"}},
             )
 
@@ -390,10 +397,84 @@ class OrcaClientContractTest(unittest.TestCase):
             [call[0] for call in runner.calls],
             [
                 (ORCA_COMMAND, "status", "--json"),
-                (ORCA_COMMAND, "worktree", "current", "--json"),
+                (
+                    ORCA_COMMAND,
+                    "worktree",
+                    "show",
+                    "--worktree",
+                    f"path:{cwd.resolve()}",
+                    "--json",
+                ),
             ],
         )
         self.assertTrue(all(call[2] <= 900 for call in runner.calls))
+
+    def test_client_worktree_show_targets_explicit_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cwd = Path(temp_dir)
+            workspace = cwd / "worktree"
+            workspace.mkdir()
+            workspace_path = str(workspace.resolve())
+            foreign_path = str(cwd.resolve())
+            runner = RecordingRunner(
+                {
+                    (ORCA_COMMAND, "worktree", "current", "--json"): ProcessResult(
+                        0,
+                        json.dumps(
+                            {
+                                "ok": True,
+                                "result": {
+                                    "worktree": {
+                                        "id": "repo::project",
+                                        "path": foreign_path,
+                                    }
+                                },
+                            }
+                        ),
+                        "",
+                    ),
+                    (
+                        ORCA_COMMAND,
+                        "worktree",
+                        "show",
+                        "--worktree",
+                        f"path:{workspace_path}",
+                        "--json",
+                    ): ProcessResult(
+                        0,
+                        json.dumps(
+                            {
+                                "ok": True,
+                                "result": {
+                                    "worktree": {
+                                        "id": "repo::project",
+                                        "path": workspace_path,
+                                    }
+                                },
+                            }
+                        ),
+                        "",
+                    ),
+                }
+            )
+            client = OrcaClient(runner=runner)
+
+            shown = client.worktree_show(workspace)
+
+        self.assertEqual(shown["worktree"]["path"], workspace_path)
+        self.assertEqual(
+            [call[0] for call in runner.calls],
+            [
+                (
+                    ORCA_COMMAND,
+                    "worktree",
+                    "show",
+                    "--worktree",
+                    f"path:{workspace_path}",
+                    "--json",
+                )
+            ],
+        )
 
     def test_client_validates_run_create_objective_and_coordinator(self) -> None:
         objective = "team-project: Planner / Worker / Reviewer coordination"
@@ -1227,7 +1308,7 @@ class OrcaBackendSafetyTest(unittest.TestCase):
             [call[0] for call in client.calls],
             [
                 "status",
-                "worktree-current",
+                "worktree-show",
                 "terminal-create",
                 "terminal-show",
                 "terminal-wait",

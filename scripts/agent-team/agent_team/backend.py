@@ -1106,7 +1106,7 @@ class OrcaBackend(BackendPort):
                     f"Orca is not ready: runtime={runtime_state}, graph={graph_state}"
                 )
             try:
-                current = self._client.worktree_current(workspace)
+                current = self._client.worktree_show(workspace)
             except OrcaCommandError as exc:
                 raise RuntimeFailure(
                     ErrorCode.INVALID_REQUEST,
@@ -1114,7 +1114,7 @@ class OrcaBackend(BackendPort):
                     "`orca repo add --path <workspace>` and retry",
                 ) from exc
             worktree_id = _required_string(
-                current, ("worktree", "id"), "orca worktree current"
+                current, ("worktree", "id"), "orca worktree show"
             )
             self._assert_worktree_path(current, workspace)
             return worktree_id, self._current_orca_socket()
@@ -1265,9 +1265,9 @@ class OrcaBackend(BackendPort):
         self, *, workspace: Path, worktree_id: str
     ) -> dict[str, object]:
         try:
-            current = self._client.worktree_current(workspace)
+            current = self._client.worktree_show(workspace)
             self._assert_nested_string(
-                current, ("worktree", "id"), worktree_id, "worktree current"
+                current, ("worktree", "id"), worktree_id, "worktree show"
             )
             self._assert_worktree_path(current, workspace)
             return current
@@ -1282,7 +1282,7 @@ class OrcaBackend(BackendPort):
 
     @staticmethod
     def _assert_worktree_path(payload: Mapping[str, object], workspace: Path) -> None:
-        observed = _required_string(payload, ("worktree", "path"), "worktree current")
+        observed = _required_string(payload, ("worktree", "path"), "worktree show")
         if Path(observed).expanduser().resolve(strict=False) != workspace.resolve():
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,

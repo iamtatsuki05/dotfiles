@@ -38,6 +38,7 @@ class ProjectSmokeTest(unittest.TestCase):
             )
         for relative in (
             "config.toml",
+            "teams.toml",
             "prompts/orchestrator.md",
             "prompts/planner.md",
             "prompts/worker.md",

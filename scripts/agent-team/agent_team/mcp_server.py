@@ -20,7 +20,13 @@ from .adapters import (
     remove_owned_tree,
 )
 from .contracts import ErrorCode, RuntimeFailure
-from .orca import _LifecycleReservation, orca_executable
+from .orca import (
+    OrcaCommandError,
+    OrcaProtocolError,
+    OrcaTransportError,
+    _LifecycleReservation,
+    orca_executable,
+)
 from .runtime import (
     MAX_PROMPT_CHARS,
     RuntimeValidationError,
@@ -296,29 +302,30 @@ def run_orca(
     state: dict[str, object], args: list[str], *, timeout_ms: int = 30_000
 ) -> dict[str, object]:
     workspace = Path(require_state_string(state, "workspace"))
-    result = subprocess.run(
-        [orca_executable(), *args],
-        check=False,
-        capture_output=True,
-        cwd=workspace,
-        text=True,
-        timeout=timeout_ms / 1_000,
-    )
+    executable = orca_executable()
+    try:
+        result = subprocess.run(
+            [executable, *args],
+            check=False,
+            capture_output=True,
+            cwd=workspace,
+            text=True,
+            timeout=timeout_ms / 1_000,
+        )
+    except Exception as exc:
+        raise OrcaTransportError() from exc
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        detail = result.stderr.strip() or result.stdout.strip() or "invalid JSON"
-        raise RuntimeError(f"orca {' '.join(args[:2])} failed: {detail}") from exc
+        raise OrcaProtocolError() from exc
+    returncode = result.returncode
     if not isinstance(payload, dict):
-        raise TypeError("Orca returned a non-object JSON value")
-    if result.returncode != 0 or payload.get("ok") is not True:
-        error = payload.get("error")
-        message = error.get("message") if isinstance(error, dict) else None
-        failure_detail = message if isinstance(message, str) else None
-        raise RuntimeError(failure_detail or f"orca {' '.join(args[:2])} failed")
+        raise OrcaProtocolError()
+    if returncode != 0 or payload.get("ok") is not True:
+        raise OrcaCommandError()
     response = payload.get("result")
     if not isinstance(response, dict):
-        raise TypeError("Orca response is missing result")
+        raise OrcaProtocolError()
     return response
 
 

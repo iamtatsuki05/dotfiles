@@ -923,7 +923,7 @@ permission = "read-only"
         with tempfile.TemporaryDirectory() as temp_dir:
             parsed = load_v4_config(
                 self.make_config(Path(temp_dir)),
-                resolver=FalseyResolver(),  # type: ignore[arg-type]
+                resolver=FalseyResolver(),
             )
 
         self.assertFalse(parsed.team("build").validation.valid)

@@ -18,7 +18,7 @@ packages = ["agent_team", "agent_team.defaults", "agent_team.defaults.prompts"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-agent_team = ["defaults/config.toml", "defaults/prompts/*.md"]
+agent_team = ["defaults/config.toml", "defaults/teams.toml", "defaults/prompts/*.md"]
 
 [tool.ruff]
 required-version = "==0.16.5"

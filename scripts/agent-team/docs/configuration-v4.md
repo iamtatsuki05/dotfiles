@@ -2,9 +2,9 @@
 
 [日本語](configuration-v4_JA.md) · [Version-3 configuration](configuration.md)
 
-Version 4 describes one or more immutable team topologies. It is an inspection
-and selection contract; it does not start a provider, Orca resource, task,
-lease, or state store.
+Version 4 is a catalog of named team topologies. A team can explicitly link a
+version-3 launch configuration to use the existing Orca runtime. Teams without
+a launch configuration support graph inspection and selection dry runs.
 
 ## Minimal schema
 
@@ -63,7 +63,7 @@ For a team with no edges, declare `edges = []`. The accepted fields are
 deliberately closed:
 
 - config: `version`, `runtime`, `teams`
-- team: `name`, `nodes`, `edges`
+- team: `name`, `nodes`, `edges`, optional `launch_config`
 - node: `id`, `label`, `main`, `profile`
 - profile: `provider`, `transport`, `permission`
 - edge: `source`, `target`, `kind`
@@ -108,7 +108,7 @@ agent-team teams --config /absolute/path/to/config-v4.toml
 
 This command always emits JSON; it has no `--json` compatibility switch.
 
-Render one selected topology with the PR #20 renderer:
+Render one selected topology:
 
 ```bash
 agent-team graph \
@@ -120,31 +120,65 @@ agent-team graph \
 `--format` accepts only `json`, `ascii`, or `mermaid`. The renderer output is
 topology data only; it does not contain shell commands or Orca payloads.
 
-The v4 dry run passes only a typed selection plan to the future runtime/store
-seam:
+Without `launch_config`, a dry run returns only the selected `config_path`,
+`team_id`, and canonical `workspace`:
 
 ```bash
-agent-team start \
-  --config /absolute/path/to/config-v4.toml \
-  --cwd /absolute/path/to/project \
-  --team build \
-  --dry-run
+agent-team start --config /absolute/path/to/teams.toml --team build --dry-run
 ```
 
-Its output has exactly `config_path`, `team_id`, and `workspace`.
-The config still validates `runtime = "orca"`, but runtime/backend selection
-is not part of this narrow plan.
-The workspace is absolute and canonical. It intentionally has no state path,
-lease, backend ownership, provider command, or role launch arguments. A v4
-`start` without `--dry-run`, and v4 `status`, `attach`, and `stop`, fail
-explicitly until the later runtime/store integration is complete.
+`teams`, `graph`, and all dry runs launch no external processes. An invalid
+topology anywhere in the catalog prevents graph rendering and launch planning.
+Inspection-only teams reject real startup and management commands.
 
-All three pure commands and v4 dry run perform no external process execution.
-An invalid team anywhere in the config is reported by `teams` and prevents a
-launch plan or graph from being built.
+## Launch a named team
 
-`--no-attach` is a v3 startup option and is rejected for v4 dry runs rather
-than being silently ignored.
+The bundled [teams.toml](../agent_team/defaults/teams.toml) is a complete runnable
+catalog. It refers to the adjacent `config.toml`, which retains the models,
+efforts, prompts, permissions, and review-round limit. From this repository:
+
+```bash
+scripts/agent-team/agent-team start \
+  --config scripts/agent-team/agent_team/defaults/teams.toml \
+  --team agent-team --dry-run
+```
+
+After the normal dotfiles sync, the same catalog is available at
+`~/.config/agent-team/teams.toml` (or beneath your `XDG_CONFIG_HOME`):
+
+```bash
+agent-team start --config ~/.config/agent-team/teams.toml --team agent-team --no-attach
+agent-team status --config ~/.config/agent-team/teams.toml --team agent-team
+agent-team attach main --config ~/.config/agent-team/teams.toml --team agent-team
+agent-team stop --config ~/.config/agent-team/teams.toml --team agent-team
+```
+
+To add another runnable team, copy its launch configuration beneath the catalog
+directory and give it a distinct `team_prefix`. Use that exact prefix as the
+catalog team ID and set `launch_config` to the relative file path. Edit the
+models, efforts, and prompts in that launch file. Stop the active team before
+switching to another team in the same workspace.
+
+Runnable entries must match the implemented serial workflow:
+
+- Exactly four node IDs: `main`, `planner`, `worker`, `reviewer`; only `main`
+  has `main = true`.
+- Each node's provider, transport, and permission match its launch role.
+- Exactly eight edges: Main delegates to each of the three roles; Planner and
+  Worker are reviewed by Reviewer; each of the three roles escalates to Main.
+- `launch_config` is a relative path to a regular file within the catalog
+  directory, without symlinks in the path.
+  The referenced version-3 configuration must pass its normal validation.
+- The selected team ID equals the referenced `team_prefix`. This prevents two
+  different catalog team IDs from silently selecting the same runtime state.
+
+For these entries, `start --dry-run` shows the actual launch plan, including
+role commands and state path; `--no-attach` is accepted. Real `start`, `status`,
+`attach`, and `stop` use the same version-3 lifecycle. The plan's `config_path`
+is the referenced launch file so child role processes read the same settings.
+Unsupported graphs remain available for inspection but fail before runtime
+resources are created. Arbitrary graph execution and parallel roles are not
+implemented.
 
 ## Version boundary
 

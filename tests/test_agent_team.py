@@ -905,7 +905,14 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 elif args == ["worktree", "current", "--json"]:
                     if os.environ.get("FAKE_ORCA_MANAGED") == "0":
                         print(json.dumps({{"ok": False, "error": {{"message": "not managed"}}}})); raise SystemExit(1)
-                    print(json.dumps({{"ok": True, "result": {{"worktree": {{"id": "repo::/project", "path": str(Path.cwd())}}}}}}))
+                    print(json.dumps({{"ok": True, "result": {{"worktree": {{"id": "repo::/project", "path": str(Path.cwd().parent)}}}}}}))
+                elif args[:2] == ["worktree", "show"]:
+                    if os.environ.get("FAKE_ORCA_MANAGED") == "0":
+                        print(json.dumps({{"ok": False, "error": {{"message": "not managed"}}}})); raise SystemExit(1)
+                    requested = args[args.index("--worktree") + 1]
+                    expected = "path:" + str(Path.cwd().resolve())
+                    path = str(Path.cwd()) if requested == expected else str(Path.cwd().parent)
+                    print(json.dumps({{"ok": True, "result": {{"worktree": {{"id": "repo::/project", "path": path}}}}}}))
                 elif args[:2] == ["terminal", "create"]:
                     title = args[args.index("--title") + 1]
                     print(json.dumps({{"ok": True, "result": {{"terminal": {{"handle": "term_main", "worktreeId": "repo::/project", "title": title}}}}}}))
@@ -1161,7 +1168,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
             [row[:2] for row in log],
             [
                 ["status", "--json"],
-                ["worktree", "current"],
+                ["worktree", "show"],
                 ["terminal", "create"],
                 ["terminal", "show"],
                 ["terminal", "wait"],
