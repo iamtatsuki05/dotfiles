@@ -1,6 +1,6 @@
 ---
 name: agent-cli-consult
-description: "Use when the user explicitly asks to consult an external agent CLI (Codex CLI or Claude Code CLI) for review, wording, design, debugging, architecture, or difficult code investigation, e.g. codex と相談, claude に聞いて, コードレビュー, レビューして. Do not use for the current harness's own subagents or when no external CLI was requested."
+description: "Consult Codex CLI or Claude Code CLI when an external opinion is requested. Excludes generic reviews and the current harness's own subagents."
 ---
 
 # Agent CLI Consult

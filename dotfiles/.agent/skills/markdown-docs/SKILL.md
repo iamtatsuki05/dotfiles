@@ -1,6 +1,6 @@
 ---
 name: markdown-docs
-description: "Use when the user asks to create, edit, restructure, review, or lint a Markdown document itself (README, docs/, guides, API docs, release notes): headings, links, tables, code blocks, syntax. Not for README edits riding along with a code change, slides/PDF/LaTeX, Japanese naturalness (natural-japanese), .agent/work logs, or fact/number checking."
+description: "Create, edit, or review Markdown structure, formatting, and links. Excludes incidental code docs, work logs, fact checks, and Japanese prose quality."
 ---
 
 # Markdown Docs
@@ -10,7 +10,7 @@ Markdown 文書そのものの構成、記法、リンク、表を作成、編�
 ## 着手前の判定
 
 - 依頼が数値・出典・事実の照合、コード変更、スライド・PDF・LaTeX なら本 skill は不要。読んだ時点で対象外と分かったら、以下の手順を適用せず本来の作業へ戻る。
-- 「レビュー」「校閲」だけの依頼は、直接編集するか指摘だけ返すかを確認する。
+- 「レビュー」「校閲」だけの依頼はファイルを変更せず指摘を返す。修正も依頼されていれば反映まで進める。
 - 対象読者、言語、文体、変更範囲は既存文書と同種の文書から読み取り、決められない場合だけ短く確認する。
 
 ## 共通ルール
@@ -30,7 +30,7 @@ Markdown 文書そのものの構成、記法、リンク、表を作成、編�
 リンクと表示
 
 - 相対リンク、画像パス、見出しアンカーは実在を確認する(`ls` と `grep -n '^#' <file>` で足りる)。
-- Notion や Slack へ貼る文書は、貼り付け後に `*`、`•`、強調が落ちないか確認する。
+- Notion や Slack へ貼る文書は、承認済みの貼り付け後に `*`、`•`、強調が落ちないか確認する。未承認の外部送信はせず、ローカルで確認できた範囲と残る確認を報告する。
 
 出力の長さ
 
@@ -40,7 +40,7 @@ Markdown 文書そのものの構成、記法、リンク、表を作成、編�
 
 作成
 
-- 文書の種類、読者、必須節、言語を決めてから節構成を先に示し、長い文書は節単位で進める。
+- 入力資料と既存テンプレートから文書の種類、読者、必須節、言語、構成を決め、完成稿まで進める。結果が大きく変わる不明点がある場合だけ質問し、構成の合意が明示された依頼ではその段階で止める。
 
 編集
 
@@ -49,7 +49,7 @@ Markdown 文書そのものの構成、記法、リンク、表を作成、編�
 
 レビュー
 
-- 通読して構成、過不足、読者適合を見たあと、`references/review-checklist.md` を開いて個別項目を確認する。
+- 対象範囲の構成、過不足、読者適合を確認する。文書全体のレビューでは `references/review-checklist.md` を開き、局所編集では必要な観点だけ使う。
 - 指摘は重要度順(高・中・低)に、位置(見出しまたは行)と改善案を付けて返す。問題がなければ「重大な問題なし」と明記する。
 
 ## エンジニアリング文書の Why
