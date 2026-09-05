@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,10 +8,24 @@ version = "0.1.0"
 description = "Safe, Orca-backed multi-agent team launcher"
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "Tatsuki Okada", email = "tatsukio0522@gmail.com" }]
+keywords = ["agents", "orchestration", "orca", "cli"]
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/iamtatsuki05/dotfiles"
+Issues = "https://github.com/iamtatsuki05/dotfiles/issues"
 
 [project.scripts]
 agent-team = "agent_team.cli:main"
+
+[dependency-groups]
+dev = [
+    "build==1.3.0",
+    "mypy==2.3.1",
+    "ruff==0.16.5",
+    "setuptools==84.0.0",
+]
 
 [tool.setuptools]
 packages = ["agent_team", "agent_team.defaults", "agent_team.defaults.prompts"]

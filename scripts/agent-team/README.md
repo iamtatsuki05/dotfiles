@@ -239,16 +239,37 @@ Useful terms:
 
 ## Develop and verify changes
 
+The project tracks its development tools in `pyproject.toml` and their resolved
+versions and hashes in `uv.lock`. The lock does not add runtime dependencies.
+Run these commands from the repository root:
+
 ```bash
-python3.13 -m unittest tests.test_agent_team tests.test_agent_team_mcp
-uvx ruff check \
+uv sync --locked --project scripts/agent-team --python 3.13
+uv run --locked --project scripts/agent-team python -m unittest discover -s scripts/agent-team/tests
+uv run --locked --project scripts/agent-team ruff check \
   scripts/agent-team/agent_team \
+  scripts/agent-team/tests \
   tests/test_agent_team.py \
   tests/test_agent_team_mcp.py
-uvx mypy --strict scripts/agent-team/agent_team
-python3.13 -m build --wheel scripts/agent-team
-zsh tests/test_agent_sync.sh
+uv run --locked --project scripts/agent-team ruff format --check \
+  scripts/agent-team/agent_team \
+  scripts/agent-team/tests \
+  tests/test_agent_team.py \
+  tests/test_agent_team_mcp.py
+uv run --locked --project scripts/agent-team mypy --strict --python-version 3.11 scripts/agent-team/agent_team
+uv run --locked --project scripts/agent-team python -m build --no-isolation scripts/agent-team
+DOTFILES_TEST_PYTHON=python uv run --locked --project scripts/agent-team /bin/zsh tests/run.sh
 ```
+
+CI runs the same locked environment on Python 3.11 and 3.13. Builds use the
+locked setuptools installation without creating a second build environment;
+the build-system requirement is also pinned for ordinary isolated installs.
+The source distribution includes `uv.lock`.
+
+After intentionally editing development dependencies, run
+`uv lock --project scripts/agent-team` and commit both files. `--locked` rejects
+an out-of-date lock instead of silently updating it. See the
+[uv locking documentation](https://docs.astral.sh/uv/concepts/projects/sync/).
 
 When changing Orca or ACP integration, repeat a real bounded smoke test and
 confirm that terminals, state, prompt files, sessions, and adapter processes

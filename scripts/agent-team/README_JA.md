@@ -223,16 +223,34 @@ Orca 1.4.190では、非表示の検出済みworktreeに作ったterminalの終�
 
 ## 変更を検証する
 
+開発用toolは`pyproject.toml`に宣言し、解決したバージョンとhashを`uv.lock`へ保存します。
+実行時の依存は増やしません。次のcommandはリポジトリのrootから実行してください。
+
 ```bash
-python3.13 -m unittest tests.test_agent_team tests.test_agent_team_mcp
-uvx ruff check \
+uv sync --locked --project scripts/agent-team --python 3.13
+uv run --locked --project scripts/agent-team python -m unittest discover -s scripts/agent-team/tests
+uv run --locked --project scripts/agent-team ruff check \
   scripts/agent-team/agent_team \
+  scripts/agent-team/tests \
   tests/test_agent_team.py \
   tests/test_agent_team_mcp.py
-uvx mypy --strict scripts/agent-team/agent_team
-python3.13 -m build --wheel scripts/agent-team
-zsh tests/test_agent_sync.sh
+uv run --locked --project scripts/agent-team ruff format --check \
+  scripts/agent-team/agent_team \
+  scripts/agent-team/tests \
+  tests/test_agent_team.py \
+  tests/test_agent_team_mcp.py
+uv run --locked --project scripts/agent-team mypy --strict --python-version 3.11 scripts/agent-team/agent_team
+uv run --locked --project scripts/agent-team python -m build --no-isolation scripts/agent-team
+DOTFILES_TEST_PYTHON=python uv run --locked --project scripts/agent-team /bin/zsh tests/run.sh
 ```
+
+CIもPython 3.11と3.13で同じlockを使います。buildではlockから導入したsetuptoolsを使い、
+別のbuild環境は作りません。通常の隔離installでも版が変わらないよう、build-system側の
+要求も固定しています。ソース配布物にも`uv.lock`を含めます。
+
+開発依存を変更するときは、`uv lock --project scripts/agent-team`を実行し、両ファイルを
+commitしてください。`--locked`は不整合のあるlockを自動更新せず、エラーにします。
+詳しくは[uvのlock管理ドキュメント](https://docs.astral.sh/uv/concepts/projects/sync/)を参照してください。
 
 OrcaやACPの連携を変更した場合は、実環境で範囲を限定したsmoke testも行います。
 `stop`後にterminal、state、prompt file、session、adapter processが残っていないことを
