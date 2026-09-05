@@ -36,7 +36,7 @@ skills/
 | `agent-cli-consult` | Codex CLI / Claude Code CLI に stdin 経由の prompt で読み取り専用のレビュー・調査を依頼する。 | ユーザーが外部 CLI を明示した時だけ使う。 |
 | `agent-job-scheduler` | 10 種の agent CLI の長時間・非対話ジョブを queue / retry / cancel し、allowlist、stale recovery、launchd も扱う。 | app 本体、README、pytest を同梱。 |
 | `alphaxiv-paper-lookup` | alphaxiv の overview と全文 Markdown で arXiv 論文を要約・比較・実装抽出する。 | 数値は全文で裏取りしてから報告する。 |
-| `auto-debugger` | 1 コマンドで再現するエラー・失敗テストの原因特定と修正、リグレッションテスト追加。 | 再現が作れない、flaky、性能退行の場合は `diagnosing-bugs` に引き継ぐ。 |
+| `auto-debugger` | 具体的なエラー・失敗テストを説明・調査し、修正の依頼があれば最小変更で直す。 | テスト・ログ・デバッガで検証し、必要な回帰テストを追加。再現困難・性能問題は `diagnosing-bugs`、CI定義の問題は `ci-cd` に引き継ぐ。 |
 | `ci-cd` | CI/CD workflow(GitHub Actions、GitLab CI、CircleCI)の作成・修正・調査。 | 権限と本番影響を先に確認し、実際の CI 実行を確認してから報告する。CI で落ちる app コード自体は対象外。 |
 | `compatibility-safety` | 根拠のない alias、silent fallback、default 値 fallback、legacy path、runner / backend の黙った差し替えを退ける。 | 書く・レビューする差分にそれらが含まれた時点で読む。実装開始時には読まない。 |
 | `database-dev` | EXPLAIN による実測、expand-contract の migration、共有環境への承認手順を含む schema / index / query / migration の設計・レビュー。 | session で 1 回だけ読む。SQL / NoSQL 両方。 |
