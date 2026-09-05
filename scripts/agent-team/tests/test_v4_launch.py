@@ -10,9 +10,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from test_management_snapshot import saved_state
+
 from agent_team import cli
 from agent_team.config_v4 import V4ConfigError, load_v4_config
 from agent_team.contracts import ErrorCode, RuntimeFailure
+from agent_team.runtime import read_state, write_state
 
 V3_CONFIG = """\
 version = 3
@@ -206,7 +209,7 @@ class V4LaunchTest(unittest.TestCase):
 
         self.assertEqual(result, 0, stderr)
         plan = json.loads(stdout)
-        self.assertEqual(plan["config_path"], str(self.launch_config.resolve()))
+        self.assertEqual(plan["config_path"], str(self.v4_config.resolve()))
         self.assertEqual(plan["team_id"].split("-", 1)[0], "build")
         self.assertEqual(set(plan["roles"]), {"main", "planner", "worker", "reviewer"})
         self.assertEqual(stderr, "")
@@ -225,9 +228,21 @@ class V4LaunchTest(unittest.TestCase):
             )
             self.assertEqual(result, 0, stderr)
             plan = start.call_args.args[0]
-            self.assertEqual(plan["config_path"], str(self.launch_config.resolve()))
+            self.assertEqual(plan["config_path"], str(self.v4_config.resolve()))
             self.assertEqual(plan["team_id"].split("-", 1)[0], "build")
             self.assertEqual(json.loads(stdout), {"status": "running"})
+
+            _, _, state_path = saved_state(
+                self.root / "saved",
+                state_home=self.root / "state",
+                team_id=plan["team_id"],
+            )
+            state = read_state(state_path)
+            state["workspace"] = str(self.root.resolve())
+            state["config_path"] = str(self.v4_config.resolve())
+            write_state(state_path, state, require_existing=True)
+            self.v4_config.unlink()
+            self.launch_config.unlink()
 
             for command, extra in (
                 ("status", ()),
@@ -265,7 +280,7 @@ class V4LaunchTest(unittest.TestCase):
         self.assertIn("team_prefix", stderr)
         start.assert_not_called()
 
-    def test_management_requires_launch_config_before_runtime(self) -> None:
+    def test_management_requires_saved_state_before_runtime(self) -> None:
         no_launch_config = self.root / "inspection-only.toml"
         no_launch_config.write_text(
             V4_CONFIG.replace(
@@ -285,7 +300,7 @@ class V4LaunchTest(unittest.TestCase):
             self.v4_config = original
 
         self.assertEqual(result, 2)
-        self.assertIn("launch_config", stderr)
+        self.assertIn("no saved agent-team state", stderr)
         manage.assert_not_called()
 
     def test_profile_or_graph_mismatch_fails_before_runtime(self) -> None:
@@ -381,7 +396,7 @@ class V4LaunchTest(unittest.TestCase):
         self.assertEqual(
             Path(plan["config_path"]),
             (
-                project_root / "scripts/agent-team/agent_team/defaults/config.toml"
+                project_root / "scripts/agent-team/agent_team/defaults/teams.toml"
             ).resolve(),
         )
         self.assertEqual(Path(plan["workspace"]), project_root.resolve())

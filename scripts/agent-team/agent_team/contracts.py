@@ -126,6 +126,7 @@ class RoleSpec:
     instructions: str
     execution: str
     adapter_id: str | None = None
+    acp_executables: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

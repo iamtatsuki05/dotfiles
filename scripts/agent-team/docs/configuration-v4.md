@@ -6,6 +6,14 @@ Version 4 is a catalog of named team topologies. A team can explicitly link a
 version-3 launch configuration to use the existing Orca runtime. Teams without
 a launch configuration support graph inspection and selection dry runs.
 
+The topology stores provider, transport, and permission. The referenced
+version-3 launch config supplies model and effort values and performs ACP
+dependency preflight only for the ACP roles it selects.
+For Claude ACP, that preflight requires Node.js `22.13.0` or newer and the
+exact `acpx@0.13.2` and
+`@agentclientprotocol/claude-agent-acp@0.70.0` packages. It records absolute
+executable paths with SHA-256 fingerprints and never invokes `npm` or `npx`.
+
 ## Minimal schema
 
 The top-level `version` key must be the integer `4`, and `runtime` must be
@@ -136,6 +144,10 @@ Inspection-only teams reject real startup and management commands.
 The bundled [teams.toml](../agent_team/defaults/teams.toml) is a complete runnable
 catalog. It refers to the adjacent `config.toml`, which retains the models,
 efforts, prompts, permissions, and review-round limit. From this repository:
+
+That bundled launch config uses `fable` for Main and Planner and `gpt-6-astra`
+for Worker and Reviewer. A dry run does not resolve ACP dependencies; the
+selected launch does so only when its version-3 config contains an ACP role.
 
 ```bash
 scripts/agent-team/agent-team start \

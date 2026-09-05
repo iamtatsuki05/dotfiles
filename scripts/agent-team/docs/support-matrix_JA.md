@@ -13,7 +13,7 @@ package download、process起動、workspace書き込みは行いません。
 
 | Harness | 現在実行できるdirect profile | 既知のACP adapter | Static registry snapshot (not safety status) | 広く対応していない理由 |
 |---|---|---|---|---|
-| Claude | Main `orchestrator`、Planner/Reviewer `read-only` | `claude-agent-acp@0.70.0` | 検証済み | ACPはread-only background roleに限定。 |
+| Claude | Main `orchestrator`、Planner/Reviewer `read-only` | `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0` | 検証済み | ACPはread-only background roleに限定。 |
 | Codex | Main `orchestrator`、Planner/Reviewer `read-only`、Worker `workspace-write` | `codex-acp` | direct検証済み、ACP拒否 | ACPのpermission制御がinternal writeを止めないnegative test結果。 |
 | GitHub Copilot | Planner/Reviewer `read-only`（direct background、厳密な`1.0.81`） | native `copilot --acp`、acpx built-in `copilot` | 厳密なGitHub CLIを解決できた場合は検証済み | read-onlyのPlanner/Reviewerに限定。Workerは引き続き拒否。 |
 | Cursor | なし | native `cursor-agent acp`、acpx built-in `cursor` | 認識済み; direct=`not-run`; acp=`not-run` | historicalなauth観測は未検証。現在のpermission phaseは`not-run`。 |
@@ -28,6 +28,12 @@ ACP adapterがインストールされていることやacpxが表示するこ�
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
 unknown providerと認識済みだが拒否されたprofileは、Orca Task、terminal、ACP processを作る前に
 失敗します。別harnessへのfallbackはありません。
+
+Claude ACP profileにはNode.js `22.13.0`以降も必要です。起動前に、agent-teamは選択したACP roleの
+`node`、`acpx`、`claude-agent-acp`だけを解決し、exact package manifestを確認したうえで、absoluteな
+pathとSHA-256 fingerprintを保存します。packageは`agent-team`の外で明示的に導入してください。実行時は
+保存したfileを使い、`npm`や`npx`を呼び出しません。directだけのteamではACP依存関係を解決しません。
+このmatrixの他のACP entryも、各rowに記載したstatusとevidence scopeのままです。
 
 ```bash
 agent-team harnesses

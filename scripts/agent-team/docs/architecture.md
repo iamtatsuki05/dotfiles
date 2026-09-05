@@ -28,6 +28,10 @@ Herdr and Zellij can host an outer terminal, but they are not agent-team
 orchestration backends. Giving two systems ownership of the same worker would
 make completion and cleanup ambiguous.
 
+The repository also contains an isolated tmux terminal driver and a live driver
+test. It is not wired into team launch or orchestration; passing that test
+covers terminal operations only and does not prove the full team workflow.
+
 ## Components have narrow responsibilities
 
 | Component | Responsibility |
@@ -36,16 +40,18 @@ make completion and cleanup ambiguous.
 | `agent_team/config_v4.py`, `topology.py` | Validate named team catalogs and render their graphs. Runnable catalog entries explicitly reference a matching version-3 launch configuration. |
 | `agent_team/cli.py` | Parses and validates config/arguments, composes `WorkflowEngine(OrcaBackend)`, renders compatibility JSON, and runs ACP turns. |
 | `agent_team/backend.py` | Owns the CLI `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
-| `agent_team/orca.py` | Owns the fixed Orca argv/envelope decoder and stable per-team lifecycle reservation. It does not own MCP role operations. |
+| `agent_team/orca.py` | Owns the fixed Orca argv/envelope decoder. It does not own MCP role operations. |
+| `agent_team/locking.py` | Owns the stable per-team lifecycle reservation, shared by state writes and runtime operations without importing a backend. |
 | `agent_team/cleanup.py` | Owns the private stop journal, startup-recovery sidecar, and exact local cleanup/rollback phases. |
 | `agent_team/mcp_server.py` | Exposes seven fixed Main-facing tools, maps role operations to Orca, and holds the shared lifecycle reservation from state load through remote effect and save/rollback. It is launched through the same `agent-team _mcp-server` entrypoint. |
 | `agent_team/runtime.py` | Shares identity, private-file, state-v3, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |
 | `agent_team/adapters.py` | Provides the provider-independent background seam, bounded process runner, exact identity checks, and Copilot/OpenCode read-only adapters. It has no Orca lifecycle authority. |
+| `agent_team/acp_dependencies.py` | Resolves selected ACP dependencies, verifies exact package manifests, and records absolute executable paths with SHA-256 fingerprints. |
 | `agent_team/defaults/` | Bundled config and Japanese prompts used when no user config is selected. |
 | `prompts/*.md` | Defines the Japanese role contracts. |
 | Orca | Stores the Run/Task/Dispatch lifecycle and owns managed terminals. |
-| acpx | Runs the pinned Claude ACP adapter and returns final text plus an exit status. |
+| Node.js, `acpx`, `claude-agent-acp` | Run the pinned Claude ACP adapter through the saved executable binding and return final text plus an exit status. |
 
 Copilot read-only Planner and Reviewer profiles run through the common Orca
 lifecycle and state-v3 snapshot integration. The OpenCode provider adapter is
@@ -61,6 +67,10 @@ In the canonical config, Main starts as a direct Claude process with the
 `agent_team` MCP server and no Bash tool. A custom config may select direct
 Codex Main; it keeps the same fixed MCP surface but uses Codex-specific launch
 and permission settings. In either case, Main is the only user-facing role.
+
+The bundled defaults use `fable` for Main and Planner and `gpt-6-astra` for
+Worker and Reviewer. The role graph does not change those launch-config model
+choices.
 
 The MCP server exposes only:
 
@@ -95,6 +105,16 @@ is allowed by agent-team.
 Planner currently uses Claude through ACP. acpx is not an Orca-recognized TUI,
 so agent-team uses a bare terminal without pretending that it is a supervised
 native agent.
+
+Before creating the Orca Run, ACP startup requires Node.js `22.13.0` or newer
+and the exact `acpx@0.13.2` and
+`@agentclientprotocol/claude-agent-acp@0.70.0` packages. It resolves only the
+selected ACP roles' `node`, `acpx`, and `claude-agent-acp` files, verifies their
+package manifests, and stores absolute paths with SHA-256 fingerprints. The
+role-start path rechecks that binding before creating the Orca Task. The runner
+rechecks it before starting ACP execution and uses the same files for each
+session operation. It never invokes `npm` or `npx`; a direct-only launch does
+not resolve ACP dependencies.
 
 1. The MCP bridge creates a Task and a private prompt sidecar.
 2. It creates a launcher-owned bare terminal.
@@ -139,6 +159,11 @@ workspace, config path, Run, Main terminal, role specifications, and active
 assignment. Model, effort, permission, and instructions are copied at launch;
 an ACP runner does not reinterpret a changed config during the same team run.
 
+An ACP role specification also stores the resolved absolute `node`, `acpx`, and
+`claude-agent-acp` paths and their SHA-256 fingerprints. The runner uses and
+verifies this saved binding for every ACP lifecycle operation; missing or
+changed files fail closed.
+
 ACP prompt sidecars and state files are current-user-owned private files.
 State writes are atomic and fsync their parent directory after replace. Prompt
 reads use non-following file descriptors.
@@ -148,6 +173,11 @@ treated as published and the startup marker is retained for management retry.
 
 ## Failure handling is fail-closed
 
+- If role startup cannot confirm remote rollback, it retains the assignment and
+  private resources. Before a complete assignment exists, `pending_role_start`
+  records only known resource identities. `status` shows `cleanup_pending`, and
+  another role launch or team-state deletion is blocked. Resolving this unknown
+  outcome is not automated; deleting the record to force a restart is unsafe.
 - A partial start stops or closes only resources whose exact IDs were returned.
 - Cleanup errors are reported together with the original failure.
 - CLI and MCP stateful operations share a stable per-team reservation outside
@@ -185,6 +215,17 @@ CLI lifecycle operations use `WorkflowEngine(OrcaBackend)`. Role operations
 use the MCP server's Orca implementation and the same state and reservation
 helpers. The role methods on the abstract backend contract are not an
 implemented replacement for this MCP path.
+
+The MCP path records each observed Delivery and enforces reading the result,
+releasing the owned role resources, and then acknowledging completion. Questions
+must be answered before acknowledgment; escalations remain pending. Failed
+operations retain their pending state. CLI inspection commands load no Orca
+implementation and start no external process.
+
+When Orca returns `retained`, the assignment stays pending and the launcher does
+not close the terminal. A `no_owned_resource` result for a launcher-created
+background terminal still needs an ownership-aware release path; its cleanup is
+not treated as successful.
 
 If a role-start or release response is lost, inspect the recorded Dispatch and
 terminal before retrying. Role operations do not provide automatic crash

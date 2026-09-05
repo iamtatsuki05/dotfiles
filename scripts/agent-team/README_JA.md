@@ -86,7 +86,8 @@ Orcaの実行ファイルはplatformごとに固定し、PATH fallbackや環境�
 
 起動前に次を確認してください。
 
-1. 上記のplatform固有のOrca実行ファイル、`claude`、`codex`、Node.js、`npx`を利用できる。
+1. 選択したbackendとharnessのcommandを利用できる。既定のteamは上記のOrca実行ファイル、
+   `claude`、`codex`と、後述のACP toolを使います。
 2. Orcaを起動し、platform固有の`status --json`でruntimeとgraphがreadyである。
 3. 利用するClaude/Codex accountへloginしている。
 4. 対象repositoryをOrcaへ一度登録している。
@@ -102,9 +103,18 @@ orca-ide status --json
 orca-ide repo add --path "$PWD"
 ```
 
-ACP Plannerは`acpx@0.13.2`と
-`@agentclientprotocol/claude-agent-acp@0.70.0`を固定して使います。初回は
-`npx`がpackageをdownloadする場合があります。global installは行いません。
+ACP PlannerにはNode.js 22.13以降と、`acpx@0.13.2`、
+`@agentclientprotocol/claude-agent-acp@0.70.0`のcommandが必要です。
+利用するtoolは、例えば次のように指定したdirectoryへ事前に導入してください。
+
+```bash
+npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/claude-agent-acp@0.70.0
+export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
+```
+
+起動時に実行ファイルのpathとfingerprintを保存し、実行時はそのファイルを直接使います。
+`npm`や`npx`は呼び出しません。依存が不足した場合やファイルが変わった場合はエラーにします。
+direct transportだけのteamにはACP toolは不要です。
 
 config version 2で起動したteamが残っている場合は、version 3へ切り替える前に、
 旧codeの`agent-team stop`で停止してください。legacy fallbackはありません。
@@ -163,7 +173,11 @@ agent-team stop
 `stop`後も、Orca Runは監査記録として残ります。project fileのcommit、push、
 publish、削除は行いません。
 
-管理commandでは、`start`と同じ`--config`と`--cwd`を指定してください。
+管理コマンドは、起動時に保存した設定を使います。元の設定やpromptファイルを
+変更・削除しても管理できます。対象の実行を選ぶには、`start`と同じ`--cwd`と、
+指定した場合は同じ`--config`・`--team`を使ってください。`--config`はversion 4の
+カタログも含めた元の入力パスと照合し、ファイルを読み直しません。選択条件の省略は、
+一致する保存済みの実行が1件だけの場合に限ります。
 
 ```bash
 agent-team start \
@@ -174,6 +188,10 @@ agent-team status \
   --config /absolute/path/to/config.toml \
   --cwd /absolute/path/to/project
 ```
+
+`status`・`attach`・`stop`では、`--state /absolute/path/to/state.json`で
+現在のディレクトリに関係なく保存済みの実行を選べます。`--team`とは併用できません。
+`--config`も指定する場合は、保存したパスとの一致が必要です。
 
 ## 安全境界を理解する
 
@@ -205,7 +223,7 @@ Orca 1.4.190では、非表示の検出済みworktreeに作ったterminalの終�
 | `agent-team state already exists` | 2つ目を起動せず、`status`、`attach`、`stop`を使う。 |
 | `role has no active Orca Dispatch` | Mainがそのroleを未起動か、すでにrelease済み。 |
 | authenticationを求められる | agent-team外で`claude auth status`か`codex login status`を確認する。 |
-| 初回のACP起動に失敗する | 固定した`npx` packageへのnetwork accessを確認し、明示的に再実行する。 |
+| ACPの依存検査に失敗する | 固定したACP packageを明示的にインストールし、その`node_modules/.bin`とNode >=22.13を`PATH`に含める。 |
 | roleが`escalation`を返す | 保持されたterminalとRunを調べる。完了として扱わない。 |
 
 ## 用語と問い合わせ時の情報を揃える
@@ -255,3 +273,13 @@ commitしてください。`--locked`は不整合のあるlockを自動更新せ
 OrcaやACPの連携を変更した場合は、実環境で範囲を限定したsmoke testも行います。
 `stop`後にterminal、state、prompt file、session、adapter processが残っていないことを
 確認してください。
+
+tmux端末driverの実機確認は、tmuxを導入した環境で、リポジトリのrootから明示的に実行します。
+
+```bash
+uv run --locked --project scripts/agent-team python scripts/agent-team/tests/live_tmux.py
+```
+
+専用tmux serverを作り、引数の保持とprocessの終了状態を検証して、自分の資源を回収します。
+このtestではtmux未導入をエラーとします。通常のsuiteはtmuxを要求せずdriverの契約を検証します。
+実機testの対象は端末操作であり、チーム全工程の動作を証明するものではありません。

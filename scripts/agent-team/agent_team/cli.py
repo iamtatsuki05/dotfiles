@@ -7,14 +7,17 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
+from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .adapters import (
     AdapterContext,
     AdapterSnapshot,
@@ -23,7 +26,6 @@ from .adapters import (
     background_adapter,
     remove_owned_tree,
 )
-from .backend import OrcaBackend, OrcaClient
 from .cleanup import StartupCleanup
 from .config_v4 import (
     V4Config,
@@ -43,7 +45,12 @@ from .contracts import (
     StartSpec,
     Status,
 )
-from .orca import orca_executable
+from .harness_launch import (
+    LaunchValidationError,
+    build_claude_argv,
+    build_codex_argv,
+    build_plan_role_command,
+)
 from .registry import (
     CANONICAL_HARNESSES,
     adapter_id_for_profile,
@@ -58,7 +65,6 @@ from .runtime import (
     build_acp_argv,
     build_acp_runner_command,
     build_acp_session_name,
-    build_role_command,
     read_prompt_file,
 )
 from .runtime import (
@@ -77,6 +83,9 @@ from .runtime import (
     write_state as runtime_write_state,
 )
 from .workflow import WorkflowEngine
+
+if TYPE_CHECKING:
+    from .backend import OrcaBackend
 
 SUPPORTED_TRANSPORTS: Final = frozenset({"direct", "acp"})
 SUPPORTED_PROVIDERS: Final = frozenset(CANONICAL_HARNESSES)
@@ -298,9 +307,9 @@ def slugify(value: str) -> str:
     return slug[:24] or "workspace"
 
 
-def team_name(config: TeamConfig, workspace: Path) -> str:
+def team_name(team_prefix: str, workspace: Path) -> str:
     digest = hashlib.sha256(str(workspace).encode()).hexdigest()[:8]
-    return f"{config.team_prefix}-{slugify(workspace.name)}-{digest}"
+    return f"{team_prefix}-{slugify(workspace.name)}-{digest}"
 
 
 def state_dir_for(team_id: str) -> Path:
@@ -314,16 +323,163 @@ def state_path_for(team_id: str) -> Path:
     return state_dir_for(team_id) / "state.json"
 
 
-def toml_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
+def _state_root() -> Path:
+    configured = os.environ.get("XDG_STATE_HOME")
+    base = (
+        Path(configured).expanduser()
+        if configured
+        else Path.home() / ".local" / "state"
+    )
+    return base / "agent-team"
 
 
-def project_trust_root(workspace: Path) -> Path:
-    for candidate in (workspace, *workspace.parents):
-        git_marker = candidate / ".git"
-        if git_marker.is_dir() or git_marker.is_file():
-            return candidate
-    return workspace
+def _management_state_paths() -> tuple[Path, ...]:
+    root = _state_root()
+    try:
+        root_stat = root.lstat()
+    except FileNotFoundError:
+        return ()
+    except OSError as exc:
+        raise ConfigError(
+            f"could not inspect agent-team state directory: {root}"
+        ) from exc
+    if stat.S_ISLNK(root_stat.st_mode):
+        raise ConfigError(f"agent-team state directory must not be a symlink: {root}")
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise ConfigError(f"agent-team state path is not a directory: {root}")
+    if root_stat.st_uid != os.getuid():
+        raise ConfigError(
+            f"agent-team state directory owner is not the current user: {root}"
+        )
+
+    paths: list[Path] = []
+    try:
+        entries = sorted(root.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        raise ConfigError(
+            f"could not inspect agent-team state directory: {root}"
+        ) from exc
+    for entry in entries:
+        try:
+            entry_stat = entry.lstat()
+        except OSError as exc:
+            raise ConfigError(
+                f"could not inspect agent-team state path: {entry}"
+            ) from exc
+        if stat.S_ISLNK(entry_stat.st_mode):
+            raise ConfigError(f"agent-team state path must not be a symlink: {entry}")
+        if not stat.S_ISDIR(entry_stat.st_mode):
+            continue
+        candidate = entry / "state.json"
+        try:
+            candidate_stat = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ConfigError(
+                f"could not inspect agent-team state file: {candidate}"
+            ) from exc
+        if stat.S_ISLNK(candidate_stat.st_mode):
+            raise ConfigError(
+                f"agent-team state file must not be a symlink: {candidate}"
+            )
+        if stat.S_ISREG(candidate_stat.st_mode):
+            paths.append(candidate)
+    return tuple(paths)
+
+
+def _management_state(
+    state_path: Path | None,
+    workspace: Path,
+    *,
+    config_path: Path | None = None,
+    team: list[str] | None = None,
+) -> dict[str, object]:
+    requested_config = (
+        config_path.expanduser().resolve(strict=False) if config_path else None
+    )
+    if state_path is not None:
+        if team is not None:
+            raise ConfigError("--state cannot be combined with --team")
+        state = read_state(state_path)
+        if (
+            requested_config is not None
+            and Path(str(state["config_path"])).resolve(strict=False)
+            != requested_config
+        ):
+            raise ConfigError("--config does not match the selected saved state")
+        return state
+
+    requested_workspace = workspace.expanduser().resolve(strict=False)
+    requested_team_id = None
+    if team is not None:
+        if len(team) != 1 or not team[0]:
+            raise ConfigError("exactly one non-empty --team must be specified")
+        requested_team_id = team_name(team[0], requested_workspace)
+    matches: list[tuple[Path, dict[str, object]]] = []
+    for candidate in _management_state_paths():
+        state = read_state(candidate)
+        state_workspace = state.get("workspace")
+        if not isinstance(state_workspace, str) or not state_workspace:
+            raise ConfigError(f"saved state is missing workspace: {candidate}")
+        if (
+            Path(state_workspace).expanduser().resolve(strict=False)
+            == requested_workspace
+            and (
+                requested_config is None
+                or Path(str(state["config_path"])).resolve(strict=False)
+                == requested_config
+            )
+            and (requested_team_id is None or state["team_id"] == requested_team_id)
+        ):
+            matches.append((candidate, state))
+    if not matches:
+        raise ConfigError(
+            "no saved agent-team state matches the requested workspace/config/team: "
+            f"{requested_workspace}; use --state <path> to select a saved run explicitly"
+        )
+    if len(matches) > 1:
+        paths = ", ".join(str(path) for path, _ in matches)
+        raise ConfigError(
+            "saved agent-team state selection is ambiguous for workspace "
+            f"{requested_workspace}; pass --state <path> ({paths})"
+        )
+    return matches[0][1]
+
+
+def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
+    required = ("team_id", "workspace", "config_path", "state_path", "orca_socket")
+    values: dict[str, str] = {}
+    for key in required:
+        value = state.get(key)
+        if not isinstance(value, str) or not value:
+            raise ConfigError(f"saved state is missing {key}")
+        values[key] = value
+
+    raw_specs = state.get("role_specs")
+    if not isinstance(raw_specs, dict) or set(raw_specs) != set(ALL_ROLES):
+        raise ConfigError(
+            "saved state must contain role_specs for exactly " + ", ".join(ALL_ROLES)
+        )
+    roles: dict[str, dict[str, object]] = {}
+    for role in ALL_ROLES:
+        raw_spec = raw_specs.get(role)
+        if not isinstance(raw_spec, dict):
+            raise ConfigError(f"saved state is missing role_specs.{role}")
+        launch = dict(raw_spec)
+        launch["role"] = role
+        launch.setdefault("env", {})
+        launch.setdefault("argv", [])
+        roles[role] = launch
+    return {
+        "runtime": "orca",
+        "team_id": values["team_id"],
+        "workspace": values["workspace"],
+        "config_path": values["config_path"],
+        "state_path": values["state_path"],
+        "orca_socket": values["orca_socket"],
+        "roles": roles,
+    }
 
 
 def role_instructions(role: str, config: TeamConfig, state_path: Path) -> str:
@@ -409,82 +565,20 @@ def claude_argv(
     instructions: str,
     state_path: Path,
 ) -> list[str]:
-    argv = [
-        "claude",
-        "--name",
-        f"team-{role}",
-        "--model",
-        role_config.model,
-        "--effort",
-        role_config.effort,
-    ]
-    if role == "main":
-        mcp_config = json.dumps(
-            {
-                "mcpServers": {
-                    "agent_team": {
-                        "command": str(mcp_server_path()),
-                        "args": ["_mcp-server"],
-                        "env": {"AGENT_TEAM_STATE_PATH": str(state_path)},
-                    }
-                }
-            },
-            separators=(",", ":"),
+    try:
+        return list(
+            build_claude_argv(
+                role=role,
+                model=role_config.model,
+                effort=role_config.effort,
+                permission=role_config.permission,
+                instructions=instructions,
+                state_path=state_path,
+                mcp_server_path=mcp_server_path() if role == "main" else None,
+            )
         )
-        mcp_tools = [
-            "mcp__agent_team__role_get",
-            "mcp__agent_team__role_prompt",
-            "mcp__agent_team__role_wait",
-            "mcp__agent_team__role_read",
-            "mcp__agent_team__role_release",
-            "mcp__agent_team__delivery_ack",
-            "mcp__agent_team__message_reply",
-        ]
-        argv.extend(
-            [
-                "--append-system-prompt",
-                instructions,
-                "--tools",
-                ",".join(["Read", "Grep", "Glob", *mcp_tools]),
-                "--allowedTools",
-                "Read",
-                "Grep",
-                "Glob",
-                *mcp_tools,
-                "--permission-mode",
-                "dontAsk",
-                "--mcp-config",
-                mcp_config,
-                "--strict-mcp-config",
-            ]
-        )
-    elif role_config.permission == "read-only":
-        argv.extend(
-            [
-                "--append-system-prompt-file",
-                str(role_config.prompt_path),
-                "--tools",
-                "Read,Grep,Glob",
-                "--allowedTools",
-                "Read",
-                "Grep",
-                "Glob",
-                "--permission-mode",
-                "dontAsk",
-            ]
-        )
-    else:
-        argv.extend(
-            [
-                "--append-system-prompt-file",
-                str(role_config.prompt_path),
-                "--tools",
-                "default",
-                "--permission-mode",
-                "auto",
-            ]
-        )
-    return argv
+    except LaunchValidationError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def codex_argv(
@@ -495,67 +589,22 @@ def codex_argv(
     workspace: Path,
     orca_socket: Path | None,
 ) -> list[str]:
-    base_permission_profile = (
-        ":workspace" if role_config.permission == "workspace-write" else ":read-only"
-    )
-    permission_profile = base_permission_profile
-    trust_root = project_trust_root(workspace)
-    project_trust = (
-        "projects={" + toml_string(str(trust_root)) + '={trust_level="untrusted"}}'
-    )
-    argv = [
-        "codex",
-        "-m",
-        role_config.model,
-        "-c",
-        f"model_reasoning_effort={toml_string(role_config.effort)}",
-        "-c",
-        f"developer_instructions={toml_string(instructions)}",
-    ]
-    if orca_socket is not None:
-        permission_profile = (
-            "agent_team_workspace"
-            if role_config.permission == "workspace-write"
-            else "agent_team_readonly"
+    try:
+        return list(
+            build_codex_argv(
+                role=role,
+                model=role_config.model,
+                effort=role_config.effort,
+                permission=role_config.permission,
+                instructions=instructions,
+                state_path=state_path,
+                workspace=workspace,
+                control_socket=orca_socket,
+                mcp_server_path=mcp_server_path() if role == "main" else None,
+            )
         )
-        socket_table = "{" + toml_string(str(orca_socket)) + '="allow"}'
-        argv.extend(
-            [
-                "-c",
-                "features.network_proxy=true",
-                "-c",
-                f"permissions.{permission_profile}.extends="
-                + toml_string(base_permission_profile),
-                "-c",
-                f"permissions.{permission_profile}.network.enabled=true",
-                "-c",
-                f"permissions.{permission_profile}.network.unix_sockets={socket_table}",
-            ]
-        )
-    argv.extend(
-        [
-            "-c",
-            f"default_permissions={toml_string(permission_profile)}",
-            "-c",
-            project_trust,
-        ]
-    )
-    if role == "main":
-        argv.extend(
-            [
-                "-c",
-                f"mcp_servers.agent_team.command={toml_string(str(mcp_server_path()))}",
-                "-c",
-                'mcp_servers.agent_team.args=["_mcp-server"]',
-                "-c",
-                "mcp_servers.agent_team.env.AGENT_TEAM_STATE_PATH="
-                + toml_string(str(state_path)),
-                "-c",
-                'mcp_servers.agent_team.default_tools_approval_mode="approve"',
-            ]
-        )
-    argv.extend(["-a", "never"])
-    return argv
+    except LaunchValidationError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def build_argv(
@@ -579,9 +628,17 @@ def build_argv(
     )
 
 
-def acp_agent_command(team_id: str, role: str, launch_nonce: str) -> str:
+def acp_agent_command(
+    team_id: str,
+    role: str,
+    launch_nonce: str,
+    *,
+    executables: AcpExecutables,
+) -> str:
     try:
-        return build_acp_agent_command(team_id, role, launch_nonce)
+        return build_acp_agent_command(
+            team_id, role, launch_nonce, executables=executables
+        )
     except RuntimeValidationError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -590,6 +647,7 @@ def acp_argv(
     *,
     workspace: Path,
     agent_command: str,
+    executables: AcpExecutables,
     model: str,
     instructions: str,
     operation: tuple[str, ...],
@@ -600,6 +658,7 @@ def acp_argv(
         return build_acp_argv(
             workspace=workspace,
             agent_command=agent_command,
+            executables=executables,
             model=model,
             instructions=instructions,
             operation=operation,
@@ -607,6 +666,42 @@ def acp_argv(
         )
     except RuntimeValidationError as exc:
         raise ConfigError(str(exc)) from exc
+
+
+def _saved_acp_executables(spec: dict[str, object]) -> AcpExecutables:
+    try:
+        executables = AcpExecutables.from_dict(spec.get("acp_executables"))
+        executables.verify()
+    except AcpDependencyError as exc:
+        raise ConfigError(str(exc)) from exc
+    return executables
+
+
+def _validate_acp_assignment_snapshot(
+    assignment: dict[str, object], executables: AcpExecutables
+) -> None:
+    snapshot = assignment.get("adapter_snapshot")
+    identity = snapshot.get("identity") if isinstance(snapshot, dict) else None
+    if not isinstance(snapshot, dict) or not isinstance(identity, dict):
+        raise ConfigError("ACP assignment has an invalid executable snapshot")
+    try:
+        current = executables.client.stat()
+    except OSError as exc:
+        raise ConfigError("ACP assignment executable snapshot is unavailable") from exc
+    expected = {
+        "device": current.st_dev,
+        "inode": current.st_ino,
+        "size": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "sha256": executables.client_sha256,
+    }
+    if (
+        snapshot.get("revision") != "acpx@0.13.2"
+        or snapshot.get("executable") != str(executables.client)
+        or snapshot.get("version") != "@agentclientprotocol/claude-agent-acp@0.70.0"
+        or any(identity.get(key) != value for key, value in expected.items())
+    ):
+        raise ConfigError("ACP assignment has an invalid executable snapshot")
 
 
 def create_prompt_file(
@@ -654,7 +749,7 @@ def build_plan(
     resolved_workspace = workspace.expanduser().resolve()
     if not resolved_workspace.is_dir():
         raise ConfigError(f"workspace is not a directory: {resolved_workspace}")
-    team_id = team_name(config, resolved_workspace)
+    team_id = team_name(config.team_prefix, resolved_workspace)
     state_path = state_path_for(team_id)
     role_configs = {"main": config.main, **config.roles}
     roles: dict[str, dict[str, object]] = {}
@@ -683,6 +778,7 @@ def build_plan(
             "model": role_config.model,
             "effort": role_config.effort,
             "permission": role_config.permission,
+            "instructions": instructions,
             "execution": execution,
             "adapter_id": adapter_id,
             "env": role_env,
@@ -758,7 +854,9 @@ def _v4_runtime_plan(
         raise V4ConfigError(
             "selected v4 topology edges do not match the fixed runtime graph"
         )
-    return build_plan(launch, workspace)
+    plan = build_plan(launch, workspace)
+    plan["config_path"] = str(config.config_path)
+    return plan
 
 
 def require_binary(binary: str) -> None:
@@ -876,6 +974,8 @@ def run_orca(
     check: bool = True,
     timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    from .orca import orca_executable
+
     result = subprocess.run(
         [orca_executable(), *args],
         check=False,
@@ -904,24 +1004,25 @@ def nested_string(
 
 
 def role_command(plan: dict[str, object], role: str) -> str:
-    config_path = plan.get("config_path")
-    workspace = plan.get("workspace")
-    orca_socket = plan.get("orca_socket")
-    if not isinstance(config_path, str) or not isinstance(workspace, str):
-        raise TypeError("launch plan contains invalid paths")
-    roles = plan.get("roles")
-    launch = roles.get(role) if isinstance(roles, dict) else None
-    if isinstance(launch, dict) and launch.get("transport") != "direct":
-        raise ConfigError(f"role {role} must use direct transport for a TUI terminal")
     try:
-        return build_role_command(
-            str(launcher_path()),
-            role,
-            config_path,
-            workspace,
-            orca_socket if isinstance(orca_socket, str) else None,
+        raw_socket = plan.get("orca_socket")
+        control_socket = (
+            Path(raw_socket) if isinstance(raw_socket, str) and raw_socket else None
         )
-    except RuntimeValidationError as exc:
+        roles = plan.get("roles")
+        launch = roles.get(role) if isinstance(roles, dict) else None
+        provider = launch.get("provider") if isinstance(launch, dict) else None
+        return build_plan_role_command(
+            plan,
+            role,
+            control_socket=control_socket,
+            mcp_server_path=(
+                mcp_server_path()
+                if role == "main" and control_socket is not None and provider == "codex"
+                else None
+            ),
+        )
+    except (LaunchValidationError, RuntimeValidationError) as exc:
         raise ConfigError(str(exc)) from exc
 
 
@@ -1040,7 +1141,7 @@ def _acp_assignment(
     terminal_handle: str,
     prompt_path: Path,
     launch_nonce: str,
-) -> tuple[dict[str, object], dict[str, object]]:
+) -> tuple[dict[str, object], dict[str, object], AcpExecutables]:
     state_state_path = state.get("state_path")
     if not isinstance(state_state_path, str) or state_path.resolve(
         strict=False
@@ -1060,14 +1161,6 @@ def _acp_assignment(
     for key, value in expected.items():
         if assignment.get(key) != value:
             raise ConfigError(f"ACP assignment does not match {key}")
-    team_id = nested_string(state, ("team_id",), "agent-team state")
-    if assignment.get("agent_command") != acp_agent_command(
-        team_id, role, launch_nonce
-    ):
-        raise ConfigError("ACP assignment has an invalid agent command")
-    session_name = assignment.get("session_name")
-    if session_name != acp_session_name(role, launch_nonce):
-        raise ConfigError("ACP assignment has an invalid session name")
     specs = state.get("role_specs")
     spec = specs.get(role) if isinstance(specs, dict) else None
     if not isinstance(spec, dict):
@@ -1083,13 +1176,23 @@ def _acp_assignment(
         or not isinstance(spec.get("instructions"), str)
     ):
         raise ConfigError("ACP role does not satisfy the Claude read-only capability")
+    executables = _saved_acp_executables(spec)
+    team_id = nested_string(state, ("team_id",), "agent-team state")
+    if assignment.get("agent_command") != acp_agent_command(
+        team_id, role, launch_nonce, executables=executables
+    ):
+        raise ConfigError("ACP assignment has an invalid agent command")
+    session_name = assignment.get("session_name")
+    if session_name != acp_session_name(role, launch_nonce):
+        raise ConfigError("ACP assignment has an invalid session name")
+    _validate_acp_assignment_snapshot(assignment, executables)
     validate_prompt_file(
         prompt_path,
         state_path.parent,
         role=role,
         launch_nonce=launch_nonce,
     )
-    return assignment, spec
+    return assignment, spec, executables
 
 
 def _send_worker_done(
@@ -1143,7 +1246,7 @@ def acp_run(
 
     try:
         state = read_state(state_path)
-        assignment, spec = _acp_assignment(
+        assignment, spec, executables = _acp_assignment(
             state,
             role,
             state_path=state_path,
@@ -1171,7 +1274,12 @@ def acp_run(
             role=role,
             launch_nonce=launch_nonce,
         )
-        agent_command = str(assignment["agent_command"])
+        agent_command = acp_agent_command(
+            nested_string(state, ("team_id",), "agent-team state"),
+            role,
+            launch_nonce,
+            executables=executables,
+        )
         session_name = acp_session_name(role, launch_nonce)
     except (ConfigError, OSError, TypeError, RuntimeValidationError) as exc:
         print(f"ACP runner validation failed: {exc}", file=sys.stderr)
@@ -1186,6 +1294,7 @@ def acp_run(
         return acp_argv(
             workspace=workspace,
             agent_command=agent_command,
+            executables=executables,
             model=model,
             instructions=instructions,
             operation=operation,
@@ -1498,7 +1607,6 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         raise TypeError("launch plan contains invalid team metadata")
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
-    config = load_config(Path(cast(str, config_path)))
     role_specs: dict[Role, RoleSpec] = {}
     for role_name in ALL_ROLES:
         launch = roles.get(role_name)
@@ -1512,26 +1620,35 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
                 "model",
                 "effort",
                 "permission",
+                "instructions",
                 "execution",
             )
         }
         if not all(isinstance(value, str) and value for value in values.values()):
             raise TypeError(f"launch plan contains invalid role metadata: {role_name}")
+        raw_acp_executables = launch.get("acp_executables")
+        if raw_acp_executables is not None and not isinstance(
+            raw_acp_executables, Mapping
+        ):
+            raise TypeError(
+                f"launch plan contains invalid ACP executable bindings: {role_name}"
+            )
         role_config = RoleSpec(
             provider=cast(str, values["provider"]),
             transport=cast(str, values["transport"]),
             model=cast(str, values["model"]),
             effort=cast(str, values["effort"]),
             permission=cast(str, values["permission"]),
-            instructions=role_instructions(
-                role_name,
-                config,
-                Path(cast(str, state_path)),
-            ),
+            instructions=cast(str, values["instructions"]),
             execution=cast(str, values["execution"]),
             adapter_id=(
                 cast(str, launch["adapter_id"])
                 if isinstance(launch.get("adapter_id"), str)
+                else None
+            ),
+            acp_executables=(
+                dict(raw_acp_executables)
+                if isinstance(raw_acp_executables, Mapping)
                 else None
             ),
         )
@@ -1547,6 +1664,8 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
 
 
 def _start_prerequisites(plan: dict[str, object]) -> None:
+    from .orca import orca_executable
+
     require_binary(orca_executable())
     roles = plan.get("roles")
     if not isinstance(roles, dict):
@@ -1562,11 +1681,41 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         if not isinstance(provider, str):
             raise TypeError("launch plan contains invalid provider")
         require_binary(provider)
-    if any(
-        isinstance(launch, dict) and launch.get("transport") == "acp"
+    acp_launches = [
+        launch
         for launch in roles.values()
-    ):
-        require_binary("npx")
+        if isinstance(launch, dict) and launch.get("transport") == "acp"
+    ]
+    if acp_launches:
+        try:
+            executables = AcpExecutables.resolve()
+            node_version = subprocess.run(
+                [str(executables.node), "--version"],
+                check=False,
+                capture_output=True,
+                env=acp_environment(),
+                text=True,
+                timeout=5,
+            )
+        except (AcpDependencyError, OSError, subprocess.TimeoutExpired) as exc:
+            raise ConfigError(
+                f"selected Claude ACP dependencies are unavailable: {exc}"
+            ) from exc
+        if node_version.returncode != 0:
+            detail = node_version.stderr.strip() or node_version.stdout.strip()
+            raise ConfigError(
+                "selected Node --version check failed"
+                + (f": {detail}" if detail else "")
+            )
+        match = re.fullmatch(
+            r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?",
+            node_version.stdout.strip(),
+        )
+        if match is None or tuple(int(item) for item in match.groups()) < (22, 13, 0):
+            raise ConfigError("selected Node must be version 22.13.0 or newer")
+        binding = executables.as_dict()
+        for launch in acp_launches:
+            launch["acp_executables"] = dict(binding)
     if not os.access(mcp_server_path(), os.X_OK):
         raise ConfigError(
             f"agent-team MCP server is not executable: {mcp_server_path()}"
@@ -1584,6 +1733,8 @@ def _ensure_orca_platform() -> None:
 def _runtime_engine(
     plan: dict[str, object], *, resume_existing: bool
 ) -> tuple[WorkflowEngine, OrcaBackend]:
+    from .backend import OrcaBackend, OrcaClient
+
     config_path = plan.get("config_path")
     if not isinstance(config_path, str):
         raise TypeError("launch plan contains invalid config path")
@@ -1644,25 +1795,6 @@ def manage_team(
             f"Orca backend did not produce a {command} response",
         )
     return response
-
-
-def role_run(plan: dict[str, object], role: str) -> None:
-    roles = plan.get("roles")
-    if not isinstance(roles, dict) or not isinstance(roles.get(role), dict):
-        raise ConfigError(f"unknown role: {role}")
-    launch = roles[role]
-    argv = launch.get("argv")
-    role_env = launch.get("env")
-    if not isinstance(argv, list) or not all(isinstance(arg, str) for arg in argv):
-        raise TypeError(f"launch plan contains invalid argv for {role}")
-    if not isinstance(role_env, dict) or not all(
-        isinstance(key, str) and isinstance(value, str)
-        for key, value in role_env.items()
-    ):
-        raise TypeError(f"launch plan contains invalid env for {role}")
-    env = os.environ.copy()
-    env.update(role_env)
-    os.execvpe(argv[0], argv, env)
 
 
 def default_config_path() -> Path:
@@ -1766,9 +1898,13 @@ def resolve_cli_path(raw_path: str) -> Path:
     return (_caller_cwd() / path).resolve(strict=False)
 
 
-def add_context_arguments(parser: argparse.ArgumentParser) -> None:
+def add_context_arguments(
+    parser: argparse.ArgumentParser, *, management: bool = False
+) -> None:
     parser.add_argument(
-        "--config", type=resolve_cli_path, default=default_config_path()
+        "--config",
+        type=resolve_cli_path,
+        default=None if management else default_config_path(),
     )
     parser.add_argument(
         "--cwd",
@@ -1786,14 +1922,17 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--no-attach", action="store_true")
     status = subparsers.add_parser("status", help="show the derived Orca team state")
-    add_context_arguments(status)
+    add_context_arguments(status, management=True)
+    status.add_argument("--state", type=resolve_cli_path)
     status.add_argument("--team", action="append")
     attach = subparsers.add_parser("attach", help="focus one role in Orca")
     attach.add_argument("role", choices=ALL_ROLES)
-    add_context_arguments(attach)
+    add_context_arguments(attach, management=True)
+    attach.add_argument("--state", type=resolve_cli_path)
     attach.add_argument("--team", action="append")
     stop = subparsers.add_parser("stop", help="stop this team's exact Orca terminals")
-    add_context_arguments(stop)
+    add_context_arguments(stop, management=True)
+    stop.add_argument("--state", type=resolve_cli_path)
     stop.add_argument("--team", action="append")
     harnesses = subparsers.add_parser(
         "harnesses", help="show recognized harnesses and static availability"
@@ -1805,10 +1944,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_context_arguments(graph)
     graph.add_argument("--team", action="append", required=True)
     graph.add_argument("--format", choices=("json", "ascii", "mermaid"), required=True)
-    role = subparsers.add_parser("_role-run", help=argparse.SUPPRESS)
-    role.add_argument("role", choices=ALL_ROLES)
-    role.add_argument("--orca-socket", type=Path)
-    add_context_arguments(role)
     acp = subparsers.add_parser("_acp-run", help=argparse.SUPPRESS)
     acp.add_argument("role", choices=ALL_ROLES)
     acp.add_argument("--state", type=Path, required=True)
@@ -1908,13 +2043,21 @@ def main(argv: list[str] | None = None) -> int:
             raise ConfigError(f"{args.command} requires config version 4")
 
         team_values = getattr(args, "team", None)
-        if team_values is not None:
+        state_argument = getattr(args, "state", None)
+        if args.command in {"status", "attach", "stop"}:
+            plan = _management_plan_from_state(
+                _management_state(
+                    state_argument, args.cwd, config_path=args.config, team=team_values
+                )
+            )
+        elif team_values is not None:
             resolved_config_path, config_data = read_config_file(args.config)
             return run_v4_command(
                 args, load_v4_config_data(resolved_config_path, config_data)
             )
-        config = load_config(args.config)
-        plan = build_plan(config, args.cwd, getattr(args, "orca_socket", None))
+        else:
+            config = load_config(args.config)
+            plan = build_plan(config, args.cwd)
     except (
         ConfigError,
         V4ConfigError,
@@ -1926,9 +2069,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        if args.command == "_role-run":
-            role_run(plan, args.role)
-            raise RuntimeError("role process unexpectedly returned")
         if args.command == "start":
             if args.dry_run:
                 print(json.dumps(plan, ensure_ascii=False, indent=2))

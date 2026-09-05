@@ -6,6 +6,12 @@ Version 4は、名前付きteamの構成を管理する一覧です。各teamか
 明示参照すると、既存のOrca runtimeで起動できます。起動設定のないteamは、graphの確認と
 選択内容のdry runに使えます。
 
+topologyが保持するのはprovider、transport、permissionです。参照先のversion 3起動設定が
+modelとeffortを供給し、ACP依存関係の起動前検査も、その設定で選択したACP roleに対してだけ行います。
+Claude ACPでは、この検査にNode.js `22.13.0`以降と、exactな`acpx@0.13.2`、
+`@agentclientprotocol/claude-agent-acp@0.70.0` packageが必要です。absoluteな実行ファイルpathと
+SHA-256 fingerprintを保存し、`npm`や`npx`は呼び出しません。
+
 ## 最小のschema
 
 top-levelの`version` keyには整数の`4`を指定し、`runtime`には`"orca"`を明示します。
@@ -134,6 +140,9 @@ agent-team start --config /absolute/path/to/teams.toml --team build --dry-run
 同梱の[teams.toml](../agent_team/defaults/teams.toml)は、そのまま使える一覧の例です。
 隣の`config.toml`を参照し、モデル、effort、prompt、permission、review回数の上限は
 既存の起動設定から読みます。リポジトリ内では、次のcommandで確認できます。
+
+同梱の起動設定では、MainとPlannerに`fable`、WorkerとReviewerに`gpt-6-astra`を使います。
+dry runではACP依存関係を解決せず、参照先のversion 3設定にACP roleがある場合の実起動時だけ検査します。
 
 ```bash
 scripts/agent-team/agent-team start \

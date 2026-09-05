@@ -49,6 +49,9 @@ prompt = "prompts/reviewer.md"
 permission = "read-only"
 ```
 
+bundled configでは、MainとPlannerに`fable`、WorkerとReviewerに`gpt-6-astra`を使います。
+canonical PlannerはClaudeのread-only ACP roleで、canonical WorkerとReviewerはdirect Codexのままです。
+
 ## top-level fieldで1つのteam contractを定義する
 
 | Field | Contract |
@@ -97,6 +100,22 @@ workspace-write Claude、すべてのworkspace-write ACPはfail-fastで拒否し
 
 新しいproviderやACP adapterの追加は、configだけでは完了しません。code変更、
 capability/permission test、exact version policy、実lifecycle/cleanup smokeが必要です。
+
+## ACP依存関係は明示し、選択したroleだけで解決する
+
+Claudeの`acp`を選ぶconfigには、Node.js `22.13.0`以降と、exact packageの
+`acpx@0.13.2`、`@agentclientprotocol/claude-agent-acp@0.70.0`が必要です。`agent-team`の外で、
+たとえば次のように導入してください。
+
+```bash
+npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/claude-agent-acp@0.70.0
+export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
+```
+
+ACP roleを選択した場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、exact package
+manifestを確認したうえで、absoluteなfile pathとSHA-256 fingerprintをlaunch snapshotへ保存します。
+runnerは保存したbindingを検証して使います。fileの不足や変更はfail-closedで停止します。実行時の
+commandは`npm`や`npx`を呼び出さず、directだけのconfigではACP依存関係を解決しません。
 
 ## effortはproviderごとの値を使う
 

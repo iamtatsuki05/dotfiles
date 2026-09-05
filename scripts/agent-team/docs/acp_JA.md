@@ -10,6 +10,7 @@ OS sandboxではなく、providerのsubscriptionをAPI keyの契約へ変える�
 
 検証済みのACP profileは、Claudeを使うread-onlyのPlannerまたはReviewerだけです。
 
+- Node.js `22.13.0`以降
 - `acpx@0.13.2`
 - `@agentclientprotocol/claude-agent-acp@0.70.0`
 - ambientなClaude loginを使い、API key環境変数はchildへコピーしない
@@ -18,6 +19,26 @@ OS sandboxではなく、providerのsubscriptionをAPI keyの契約へ変える�
 
 正確なadapter command、Task identity、nonceはDispatch時に生成します。Agentの出力はデータとして
 扱い、lifecycle messageを送る権限は与えません。
+
+## 依存関係は明示し、起動単位で固定する
+
+選択したACP packageは`agent-team`の外で導入してください。たとえば、次のように2つの
+exact packageを任意のdirectoryへ導入し、そのbin directoryをteam起動前の`PATH`へ追加します。
+
+```bash
+npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/claude-agent-acp@0.70.0
+export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
+```
+
+起動planにACP roleが含まれる場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、
+package manifestのexact versionを確認します。解決した3つのabsolute pathとSHA-256 fingerprintを
+roleのlaunch snapshotへ保存します。role起動経路はOrca Taskを作る前に保存bindingを再検証し、
+runnerもACP実行の前に再検証して、各session operationで同じfileを使います。実行ファイルが不足、
+置換、変更された場合はfail-closedで停止します。
+
+実行時は保存したfileを直接使い、`npm`や`npx`を呼び出しません。選択したroleにACPがなければ、
+これらのACP依存関係を解決せず、directだけのteamにも必要ありません。static harness inventoryは
+この起動前検査とは別であり、providerのinstallや起動を行いません。
 
 Codex ACPは意図的に拒否しています。negative testで、ACPの`deny-all`/read-only制御を設定しても
 Codex internal toolのwriteを防げないことを確認したためです。検証済みのworkspace-write Workerと
@@ -37,3 +58,7 @@ adapterを対応matrixへ登録するには、exact version policy、認証経�
 read/write/process/networkのnegative testを記録する必要があります。adapterが存在するだけでは
 不十分です。条件が揃うまでは`recognized-but-rejected`のままとし、Orca resource作成前にconfigを
 拒否します。
+
+この依存関係bindingで確認できるのは、選択したClaude profileの実行ファイルidentityです。
+他のACP adapterをrunnableへ昇格させたり、[対応matrix](support-matrix_JA.md)に記録したscopeや
+statusを変更したりはしません。

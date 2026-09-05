@@ -10,8 +10,9 @@ import stat
 from pathlib import Path
 from typing import Final
 
+from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .contracts import ErrorCode, RuntimeFailure
-from .orca import _LifecycleReservation
+from .locking import _LifecycleReservation
 
 ACP_ROLES: Final = frozenset({"planner", "reviewer"})
 ACP_PACKAGE: Final = "acpx@0.13.2"
@@ -70,16 +71,35 @@ def _require_identity(team_id: str, role: str, launch_nonce: str) -> None:
     _require_role_nonce(role, launch_nonce, "ACP launch identity")
 
 
-def build_acp_agent_command(team_id: str, role: str, launch_nonce: str) -> str:
+def _validated_acp_executables(executables: AcpExecutables) -> AcpExecutables:
+    if not isinstance(executables, AcpExecutables):
+        raise RuntimeValidationError("resolved ACP executables are required")
+    paths = (executables.node, executables.client, executables.agent)
+    if any(not isinstance(path, Path) or not path.is_absolute() for path in paths):
+        raise RuntimeValidationError("resolved ACP executable paths must be absolute")
+    try:
+        executables.verify()
+    except AcpDependencyError as exc:
+        raise RuntimeValidationError(str(exc)) from exc
+    return executables
+
+
+def build_acp_agent_command(
+    team_id: str,
+    role: str,
+    launch_nonce: str,
+    *,
+    executables: AcpExecutables,
+) -> str:
     _require_identity(team_id, role, launch_nonce)
+    executables = _validated_acp_executables(executables)
     marker = f"agent-team/{team_id}/{role}/{launch_nonce}"
     return shlex.join(
         [
             "env",
             f"AGENT_TEAM_ACP_MARKER={marker}",
-            "npx",
-            "-y",
-            CLAUDE_ACP_PACKAGE,
+            str(executables.node),
+            str(executables.agent),
         ]
     )
 
@@ -282,27 +302,6 @@ def remove_prompt_file(
         ) from exc
 
 
-def build_role_command(
-    launcher_path: str,
-    role: str,
-    config_path: str,
-    workspace: str,
-    orca_socket: str | None,
-) -> str:
-    argv = [
-        launcher_path,
-        "_role-run",
-        role,
-        "--config",
-        config_path,
-        "--cwd",
-        workspace,
-    ]
-    if orca_socket is not None:
-        argv.extend(["--orca-socket", orca_socket])
-    return shlex.join(argv)
-
-
 def build_acp_runner_command(
     state: dict[str, object],
     role: str,
@@ -385,6 +384,7 @@ def build_acp_argv(
     *,
     workspace: Path,
     agent_command: str,
+    executables: AcpExecutables,
     model: str,
     instructions: str,
     operation: tuple[str, ...],
@@ -392,10 +392,27 @@ def build_acp_argv(
 ) -> list[str]:
     if not operation or operation[0] not in {"sessions", "set", "prompt"}:
         raise RuntimeValidationError("ACP operation is not supported")
+    executables = _validated_acp_executables(executables)
+    if not isinstance(agent_command, str) or not agent_command:
+        raise RuntimeValidationError("ACP agent command is invalid")
+    try:
+        agent_tokens = shlex.split(agent_command)
+    except ValueError as exc:
+        raise RuntimeValidationError("ACP agent command is invalid") from exc
+    if (
+        len(agent_tokens) != 4
+        or agent_tokens[0] != "env"
+        or not agent_tokens[1].startswith("AGENT_TEAM_ACP_MARKER=")
+        or agent_tokens[1] == "AGENT_TEAM_ACP_MARKER="
+        or agent_tokens[2] != str(executables.node)
+        or agent_tokens[3] != str(executables.agent)
+    ):
+        raise RuntimeValidationError(
+            "ACP agent command does not match resolved executable bindings"
+        )
     return [
-        "npx",
-        "-y",
-        ACP_PACKAGE,
+        str(executables.node),
+        str(executables.client),
         "--agent",
         agent_command,
         "--cwd",

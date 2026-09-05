@@ -57,7 +57,7 @@ from agent_team.contracts import (
     StartSpec,
     Status,
 )
-from agent_team.runtime import write_state
+from agent_team.runtime import read_state, write_state
 from agent_team.workflow import WorkflowEngine
 
 ORCA_COMMAND = orca_module.orca_executable()
@@ -331,12 +331,7 @@ class OrcaClientContractTest(unittest.TestCase):
     def test_cli_raw_reporter_uses_the_shared_linux_orca_command(self) -> None:
         completed = mock.Mock(returncode=0)
         with (
-            mock.patch.object(
-                cli_module,
-                "orca_executable",
-                return_value="orca-ide",
-                create=True,
-            ),
+            mock.patch.object(cli_module.sys, "platform", "linux"),
             mock.patch.object(
                 cli_module.subprocess, "run", return_value=completed
             ) as run,
@@ -1495,6 +1490,41 @@ class OrcaBackendSafetyTest(unittest.TestCase):
         self.assertNotIn(
             "terminal-create", [call[0] for call in client.calls[prior_calls:]]
         )
+
+    def test_partial_role_start_keeps_evidence_visible_and_blocks_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spec = start_spec(root)
+            spec.workspace.mkdir()
+            state = existing_state(spec)
+            pending = {
+                "role": "planner",
+                "task_id": "task_partial",
+                "terminal_handle": "term_partial",
+                "reason": "terminal stop was not confirmed",
+            }
+            state["pending_role_start"] = pending
+            write_state(spec.state_path, state)
+            client = FakeOrcaClient()
+            backend = OrcaBackend(client, resume_existing=True)
+            engine = WorkflowEngine(backend)
+            engine.start(spec)
+            client.calls.clear()
+
+            status = engine.request(Status())
+            self.assertEqual(status.status, "cleanup_pending")
+            self.assertIsNotNone(backend.last_status_response)
+            assert backend.last_status_response is not None
+            self.assertEqual(
+                backend.last_status_response["pending_role_start"], pending
+            )
+            with self.assertRaisesRegex(
+                RuntimeFailure, "role startup cleanup is pending"
+            ):
+                engine.stop()
+
+            self.assertEqual(client.calls, [])
+            self.assertEqual(read_state(spec.state_path), state)
 
     def test_stop_skips_terminal_close_when_worker_stop_kills_agent_pty(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
