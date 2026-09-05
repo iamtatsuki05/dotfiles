@@ -46,6 +46,57 @@ zsh dotfiles/.agent/sync.sh
 
 Herdr 本体は `mise` の `github:ogulcancelik/herdr` で導入します。公式 Herdr skill は upstream license と local safety overlay 付きで `skills/herdr/` に vendoring しています。
 
+### 通常のCLI挙動を変えずにOrcaのagent teamを起動する
+
+Quick Start、アーキテクチャ、設定、troubleshootingは、専用の
+[Agent Teamガイド](apps/agent-team/README_JA.md)にまとめています。
+
+`agent-team`はprojectごとにOrca Runを作ります。オーケストレーションbackendはOrcaだけです。最初に起動するのは、ユーザーと対話するMainだけです。Mainは必要に応じてPlanner、Worker、Reviewer用のOrca Taskを作り、専用terminalをsupervised Dispatchとして起動します。roleごとのprovider、model、effort、prompt、permission、transportは`apps/agent-team/config.toml`と`apps/agent-team/prompts/`で管理します。launcherが起動したprocessだけにrole別設定を渡すため、通常の`claude`と`codex`の挙動は変わりません。
+
+config version 3では、すべてのroleに`transport = "direct"`または`transport = "acp"`を明示します。欠落や未対応の値はfail-fastで拒否します。canonical teamは次のとおりです。
+
+| Role | Provider / transport | Model / effort | Permission |
+|---|---|---|---|
+| Main | Claude / `direct` | `fable` / `high` | `orchestrator` |
+| Planner | Claude / `acp` | `fable` / `high` | `read-only` |
+| Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
+| Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
+
+初期のACP対応は、Claudeのread-only background roleだけです。MainのACP、CodexのACP、workspace-writeのACPはfail-fastで拒否します。互換性probeで、Codex ACPの`deny-all`/`read-only`設定ではCodex internal toolの書き込みを止められないことが分かったためです。ACPのpermission制御はproviderやOSのsandboxではありません。write roleはdirect Codexのpermissionを維持します。
+
+MainはRun限定の`agent_team` MCP serverでroleを操作します。MCP serverは固定された3 roleに対するTask作成、起動、待機、読み取り、解放、質問への返信だけを公開します。Orcaはargv配列で直接呼び出します。Claude MainにはBash toolを与えません。PlannerのACP invocationは`Read,Grep,Glob`のallowlistを使います。Reviewerはdirect Codexの組み込み`:read-only` permission profileで起動します。
+
+ACPのpackageは`acpx@0.13.2`と`@agentclientprotocol/claude-agent-acp@0.70.0`に固定します。初回実行では`npx`によるdownload/networkが発生する可能性がありますが、global installは行いません。Claude ACPはambientな`claude.ai` loginを使い、API credentialをchildへ渡しません。subscription billing ledgerそのものは検証していません。
+
+起動した各Codex roleは、teamのruntime state directory配下にある専用の`CODEX_HOME`を使います。通常のhomeから共有するのは`auth.json`と、存在する場合の`AGENTS.md`、`skills`だけです。通常の`config.toml`、hook、plugin、MCP serverは引き継がないため、普段のCodexとteamのtool surfaceを分離できます。
+
+各Codex processでは、対象workspaceのGit rootを`untrusted`として指定します。Git管理外ではworkspace自体を指定します。これにより起動時のdirectory trust確認を出さず、project固有の`.codex` config、hook、実行policyは無効のままにします。通常のCodexに保存されたtrust設定は変更しません。
+
+```bash
+# role metadataとdirect argvだけを確認する。ACP argvはrole起動時に生成される。
+agent-team start --dry-run
+
+# 初回だけ、対象repositoryをOrcaへ明示的に登録する。
+orca repo add --path "$PWD"
+
+# 現在のrepository用teamを起動し、Orca上のMainへfocusする。
+agent-team start
+
+agent-team status
+agent-team stop
+```
+
+MainがWorker Dispatchを起動済みの場合だけ、Workerへfocusします。
+
+```bash
+# MainがWorker Dispatchを起動済みの場合だけ実行する。
+agent-team attach worker
+```
+
+既存の`start`、`status`、`attach`、`stop`コマンドは変わりません。`start`は設定した外部agent CLIを呼び出すため、provider quotaを消費する可能性があります。commit、push、publish、integration install、通常のClaude/Codex config変更は行いません。runtime stateは`$XDG_STATE_HOME/agent-team/`（既定は`~/.local/state/agent-team/`）へ保存します。同じteam stateが存在する場合、`start`はfailし、明示的な`attach`か`stop`を要求します。`stop`はこのteamが所有するterminalだけを停止し、Orca Runは監査記録として残します。
+
+config version 3では、`workspace-write` roleはCodex providerのdirect transportに限定します。launcherはCodex組み込みの`:workspace`または`:read-only`を継承し、起動中のOrca runtime socketだけを許可するpermission profileをprocessごとに生成します。外部domainは許可しません。workspace内の通常ファイルだけを書き込み可能にし、`.git/`と`.codex/`を保護します。Mainとread-only roleではClaudeも選べます。write可能なClaude roleが指定された場合、隔離を静かに弱めず起動を拒否します。version 2のコードで起動中のteamをversion 3へ上げる場合は、先に旧コードの`agent-team stop`で停止してから切り替えてください。legacy fallbackはありません。
+
 Herdr の integration installer は各 agent の config home を直接変更します。`sync.sh` はそれらの home をこの repo へ symlink するため、live home に対して installer を実行すると tracked config を直接汚す可能性があります。まず scratch home に生成し、差分を確認してから、必要な生成物だけをこの repo の管理ファイルとして取り込んでください。
 
 ```bash
@@ -59,7 +110,7 @@ find "$scratch_home" -maxdepth 3 -type f -print
 
 ## ファイル対応表
 
-| Source | Destination |
+| Source | Destination / 役割 |
 |---|---|
 | `AGENTS.md` | `~/.codex/AGENTS.md` |
 | `AGENTS.md` | `~/.claude/CLAUDE.md` |
@@ -77,6 +128,9 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `apps/copilot/mcp-config.json` | `~/.copilot/mcp-config.json` |
 | `apps/codex/config.toml` | `~/.codex/config.toml` |
 | `apps/codex/hooks.json` | `~/.codex/hooks.json` |
+| `../../scripts/agent-team/agent-team` | `~/.local/bin/agent-team` |
+| `../../scripts/agent-team/agent_team/mcp_server.py` | 同じpackage entrypointの`agent-team _mcp-server`経由で起動する |
+| `../../scripts/agent-team/agent_team/runtime.py` | packageがimportするため、managed runtime linkは作らない |
 | `apps/cursor/cli-config.json` | `~/.cursor/cli-config.json` |
 | `apps/cursor/hooks.json` | `~/.cursor/hooks.json` |
 | `apps/cursor/mcp.json` | `~/.cursor/mcp.json` |

@@ -11,6 +11,7 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 
 | Path | Agent | Contents |
 |---|---|---|
+| `agent-team/` | Opt-in orchestration runtime | Main, Planner, Worker, and Reviewer role config and prompts. |
 | `antigravity-cli/` | Antigravity CLI | Settings and the `dotfiles-agent` plugin files for Gemini / Antigravity. |
 | `claude/` | Claude Code | Claude settings and MCP configuration. |
 | `codex/` | Codex | Codex config and hook registration. |

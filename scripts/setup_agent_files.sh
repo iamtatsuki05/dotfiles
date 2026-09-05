@@ -288,6 +288,7 @@ tool_config_link_specs() {
   print -r -- "$APPS_DIR/hermes-agent/config.yaml"$'\t'"$HOME/.hermes/config.yaml"
   print -r -- "$APPS_DIR/openclaw/openclaw.json"$'\t'"$HOME/.openclaw/openclaw.json"
   print -r -- "$APPS_DIR/grok/config.toml"$'\t'"$HOME/.grok/config.toml"
+  print -r -- "$APPS_DIR/agent-team"$'\t'"$xdg_config_home/agent-team"
 }
 
 agent_plugin_link_specs() {
@@ -298,6 +299,29 @@ agent_plugin_link_specs() {
 sync_tool_configs() {
   sync_link_specs tool_config_link_specs
   sync_link_specs agent_plugin_link_specs
+}
+
+command_link_specs() {
+  print -r -- "$REPO_ROOT/scripts/agent-team/agent-team"$'\t'"$HOME/.local/bin/agent-team"
+}
+
+require_agent_team_command_link() {
+  local command_path="$HOME/.local/bin/agent-team"
+  local source_path="$REPO_ROOT/scripts/agent-team/agent-team"
+  if [[ -L "$command_path" && "$command_path" -ef "$source_path" ]]; then
+    return 0
+  fi
+  echo "ERROR: required command link was not created: $command_path -> $source_path" >&2
+  return 1
+}
+
+sync_commands() {
+  chmod +x "$REPO_ROOT/scripts/agent-team/agent-team"
+  sync_link_specs command_link_specs
+  remove_managed_symlink "$HOME/.local/bin/agent_team_runtime.py" \
+    "$REPO_ROOT/scripts/agent_team_runtime.py" \
+    "$REPO_ROOT/scripts/agent-team/agent_team/runtime.py"
+  require_agent_team_command_link
 }
 
 write_env_file_from_secrets() {
@@ -410,6 +434,7 @@ main() {
   sync_shared_files
   sync_hooks
   sync_tool_configs
+  sync_commands
   sync_agent_env_files
   sync_hermes_mcp_dependency
 }

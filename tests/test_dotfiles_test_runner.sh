@@ -28,7 +28,7 @@ write_fixture_zsh_script() {
 create_runner_fixture() {
   local repo="$1"
 
-  mkdir -p "$repo/scripts" "$repo/tests"
+  mkdir -p "$repo/scripts/agent-team/tests" "$repo/tests"
   cp "$TEST_RUNNER" "$repo/tests/run.sh"
   chmod +x "$repo/tests/run.sh"
 
@@ -36,6 +36,14 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/scripts/helper.sh" "helper"
   write_fixture_zsh_script "$repo/tests/test_agent_delegation_analysis.sh" "unit:agent-delegation"
   write_fixture_zsh_script "$repo/tests/test_agent_html_preview_review.sh" "unit:html-preview-review"
+  print -r -- 'print("unit:agent-team")' > "$repo/tests/test_agent_team.py"
+  print -r -- 'print("unit:agent-team-mcp")' > "$repo/tests/test_agent_team_mcp.py"
+  {
+    print -r -- 'import unittest'
+    print -r -- 'class ProjectTest(unittest.TestCase):'
+    print -r -- '  def test_fixture(self):'
+    print -r -- '    pass'
+  } > "$repo/scripts/agent-team/tests/test_project.py"
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
   write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"
@@ -61,6 +69,10 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "run_chezmoi_render_test"
   assert_contains "$TEST_RUNNER" "tests/test_agent_delegation_analysis.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_html_preview_review.sh"
+  assert_contains "$TEST_RUNNER" "tests/test_agent_team.py"
+  assert_contains "$TEST_RUNNER" "tests/test_agent_team_mcp.py"
+  assert_contains "$TEST_RUNNER" "scripts/agent-team/tests"
+  assert_contains "$TEST_RUNNER" 'PYTHONPATH="$REPO_ROOT/scripts/agent-team'
   assert_contains "$TEST_RUNNER" "tests/test_agent_run_compact.py"
   assert_contains "$TEST_RUNNER" "tests/test_agent_sync.sh"
   assert_contains "$TEST_RUNNER" "tests/test_agent_support_matrix.sh"
@@ -136,6 +148,8 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:agent"
   assert_output_contains "$output" "unit:agent-delegation"
   assert_output_contains "$output" "unit:html-preview-review"
+  assert_output_contains "$output" "unit:agent-team"
+  assert_output_contains "$output" "unit:agent-team-mcp"
   assert_output_contains "$output" "unit:agent-run-compact"
   assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"

@@ -85,6 +85,10 @@ run_unit_tests() {
   log_step "Running unit tests"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_delegation_analysis.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_html_preview_review.sh"
+  PYTHONPATH="$REPO_ROOT/scripts/agent-team${PYTHONPATH:+:$PYTHONPATH}" \
+    "$TEST_PYTHON_BIN" -m unittest discover -s "$REPO_ROOT/scripts/agent-team/tests"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team_mcp.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_sync.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_support_matrix.sh"
