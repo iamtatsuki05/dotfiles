@@ -81,12 +81,13 @@ zsh scripts/setup_git_hooks.sh
 
 ## リポジトリは毎日定期 pull される
 
-`full` profile は、macOS では nix-darwin の launchd agent、Linux では Home
-Manager の systemd user timer として `dotfiles-auto-update` を宣言します。
+`full` profile は、Macで `features.macos` が `true` の場合に、nix-darwinのlaunchd agentとして
+`dotfiles-auto-update` を宣言します。Linuxでは、この値にかかわらずHome Managerのsystemd user timerを使います。
 毎日 06:00 に `${HOME}/src/dotfiles` で `git pull --ff-only` を実行し、ログは
 `/tmp/dotfiles-git-pull.log` に書きます。
 
-macOS の activation では、nix-darwin module が旧 managed cron block も削除します。
+Macの機能がONの場合、Nix適用時に旧管理用cronブロックも削除します。
+OFFにすると、管理対象のlaunchd agentは次のNix切り替えで削除されますが、旧cronの整理は行いません。
 
 この定期 pull にも Git hook と同じ境界があります。flake が変わっても、
 それだけで新しい Nix generation へ切り替わることはありません。

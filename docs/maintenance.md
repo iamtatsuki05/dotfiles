@@ -83,12 +83,14 @@ zsh scripts/setup_git_hooks.sh
 ## Scheduled repository pulls
 
 The `full` profile declares `dotfiles-auto-update` as a nix-darwin launchd
-agent on macOS and a Home Manager systemd user timer on Linux. It runs
+agent on macOS when `features.macos` is `true`, and as a Home Manager systemd
+user timer on Linux regardless of that flag. It runs
 `git pull --ff-only` in `${HOME}/src/dotfiles` every day at 06:00 and writes
 logs to `/tmp/dotfiles-git-pull.log`.
 
-During macOS activation, the nix-darwin module also removes the legacy managed
-cron block when it is still present.
+With the macOS feature enabled, activation also removes the legacy managed
+cron block when it is still present. Setting the feature to `false` removes the
+managed launchd agent on the next Nix switch; it does not clean up legacy cron.
 
 This scheduled pull has the same boundary as the Git hooks: it does not make a
 new Nix generation merely because the flake changed.

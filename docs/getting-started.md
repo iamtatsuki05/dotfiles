@@ -151,8 +151,8 @@ host, or RHEL installation.
 
 ## Verify the result
 
-For the Bash-only path, `--verify` is the non-mutating check for the six shell
-targets and any derived custom-XDG Fish loader.
+For the Bash-only path, `--verify` checks the six shell targets, managed csh/tcsh
+startup blocks, and any derived custom-XDG Fish loader without changing them.
 
 For the full path, run the non-mutating checks first:
 

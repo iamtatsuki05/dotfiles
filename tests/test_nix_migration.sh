@@ -2822,6 +2822,7 @@ print -r -- "install_mas_apps:\$*" >> "$log_file"
 EOF
   ln -s "$TEST_ZSH_BIN" "$bin_dir/zsh"
   ln -s "$(command -v dirname)" "$bin_dir/dirname"
+  ln -s "$(command -v awk)" "$bin_dir/awk"
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \

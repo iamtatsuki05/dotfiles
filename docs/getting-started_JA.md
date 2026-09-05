@@ -141,8 +141,8 @@ WSL kernel、BSD host、RHEL installation への互換性を保証するもの�
 
 ## 導入結果を確認する
 
-Bash 専用経路では、`--verify` が6つの shell target と custom-XDG Fish loader を
-書き換えずに確認します。
+Bash専用経路では、`--verify` が6つの展開対象、csh/tcshの管理用起動部分、
+custom-XDG Fish loaderを書き換えずに確認します。
 
 full 経路では、まず状態を書き換えない確認を実行します。
 
