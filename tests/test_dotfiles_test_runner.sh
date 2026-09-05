@@ -14,6 +14,11 @@ source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/chezmoi.sh"
 
 typeset -r -a RUNNER_TEST_FILES=(
+  tests/test_fixture_isolation.sh
+  tests/test_feature_flags.sh
+  tests/test_macos_entrypoints.sh
+  tests/test_macos_update_features.sh
+  tests/test_macos_nix_features.sh
   tests/test_agent_delegation_analysis.sh
   tests/test_agent_html_preview_review.sh
   tests/test_agent_run_compact.py
@@ -66,6 +71,11 @@ create_runner_fixture() {
   chmod +x "$repo/tests/run.sh"
 
   write_fixture_zsh_script "$repo/main.sh" "main"
+  write_fixture_bash_script "$repo/tests/test_fixture_isolation.sh" "unit:isolation"
+  write_fixture_bash_script "$repo/tests/test_feature_flags.sh" "unit:features"
+  write_fixture_zsh_script "$repo/tests/test_macos_entrypoints.sh" "unit:macos-entrypoints"
+  write_fixture_zsh_script "$repo/tests/test_macos_update_features.sh" "unit:macos-updates"
+  write_fixture_zsh_script "$repo/tests/test_macos_nix_features.sh" "unit:macos-nix"
   write_fixture_zsh_script "$repo/scripts/helper.sh" "helper"
   write_fixture_zsh_script "$repo/tests/test_agent_delegation_analysis.sh" "unit:agent-delegation"
   write_fixture_zsh_script "$repo/tests/test_agent_html_preview_review.sh" "unit:html-preview-review"
@@ -541,7 +551,7 @@ test_test_runner_runs_render_checks_by_default() {
 }
 
 test_multi_shell_required_bash5_skip_has_failure_summary() {
-  local repo fake_bash fake_fish output exit_status
+  local repo fake_bash output exit_status
 
   make_temp_dir "dotfiles-required-skip-test"
   repo="${REPLY:A}"
@@ -556,53 +566,18 @@ test_multi_shell_required_bash5_skip_has_failure_summary() {
   } > "$fake_bash"
   chmod +x "$fake_bash"
   [[ "$("$fake_bash" --noprofile --norc -c true)" == 4 ]] || fail 'fake Bash unavailable fixture must report deterministic unsupported major 4'
-  fake_fish="$repo/fish"
-  {
-    print -r -- '#!/bin/sh'
-    print -r -- 'set -eu'
-    print -r -- 'case "$*" in'
-    print -r -- '  *MISE_BIN*)'
-    print -r -- '    route_global="${MISE_GLOBAL_CONFIG_FILE:-}"'
-    print -r -- '    if [ -z "$route_global" ] && [ -r "$HOME/.config/mise/config.toml" ]; then route_global="$HOME/.config/mise/config.toml"; fi'
-    print -r -- '    route_display="$route_global"'
-    print -r -- '    if [ -z "$route_global" ] && [ -z "${MISE_GLOBAL_CONFIG_FILE+x}" ]; then route_display=unset; fi'
-    print -r -- '    printf "global=%s\n" "$route_display"'
-    print -r -- '    if [ -z "$route_global" ]; then printf "%s\n" "[]"; elif [ "$route_global" != "$HOME/.config/mise/config.toml" ] && [ -r "$HOME/.config/mise/config.toml" ]; then printf "[%s\n" "  {\"path\": \"$HOME/.config/mise/config.toml\", \"tools\": []}, {\"path\": \"$route_global\", \"tools\": []}]"; else printf "[%s\n" "  {\"path\": \"$route_global\", \"tools\": []}]"; fi'
-    print -r -- '    exit 0'
-    print -r -- '    ;;'
-    print -r -- 'esac'
-    print -r -- 'mise_path="$(command -v mise)"'
-    print -r -- 'fixture_dir="$(dirname "$mise_path")/.."'
-    print -r -- 'gcloud_log="$fixture_dir/gcloud.log"'
-    print -r -- 'mise_log="$fixture_dir/mise.log"'
-    print -r -- 'interactive=0'
-    print -r -- 'for arg in "$@"; do [ "$arg" = -i ] && interactive=1; done'
-    print -r -- 'if [ "$interactive" -eq 1 ] && [ -n "${FAKE_MISE_MODE:-}" ]; then'
-    print -r -- '  printf "%s\\n" "dotfiles: mise activate fish failed" >&2'
-    print -r -- '  printf "%s\\n" "source_status=1" "activation_failed=1" "after_status=0"'
-    print -r -- '  printf "%s\\n" "activate fish" >> "$mise_log"'
-    print -r -- '  exit 0'
-    print -r -- 'fi'
-    print -r -- 'if [ "$interactive" -eq 1 ]; then'
-    print -r -- '  printf "%s\\n" "mise=$mise_path" "activated=yes" "activation_failed=0" "interactive=yes"'
-    print -r -- '  printf "%s\\n" "init" "auth login" "compute instances list" > "$gcloud_log"'
-    print -r -- '  printf "%s\\n" "activate fish" >> "$mise_log"'
-    print -r -- 'else'
-    print -r -- '  printf "%s\\n" "editor=fixture-editor" "config=$HOME/.config" "cache=$HOME/.fixture-cache" "data=$HOME/.fixture-data" "state=$HOME/.fixture-state" "mise=$mise_path" "foreign=foreign" "ginit=absent" "activation_failed=0" "path=$HOME/.fixture-bin"'
-    print -r -- 'fi'
-  } > "$fake_fish"
-  chmod +x "$fake_fish"
-
   set +e
-  PATH="$repo:$PATH" BASH32_BIN="$fake_bash" BASH5_BIN="$fake_bash" "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render > "$output" 2>&1
+  BASH32_BIN="$fake_bash" BASH5_BIN="$fake_bash" "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render > "$output" 2>&1
   exit_status=$?
   set -e
 
   (( exit_status != 0 )) || fail 'required Bash 5 skip must keep a non-zero status'
   assert_output_contains "$output" 'shell=bash5|target=rendered-home|status=SKIP|requirement=required|reason=bash5-unavailable'
+  assert_output_contains "$output" 'shell=bash5|target=macos-features|status=SKIP|requirement=required|reason=bash5-unavailable'
   assert_output_contains "$output" 'shell=bash|target=hostile-repo-root|status=SKIP|requirement=not-applicable|reason=no-supported-bash'
   assert_output_contains "$output" 'multi-shell render/runtime checks failed'
   assert_not_contains "$output" 'multi-shell render/runtime checks passed'
+  assert_not_contains "$output" 'macOS feature on/off checks passed'
 
   rm -rf "$repo"
 }
@@ -640,9 +615,11 @@ test_multi_shell_required_bash5_runtime_failure_has_structured_summary() {
 
   (( exit_status != 0 )) || fail 'required Bash 5 runtime failure must return non-zero'
   assert_output_contains "$output" 'shell=bash5|target=rendered-home|status=FAIL|requirement=required|reason=smoke-failed'
+  assert_output_contains "$output" 'shell=bash|target=features-Darwin-false|status=FAIL|requirement=required|reason=runtime-smoke-failed'
   assert_output_contains "$output" 'shell=zsh|target=rendered-home|status=PASS|requirement=required'
   assert_output_contains "$output" 'multi-shell render/runtime checks failed'
   assert_not_contains "$output" 'multi-shell render/runtime checks passed'
+  assert_not_contains "$output" 'macOS feature on/off checks passed'
 
   rm -rf "$repo"
 }

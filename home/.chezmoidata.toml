@@ -1,3 +1,6 @@
+[features]
+macos = true
+
 [shell]
 editor = "nvim"
 

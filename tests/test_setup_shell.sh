@@ -71,6 +71,50 @@ assert_same_file() {
   cmp "$1" "$2" >/dev/null || fail "expected files to match: $1 and $2"
 }
 
+assert_file_prefix() {
+  local actual_file="$1"
+  local prefix_file="$2"
+  local prefix_bytes prefix_copy
+
+  assert_file "$actual_file"
+  assert_file "$prefix_file"
+  prefix_bytes="$(wc -c < "$prefix_file" | tr -d '[:space:]')"
+  prefix_copy="$TEST_ROOT/prefix.$RANDOM"
+  dd if="$actual_file" of="$prefix_copy" bs=1 count="$prefix_bytes" 2>/dev/null || {
+    fail "could not read $prefix_bytes prefix bytes from $actual_file"
+  }
+  assert_same_file "$prefix_file" "$prefix_copy"
+}
+
+assert_csh_startup_block() {
+  local file_path="$1"
+  local start_count end_count
+
+  assert_file "$file_path"
+  start_count="$(grep -Fxc -- '# >>> dotfiles:csh-adapter >>>' "$file_path" || true)"
+  end_count="$(grep -Fxc -- '# <<< dotfiles:csh-adapter <<<' "$file_path" || true)"
+  [[ "$start_count" == 1 ]] || fail "expected one csh startup block start in $file_path, got $start_count"
+  [[ "$end_count" == 1 ]] || fail "expected one csh startup block end in $file_path, got $end_count"
+  assert_contains "$file_path" 'if ( ! $?df_csh_loaded ) then'
+  assert_contains "$file_path" 'source "$HOME/.config/shell/dotfiles-shell-common.csh"'
+  assert_contains "$file_path" 'if ( $status == 0 ) set df_csh_loaded = 1'
+  assert_not_contains "$file_path" 'setenv df_csh_loaded'
+}
+
+write_csh_startup_block_fixture() {
+  local file_path="$1"
+
+  printf '%s\n' \
+    '# >>> dotfiles:csh-adapter >>>' \
+    'if ( ! $?df_csh_loaded ) then' \
+    '  if ( -r "$HOME/.config/shell/dotfiles-shell-common.csh" ) then' \
+    '    source "$HOME/.config/shell/dotfiles-shell-common.csh"' \
+    '    if ( $status == 0 ) set df_csh_loaded = 1' \
+    '  endif' \
+    'endif' \
+    '# <<< dotfiles:csh-adapter <<<' > "$file_path"
+}
+
 assert_exact_content() {
   local file_path="$1"
   local expected="$2"
@@ -195,6 +239,13 @@ assert_no_shell_targets() {
   do
     assert_not_exists "$target"
   done
+}
+
+assert_no_csh_startup_files() {
+  local home="$1"
+
+  assert_not_exists "$home/.cshrc"
+  assert_not_exists "$home/.tcshrc"
 }
 
 assert_unmanaged_targets_untouched() {
@@ -327,8 +378,218 @@ run_csh_smoke() {
   fi
 }
 
+write_counting_csh_adapter() {
+  local home="$1"
+
+  printf '%s\n' \
+    'if ( $?df_test_hits ) then' \
+    '  @ df_test_hits++' \
+    'else' \
+    '  set df_test_hits = 1' \
+    'endif' > "$home/.config/shell/dotfiles-shell-common.csh"
+}
+
+run_csh_startup_count() {
+  local shell_bin="$1"
+  local home="$2"
+  local output="$3"
+
+  env -i \
+    HOME="$home" \
+    PATH="$(test_path)" \
+    SHELL="$shell_bin" \
+    USER=dotfiles-test \
+    "$shell_bin" -c '
+      if ( $?df_test_hits ) then
+        echo "adapter_hits=$df_test_hits"
+      else
+        echo adapter_hits=unset
+      endif
+    ' > "$output" 2>&1
+  assert_output_contains "$output" 'adapter_hits=1'
+}
+
+test_csh_startup_presence_matrix() {
+  local fixture home output mode
+
+  if [[ -z "$CSH_BIN" && -z "$TCSH_BIN" ]]; then
+    if [[ "$TEST_REQUIRE_TCSH" == 1 || "$TEST_REQUIRE_CSH" == 1 ]]; then
+      fail 'csh/tcsh runtime is required for startup loading tests but unavailable'
+    fi
+    printf 'SKIP: csh/tcsh runtimes unavailable for startup loading tests\n'
+    return 0
+  fi
+
+  for mode in neither csh-only tcsh-only both; do
+    fixture="$(new_fixture)"
+    home="$fixture/home"
+    case "$mode" in
+      csh-only)
+        printf '%s' '# foreign csh body without a final newline' > "$home/.cshrc"
+        ;;
+      tcsh-only)
+        printf '%s\n' '# foreign tcsh body' > "$home/.tcshrc"
+        ;;
+      both)
+        printf '%s' '# foreign csh body without a final newline' > "$home/.cshrc"
+        printf '%s\n' 'source "$HOME/.cshrc"' > "$home/.tcshrc"
+        ;;
+    esac
+
+    output="$fixture/apply.log"
+    run_setup "$home" __UNSET__ "$output"
+    write_counting_csh_adapter "$home"
+    if [[ -n "$CSH_BIN" ]]; then
+      run_csh_startup_count "$CSH_BIN" "$home" "$fixture/csh-startup.log"
+    fi
+    if [[ -n "$TCSH_BIN" ]]; then
+      run_csh_startup_count "$TCSH_BIN" "$home" "$fixture/tcsh-startup.log"
+    fi
+    assert_file "$home/.cshrc"
+    assert_csh_startup_block "$home/.cshrc"
+    case "$mode" in
+      neither|csh-only)
+        assert_not_exists "$home/.tcshrc"
+        ;;
+      tcsh-only|both)
+        assert_file "$home/.tcshrc"
+        assert_csh_startup_block "$home/.tcshrc"
+        ;;
+    esac
+  done
+}
+
+test_csh_startup_preserves_later_settings() {
+  local fixture home
+
+  fixture="$(new_fixture)"
+  home="$fixture/home"
+  run_setup "$home" __UNSET__ "$fixture/first.log"
+  printf '%s\n' '# user settings added after setup' 'set custom_shell_setting = yes' >> "$home/.cshrc"
+  cp "$home/.cshrc" "$fixture/cshrc.snapshot"
+  run_setup "$home" __UNSET__ "$fixture/verify.log" --verify || {
+    sed -n '1,40p' "$fixture/verify.log" >&2
+    fail 'valid user settings after the managed block must be accepted'
+  }
+  run_setup "$home" __UNSET__ "$fixture/rerun.log"
+  assert_same_file "$fixture/cshrc.snapshot" "$home/.cshrc"
+  assert_csh_startup_block "$home/.cshrc"
+}
+
+test_csh_startup_invalid_state_is_fail_fast() {
+  local fixture home output case_name snapshot foreign foreign_snapshot
+
+  for case_name in malformed duplicate foreign-marker; do
+    fixture="$(new_fixture)"
+    home="$fixture/home"
+    case "$case_name" in
+      malformed)
+        printf '%s\n' \
+          'foreign csh prefix' \
+          '# >>> dotfiles:csh-adapter >>>' \
+          'source "$HOME/foreign.csh"' > "$home/.cshrc"
+        ;;
+      duplicate)
+        printf '%s\n' 'foreign csh prefix' > "$home/.cshrc"
+        write_csh_startup_block_fixture "$fixture/block"
+        printf '\n' >> "$home/.cshrc"
+        cat "$fixture/block" >> "$home/.cshrc"
+        printf '\n' >> "$home/.cshrc"
+        cat "$fixture/block" >> "$home/.cshrc"
+        ;;
+      foreign-marker)
+        printf '%s\n' \
+          'foreign csh prefix' \
+          '# >>> dotfiles:csh-adapter >>>' \
+          'source "$HOME/foreign.csh"' \
+          '# <<< dotfiles:csh-adapter <<<' > "$home/.cshrc"
+        ;;
+    esac
+    snapshot="$fixture/cshrc.snapshot"
+    cp "$home/.cshrc" "$snapshot"
+    output="$fixture/$case_name.log"
+    run_setup_expect_failure "$home" __UNSET__ "$output"
+    assert_same_file "$snapshot" "$home/.cshrc"
+    assert_no_shell_targets "$home"
+    assert_not_exists "$home/.tcshrc"
+    assert_output_contains "$output" 'csh startup'
+
+    if [[ "$case_name" == malformed ]]; then
+      output="$fixture/$case_name-force.log"
+      run_setup_expect_failure "$home" __UNSET__ "$output" --force
+      assert_same_file "$snapshot" "$home/.cshrc"
+      assert_no_shell_targets "$home"
+    fi
+  done
+
+  fixture="$(new_fixture)"
+  home="$fixture/home"
+  foreign="$fixture/foreign-cshrc"
+  foreign_snapshot="$fixture/foreign-cshrc.snapshot"
+  printf '%s\n' 'foreign csh target' > "$foreign"
+  cp "$foreign" "$foreign_snapshot"
+  ln -s "$foreign" "$home/.cshrc"
+  output="$fixture/symlink.log"
+  run_setup_expect_failure "$home" __UNSET__ "$output"
+  [[ -L "$home/.cshrc" ]] || fail 'cshrc symlink was changed'
+  assert_same_file "$foreign_snapshot" "$foreign"
+  assert_no_shell_targets "$home"
+  assert_output_contains "$output" 'non-regular csh startup file'
+
+  fixture="$(new_fixture)"
+  home="$fixture/home"
+  foreign="$fixture/foreign-tcshrc"
+  foreign_snapshot="$fixture/foreign-tcshrc.snapshot"
+  printf '%s\n' 'foreign tcsh target' > "$foreign"
+  cp "$foreign" "$foreign_snapshot"
+  ln -s "$foreign" "$home/.tcshrc"
+  output="$fixture/tcsh-symlink.log"
+  run_setup_expect_failure "$home" __UNSET__ "$output"
+  [[ -L "$home/.tcshrc" ]] || fail 'tcshrc symlink was changed'
+  assert_same_file "$foreign_snapshot" "$foreign"
+  assert_no_shell_targets "$home"
+  assert_output_contains "$output" 'non-regular csh startup file'
+
+  fixture="$(new_fixture)"
+  home="$fixture/home"
+  mkdir -p "$home/.cshrc"
+  output="$fixture/directory.log"
+  run_setup_expect_failure "$home" __UNSET__ "$output"
+  [[ -d "$home/.cshrc" ]] || fail 'cshrc directory was changed'
+  assert_no_shell_targets "$home"
+  assert_output_contains "$output" 'non-regular csh startup file'
+}
+
+test_csh_startup_rejects_hard_links() {
+  local fixture home mode alias_target snapshot output
+
+  for mode in shared-rc external-alias; do
+    fixture="$(new_fixture)"
+    home="$fixture/home"
+    printf '%s\n' '# shared user configuration' > "$home/.cshrc"
+    snapshot="$fixture/cshrc.snapshot"
+    cp "$home/.cshrc" "$snapshot"
+    if [[ "$mode" == shared-rc ]]; then
+      alias_target="$home/.tcshrc"
+    else
+      alias_target="$fixture/external-file"
+    fi
+    ln "$home/.cshrc" "$alias_target"
+    output="$fixture/hard-link.log"
+    run_setup_expect_failure "$home" __UNSET__ "$output"
+    assert_output_contains "$output" 'hard-linked csh startup file'
+    assert_same_file "$snapshot" "$home/.cshrc"
+    assert_same_file "$snapshot" "$alias_target"
+    [[ "$home/.cshrc" -ef "$alias_target" ]] || fail 'hard-link relationship was changed'
+    assert_no_shell_targets "$home"
+    run_setup_expect_failure "$home" __UNSET__ "$fixture/hard-link-force.log" --force
+    assert_same_file "$snapshot" "$alias_target"
+    assert_no_shell_targets "$home"
+  done
+}
+
 test_help_and_dry_run() {
-  local fixture home output
+  local fixture home output csh_before tcsh_before csh_mode tcsh_mode
 
   fixture="$(new_fixture)"
   home="$fixture/home"
@@ -342,6 +603,7 @@ test_help_and_dry_run() {
   output="$fixture/dry-run.log"
   run_setup "$home" __UNSET__ "$output" --dry-run
   assert_no_shell_targets "$home"
+  assert_no_csh_startup_files "$home"
   assert_output_contains "$output" 'Dry-run'
   for target in \
     "$home/.bashrc" \
@@ -353,10 +615,32 @@ test_help_and_dry_run() {
   do
     assert_output_contains "$output" "Plan: target=$target action=chezmoi-apply"
   done
+
+  csh_before="$fixture/cshrc.before-dry-run"
+  tcsh_before="$fixture/tcshrc.before-dry-run"
+  printf '%s' 'foreign csh dry-run body without a final newline' > "$home/.cshrc"
+  printf '%s\n' 'foreign tcsh dry-run body' > "$home/.tcshrc"
+  cp "$home/.cshrc" "$csh_before"
+  cp "$home/.tcshrc" "$tcsh_before"
+  chmod 640 "$home/.cshrc"
+  chmod 600 "$home/.tcshrc"
+  csh_mode="$(file_mode "$home/.cshrc")"
+  tcsh_mode="$(file_mode "$home/.tcshrc")"
+  output="$fixture/dry-run-existing-rc.log"
+  run_setup "$home" __UNSET__ "$output" --dry-run
+  assert_file_prefix "$home/.cshrc" "$csh_before"
+  assert_same_file "$home/.tcshrc" "$tcsh_before"
+  [[ "$(file_mode "$home/.cshrc")" == "$csh_mode" ]] || fail 'dry-run changed cshrc mode'
+  [[ "$(file_mode "$home/.tcshrc")" == "$tcsh_mode" ]] || fail 'dry-run changed tcshrc mode'
+  assert_not_contains "$home/.cshrc" 'dotfiles:csh-adapter'
+  assert_not_contains "$home/.tcshrc" 'dotfiles:csh-adapter'
+  assert_output_contains "$output" "Plan: target=$home/.cshrc action=csh-startup-append"
+  assert_output_contains "$output" "Plan: target=$home/.tcshrc action=csh-startup-append"
 }
 
 test_apply_allowlist_and_runtimes() {
   local fixture home output custom_xdg secret_before profile_before foreign_fish secret_mode
+  local csh_before tcsh_before csh_mode tcsh_mode
 
   fixture="$(new_fixture)"
   home="$fixture/home"
@@ -367,12 +651,20 @@ test_apply_allowlist_and_runtimes() {
   printf '%s\n' 'foreign profile' > "$home/.profile"
   printf '%s\n' 'foreign secret' > "$home/.config/shell/secrets.env"
   printf '%s\n' 'foreign fish config' > "$home/.config/fish/config.fish"
-  printf '%s\n' 'foreign csh' > "$home/.cshrc"
+  printf '%s' 'foreign csh body without a final newline' > "$home/.cshrc"
   printf '%s\n' 'foreign tcsh' > "$home/.tcshrc"
   printf '%s\n' 'foreign mise file' > "$home/.config/mise/foreign.toml"
   cp "$home/.profile" "$profile_before"
   cp "$home/.config/shell/secrets.env" "$secret_before"
   cp "$home/.config/fish/config.fish" "$foreign_fish"
+  csh_before="$fixture/csh.before"
+  tcsh_before="$fixture/tcsh.before"
+  cp "$home/.cshrc" "$csh_before"
+  cp "$home/.tcshrc" "$tcsh_before"
+  chmod 640 "$home/.cshrc"
+  chmod 600 "$home/.tcshrc"
+  csh_mode="$(file_mode "$home/.cshrc")"
+  tcsh_mode="$(file_mode "$home/.tcshrc")"
   chmod 600 "$home/.config/shell/secrets.env"
   secret_mode="$(file_mode "$home/.config/shell/secrets.env")"
 
@@ -384,8 +676,12 @@ test_apply_allowlist_and_runtimes() {
   assert_same_file "$secret_before" "$home/.config/shell/secrets.env"
   [[ "$(file_mode "$home/.config/shell/secrets.env")" == "$secret_mode" ]] || fail 'secret mode changed'
   assert_same_file "$foreign_fish" "$home/.config/fish/config.fish"
-  assert_exact_content "$home/.cshrc" 'foreign csh'
-  assert_exact_content "$home/.tcshrc" 'foreign tcsh'
+  assert_file_prefix "$home/.cshrc" "$csh_before"
+  assert_file_prefix "$home/.tcshrc" "$tcsh_before"
+  [[ "$(file_mode "$home/.cshrc")" == "$csh_mode" ]] || fail 'cshrc mode changed'
+  [[ "$(file_mode "$home/.tcshrc")" == "$tcsh_mode" ]] || fail 'tcshrc mode changed'
+  assert_csh_startup_block "$home/.cshrc"
+  assert_csh_startup_block "$home/.tcshrc"
   assert_exact_content "$home/.config/mise/foreign.toml" 'foreign mise file'
   assert_contains "$home/.config/mise/config.toml" "$REPO_ROOT"
   assert_not_contains "$home/.config/mise/config.toml" '__DOTFILES_REPO_ROOT__'
@@ -488,7 +784,7 @@ test_parent_chain_preflight() {
 }
 
 test_verify_force_and_clean_rerun() {
-  local fixture home output custom_xdg bridge snapshot bridge_mode
+  local fixture home output custom_xdg bridge snapshot csh_snapshot bridge_mode
 
   fixture="$(new_fixture)"
   home="$fixture/home"
@@ -505,6 +801,13 @@ test_verify_force_and_clean_rerun() {
   [[ "$bridge_mode" == 644 ]] || fail "unexpected Fish XDG bridge mode: $bridge_mode"
 
   run_setup "$home" "$custom_xdg" "$fixture/verify.log" --verify
+  csh_snapshot="$fixture/cshrc.snapshot"
+  cp "$home/.cshrc" "$csh_snapshot"
+  printf '%s\n' 'managed csh block removed by fixture' > "$home/.cshrc"
+  run_setup_expect_failure "$home" "$custom_xdg" "$fixture/csh-verify-failure.log" --verify
+  assert_exact_content "$home/.cshrc" 'managed csh block removed by fixture'
+  cp "$csh_snapshot" "$home/.cshrc"
+
   printf '%s\n' 'modified by fixture' > "$home/.bashrc"
   run_setup_expect_failure "$home" "$custom_xdg" "$fixture/verify-failure.log" --verify
   assert_exact_content "$home/.bashrc" 'modified by fixture'
@@ -528,6 +831,10 @@ main() {
   resolve_runtime_bins
   test_help_and_dry_run
   test_apply_allowlist_and_runtimes
+  test_csh_startup_presence_matrix
+  test_csh_startup_preserves_later_settings
+  test_csh_startup_invalid_state_is_fail_fast
+  test_csh_startup_rejects_hard_links
   test_conflict_preflight
   test_verify_force_and_clean_rerun
   printf 'setup_shell tests passed\n'

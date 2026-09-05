@@ -52,10 +52,15 @@ mise run mise-update
 mise run package-update
 ```
 
-`mise run package-update` uses the CLI Nix profile by default on macOS when
-Homebrew GUI fallback entries exist. Add `-- --with-gui-apps` to apply both the
-Nix GUI package set and Homebrew-managed GUI fallback apps. Use
+When `features.macos` is `true` (the default), `mise run package-update` uses the
+CLI Nix profile by default on macOS when Homebrew GUI fallback entries exist.
+Add `-- --with-gui-apps` to apply both the Nix GUI package set and Homebrew-managed
+GUI fallback apps. Use
 `mise run hermes-update` when Hermes Agent is the only target.
+
+With `features.macos` set to `false` on macOS, `--with-gui-apps` does not enable
+GUI packages or managed Homebrew updates. CLI packages and mise remain enabled.
+See [Disable optional macOS features](configuration-ownership.md#disable-optional-macos-features).
 
 ## Understand pull hooks
 

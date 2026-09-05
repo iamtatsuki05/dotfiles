@@ -51,10 +51,15 @@ mise run mise-update
 mise run package-update
 ```
 
-macOS で Homebrew の GUI fallback entry がある場合、`mise run package-update` は
-既定で CLI 用 Nix profile を使います。Nix の GUI package set と Homebrew 管理の
-GUI fallback の両方を適用する場合は、`-- --with-gui-apps` を付けてください。
+`features.macos` が `true`（既定値）の macOS で Homebrew の GUI fallback entry がある場合、
+`mise run package-update` は既定で CLI 用 Nix profile を使います。Nix の GUI package set
+と Homebrew 管理の GUI fallback の両方を適用する場合は、`-- --with-gui-apps` を付けて
+ください。
 Hermes Agent だけなら `mise run hermes-update` を使います。
+
+Macで `features.macos` が `false` の場合は、`--with-gui-apps` を指定してもGUIパッケージや
+管理対象のHomebrew更新は有効になりません。CLIパッケージとmiseは維持します。
+詳しくは[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
 
 ## Git pull hook が行う範囲を把握する
 

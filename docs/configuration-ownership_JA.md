@@ -56,13 +56,45 @@ fallback は追加しません。
 `config/nix/home-manager/session.nix` は `builtins.fromTOML` で同じ TOML を読みます。
 default 値を変えるときは TOML だけを変更し、Nix module に値をコピーしないでください。
 
+### Mac用の追加機能をOFFにする
+
+`home/.chezmoidata.toml` の次の値を `false` にします。初期値は `true` です。
+
+```toml
+[features]
+macos = false
+```
+
+OFFでは、Mac用Homebrew PATH・`intel`/`arm` alias・ZshのHomebrew補完に加え、
+Dock・Touch IDなどの追加OS設定、NixのGUIパッケージとアプリコピー、Homebrew・
+Rosetta・Mac App Storeの導入、管理対象のHomebrew更新を停止します。
+Macの `full`・`--with-gui-apps` 指定よりもOFFを優先しますが、プロファイル名や
+Darwinの実行経路は変更しません。Nix基盤、CLIパッケージ（OS固有のCLIツールを含む）、
+共通環境変数、mise、ビルドに必要なmacOS SDKの処理は維持します。
+LinuxのGUI指定には影響しません。
+
+変更後はchezmoiでシェル設定を再生成し、Zsh補完にはNixの再適用も行ってください。
+Nixは `config/nix/features.nix` で同じ値を読みます。
+値の欠落、文字列の `"false"`、未定義の項目はエラーにします。
+すでに起動しているシェルのaliasや、継承したPATHは削除しません。
+
+OFFは過去の状態への復元ではありません。既存アプリのアンインストールや、
+Dock・DNSなどに以前設定した値の推測による復元は行いません。
+Nix管理のファイルやlaunchd定義は、次の世代への切り替え時に通常の管理処理で
+更新・削除されます。既存の非管理cronや、手動の `brew` コマンドは対象外です。
+導入前のスクリプトは、追加依存のないreaderで、引用符なしの `[features]` と
+`macos = true` / `macos = false` を読みます。TOML全体を解析するNixとは異なり、
+この節だけを検証し、引用符付きの項目名やinline tableには対応しません。
+環境変数による上書きはありません。
+
 ### Shell ごとの挙動
 
 `home/.chezmoitemplates/dotfiles-shell-common.sh` は、非 secret の共通環境変数、
 PATH、safe alias、Bash/Zsh 固有の `DOTFILES_REPO_ROOT`、Bash/Zsh の interactive
 mise activation を一度だけ担当します。Zsh の prompt、completion、option、
-oh-my-zsh は引き続き `config/nix/home-manager/zsh.nix` が担当します。この module
+oh-my-zsh、SSH補完の `_ssh` は `config/nix/home-manager/zsh.nix` が担当します。この module
 に共通環境や mise activation を重複して書きません。
+共通fileを読み直しても、Zsh側のSSH補完は上書きしません。
 
 Fish には `~/.config/fish/conf.d/zz-dotfiles.fish` の任意の native adapter があり、
 共通する非 secret の環境変数、PATH、interactive な safe alias を提供します。
@@ -71,7 +103,14 @@ Fish には `~/.config/fish/conf.d/zz-dotfiles.fish` の任意の native adapter
 
 csh/tcsh には `~/.config/shell/dotfiles-shell-common.csh` の standalone adapter が
 あります。限定した非 secret の環境変数、PATH、prompt 内の safe alias だけを提供し、
-activation は行いません。mise shim、`mise exec`、`mise run` を使ってください。
+activation は行いません。起動時に既存のmise shimディレクトリをPATHへ追加するため、
+shimが用意されたツールは通常のコマンド名で実行できます。
+shim経由のツールには `mise.toml` の環境変数も渡ります。ただし、csh/tcsh自身の
+環境変数をディレクトリ移動に応じて自動変更する機能やprompt hookは提供しません。
+shimを通らないコマンドにも環境を渡す場合は `mise exec`・`mise run` を使います。
+shimの配置先は、空でない `MISE_DATA_DIR`、空でない `XDG_DATA_HOME`、`HOME` の
+優先順で1つ選びます。その配置先にshimディレクトリがなくても、下位の配置先を
+探し直すことはありません。
 どちらの optional adapter も `DOTFILES_REPO_ROOT` を提供せず、`secrets.env` を読みません。
 
 Bash/Zsh 共通 file、Fish adapter、csh/tcsh adapter は、`MISE_GLOBAL_CONFIG_FILE` が
@@ -97,12 +136,19 @@ file を探します。custom `XDG_CONFIG_HOME` が有効な場合、shell boots
 source するもので、chezmoi の別の source file ではありません。custom XDG path を
 変えたときは bootstrap を再実行してください。
 
-csh/tcsh の adapter は既存の起動 file へ自動追加しません。既存の `.cshrc` または
-`.tcshrc` から、次のように手動で opt-in します。
+csh/tcshの自動読み込みには、次節の `scripts/setup_shell.sh` を実行します。
+chezmoiによるファイル展開だけでは、起動ファイルへの登録は行いません。
+bootstrapは `.cshrc` と、すでに存在する `.tcshrc` に管理用の読み込み部分を追加します。
+`.cshrc` がなければ作成しますが、`.tcshrc` は新規作成しません。
+これは、tcshが既存の `.cshrc` を読まなくなることを防ぐためです。
 
-```csh
-if (-r "$HOME/.config/shell/dotfiles-shell-common.csh") source "$HOME/.config/shell/dotfiles-shell-common.csh"
-```
+既存の本文とファイルモードは保持し、末尾に改行がなければ区切りの改行を加えます。
+このアダプタを読む古い手動の `source` 行がある場合は、bootstrap前にその行を取り除いてください。
+bootstrapはユーザー本文を保持し、その行を検出・移行・削除しません。
+初回の登録後に追記したユーザー設定も保持します。
+管理ブロック経由なら、`.tcshrc` が `.cshrc` を読む構成でも共通設定を1プロセスにつき1回だけ
+読み込みます。判定に使う `df_csh_loaded` は予約変数なので、ユーザーの起動設定には使わないでください。
+設定を再生成した後は、新しいシェルを起動してください。
 
 ## Bash 専用の shell bootstrap
 
@@ -117,10 +163,10 @@ bash scripts/setup_shell.sh --verify
 
 必要なのは Bash、chezmoi、標準 Unix utility です。package、Nix、Homebrew、mise、
 別の shell を install せず、login shell を変更したり `chsh` を実行したりしません。
-`.profile`、`.cshrc`、`.tcshrc`、`~/.config/fish/config.fish`、`secrets.env`、
+`.profile`、`~/.config/fish/config.fish`、`secrets.env`、
 対象外の application file も変更しません。
 
-通常の apply 対象は、次の6つに固定しています。
+chezmoiで展開する対象は、次の6つに固定しています。
 
 | 対象 | 役割 |
 |---|---|
@@ -134,11 +180,15 @@ bash scripts/setup_shell.sh --verify
 custom `XDG_CONFIG_HOME` を使う場合は、前述の Fish loader が derived file として
 追加されます。これは custom path 専用の生成物であり、managed source target の数には
 含めません。
+前述のcsh/tcsh起動部分も、6つの展開対象とは別に登録します。
 
 bootstrap は書き込み前に既存 target と比較し、foreign または内容の異なる file が
 あれば拒否します。custom-XDG Fish loader も同じです。同一内容の既存 file は再利用
 できますが、異なる file を置き換えるには `--force` が必要です。`--dry-run` は
-書き込まず、`--verify` は allowlist の target が一致するかを報告し、`--help` は
+書き込まず、`--verify` は展開対象、csh/tcsh起動部分、Fish loaderの一致を確認します。
+csh/tcshの管理用マーカーが壊れている場合や重複する場合、起動ファイルがsymlink・
+hard link・ディレクトリの場合は、`--force` でも変更せずに停止します。
+hard linkは別名のファイルにも変更が及ぶため、追記の対象にしません。`--help` は
 現在の interface を表示します。この文書と実際の script が異なる場合は、script の
 `--help` を正としてください。
 

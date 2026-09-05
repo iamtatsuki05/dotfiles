@@ -3,7 +3,7 @@
 {{- if not (kindIs "string" $dotfilesRepoRoot.raw) }}{{ fail "invalid DOTFILES_REPO_ROOT raw template context" }}{{ end -}}
 {{- if not (kindIs "string" $dotfilesRepoRoot.prequoted) }}{{ fail "invalid DOTFILES_REPO_ROOT quoted template context" }}{{ end -}}
 {{- $shell := .shell -}}
-{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell) -}}
+{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell "features" .features) -}}
 if [ -z "${DOTFILES_REPO_ROOT:-}" ]; then
   DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}
 fi
@@ -75,6 +75,7 @@ dotfiles_prepend_path() {
 
 dotfiles_macos_arch=""
 if [ "$(uname -s)" = "Darwin" ]; then
+{{- if .features.macos }}
   dotfiles_macos_arch="$(uname -m)"
   if [ "$dotfiles_macos_arch" = "arm64" ] && [ -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" ]; then
     dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}"
@@ -89,6 +90,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
     dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}"
     dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
   fi
+{{- else }}
+  :
+{{- end }}
 else
   if [ -d "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}" ]; then
     dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_sbin }}"
@@ -125,10 +129,12 @@ elif [ -n "${BASH_VERSION:-}" ]; then
   dotfiles_shell_bin=/bin/bash
 fi
 
+{{- if .features.macos }}
 if [ "$(uname -s)" = "Darwin" ]; then
   alias intel="env /usr/bin/arch -x86_64 $dotfiles_shell_bin -l"
   alias arm="env /usr/bin/arch -arm64 $dotfiles_shell_bin -l"
 fi
+{{- end }}
 
 dotfiles_is_in_git_repo() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1
@@ -165,12 +171,6 @@ gs() {
     dotfiles_fzf_down --reverse -d: --preview 'git show --color=always {1}' |
     cut -d: -f1
 }
-
-if [ "$dotfiles_shell_name" = "zsh" ]; then
-  _ssh() {
-    compadd $(fgrep 'Host ' ~/.ssh/config 2>/dev/null | awk '{print $2}' | sort)
-  }
-fi
 
 dotfiles_add_default_ssh_key() {
   local key_path

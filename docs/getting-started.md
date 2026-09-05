@@ -69,9 +69,13 @@ bash scripts/setup_shell.sh --verify
 The bootstrap keeps managed shell files under `$HOME/.config`, even when
 `XDG_CONFIG_HOME` points elsewhere. With a custom XDG config directory it also
 creates a derived Fish loader under that directory so Fish can load the
-canonical adapter. It does not add anything to `.profile`, `.cshrc`, or
-`.tcshrc`; see [Shell roles and startup boundaries](configuration-ownership.md#shell-roles-and-startup-boundaries)
-for the manual csh/tcsh opt-in.
+canonical adapter. It does not modify `.profile`; it registers a managed
+csh/tcsh startup block by appending to `.cshrc` and an existing `.tcshrc`.
+It creates a missing `.cshrc` but never creates `.tcshrc`. If an older manual
+`source` line loads `~/.config/shell/dotfiles-shell-common.csh`, remove that line before running the bootstrap; the
+bootstrap preserves that user text and does not detect or migrate the line.
+See [Shell roles and startup
+boundaries](configuration-ownership.md#shell-roles-and-startup-boundaries).
 
 Before writing, the bootstrap refuses an existing target whose content differs
 from the rendered file. An identical target can be reused; `--force` is the
@@ -92,6 +96,11 @@ existing Nix installation.
   apps, macOS defaults, user timers, mise tools, and home files.
 - `cli` is the default on Linux. It omits GUI apps, macOS-only settings, and
   user timers, then applies the shared CLI package set and home files.
+
+On macOS, the `full` examples below assume that `features.macos` is `true` (the
+default). Setting it to `false` disables optional OS settings and macOS app
+installation while retaining the Nix/CLI setup. See [Disable
+optional macOS features](configuration-ownership.md#disable-optional-macos-features).
 
 Run the CLI profile explicitly when you want a smaller macOS setup:
 
@@ -116,8 +125,9 @@ zsh main.sh
 ```
 
 The full setup is intended to be rerunnable. Read an error before retrying: a
-fresh shell may be required after the first Nix installation, and Homebrew may
-still be required when fallback entries exist.
+fresh shell may be required after the first Nix installation. When
+`features.macos` is `true` and fallback entries exist, Homebrew may still be
+required.
 
 ### Linux without sudo
 

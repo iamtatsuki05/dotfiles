@@ -79,9 +79,18 @@ emit_matrix_result() {
   fi
 }
 
+copy_feature_flags_fixture() {
+  local repo="$1"
+
+  mkdir -p "$repo/scripts/lib" "$repo/home"
+  cp "$REPO_ROOT/scripts/lib/features.sh" "$repo/scripts/lib/features.sh"
+  print -r -- $'[features]\nmacos = true' > "$repo/home/.chezmoidata.toml"
+}
+
 copy_script_libs() {
   local repo="$1"
 
+  copy_feature_flags_fixture "$repo"
   mkdir -p "$repo/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
@@ -2697,6 +2706,7 @@ test_install_mas_apps_script_continues_after_individual_failures() {
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
   cp "$INSTALL_MAS_APPS_SCRIPT" "$repo/scripts/install_mas_apps.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  copy_feature_flags_fixture "$repo"
 
   cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
 {
@@ -5236,6 +5246,7 @@ test_nix_install_direct_copy_uses_bash_shebang() {
   mkdir -p "$repo/scripts/lib" "$repo/link" "$bin_dir"
   cp "$INSTALL_SCRIPT" "$script_copy"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  copy_feature_flags_fixture "$repo"
   cp "$REPO_ROOT/scripts/lib/homebrew.sh" "$repo/scripts/lib/homebrew.sh"
   cp "$REPO_ROOT/scripts/lib/homebrew_fallback.sh" "$repo/scripts/lib/homebrew_fallback.sh"
   cp "$REPO_ROOT/scripts/lib/runtime.sh" "$repo/scripts/lib/runtime.sh"

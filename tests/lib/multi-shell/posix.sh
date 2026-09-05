@@ -30,7 +30,14 @@ run_zsh_probe() {
   local home="$1" out="$2" rc=0
 
   env -i HOME="$home" PATH="$FAKE_BIN:/bin:/usr/bin:/usr/sbin:/sbin" SHELL="$TEST_ZSH_BIN" USER=fixture-user "$TEST_ZSH_BIN" -f -c '
+    _ssh() { print -r -- custom-ssh-completion; }
+    saved_ssh_completion=$functions[_ssh]
     source "$HOME/.config/shell/dotfiles-shell-common.sh"; source "$HOME/.config/shell/dotfiles-shell-common.sh"
+    if [[ $functions[_ssh] == $saved_ssh_completion ]]; then
+      print -r -- ssh_completion=preserved
+    else
+      print -r -- ssh_completion=replaced
+    fi
     eval ginit; eval gauth; eval gls
     print -r -- "shell=$dotfiles_shell_name"; print -r -- "root=$DOTFILES_REPO_ROOT"
     print -r -- "editor=$EDITOR"; print -r -- "config=$XDG_CONFIG_HOME"; print -r -- "cache=$XDG_CACHE_HOME"; print -r -- "data=$XDG_DATA_HOME"; print -r -- "state=$XDG_STATE_HOME"; print -r -- "path=$PATH"
@@ -188,6 +195,9 @@ assert_shell_output() {
   assert_output_contains "$out" "state=$home/.fixture-state"
   assert_output_contains "$out" 'gt=function gr=function gs=function'
   assert_output_contains "$out" "$home/.fixture-bin"
+  if [[ "$shell_kind" == zsh ]]; then
+    assert_output_contains "$out" 'ssh_completion=preserved'
+  fi
 }
 
 posix_brew_bin() {

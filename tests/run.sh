@@ -84,6 +84,11 @@ run_syntax_checks() {
 
 run_unit_tests() {
   log_step "Running unit tests"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_fixture_isolation.sh"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_feature_flags.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_entrypoints.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_update_features.sh"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_nix_features.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_delegation_analysis.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_html_preview_review.sh"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"

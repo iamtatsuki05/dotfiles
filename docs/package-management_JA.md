@@ -6,6 +6,10 @@
 Homebrew の宣言的な fallback として残します。Mac App Store アプリは、別の
 best-effort 手順で導入します。
 
+Macで `features.macos` を `false` にすると、`full` や `--with-gui-apps` より優先し、
+GUIパッケージやHomebrew・Mac App Storeの導入、Touch ID設定のバックアップを停止します。
+CLIパッケージは維持します。詳しくは[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
+
 ## パッケージを記録するファイル
 
 - CLI package 名: `config/nix/package-names.nix`
@@ -44,7 +48,7 @@ flake は Darwin / Linux の aarch64 と x86_64 に対し、`full` と `cli` の
 `scripts/nix_install.sh` が flake 内のコマンドを使います。Linux の
 `home-manager` も同様です。
 
-macOS の初回適用では、nix-darwin が管理を引き継ぐ前に、既存の
+`features.macos` が `true`（既定値）の macOS 初回適用では、nix-darwin が管理を引き継ぐ前に、既存の
 `/etc/pam.d/sudo_local` を `/etc/pam.d/sudo_local.before-nix-darwin` へ
 バックアップします。
 
@@ -72,15 +76,16 @@ Brewfile を省略すると、スクリプトは `brew bundle dump` で一時フ
 
 ## Fallback の挙動を明示したまま保つ
 
-`homebrew-fallback.nix` に entry がある間は、その formula、cask、tap、VS Code
-extension のために Homebrew が必要です。formula は CLI profile でも適用します。
-cask と VS Code extension は `--with-gui-apps` の場合だけ対象になります。
+`features.macos` が `true`（既定値）で `homebrew-fallback.nix` に entry がある間は、
+その formula、cask、tap、VS Code extension のために Homebrew が必要です。formula は
+CLI profile でも適用します。cask と VS Code extension は `--with-gui-apps` の場合だけ
+対象になります。
 
 Mac App Store アプリは nix-darwin の `homebrew.masApps` に渡しません。取得できない
 アプリが1件あるだけで、`brew bundle` activation 全体が失敗するためです。代わりに
 `scripts/install_mas_apps.sh` が個別の失敗を報告し、setup 全体は継続します。
-Mac App Store へのサインインが必要です。また、`mas-apps.nix` からアプリを
-削除しても uninstall はされません。
+`features.macos` が `true` の場合は Mac App Store へのサインインが必要です。また、
+`mas-apps.nix` からアプリを削除しても uninstall はされません。
 
 ## Fallback が空になってから Homebrew を削除する
 

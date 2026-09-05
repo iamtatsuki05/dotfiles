@@ -65,9 +65,12 @@ bash scripts/setup_shell.sh --verify
 bootstrap は `XDG_CONFIG_HOME` が別の場所を指していても、managed shell file を
 `$HOME/.config` 配下に保ちます。custom XDG config directory を使う場合は、Fish が
 canonical adapter を読めるよう、その directory に derived Fish loader も生成します。
-`.profile`、`.cshrc`、`.tcshrc` には何も追加しません。csh/tcsh の手動 opt-in は
-[Shell の役割と起動境界](configuration-ownership_JA.md#shell-の役割と起動境界)を
-参照してください。
+`.profile` は変更せず、`.cshrc` と既存の `.tcshrc` には管理用の csh/tcsh 起動部分を
+追加します。`.cshrc` はなければ作成しますが、`.tcshrc` は作成しません。
+`~/.config/shell/dotfiles-shell-common.csh` を読む古い手動の `source` 行がある場合は、
+bootstrap前にその行を取り除いてください。bootstrapはユーザー本文を保持し、
+その行を検出・移行・削除しません。詳しくは
+[Shell の役割と起動境界](configuration-ownership_JA.md#shell-の役割と起動境界)を参照してください。
 
 bootstrap は書き込み前に既存 target と render 結果を比較し、内容が異なる target を
 拒否します。同一内容なら再利用できます。異なる target を置き換える明示的な option
@@ -86,6 +89,10 @@ Linux では Nix が導入済みである必要があります。
   user timer、mise tool、home file を対象にします。
 - `cli` は Linux の既定値です。GUI app、macOS 固有設定、user timer を省き、共通の
   CLI package set と home file を適用します。
+
+macOS の `full` の例は、`features.macos` が `true`（既定値）であることを前提にします。
+`false` にすると、Macの追加OS設定やアプリ導入を停止し、Nix・CLIの設定は維持します。
+詳しくは[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
 
 macOS に小さい構成を入れたい場合は、`cli` を明示します。
 
@@ -110,8 +117,8 @@ zsh main.sh
 ```
 
 full setup は再実行できます。ただし、エラーを確認してから再実行してください。
-Nix の初回導入後は新しい shell が必要になる場合があり、fallback entry が残っていれば
-Homebrew も必要です。
+Nix の初回導入後は新しい shell が必要になる場合があります。`features.macos` が `true`
+で fallback entry が残っている場合は、Homebrew も必要です。
 
 ### sudo が使えない Linux
 
