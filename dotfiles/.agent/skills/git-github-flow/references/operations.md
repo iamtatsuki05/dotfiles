@@ -45,7 +45,7 @@ IssueまたはPRを作るときは、対象に対応するテンプレートを 
 
 ## Branch と worktree
 
-リポジトリ固有の規約がなければ、lowercase kebab-case で `feature/`、`work/`、`hotfix/`、`bugfix/`、`release/` を使う。新機能は `feature/`、通常作業は `work/`、緊急修正は `hotfix/`、通常の不具合修正は `bugfix/`、release準備は `release/` とする。`codex/`、`claude/`、`copilot/`、`agent/` など、作業したAI agent/tool名をbranch名に含めない。
+命名とアプリ既定との競合は [SKILL.md のブランチ命名](../SKILL.md#ブランチの命名)に従う。branch名と直接のmerge先を確定してから作成する。
 
 独立した並列作業は、作業ごとに branch と worktree を分ける。現在の checkout が dirty な場合も worktree を優先する。Issue から開始するときは branch を Development に先に結び付ける。branchごとに確定した直接のmerge先を `target_base` とし、そのbranchの起点、`gh issue develop --base`、`gh pr create --base` の3か所で同じ値を使う。
 
@@ -84,7 +84,7 @@ force-push境界、commit整理、merge済み変更のrevert、失敗した履�
 - GitHubのauto-closeを使う場合、PRのbaseが既定ブランチ以外なら、論理的に完了していても `Refs #123` を使う。PRのbaseが既定ブランチで、そのmergeがIssueを完了させる場合だけ `Closes #123` を使う。親 tracker は全体完了まで閉じず、`Part of #100` と子 Issue/PR のリンクを併記する。
 - 対応対象の既存Issueがある場合、IssueとbranchのDevelopment linkは `gh issue develop`、作成後の確認は `gh issue develop --list 123` のように対象Issueを指定する。IssueがないPRではDevelopment linkや`Closes` / `Refs`を捏造しない。
 
-GitHub 上の作成・編集・状態確認は `gh issue ...`、`gh pr ...`、`gh label ...`、必要な場合の `gh api ...` で行う。ユーザーが依頼していない push、merge、close、branch/worktree 削除まで権限を広げない。`gh pr create` は未公開branchを暗黙にpushし得るため、PR作成の依頼にbranch公開が含まれる場合だけ明示的にpushし、`git ls-remote --exit-code --heads "$head_remote" "$branch"` でheadの存在を確認する。
+GitHub 上の作成・編集・状態確認は `gh issue ...`、`gh pr ...`、`gh label ...`、必要な場合の `gh api ...` で行う。ユーザーが依頼していない push、merge、close、branch/worktree 削除まで権限を広げない。当該PRのマージ報告を受けた場合の限定的な整理は、[マージ後の後片付け](post-merge-cleanup.md)に従う。`gh pr create` は未公開branchを暗黙にpushし得るため、PR作成の依頼にbranch公開が含まれる場合だけ明示的にpushし、`git ls-remote --exit-code --heads "$head_remote" "$branch"` でheadの存在を確認する。
 
 PR作成では対象repo・直接base・headをすべて明示する。同一リポジトリなら `head_arg=$branch`、user-owned forkなら `head_arg=$head_owner:$branch` とする。forkでは、明示的なopt-inがなければ `--no-maintainer-edit` を追加する。
 
