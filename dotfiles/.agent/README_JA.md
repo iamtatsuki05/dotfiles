@@ -59,8 +59,8 @@ config version 3では、すべてのroleに`transport = "direct"`または`tran
 |---|---|---|---|
 | Main | Claude / `direct` | `fable` / `high` | `orchestrator` |
 | Planner | Claude / `acp` | `fable` / `high` | `read-only` |
-| Worker | Codex / `direct` | `gpt-5.6-sol` / `medium` | `workspace-write` |
-| Reviewer | Codex / `direct` | `gpt-5.6-sol` / `high` | `read-only` |
+| Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
+| Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
 
 初期のACP対応は、Claudeのread-only background roleだけです。MainのACP、CodexのACP、workspace-writeのACPはfail-fastで拒否します。互換性probeで、Codex ACPの`deny-all`/`read-only`設定ではCodex internal toolの書き込みを止められないことが分かったためです。ACPのpermission制御はproviderやOSのsandboxではありません。write roleはdirect Codexのpermissionを維持します。
 
