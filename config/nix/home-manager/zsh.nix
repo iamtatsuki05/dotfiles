@@ -1,5 +1,8 @@
 { lib, ... }:
 
+let
+  features = import ../features.nix;
+in
 {
   programs.zsh.enable = true;
   programs.zsh.enableCompletion = true;
@@ -14,27 +17,35 @@
   # 調整は compinit より前(mkOrder 550 = before completion init)で行い、
   # compinit と zcompdump の位置は oh-my-zsh に委ねる。
   programs.zsh.initContent = lib.mkMerge [
-    (lib.mkOrder 550 ''
-      if [[ -L /opt/homebrew/share/zsh/site-functions/_brew && ! -e /opt/homebrew/share/zsh/site-functions/_brew ]]; then
-        fpath=(''${fpath:#/opt/homebrew/share/zsh/site-functions})
-      fi
+    (lib.mkOrder 550 (''
       # Shared Linuxbrew completions are not owned by the current user or root on
       # some NAIST hosts, so zsh compaudit treats them as insecure.
       fpath=(''${fpath:#/home/linuxbrew/.linuxbrew/share/zsh/site-functions})
       fpath=(''${fpath:#/home/linuxbrew/.linuxbrew/share/zsh-completions})
 
-      for dotfiles_completion_dir in \
-        "$HOME/.linuxbrew/share/zsh/site-functions" \
-        "$HOME/.linuxbrew/share/zsh-completions" \
-        "/opt/homebrew/share/zsh/site-functions" \
-        "/usr/local/share/zsh/site-functions"
+      dotfiles_completion_dirs=(
+        "$HOME/.linuxbrew/share/zsh/site-functions"
+        "$HOME/.linuxbrew/share/zsh-completions"
+      )
+    '' + lib.optionalString features.macos ''
+      if [[ "$(uname -s)" == Darwin ]]; then
+        if [[ -L /opt/homebrew/share/zsh/site-functions/_brew && ! -e /opt/homebrew/share/zsh/site-functions/_brew ]]; then
+          fpath=(''${fpath:#/opt/homebrew/share/zsh/site-functions})
+        fi
+        dotfiles_completion_dirs+=(
+          "/opt/homebrew/share/zsh/site-functions"
+          "/usr/local/share/zsh/site-functions"
+        )
+      fi
+    '' + ''
+      for dotfiles_completion_dir in "''${dotfiles_completion_dirs[@]}"
       do
         if [[ -d "$dotfiles_completion_dir" ]]; then
           fpath=("$dotfiles_completion_dir" $fpath)
         fi
       done
-      unset dotfiles_completion_dir
-    '')
+      unset dotfiles_completion_dir dotfiles_completion_dirs
+    ''))
 
     # oh-my-zsh 読み込み後に適用する(テーマを独自 PROMPT で上書きするため mkAfter)。
     (lib.mkAfter ''
@@ -47,6 +58,10 @@
       zstyle ':completion:*:sudo:*' command-path /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin /usr/X11R6/bin
       zstyle ':completion:*:processes' command 'ps x -o pid,s,args'
       zstyle ':completion:*' menu select
+
+      _ssh() {
+        compadd $(fgrep 'Host ' ~/.ssh/config 2>/dev/null | awk '{print $2}' | sort)
+      }
 
       function git-current-branch {
         local branch_name

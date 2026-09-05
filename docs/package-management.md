@@ -6,6 +6,11 @@ Nix is the primary package-management path. Homebrew is a declared fallback
 for macOS packages not yet available through Nix, and Mac App Store apps are
 installed in a separate best-effort step.
 
+On macOS, setting `features.macos` to `false` overrides `full` and
+`--with-gui-apps`: GUI packages, Homebrew/Mac App Store installation, and the
+Touch ID backup are skipped. CLI packages remain enabled. See
+[Disable optional macOS features](configuration-ownership.md#disable-optional-macos-features).
+
 ## Package records
 
 - CLI package names: `config/nix/package-names.nix`
@@ -44,7 +49,8 @@ Darwin and Linux. On a first macOS apply, `scripts/nix_install.sh` can invoke
 the flake-provided `darwin-rebuild` before it is available in `PATH`. Linux uses
 the flake-provided `home-manager` in the same situation.
 
-The first macOS apply backs up an existing `/etc/pam.d/sudo_local` as
+When `features.macos` is `true` (the default), the first macOS apply backs up
+an existing `/etc/pam.d/sudo_local` as
 `/etc/pam.d/sudo_local.before-nix-darwin` before nix-darwin takes ownership.
 
 ## Migrate Homebrew state
@@ -72,15 +78,17 @@ apps are written to `mas-apps.nix`.
 
 ## Keep fallback behavior explicit
 
-When `homebrew-fallback.nix` contains entries, Homebrew is still required for
-those formulae, casks, taps, or VS Code extensions. Formulae apply even with the
-CLI profile. Casks and VS Code extensions require `--with-gui-apps`.
+When `features.macos` is `true` (the default) and `homebrew-fallback.nix` contains
+entries, Homebrew is still required for those formulae, casks, taps, or VS Code
+extensions. Formulae apply even with the CLI profile. Casks and VS Code
+extensions require `--with-gui-apps`.
 
 Mac App Store apps are not passed to nix-darwin's `homebrew.masApps`. A single
 unavailable app would otherwise fail the whole `brew bundle` activation.
 `scripts/install_mas_apps.sh` instead reports individual failures without
-failing the complete setup. The Mac App Store account must be signed in, and
-removing an app from `mas-apps.nix` does not uninstall it.
+failing the complete setup. When `features.macos` is `true`, the Mac App Store
+account must be signed in; removing an app from `mas-apps.nix` does not
+uninstall it.
 
 ## Remove Homebrew only after the fallback is empty
 

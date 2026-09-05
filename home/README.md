@@ -25,7 +25,11 @@ The repository root `.chezmoiroot` points here.
 - Do not commit real secrets. Use templates or examples for secret-related files.
 - Use `scripts/chezmoi_apply.sh --dry-run` before applying changes to the live home.
 - For a shell-only host, use `bash scripts/setup_shell.sh --dry-run`; it has a
-  fixed six-target allowlist and does not apply unrelated home files.
+  fixed six-target chezmoi allowlist and also registers csh/tcsh startup blocks
+  while preserving existing rc content. It does not create a new `.tcshrc`.
+- `[features] macos` in `home/.chezmoidata.toml` controls macOS shell PATH,
+  aliases, Zsh Homebrew completions, optional OS settings, and macOS app
+  installation/updates. Turning it off does not restore earlier OS settings.
 - Shell ownership, fixed managed paths, custom XDG behavior, and startup
   boundaries are documented in [Configuration ownership](../docs/configuration-ownership.md).
 

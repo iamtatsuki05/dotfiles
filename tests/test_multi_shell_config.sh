@@ -15,6 +15,7 @@ source "$TEST_DIR/lib/multi-shell/schema.sh"
 source "$TEST_DIR/lib/multi-shell/posix.sh"
 source "$TEST_DIR/lib/multi-shell/fish.sh"
 source "$TEST_DIR/lib/multi-shell/csh.sh"
+source "$TEST_DIR/lib/multi-shell/features.sh"
 
 typeset -g SELECTOR=""
 typeset -g SKIP_CHEZMOI=0
@@ -222,6 +223,7 @@ run_render() {
 
   run_fish_render_checks "$dest" || fish_status=$?
   (( fish_status == 0 )) || rc=1
+  run_macos_feature_checks || rc=1
 
   copy_source "$hostile_src"
   mutate_data "$hostile_src/home/.chezmoidata.toml"

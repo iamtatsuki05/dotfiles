@@ -49,8 +49,11 @@ try:
 except Exception as exc:
     raise SystemExit("invalid canonical TOML: " + type(exc).__name__)
 
-if set(data) != {"shell"}:
+if set(data) != {"shell", "features"}:
     raise SystemExit("unexpected top-level data key")
+features = data["features"]
+if not isinstance(features, dict) or set(features) != {"macos"} or not isinstance(features["macos"], bool):
+    raise SystemExit("invalid canonical feature flags")
 s = data["shell"]
 if set(s) != {"editor", "xdg", "path", "aliases", "mise"}:
     raise SystemExit("unexpected shell data key")
@@ -170,6 +173,84 @@ if actual != expected:
 PY
 }
 
+validate_zsh_ui_completion() {
+  local nix_bin="$(command -v nix-instantiate 2>/dev/null || true)"
+  local ui_home="$FIXTURE/zsh-ui-home"
+  local ui_source="$FIXTURE/zsh-ui-source"
+  local ui_json="$FIXTURE/zsh-ui.json"
+  local ui_script="$FIXTURE/zsh-ui.zsh"
+  local out="$FIXTURE/zsh-ui.log"
+  local expr enabled rc=0
+
+  if [[ "$nix_bin" != /* || ! -x "$nix_bin" ]]; then
+    print -r -- 'SKIP: nix-instantiate unavailable for Zsh UI completion evaluation'
+    return 0
+  fi
+  mkdir -p "$ui_home/.ssh" "$ui_home/mac-arm-completions" "$ui_home/mac-intel-completions" \
+    "$ui_home/.linuxbrew/share/zsh/site-functions" "$ui_home/bin" "$ui_source/config" "$ui_source/home"
+  cp -R "$REPO_ROOT/config/nix" "$ui_source/config/"
+  cp "$REPO_ROOT/home/.chezmoidata.toml" "$ui_source/home/"
+  "$TEST_PYTHON_BIN" - "$ui_source/config/nix/home-manager/zsh.nix" "$ui_home" <<'PY'
+from pathlib import Path
+import sys
+
+module, home = Path(sys.argv[1]), sys.argv[2]
+text = module.read_text()
+text = text.replace("/opt/homebrew/share/zsh/site-functions", f"{home}/mac-arm-completions")
+text = text.replace("/usr/local/share/zsh/site-functions", f"{home}/mac-intel-completions")
+module.write_text(text)
+PY
+  print -rl -- '#!/bin/sh' 'case "$*" in -s) echo Darwin ;; -m) echo arm64 ;; *) exit 97 ;; esac' > "$ui_home/bin/uname"
+  chmod +x "$ui_home/bin/uname"
+  print -r -- 'Host fixture-host' > "$ui_home/.ssh/config"
+  expr="let ui = import \"$ui_source/config/nix/home-manager/zsh.nix\" {
+    lib = {
+      mkMerge = values: values;
+      mkOrder = order: value: value;
+      mkAfter = value: value;
+      optionalString = condition: text: if condition then text else \"\";
+    };
+  }; in builtins.concatStringsSep \"\\n\" ui.programs.zsh.initContent"
+  for enabled in false true; do
+    "$TEST_PYTHON_BIN" - "$ui_source/home/.chezmoidata.toml" "$enabled" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+path.write_text(re.sub(r"^macos = (true|false)$", f"macos = {sys.argv[2]}", path.read_text(), flags=re.M))
+PY
+    env -i HOME="$ui_home" PATH="${nix_bin:h}:/usr/bin:/bin" \
+      "$nix_bin" --eval --json --strict --expr "$expr" > "$ui_json"
+    "$TEST_PYTHON_BIN" -c 'import json, sys; print(json.load(sys.stdin))' < "$ui_json" > "$ui_script"
+    env -i HOME="$ui_home" HOST=fixture-host PATH="$ui_home/bin:/usr/bin:/bin" DOTFILES_TEST_ZSH_INIT="$ui_script" \
+      "$TEST_ZSH_BIN" -f -c '
+        fpath=()
+        source "$DOTFILES_TEST_ZSH_INIT"
+        print -rl -- $fpath
+        if (( ! $+functions[_ssh] )); then
+          print -u2 -r -- "Zsh UI did not define SSH completion"
+          exit 1
+        fi
+        compadd() { print -rl -- "$@"; }
+        _ssh
+      ' > "$out" 2>&1 || rc=$?
+    if (( rc != 0 )); then
+      sed -n '1,60p' "$out" >&2
+      fail 'Zsh UI SSH completion probe failed'
+    fi
+    assert_output_contains "$out" 'fixture-host'
+    assert_output_contains "$out" "$ui_home/.linuxbrew/share/zsh/site-functions"
+    if [[ "$enabled" == true ]]; then
+      assert_output_contains "$out" "$ui_home/mac-arm-completions"
+      assert_output_contains "$out" "$ui_home/mac-intel-completions"
+    else
+      assert_not_contains "$out" "$ui_home/mac-arm-completions"
+      assert_not_contains "$out" "$ui_home/mac-intel-completions"
+    fi
+  done
+}
+
 test_source() {
   local common="$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh"
   local wrapper="$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl"
@@ -188,7 +269,7 @@ test_source() {
   assert_contains "$common" 'DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}'
   assert_contains "$common" 'export DOTFILES_REPO_ROOT'
   assert_contains "$wrapper" '{{- $dotfilesRepoRoot := dict "raw" $repoRoot "prequoted" (shellQuote $repoRoot) -}}'
-  assert_contains "$wrapper" '{{- $shellCommonContext := dict "shell" .shell "dotfilesRepoRoot" $dotfilesRepoRoot -}}'
+  assert_contains "$wrapper" '{{- $shellCommonContext := dict "shell" .shell "features" .features "dotfilesRepoRoot" $dotfilesRepoRoot -}}'
   assert_contains "$wrapper" 'includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" $shellCommonContext'
   assert_not_contains "$wrapper" 'includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" .'
   assert_not_contains "$common" '.chezmoi.sourceDir'
@@ -220,6 +301,7 @@ test_source() {
   require_python_tomllib
   validate_data
   validate_nix_projection
+  validate_zsh_ui_completion
 
   cp "$REPO_ROOT/home/.chezmoidata.toml" "$FIXTURE/unknown.toml"
   print -r -- '[shell.unknown]' >> "$FIXTURE/unknown.toml"

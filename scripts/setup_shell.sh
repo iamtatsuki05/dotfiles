@@ -16,8 +16,16 @@ BRIDGE_PATH=""
 BRIDGE_DIR=""
 BRIDGE_EXPECTED=""
 BRIDGE_ACTION="none"
+CSH_BLOCK_EXPECTED=""
+CSH_TARGET_ACTION=""
 declare -a CHEZMOI_ARGS=()
 declare -a SHELL_TARGETS=()
+declare -a CSH_RC_TARGETS=()
+declare -a CSH_RC_ACTIONS=()
+
+readonly CSH_MARKER_TOKEN='dotfiles:csh-adapter'
+readonly CSH_BLOCK_START='# >>> dotfiles:csh-adapter >>>'
+readonly CSH_BLOCK_END='# <<< dotfiles:csh-adapter <<<'
 
 usage() {
   cat <<'EOF'
@@ -27,8 +35,8 @@ Apply the shell-only chezmoi targets without Nix, zsh, mise, or package setup.
 
 Options:
   --dry-run  Render the shell-only apply plan without changing the destination.
-  --verify   Verify the shell-only targets and any custom-XDG Fish bridge.
-  --force    Explicitly overwrite inconsistent regular target files or bridge.
+  --verify   Verify shell-only targets, csh/tcsh startup blocks, and any custom-XDG Fish bridge.
+  --force    Overwrite inconsistent regular targets or bridge; keep csh/tcsh rc content fail-fast.
   -h, --help Show this help.
 EOF
 }
@@ -156,6 +164,13 @@ set_shell_targets() {
     "$HOME_CANONICAL/.config/shell/dotfiles-shell-common.csh"
     "$HOME_CANONICAL/.config/mise/config.toml"
   )
+}
+
+set_csh_rc_targets() {
+  CSH_RC_TARGETS=("$HOME_CANONICAL/.cshrc")
+  if [[ -e "$HOME_CANONICAL/.tcshrc" || -L "$HOME_CANONICAL/.tcshrc" ]]; then
+    CSH_RC_TARGETS+=("$HOME_CANONICAL/.tcshrc")
+  fi
 }
 
 is_allowed_system_symlink() {
@@ -314,6 +329,95 @@ prepare_bridge_context() {
   fi
 }
 
+prepare_csh_block() {
+  CSH_BLOCK_EXPECTED="$TEMP_DIR/dotfiles-csh-adapter.block"
+  printf '%s\n' \
+    "$CSH_BLOCK_START" \
+    'if ( ! $?df_csh_loaded ) then' \
+    '  if ( -r "$HOME/.config/shell/dotfiles-shell-common.csh" ) then' \
+    '    source "$HOME/.config/shell/dotfiles-shell-common.csh"' \
+    '    if ( $status == 0 ) set df_csh_loaded = 1' \
+    '  endif' \
+    'endif' \
+    "$CSH_BLOCK_END" > "$CSH_BLOCK_EXPECTED"
+  chmod 600 "$CSH_BLOCK_EXPECTED"
+}
+
+preflight_csh_rc_target() {
+  local target="$1"
+  local start_count end_count marker_count start_line end_line
+  local actual_block expected_block linked_path
+
+  CSH_TARGET_ACTION="none"
+  if [[ ! -e "$target" && ! -L "$target" ]]; then
+    CSH_TARGET_ACTION="create"
+    return 0
+  fi
+  if [[ -L "$target" || -d "$target" || ! -f "$target" ]]; then
+    printf 'ERROR: refusing to replace non-regular csh startup file: %s\n' "$target" >&2
+    return 1
+  fi
+  linked_path="$(find "$target" -prune -links +1 -print)" || {
+    printf 'ERROR: failed to inspect csh startup file links: %s\n' "$target" >&2
+    return 1
+  }
+  if [[ -n "$linked_path" ]]; then
+    printf 'ERROR: refusing to modify hard-linked csh startup file: %s\n' "$target" >&2
+    return 1
+  fi
+  if [[ ! -r "$target" ]]; then
+    printf 'ERROR: csh startup file is not readable: %s\n' "$target" >&2
+    return 1
+  fi
+  if [[ "$MODE" != verify && ! -w "$target" ]]; then
+    printf 'ERROR: csh startup file is not writable: %s\n' "$target" >&2
+    return 1
+  fi
+
+  marker_count="$(grep -F -c -- "$CSH_MARKER_TOKEN" "$target" || true)"
+  if [[ "$marker_count" == 0 ]]; then
+    CSH_TARGET_ACTION="append"
+    return 0
+  fi
+
+  start_count="$(grep -F -x -c -- "$CSH_BLOCK_START" "$target" || true)"
+  end_count="$(grep -F -x -c -- "$CSH_BLOCK_END" "$target" || true)"
+  if [[ "$marker_count" != 2 || "$start_count" != 1 || "$end_count" != 1 ]]; then
+    printf 'ERROR: csh startup managed block is malformed, duplicated, or foreign: %s\n' "$target" >&2
+    return 1
+  fi
+
+  start_line="$(grep -F -n -x -- "$CSH_BLOCK_START" "$target" | cut -d: -f1)"
+  end_line="$(grep -F -n -x -- "$CSH_BLOCK_END" "$target" | cut -d: -f1)"
+  if [[ -z "$start_line" || -z "$end_line" || "$end_line" -le "$start_line" ]]; then
+    printf 'ERROR: csh startup managed block is malformed, duplicated, or foreign: %s\n' "$target" >&2
+    return 1
+  fi
+
+  actual_block="$(sed -n "${start_line},${end_line}p" "$target")"
+  expected_block="$(cat "$CSH_BLOCK_EXPECTED")"
+  if [[ "$actual_block" != "$expected_block" ]]; then
+    printf 'ERROR: csh startup managed block is malformed, duplicated, or foreign: %s\n' "$target" >&2
+    return 1
+  fi
+
+  CSH_TARGET_ACTION="none"
+}
+
+prepare_csh_context() {
+  local target
+  local csh_preflight_failed=0
+
+  validate_parent_chain "$HOME_CANONICAL" "$HOME_CANONICAL" 'csh startup' 1 || csh_preflight_failed=1
+  prepare_csh_block
+  CSH_RC_ACTIONS=()
+  for target in "${CSH_RC_TARGETS[@]}"; do
+    preflight_csh_rc_target "$target" || csh_preflight_failed=1
+    CSH_RC_ACTIONS+=("$CSH_TARGET_ACTION")
+  done
+  (( csh_preflight_failed == 0 )) || return 1
+}
+
 preflight_all() {
   local target
   local preflight_failed=0
@@ -325,6 +429,7 @@ preflight_all() {
     fi
   done
   prepare_bridge_context || preflight_failed=1
+  prepare_csh_context || preflight_failed=1
   (( preflight_failed == 0 )) || return 1
 }
 
@@ -349,6 +454,21 @@ verify_bridge() {
       return 1
       ;;
   esac
+}
+
+verify_csh_startup() {
+  local index target action
+  local verify_status=0
+
+  for index in "${!CSH_RC_TARGETS[@]}"; do
+    target="${CSH_RC_TARGETS[$index]}"
+    action="${CSH_RC_ACTIONS[$index]}"
+    if [[ "$action" != none ]]; then
+      printf 'ERROR: csh startup managed block is missing: %s\n' "$target" >&2
+      verify_status=1
+    fi
+  done
+  return "$verify_status"
 }
 
 render_shell_targets() {
@@ -408,11 +528,43 @@ write_bridge() {
   esac
 }
 
+write_csh_startup() {
+  local index target action last_byte
+
+  for index in "${!CSH_RC_TARGETS[@]}"; do
+    target="${CSH_RC_TARGETS[$index]}"
+    action="${CSH_RC_ACTIONS[$index]}"
+    case "$action" in
+      none)
+        ;;
+      create)
+        cp "$CSH_BLOCK_EXPECTED" "$target"
+        chmod 0644 "$target"
+        printf 'csh startup: %s (created)\n' "$target"
+        ;;
+      append)
+        if [[ -s "$target" ]]; then
+          last_byte="$(tail -c 1 "$target" 2>/dev/null || true)"
+          if [[ -n "$last_byte" ]]; then
+            printf '\n' >> "$target"
+          fi
+        fi
+        cat "$CSH_BLOCK_EXPECTED" >> "$target"
+        printf 'csh startup: %s (appended)\n' "$target"
+        ;;
+      *)
+        die "invalid csh startup action: $action"
+        ;;
+    esac
+  done
+}
+
 verify_shell_targets() {
   local verify_status=0
 
   run_chezmoi verify "${SHELL_TARGETS[@]}" || verify_status=$?
   verify_bridge || verify_status=1
+  verify_csh_startup || verify_status=1
   return "$verify_status"
 }
 
@@ -423,6 +575,7 @@ main() {
   resolve_chezmoi
   create_temp_state
   set_shell_targets
+  set_csh_rc_targets
   preflight_all
 
   case "$MODE" in
@@ -433,6 +586,10 @@ main() {
       printf 'Dry-run: shell-only setup\n'
       for target in "${SHELL_TARGETS[@]}"; do
         printf 'Plan: target=%s action=chezmoi-apply\n' "$target"
+      done
+      for index in "${!CSH_RC_TARGETS[@]}"; do
+        printf 'Plan: target=%s action=csh-startup-%s\n' \
+          "${CSH_RC_TARGETS[$index]}" "${CSH_RC_ACTIONS[$index]}"
       done
       render_shell_targets 1
       if [[ "$BRIDGE_ACTION" == create ]]; then
@@ -445,6 +602,7 @@ main() {
       render_shell_targets 0
       apply_shell_targets
       write_bridge
+      write_csh_startup
       printf 'Shell-only setup completed\n'
       ;;
     *)

@@ -7,6 +7,12 @@ readonly REPO_ROOT="${SCRIPT_DIR:h}"
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 
+source "$LIB_DIR/features.sh"
+dotfiles_load_features "$REPO_ROOT" || {
+  feature_status=$?
+  echo "ERROR: failed to load feature flags for Mac App Store setup." >&2
+  exit "$feature_status"
+}
 source "$LIB_DIR/setup_profile.sh"
 
 PROFILE=""
@@ -153,11 +159,29 @@ install_mas_apps() {
   local used_count=0
   local installed_count=0
   local failed_count=0
+  local feature_status
 
   if ! dotfiles_is_macos; then
     log "Skipping Mac App Store apps because this host is not macOS"
     return 0
   fi
+
+  if dotfiles_macos_features_enabled; then
+    feature_status=0
+  else
+    feature_status=$?
+  fi
+  case "$feature_status" in
+    0)
+      ;;
+    1)
+      log "Skipping Mac App Store apps because features.macos=false"
+      return 0
+      ;;
+    *)
+      return "$feature_status"
+      ;;
+  esac
 
   if [[ "$PROFILE" != "full" ]]; then
     log "Skipping Mac App Store apps for cli profile"

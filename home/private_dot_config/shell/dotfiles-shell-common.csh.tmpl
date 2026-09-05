@@ -1,5 +1,5 @@
 {{- $shell := .shell -}}
-{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell) -}}
+{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell "features" .features) -}}
 if ( ! $?EDITOR ) then
   setenv EDITOR "{{ shellQuote .shell.editor }}"
 else if ( "$EDITOR" == "" ) then
@@ -50,6 +50,8 @@ endif
 
 set df_ma = ""
 if ( "`uname -s`" == "Darwin" ) then
+  set df_pc = ( )
+{{- if .features.macos }}
   set df_ma = "`uname -m`"
   if ( "$df_ma" == "arm64" && -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" ) then
     set df_pc = ( "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}" "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" )
@@ -62,6 +64,7 @@ if ( "`uname -s`" == "Darwin" ) then
   else
     set df_pc = ( )
   endif
+{{- end }}
 else
   if ( -d "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}" ) then
     set df_pc = ( "$HOME/{{ shellQuote .shell.path.linuxbrew_user_sbin }}" "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}" )
