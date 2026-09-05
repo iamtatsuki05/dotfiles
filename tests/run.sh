@@ -5,6 +5,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
+readonly TEST_BASH_BIN="${DOTFILES_TEST_BASH_BIN:-/bin/bash}"
 readonly TEST_PYTHON_BIN="${DOTFILES_TEST_PYTHON:-python3}"
 
 LIST_ONLY=0
@@ -19,7 +20,7 @@ Usage:
 Options:
   --list          List checks without running them.
   --syntax-only   Run only zsh syntax checks.
-  --skip-chezmoi  Skip chezmoi source/rendered-home integration checks.
+  --skip-chezmoi  Skip chezmoi source/rendered-home/bootstrap integration checks.
   -h, --help      Show this help.
 EOF
 }
@@ -111,10 +112,12 @@ run_chezmoi_render_test() {
   if (( SKIP_CHEZMOI )); then
     echo "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
     echo "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
+    echo "SKIP: shell bootstrap integration checks disabled by --skip-chezmoi"
     return 0
   fi
 
   log_step "Rendering chezmoi source state into a temporary home"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_setup_shell.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_chezmoi_rendered_home.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render
 }

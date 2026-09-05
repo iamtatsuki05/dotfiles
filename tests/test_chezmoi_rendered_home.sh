@@ -4,76 +4,20 @@ set -euo pipefail
 
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+readonly TEST_PYTHON_BIN="${DOTFILES_TEST_PYTHON:-python3}"
 
 source "$TEST_DIR/lib/assertions.sh"
+source "$TEST_DIR/lib/platform.sh"
+source "$TEST_DIR/lib/chezmoi.sh"
+source "$TEST_DIR/lib/multi-shell/schema.sh"
 
-is_test_macos() {
-  [[ "$OSTYPE" == darwin* ]]
+typeset -g RENDER_TEMP_DIR=""
+
+cleanup_render_temp() {
+  [[ -n "$RENDER_TEMP_DIR" ]] && rm -rf -- "$RENDER_TEMP_DIR"
 }
 
-matrix_os_name() {
-  if is_test_macos; then
-    echo macos
-  else
-    echo linux
-  fi
-}
-
-emit_matrix_result() {
-  local line="$1"
-
-  echo "$line"
-  if [[ -n "${MATRIX_RESULT_LOG_DIR:-}" ]]; then
-    mkdir -p "$MATRIX_RESULT_LOG_DIR"
-    echo "$line" >> "$MATRIX_RESULT_LOG_DIR/matrix-results.log"
-  fi
-}
-
-bash_major_version() {
-  local bash_bin="$1"
-
-  "$bash_bin" -c 'printf "%s\n" "${BASH_VERSINFO[0]}"'
-}
-
-select_bash_for_major() {
-  local expected_major="$1"
-  local candidate
-  local actual_major
-  local -a candidates=()
-
-  if [[ "$expected_major" == 3 ]]; then
-    if [[ -n "${BASH32_BIN:-}" ]]; then
-      candidates=("$BASH32_BIN")
-    elif is_test_macos; then
-      candidates=(/bin/bash)
-    fi
-  else
-    if [[ -n "${BASH5_BIN:-}" ]]; then
-      candidates=("$BASH5_BIN")
-    else
-      candidates=(/run/current-system/sw/bin/bash /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash)
-    fi
-  fi
-
-  for candidate in "${candidates[@]}"; do
-    [[ "$candidate" == /* && -x "$candidate" ]] || continue
-    actual_major="$(bash_major_version "$candidate" 2>/dev/null)" || continue
-    if [[ "$actual_major" == "$expected_major" ]]; then
-      REPLY="$candidate"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-run_chezmoi() {
-  local chezmoi_bin
-
-  resolve_chezmoi || return
-  chezmoi_bin="$REPLY"
-  "$chezmoi_bin" "$@"
-}
+trap cleanup_render_temp EXIT HUP INT TERM
 
 test_chezmoi_renders_cli_profile_into_temp_home() {
   local temp_dir
@@ -83,7 +27,9 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   local apply_status=0
   local matrix_os="$(matrix_os_name)"
 
-  temp_dir="$(mktemp -d)"
+  make_temp_dir chezmoi-rendered-home
+  temp_dir="${REPLY:A}"
+  RENDER_TEMP_DIR="$temp_dir"
   temp_home="$temp_dir/home"
   temp_config="$temp_dir/chezmoi.toml"
   bash_output="$temp_dir/bash-output"
@@ -92,22 +38,15 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_file_mode_portability
 
   if ! resolve_chezmoi >/dev/null 2>&1; then
-    rm -rf "$temp_dir"
-    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=chezmoi|target=rendered-home|status=SKIP|requirement=required|reason=chezmoi-unavailable"
+    emit_matrix_record "$matrix_os" chezmoi rendered-home SKIP required chezmoi-unavailable
     return 1
   fi
-  DOTFILES_PROFILE=cli DOTFILES_REPO_ROOT="$REPO_ROOT" run_chezmoi \
-    -S "$REPO_ROOT" \
-    -D "$temp_home" \
-    --cache "$temp_dir/cache" \
-    --config "$temp_config" \
-    --persistent-state "$temp_dir/chezmoistate.boltdb" \
-    --force \
-    --no-tty \
-    apply || apply_status=$?
+  CHEZMOI_BIN="$REPLY"
+  run_chezmoi_apply "$REPO_ROOT" "$temp_home" "$REPO_ROOT" "$temp_dir/cache" "$temp_config" \
+    "$temp_dir/chezmoistate.boltdb" "$temp_dir/chezmoi.log" cli "$temp_dir" || apply_status=$?
   if (( apply_status != 0 )); then
-    emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=chezmoi|target=rendered-home|status=FAIL|requirement=required|reason=apply-failed"
-    rm -rf "$temp_dir"
+    sed -n '1,120p' "$temp_dir/chezmoi.log" >&2
+    emit_matrix_record "$matrix_os" chezmoi rendered-home FAIL required apply-failed
     return 1
   fi
 
@@ -127,7 +66,6 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_contains "$temp_home/.bashrc" 'dotfiles-shell-common.sh'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "$REPO_ROOT"
   assert_not_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" "__DOTFILES_REPO_ROOT__"
-  assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" '[ "$dotfiles_shell_name" = "bash" ]'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" 'fgcc()'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" 'fgcc_p()'
   assert_contains "$temp_home/.config/shell/dotfiles-shell-common.sh" 'claude-account()'
@@ -144,11 +82,35 @@ test_chezmoi_renders_cli_profile_into_temp_home() {
   assert_not_exists "$temp_home/.cshrc"
   assert_not_exists "$temp_home/.tcshrc"
 
+  require_python_tomllib
+  local marker_root="$temp_dir/root __MISE_OPEN__ __MISE_CLOSE__"
+  local marker_home="$temp_dir/marker-home"
+  local marker_config="$temp_dir/marker-chezmoi.toml"
+  local marker_log="$temp_dir/marker-chezmoi.log"
+  run_chezmoi_apply "$REPO_ROOT" "$marker_home" "$marker_root" "$temp_dir/marker-cache" "$marker_config" \
+    "$temp_dir/marker-state.boltdb" "$marker_log" cli "$temp_dir" || {
+    sed -n '1,120p' "$marker_log" >&2
+    fail 'chezmoi apply failed for literal mise placeholder root'
+  }
+  assert_file "$marker_home/.config/mise/config.toml"
+  "$TEST_PYTHON_BIN" - "$marker_home/.config/mise/config.toml" "$marker_root" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+config = tomllib.loads(Path(sys.argv[1]).read_text())
+expected_root = sys.argv[2]
+task_dirs = [task.get("dir") for task in config.get("tasks", {}).values() if isinstance(task, dict) and "dir" in task]
+if expected_root not in task_dirs:
+    raise SystemExit("literal mise placeholder root was not preserved in task dirs")
+if not any("__MISE_OPEN__" in value and "__MISE_CLOSE__" in value for value in task_dirs):
+    raise SystemExit("literal mise placeholder markers were decoded in task dirs")
+PY
+
   mkdir -p "$temp_home/.local/bin"
   local matrix_status=0
   run_rendered_bash_matrix "$temp_home" "$bash_output" "$matrix_os" || matrix_status=$?
 
-  rm -rf "$temp_dir"
   return "$matrix_status"
 }
 
@@ -159,20 +121,29 @@ run_rendered_bash_matrix() {
   local expected_major
   local bash_bin
   local bash_version
-  local bash_major
+  local actual_major
   local smoke_status
+  local startup_file="$temp_home/bash-env-startup"
+  local startup_marker="$temp_home/bash-env-startup-marker"
+  local cdpath_marker="$temp_home/bash-cdpath-marker"
   local matrix_status=0
 
+  print -r -- ": > ${(qqq)startup_marker}; : > ${(qqq)cdpath_marker}" > "$startup_file"
+
   for expected_major in 3 5; do
-    if select_bash_for_major "$expected_major"; then
+    if select_bash "$expected_major"; then
       bash_bin="$REPLY"
       bash_version="$("$bash_bin" --version | head -1)"
-      bash_major="$(bash_major_version "$bash_bin")"
+      actual_major="$(bash_major "$bash_bin")"
       smoke_status=0
-      HOME="$temp_home" \
+      rm -f -- "$startup_marker" "$cdpath_marker"
+      BASH_ENV="$startup_file" ENV="$startup_file" CDPATH="$cdpath_marker" \
+        env -i \
+        HOME="$temp_home" \
         XDG_CONFIG_HOME="$temp_home/.config" \
         USER=dotfiles-test \
         DOTFILES_REPO_ROOT="$REPO_ROOT" \
+        SHELL="$bash_bin" \
         PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
         "$bash_bin" --noprofile --norc -c '
           . "$HOME/.bash_profile"
@@ -183,19 +154,21 @@ run_rendered_bash_matrix() {
             *) printf "local_bin_in_path=no\n" ;;
           esac
         ' > "$bash_output" 2>&1 || smoke_status=$?
+      assert_not_exists "$startup_marker"
+      assert_not_exists "$cdpath_marker"
       if (( smoke_status != 0 )); then
-        emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=FAIL|requirement=required|reason=smoke-failed"
+        emit_matrix_record "$matrix_os" "bash${expected_major}" rendered-home FAIL required smoke-failed
         matrix_status=1
         continue
       fi
       assert_contains "$bash_output" "dotfiles_shell_name=bash"
       assert_contains "$bash_output" "DOTFILES_REPO_ROOT=$REPO_ROOT"
       assert_contains "$bash_output" "local_bin_in_path=yes"
-      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash$bash_major|target=rendered-home|status=PASS|requirement=required|reason=$bash_version"
+      emit_matrix_record "$matrix_os" "bash$actual_major" rendered-home PASS required "$bash_version"
     elif [[ "$expected_major" == 3 ]] && ! is_test_macos; then
-      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=SKIP|requirement=not-applicable|reason=macos-only"
+      emit_matrix_record "$matrix_os" "bash${expected_major}" rendered-home SKIP not-applicable macos-only
     else
-      emit_matrix_result "MATRIX_RESULT|os=$matrix_os|shell=bash${expected_major}|target=rendered-home|status=SKIP|requirement=required|reason=bash${expected_major}-unavailable"
+      emit_matrix_record "$matrix_os" "bash${expected_major}" rendered-home SKIP required "bash${expected_major}-unavailable"
       matrix_status=1
     fi
   done

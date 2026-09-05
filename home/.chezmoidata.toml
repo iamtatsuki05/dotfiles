@@ -8,14 +8,21 @@ data = ".local/share"
 state = ".local/state"
 
 [shell.path]
-home_relative = [".local/bin", ".nix-profile/bin"]
-darwin_homebrew = ["/opt/homebrew/sbin", "/opt/homebrew/bin"]
-linuxbrew_user_relative = [".linuxbrew/sbin", ".linuxbrew/bin"]
-linuxbrew_system = ["/home/linuxbrew/.linuxbrew/sbin", "/home/linuxbrew/.linuxbrew/bin"]
-user_profile_root = "/etc/profiles/per-user"
-user_profile_suffix = "bin"
-absolute = ["/run/current-system/sw/bin", "/nix/var/nix/profiles/default/bin"]
-state_relative = "nix/profile/bin"
+home_local_bin = ".local/bin"
+home_nix_profile_bin = ".nix-profile/bin"
+darwin_arm64_homebrew_sbin = "/opt/homebrew/sbin"
+darwin_arm64_homebrew_bin = "/opt/homebrew/bin"
+darwin_x86_64_homebrew_sbin = "/usr/local/sbin"
+darwin_x86_64_homebrew_bin = "/usr/local/bin"
+linuxbrew_user_sbin = ".linuxbrew/sbin"
+linuxbrew_user_bin = ".linuxbrew/bin"
+linuxbrew_system_sbin = "/home/linuxbrew/.linuxbrew/sbin"
+linuxbrew_system_bin = "/home/linuxbrew/.linuxbrew/bin"
+nix_user_profile_root = "/etc/profiles/per-user"
+nix_user_profile_bin = "bin"
+nix_system_bin = "/run/current-system/sw/bin"
+nix_default_bin = "/nix/var/nix/profiles/default/bin"
+nix_state_relative = "nix/profile/bin"
 
 [shell.aliases]
 ginit = ["gcloud", "init"]

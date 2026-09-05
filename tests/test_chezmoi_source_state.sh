@@ -21,7 +21,7 @@ test_copied_source_state_matches_current_sources() {
   assert_same_file "$REPO_ROOT/config/shell/secrets.env.example" "$REPO_ROOT/home/private_dot_config/shell/create_private_secrets.env"
   assert_same_file "$REPO_ROOT/config/shell/bashrc.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bashrc"
   assert_same_file "$REPO_ROOT/config/shell/bash_profile.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bash_profile"
-  assert_same_file "$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl" "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh"
+  assert_not_exists "$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
   assert_not_exists "$REPO_ROOT/home/dot_Brewfile.tmpl"
   assert_not_exists "$REPO_ROOT/home/dot_zshrc"
   assert_not_exists "$REPO_ROOT/home/private_dot_config/nvim/init.vim"
@@ -36,6 +36,7 @@ test_templates_keep_static_integrity() {
   local wrapper="$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl"
   local fish="$REPO_ROOT/home/private_dot_config/fish/conf.d/zz-dotfiles.fish.tmpl"
   local csh="$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.csh.tmpl"
+  local validator="$REPO_ROOT/home/.chezmoitemplates/shell-data-validate"
 
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
@@ -48,36 +49,30 @@ test_templates_keep_static_integrity() {
   assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
   assert_contains "$wrapper" 'includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" $shellCommonContext'
   assert_not_contains "$wrapper" 'includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" .'
-  assert_not_contains "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" '.chezmoi'
+  assert_not_contains "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" '.chezmoi.sourceDir'
   assert_not_contains "$wrapper" 'replace "__DOTFILES_REPO_ROOT__"'
   assert_not_contains "$wrapper" '{{ include ".chezmoitemplates/dotfiles-shell-common.sh"'
   assert_contains "$REPO_ROOT/home/.chezmoidata.toml" '[shell]'
   assert_contains "$REPO_ROOT/home/.chezmoidata.toml" '[shell.aliases]'
   assert_contains "$REPO_ROOT/home/.chezmoidata.toml" '[shell.mise]'
+  assert_file "$validator"
+  assert_contains "$validator" 'home_local_bin'
+  assert_contains "$validator" 'darwin_x86_64_homebrew_bin'
+  assert_contains "$validator" 'nix_state_relative'
   assert_not_contains "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" '__DOTFILES_REPO_ROOT__'
+  for native_template in "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" "$fish" "$csh"; do
+    assert_contains "$native_template" 'shell-data-validate'
+  done
   assert_contains "$fish" 'status is-interactive'
   assert_contains "$csh" '$?prompt'
   assert_not_contains "$fish" 'secrets.env'
   assert_not_contains "$csh" 'secrets.env'
 }
 
-test_common_template_is_not_executed_raw() {
-  local forbidden_variable="SHELL_COMMON_TEMPLATE_"'FILE='
-  local forbidden_source='source "$REPO_ROOT/config/'"shell/"
-  local obsolete_helper="run_source_"'bash_matrix'
-  assert_not_contains "$REPO_ROOT/tests/test_chezmoi_source_state.sh" "$forbidden_variable"
-  assert_not_contains "$REPO_ROOT/tests/test_chezmoi_source_state.sh" "$forbidden_source"
-  assert_not_contains "$REPO_ROOT/tests/test_chezmoi_source_state.sh" "$obsolete_helper"
-  assert_contains "$REPO_ROOT/tests/test_multi_shell_config.sh" '--selector source|render'
-  assert_contains "$REPO_ROOT/tests/test_multi_shell_config.sh" 'run_source_matrix'
-  assert_contains "$REPO_ROOT/tests/test_multi_shell_config.sh" 'target=chezmoi-source'
-}
-
 main() {
   test_chezmoi_root_points_to_home
   test_copied_source_state_matches_current_sources
   test_templates_keep_static_integrity
-  test_common_template_is_not_executed_raw
   print -r -- 'chezmoi source state tests passed'
 }
 

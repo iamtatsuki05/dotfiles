@@ -11,7 +11,8 @@ secret value を入れてはいけません。
 管理対象のローカルファイルは `~/.config/shell/secrets.env` です。初回 setup では、
 ファイルが存在しない場合に限り、chezmoi が
 `config/shell/secrets.env.example` から生成します。そのマシンで必要な値だけを
-入力し、shell を再起動してください。
+入力し、shell を再起動してください。Bash 専用の `scripts/setup_shell.sh` は、この
+file を意図的に変更しません。
 
 主な変数名は次のとおりです。
 
@@ -25,8 +26,14 @@ export OPENCODE_API_KEY=""
 export DEVIN_API_KEY=""
 ```
 
-実際の webhook URL、token、password、private key、export 済み credential を
-`config/`、`home/`、文書、test fixture、session log に入れないでください。
+実際の認証情報を `config/`、`home/`、文書、test fixture、session log に入れないで
+ください。対象には次のような情報が含まれます。
+
+- 実際の webhook URL
+- token または password
+- private key
+- export 済み credential
+
 差分を共有する前に、tracked file と untracked file の両方を確認します。
 
 ## Agent sync はローカルの環境ファイルを生成する
@@ -45,26 +52,19 @@ backup、diagnostic、support bundle には含めないでください。
 
 ## Shell 起動設定の管理場所
 
-chezmoi は bash 起動ファイルと `~/.config/shell/dotfiles-shell-common.sh` を
-生成します。Home Manager の zsh 設定も、存在する場合は同じ共通ファイルを
-source します。共通の環境読込は canonical template に置き、secret value を
-各 shell config に複製しないでください。
-
-Bash/Zsh の共通 file は `~/.config/shell/secrets.env` を source できる管理経路であり、
-Bash/Zsh 固有の `DOTFILES_REPO_ROOT` も持ちます。任意の Fish adapter は非 secret の
-環境変数、PATH、interactive な safe alias を提供し、interactive な Fish session では
-公式の `mise activate fish` hook も source します。standalone の csh/tcsh adapter は
-限定した非 secret の環境変数、PATH、prompt 内の safe alias を提供しますが、mise
-activation は行いません。どちらの adapter も `secrets.env` を source せず、その値を
-展開・shell state へ複製せず、`DOTFILES_REPO_ROOT` も提供しません。Fish または csh/tcsh
-から認証が必要な tool を使う場合は、承認済みの credential store か明示的な command
-を使ってください。
+起動時の役割と固定 managed path は、[設定の管理境界](configuration-ownership_JA.md#shell-の役割と起動境界)に
+集約しています。custom `XDG_CONFIG_HOME` と Fish/csh/tcsh adapter の境界も同じページで
+確認できます。Bash 専用の `scripts/setup_shell.sh` は `secrets.env` を allowlist から
+除外します。secret の読込は管理対象の Bash/Zsh 経路に限定し、shell adapter や生成 file
+へ secret value を複製しないでください。
 
 ## 適用前に変更内容を確認する
 
 状態を書き換えない mode がある場合は、先に利用します。
 
 ```sh
+bash scripts/setup_shell.sh --dry-run
+
 zsh scripts/chezmoi_apply.sh --dry-run
 zsh scripts/chezmoi_apply.sh --verify
 zsh scripts/nix_install.sh --cli-only --dry-run

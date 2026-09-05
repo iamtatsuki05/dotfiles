@@ -11,6 +11,26 @@ readonly CI_WORKFLOW="$REPO_ROOT/.github/workflows/dotfiles-test.yml"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 
 source "$TEST_DIR/lib/assertions.sh"
+source "$TEST_DIR/lib/chezmoi.sh"
+
+typeset -r -a RUNNER_TEST_FILES=(
+  tests/test_agent_delegation_analysis.sh
+  tests/test_agent_html_preview_review.sh
+  tests/test_agent_run_compact.py
+  tests/test_agent_sync.sh
+  tests/test_agent_support_matrix.sh
+  tests/test_agent_skill_upstreams.sh
+  tests/test_claude_account.sh
+  tests/test_chezmoi_migration.sh
+  tests/test_dotfiles_test_runner.sh
+  tests/test_hermes_agent_setup.sh
+  tests/test_japanese_prose_lint.sh
+  tests/test_nix_migration.sh
+  tests/test_setup_shell.sh
+  tests/test_chezmoi_source_state.sh
+  tests/test_multi_shell_config.sh
+  tests/test_chezmoi_rendered_home.sh
+)
 
 write_fixture_zsh_script() {
   local file_path="$1"
@@ -21,6 +41,19 @@ write_fixture_zsh_script() {
     print -r -- "#!$TEST_ZSH_BIN"
     print -r -- "set -euo pipefail"
     print -r -- "print -r -- ${(qqq)message}"
+  } > "$file_path"
+  chmod +x "$file_path"
+}
+
+write_fixture_bash_script() {
+  local file_path="$1"
+  local message="$2"
+
+  mkdir -p "${file_path:h}"
+  {
+    print -r -- '#!/bin/bash'
+    print -r -- 'set -euo pipefail'
+    print -r -- "printf '%s\\n' ${(qqq)message}"
   } > "$file_path"
   chmod +x "$file_path"
 }
@@ -56,6 +89,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_hermes_agent_setup.sh" "unit:hermes"
   write_fixture_zsh_script "$repo/tests/test_japanese_prose_lint.sh" "unit:japanese-prose-lint"
   write_fixture_zsh_script "$repo/tests/test_nix_migration.sh" "unit:nix"
+  write_fixture_bash_script "$repo/tests/test_setup_shell.sh" "unit:setup-shell"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_source_state.sh" "source-state"
   write_fixture_zsh_script "$repo/tests/test_chezmoi_rendered_home.sh" "chezmoi-render-test-ran"
   print -r -- "{}" > "$repo/flake.nix"
@@ -78,6 +112,7 @@ test_test_runner_exists_and_lists_checks() {
   assert_contains "$TEST_RUNNER" "tests/test_claude_account.sh"
   assert_contains "$TEST_RUNNER" "tests/test_hermes_agent_setup.sh"
   assert_contains "$TEST_RUNNER" "tests/test_multi_shell_config.sh"
+  assert_contains "$TEST_RUNNER" "tests/test_setup_shell.sh"
   assert_contains "$TEST_RUNNER" "--selector source"
   assert_contains "$TEST_RUNNER" "--selector render"
   assert_contains "$TEST_RUNNER" "tests/test_japanese_prose_lint.sh"
@@ -95,12 +130,9 @@ test_test_runner_exists_and_lists_checks() {
 
 test_test_runner_references_existing_test_files() {
   local relative_path
-  local -a referenced_tests
 
-  referenced_tests=("${(@f)$(sed -n 's|.*\$REPO_ROOT/\(tests/[^\"]*\)".*|\1|p' "$TEST_RUNNER")}")
-  (( ${#referenced_tests[@]} > 0 )) || fail "expected test runner to reference test files"
-
-  for relative_path in "${referenced_tests[@]}"; do
+  for relative_path in "${RUNNER_TEST_FILES[@]}"; do
+    assert_contains "$TEST_RUNNER" "$relative_path"
     assert_file "$REPO_ROOT/$relative_path"
   done
 }
@@ -122,7 +154,7 @@ test_shared_chezmoi_resolver_finds_home_local_bin_outside_path() {
         source "$1"
         resolve_chezmoi
         print -r -- "$REPLY"
-      ' _ "$TEST_DIR/lib/assertions.sh"
+      ' _ "$TEST_DIR/lib/chezmoi.sh"
   )" || rc=$?
   (( rc == 0 )) || fail 'shared chezmoi resolver failed in a temp HOME'
   [[ "$output" == "$chezmoi_bin" ]] || fail "shared chezmoi resolver selected an unexpected path: $output"
@@ -179,7 +211,7 @@ resolver_probe() {
       source "$1"
       resolve_chezmoi || exit $?
       print -r -- "$REPLY"
-    ' _ "$TEST_DIR/lib/assertions.sh"
+    ' _ "$TEST_DIR/lib/chezmoi.sh"
 }
 
 test_shared_chezmoi_resolver_rejects_path_directory_and_falls_back_to_mise() {
@@ -344,6 +376,35 @@ test_shared_chezmoi_resolver_accepts_symlink_to_regular_executable() {
   rm -rf "$fixture"
 }
 
+test_shared_chezmoi_apply_isolated_and_refresh_free() {
+  local fixture fake log src dest config state rc=0
+
+  make_temp_dir "chezmoi-apply-test"
+  fixture="${REPLY:A}"
+  fake="$fixture/chezmoi"
+  log="$fixture/apply.log"
+  src="$fixture/source"
+  dest="$fixture/home"
+  config="$fixture/config.toml"
+  state="$fixture/state.boltdb"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'set -eu'
+    print -r -- "printf '%s\\n' \"ENV_HOME=\$HOME\" \"ENV_CONFIG=\${XDG_CONFIG_HOME:-}\" >> ${(qqq)log}"
+    print -r -- 'for arg in "$@"; do printf "ARG=%s\n" "$arg" >> '"${(qqq)log}"'; done'
+  } > "$fake"
+  chmod +x "$fake"
+  CHEZMOI_BIN="$fake"
+  run_chezmoi_apply "$src" "$dest" "$fixture/root" "$fixture/cache" "$config" "$state" "$log" cli "$fixture/tmp" || rc=$?
+  (( rc == 0 )) || fail "shared chezmoi apply helper failed: $rc"
+  assert_contains "$log" "ENV_HOME=$dest"
+  assert_contains "$log" "ENV_CONFIG=$dest/.config"
+  [[ "$(grep -c '^ARG=--refresh-externals=never$' "$log")" == 1 ]] || fail 'chezmoi apply must disable external refresh exactly once'
+  assert_contains "$log" 'ARG=--no-tty'
+
+  rm -rf "$fixture"
+}
+
 test_multi_shell_source_skips_only_when_chezmoi_is_unavailable() {
   local fixture output python_bin rc=0
 
@@ -447,6 +508,7 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "MATRIX_RESULT|os=linux|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-skipped"
   assert_output_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
   assert_output_contains "$output" "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
+  assert_output_contains "$output" "SKIP: shell bootstrap integration checks disabled by --skip-chezmoi"
   assert_output_contains "$output" "dotfiles tests passed"
   assert_not_contains "$output" "source-resolver-called"
   assert_not_contains "$output" "chezmoi-render-test-ran"
@@ -469,6 +531,7 @@ test_test_runner_runs_render_checks_by_default() {
   assert_output_contains "$output" "chezmoi-render-test-ran"
   assert_output_contains "$output" "multi-shell-render"
   assert_output_contains "$output" "source-resolver-called"
+  assert_output_contains "$output" "unit:setup-shell"
   assert_output_contains "$output" "MATRIX_RESULT|os=linux|shell=chezmoi|target=chezmoi-source|status=SKIP|requirement=not-applicable|reason=chezmoi-unavailable"
   assert_not_contains "$output" "SKIP: chezmoi rendered-home checks disabled by --skip-chezmoi"
   assert_not_contains "$output" "SKIP: multi-shell render/runtime checks disabled by --skip-chezmoi"
@@ -497,6 +560,17 @@ test_multi_shell_required_bash5_skip_has_failure_summary() {
   {
     print -r -- '#!/bin/sh'
     print -r -- 'set -eu'
+    print -r -- 'case "$*" in'
+    print -r -- '  *MISE_BIN*)'
+    print -r -- '    route_global="${MISE_GLOBAL_CONFIG_FILE:-}"'
+    print -r -- '    if [ -z "$route_global" ] && [ -r "$HOME/.config/mise/config.toml" ]; then route_global="$HOME/.config/mise/config.toml"; fi'
+    print -r -- '    route_display="$route_global"'
+    print -r -- '    if [ -z "$route_global" ] && [ -z "${MISE_GLOBAL_CONFIG_FILE+x}" ]; then route_display=unset; fi'
+    print -r -- '    printf "global=%s\n" "$route_display"'
+    print -r -- '    if [ -z "$route_global" ]; then printf "%s\n" "[]"; elif [ "$route_global" != "$HOME/.config/mise/config.toml" ] && [ -r "$HOME/.config/mise/config.toml" ]; then printf "[%s\n" "  {\"path\": \"$HOME/.config/mise/config.toml\", \"tools\": []}, {\"path\": \"$route_global\", \"tools\": []}]"; else printf "[%s\n" "  {\"path\": \"$route_global\", \"tools\": []}]"; fi'
+    print -r -- '    exit 0'
+    print -r -- '    ;;'
+    print -r -- 'esac'
     print -r -- 'mise_path="$(command -v mise)"'
     print -r -- 'fixture_dir="$(dirname "$mise_path")/.."'
     print -r -- 'gcloud_log="$fixture_dir/gcloud.log"'
@@ -527,6 +601,46 @@ test_multi_shell_required_bash5_skip_has_failure_summary() {
   (( exit_status != 0 )) || fail 'required Bash 5 skip must keep a non-zero status'
   assert_output_contains "$output" 'shell=bash5|target=rendered-home|status=SKIP|requirement=required|reason=bash5-unavailable'
   assert_output_contains "$output" 'shell=bash|target=hostile-repo-root|status=SKIP|requirement=not-applicable|reason=no-supported-bash'
+  assert_output_contains "$output" 'multi-shell render/runtime checks failed'
+  assert_not_contains "$output" 'multi-shell render/runtime checks passed'
+
+  rm -rf "$repo"
+}
+
+test_multi_shell_required_bash5_runtime_failure_has_structured_summary() {
+  local repo fake_bash output exit_status
+
+  make_temp_dir "dotfiles-runtime-failure-test"
+  repo="${REPLY:A}"
+  fake_bash="$repo/fake-bash"
+  output="$repo/output.log"
+  {
+    print -r -- '#!/bin/sh'
+    print -r -- 'set -eu'
+    print -r -- 'case "$*" in'
+    print -r -- '  *BASH_VERSINFO*) printf "%s\n" 5 ;;'
+    print -r -- '  *MISE_BIN*)'
+    print -r -- '    route_global="${MISE_GLOBAL_CONFIG_FILE:-}"'
+    print -r -- '    if [ -z "$route_global" ] && [ -r "$HOME/.config/mise/config.toml" ]; then route_global="$HOME/.config/mise/config.toml"; fi'
+    print -r -- '    route_display="$route_global"'
+    print -r -- '    if [ -z "$route_global" ] && [ -z "${MISE_GLOBAL_CONFIG_FILE+x}" ]; then route_display=unset; fi'
+    print -r -- '    printf "global=%s\n" "$route_display"'
+    print -r -- '    if [ -z "$route_global" ]; then printf "%s\n" "[]"; elif [ "$route_global" != "$HOME/.config/mise/config.toml" ] && [ -r "$HOME/.config/mise/config.toml" ]; then printf "[%s\n" "  {\"path\": \"$HOME/.config/mise/config.toml\", \"tools\": []}, {\"path\": \"$route_global\", \"tools\": []}]"; else printf "[%s\n" "  {\"path\": \"$route_global\", \"tools\": []}]"; fi'
+    print -r -- '    exit 0 ;;'
+    print -r -- '  *) exit 17 ;;'
+    print -r -- 'esac'
+  } > "$fake_bash"
+  chmod +x "$fake_bash"
+  [[ "$("$fake_bash" BASH_VERSINFO)" == 5 ]] || fail 'fake Bash runtime fixture must report supported major 5'
+
+  set +e
+  BASH5_BIN="$fake_bash" "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_multi_shell_config.sh" --selector render > "$output" 2>&1
+  exit_status=$?
+  set -e
+
+  (( exit_status != 0 )) || fail 'required Bash 5 runtime failure must return non-zero'
+  assert_output_contains "$output" 'shell=bash5|target=rendered-home|status=FAIL|requirement=required|reason=smoke-failed'
+  assert_output_contains "$output" 'shell=zsh|target=rendered-home|status=PASS|requirement=required'
   assert_output_contains "$output" 'multi-shell render/runtime checks failed'
   assert_not_contains "$output" 'multi-shell render/runtime checks passed'
 
@@ -618,6 +732,9 @@ test_mise_tasks_include_nix_migration_flow() {
 test_assertions_lib_isolates_xdg_base_directories() {
   assert_contains "$TEST_ASSERTIONS_LIB" 'unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME'
   [[ -z "${XDG_CONFIG_HOME-}" ]] || fail "expected XDG_CONFIG_HOME to be unset after sourcing tests/lib/assertions.sh"
+  [[ -z "${XDG_CACHE_HOME-}" ]] || fail "expected XDG_CACHE_HOME to be unset after sourcing tests/lib/assertions.sh"
+  [[ -z "${XDG_DATA_HOME-}" ]] || fail "expected XDG_DATA_HOME to be unset after sourcing tests/lib/assertions.sh"
+  [[ -z "${XDG_STATE_HOME-}" ]] || fail "expected XDG_STATE_HOME to be unset after sourcing tests/lib/assertions.sh"
 }
 
 test_github_actions_runs_dotfiles_tests_on_macos_and_ubuntu() {
@@ -639,12 +756,14 @@ main() {
   test_shared_chezmoi_resolver_rejects_mise_control_byte_output
   test_shared_chezmoi_resolver_rejects_mise_nonzero_status_with_valid_output
   test_shared_chezmoi_resolver_accepts_symlink_to_regular_executable
+  test_shared_chezmoi_apply_isolated_and_refresh_free
   test_multi_shell_source_skips_only_when_chezmoi_is_unavailable
   test_multi_shell_source_skip_avoids_chezmoi_resolution
   test_test_runner_syntax_only_stops_before_unit_tests
   test_test_runner_skip_chezmoi_keeps_fast_checks
   test_test_runner_runs_render_checks_by_default
   test_multi_shell_required_bash5_skip_has_failure_summary
+  test_multi_shell_required_bash5_runtime_failure_has_structured_summary
   test_mise_task_runs_test_runner_from_repo_root
   test_mise_tasks_include_nix_migration_flow
   test_assertions_lib_isolates_xdg_base_directories

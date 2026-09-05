@@ -7,6 +7,9 @@ on:
   schedule:
     - cron: "0 0 * * 5"
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test on ${{ matrix.os }}
@@ -17,30 +20,115 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
+          - macos-15-intel
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install zsh on Ubuntu
+      - name: Install shell runtimes on Ubuntu
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y zsh
+          sudo apt-get install -y bash zsh fish csh tcsh diffutils
 
-      - name: Install Bash 5 on macOS
+      - name: Select genuine csh on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          test -x /usr/bin/bsd-csh
+          dpkg -L csh | grep -Fx '/usr/bin/bsd-csh'
+          test "$(stat -c '%d:%i' /usr/bin/bsd-csh)" != "$(stat -c '%d:%i' /usr/bin/tcsh)"
+          csh_bin_dir="$RUNNER_TEMP/dotfiles-csh-bin"
+          mkdir -p "$csh_bin_dir"
+          ln -sf /usr/bin/bsd-csh "$csh_bin_dir/csh"
+          echo "$csh_bin_dir" >> "$GITHUB_PATH"
+          echo 'DOTFILES_TEST_CSH_BIN=/usr/bin/bsd-csh' >> "$GITHUB_ENV"
+
+      - name: Install Bash 5 and Fish on macOS
         if: runner.os == 'macOS'
         run: |
-          brew install bash
+          brew install bash fish
           bash5_path="$(brew --prefix bash)/bin/bash"
           test -x "$bash5_path"
           "$bash5_path" -c '(( BASH_VERSINFO[0] == 5 ))'
           echo "BASH5_BIN=$bash5_path" >> "$GITHUB_ENV"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Install chezmoi
         run: |
           sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Run Bash shell-only bootstrap tests
+        env:
+          DOTFILES_TEST_REQUIRE_FISH: "1"
+          DOTFILES_TEST_REQUIRE_CSH: "1"
+          DOTFILES_TEST_REQUIRE_TCSH: "1"
+        run: /bin/bash tests/test_setup_shell.sh
+
       - name: Run dotfiles tests
         run: /bin/zsh tests/run.sh
+
+  shell-only-linux:
+    name: Shell-only on ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-bookworm
+            image: debian:bookworm-slim
+            require_csh: "1"
+          - name: fedora-44
+            image: fedora:44
+            require_csh: "0"
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - name: Install shell runtimes
+        shell: bash
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends bash fish csh tcsh curl ca-certificates git diffutils
+          else
+            dnf install -y bash fish tcsh curl ca-certificates git diffutils
+          fi
+
+      - name: Select genuine csh on Debian
+        if: matrix.require_csh == '1'
+        shell: bash
+        run: |
+          test -x /usr/bin/bsd-csh
+          dpkg -L csh | grep -Fx '/usr/bin/bsd-csh'
+          test "$(stat -c '%d:%i' /usr/bin/bsd-csh)" != "$(stat -c '%d:%i' /usr/bin/tcsh)"
+          echo 'DOTFILES_TEST_CSH_BIN=/usr/bin/bsd-csh' >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install chezmoi in the container
+        shell: bash
+        run: |
+          mkdir -p /tmp/chezmoi-bin
+          sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /tmp/chezmoi-bin
+
+      - name: Run Bash shell-only bootstrap test
+        shell: bash
+        env:
+          PATH: /tmp/chezmoi-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          DOTFILES_TEST_REQUIRE_FISH: "1"
+          DOTFILES_TEST_REQUIRE_CSH: ${{ matrix.require_csh }}
+          DOTFILES_TEST_REQUIRE_TCSH: "1"
+        run: bash tests/test_setup_shell.sh

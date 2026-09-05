@@ -23,7 +23,8 @@ readonly COMMAND_LIB="$REPO_ROOT/scripts/lib/command.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
-readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
+readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh"
+readonly SHELL_DATA_VALIDATE_FILE="$REPO_ROOT/home/.chezmoitemplates/shell-data-validate"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly WAZA_AGENT_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/eval.yaml"
 readonly WAZA_MARKDOWN_DOCS_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/model.yaml"
@@ -1086,8 +1087,8 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_ZSH_MODULE" '/opt/homebrew/share/zsh/site-functions/_brew'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'PROMPT_MACHINE_EMOJI'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'prompt-machine-emoji'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'hm-session-vars.sh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'hm-session-vars.sh'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" "brew shellenv"
 
   assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'programs.neovim.enable = true'
@@ -2066,7 +2067,7 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_not_contains "$MISE_CONFIG" 'brew_dump.sh'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.enable = true'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'dotfiles-shell-common.sh'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.oh-my-zsh.enable = true'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'HOMEBREW_PREFIX'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'brew shellenv'
@@ -3439,8 +3440,9 @@ test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$BASH_PROFILE_TEMPLATE_FILE" '. "$HOME/.bashrc"'
   assert_not_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}'
-  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '$HOME/.nix-profile/bin'
-  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '[ "$dotfiles_shell_name" = "bash" ]'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'home_nix_profile_bin'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'dotfiles_mise_activate_posix'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'case "$-" in'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'mise activate "$dotfiles_shell_name"'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'hm-session-vars.sh'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'shell/secrets.env'
@@ -3448,6 +3450,8 @@ test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'fgcc_rinit()'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'fgcc_p()'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'gstop_instance()'
+  assert_contains "$SHELL_DATA_VALIDATE_FILE" 'home_local_bin'
+  assert_contains "$SHELL_DATA_VALIDATE_FILE" 'darwin_x86_64_homebrew_bin'
   assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
   assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
   assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '.chezmoitemplates/dotfiles-shell-common.sh'

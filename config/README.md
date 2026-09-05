@@ -2,8 +2,9 @@
 
 Japanese version: [README_JA.md](README_JA.md)
 
-This directory contains source configuration files used by Nix, chezmoi templates, and setup scripts.
-Files here are not necessarily copied directly into `$HOME`; many are rendered or imported by scripts.
+This directory contains source configuration files used by Nix, chezmoi
+templates, and setup scripts. Files here are not necessarily copied directly
+into `$HOME`; many are rendered or imported by scripts.
 
 ## Layout
 
@@ -15,7 +16,7 @@ Files here are not necessarily copied directly into `$HOME`; many are rendered o
 | `mouse/` | Pointing device configuration exports. |
 | `nix/` | Nix, nix-darwin, Home Manager, package lists, and migration reports. |
 | `nvim/` | Neovim config source used by Home Manager. |
-| `shell/` | Shell templates and local secret examples used by chezmoi. |
+| `shell/` | Shell startup wrappers and the local secret example used by chezmoi. |
 | `zellij/` | Zellij config source. |
 
 Some empty or agent-named directories may exist as compatibility placeholders.
@@ -24,10 +25,17 @@ Check the scripts that consume a directory before removing it.
 ## Update Rules
 
 - If a file is rendered into `home/`, keep the source and generated chezmoi state aligned.
+- Edit `home/.chezmoidata.toml` for shell integration values (`EDITOR`, XDG
+  defaults, named PATH candidates, aliases, and shell mise policy). Do not
+  duplicate those values in Nix or in a second shell template.
+- The Bash/Zsh common implementation lives only in
+  `home/.chezmoitemplates/dotfiles-shell-common.sh`; the shell files under
+  `config/shell/` are small wrappers or examples.
 - Do not commit real secrets. Use `shell/secrets.env.example` as the tracked template.
 - Nix package and module changes usually require checks from `nix/README.md`.
 - mise tool changes should stay aligned with `home/.chezmoitemplates/mise-config.toml`.
-- Shell ownership and startup boundaries are documented in [Shell roles and startup boundaries](../docs/configuration-ownership.md#shell-roles-and-startup-boundaries).
+- Shell ownership, fixed managed paths, and the Bash-only bootstrap are
+  documented in [Configuration ownership](../docs/configuration-ownership.md).
 
 ## Common Checks
 
