@@ -43,7 +43,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                 elif args[:2] == ["terminal", "wait"]:
                     print(json.dumps({{"ok": True, "result": {{"wait": {{"satisfied": True}}}}}}))
                 elif args[:2] == ["terminal", "show"]:
-                    print(json.dumps({{"ok": True, "result": {{"terminal": {{"preview": "Summarize recent commits gpt-5.6-sol medium · ~/src/dotfiles"}}}}}}))
+                    print(json.dumps({{"ok": True, "result": {{"terminal": {{"preview": "Summarize recent commits gpt-6-astra medium · ~/src/dotfiles"}}}}}}))
                 elif args[:2] == ["orchestration", "dispatch"]:
                     if os.environ.get("FAKE_ORCA_BAD_DISPATCH") == "1":
                         dispatch_task = "task_other"
@@ -119,7 +119,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                         "worker": {
                             "provider": "codex",
                             "transport": "direct",
-                            "model": "gpt-5.6-sol",
+                            "model": "gpt-6-astra",
                             "effort": "medium",
                             "permission": "workspace-write",
                             "instructions": "worker snapshot",
@@ -128,7 +128,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                         "reviewer": {
                             "provider": "codex",
                             "transport": "direct",
-                            "model": "gpt-5.6-sol",
+                            "model": "gpt-6-astra",
                             "effort": "high",
                             "permission": "read-only",
                             "instructions": "reviewer snapshot",
@@ -585,7 +585,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                     return {"wait": {"satisfied": True}}
                 if args[:2] == ["terminal", "show"]:
                     return {
-                        "terminal": {"preview": "gpt-5.6-sol medium · ~/src/dotfiles"}
+                        "terminal": {"preview": "gpt-6-astra medium · ~/src/dotfiles"}
                     }
                 if args[:2] == ["orchestration", "worker-start"]:
                     return {
@@ -655,7 +655,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                     return {"wait": {"satisfied": True}}
                 if args[:2] == ["terminal", "show"]:
                     return {
-                        "terminal": {"preview": "gpt-5.6-sol medium · ~/src/dotfiles"}
+                        "terminal": {"preview": "gpt-6-astra medium · ~/src/dotfiles"}
                     }
                 if args[:2] == ["orchestration", "worker-start"]:
                     return {
@@ -1185,7 +1185,7 @@ class AgentTeamMcpTest(unittest.TestCase):
     def test_agent_ready_rejects_loading_and_requires_configured_model_effort(
         self,
     ) -> None:
-        spec = {"provider": "codex", "model": "gpt-5.6-sol", "effort": "medium"}
+        spec = {"provider": "codex", "model": "gpt-6-astra", "effort": "medium"}
 
         self.assertFalse(
             agent_team_mcp.agent_ready(
@@ -1193,16 +1193,16 @@ class AgentTeamMcpTest(unittest.TestCase):
             )
         )
         self.assertFalse(
-            agent_team_mcp.agent_ready("OpenAI Codex model: gpt-5.6-sol high", spec)
+            agent_team_mcp.agent_ready("OpenAI Codex model: gpt-6-astra high", spec)
         )
         self.assertTrue(
             agent_team_mcp.agent_ready(
-                "OpenAI Codex › task gpt-5.6-sol medium · ~/src/dotfiles", spec
+                "OpenAI Codex › task gpt-6-astra medium · ~/src/dotfiles", spec
             )
         )
         self.assertFalse(
             agent_team_mcp.agent_ready(
-                "please use gpt-5.6-sol medium for this task", spec
+                "please use gpt-6-astra medium for this task", spec
             )
         )
 
@@ -1213,7 +1213,7 @@ class AgentTeamMcpTest(unittest.TestCase):
             "role_specs": {
                 "worker": {
                     "provider": "codex",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-6-astra",
                     "effort": "medium",
                 }
             }
@@ -1221,7 +1221,7 @@ class AgentTeamMcpTest(unittest.TestCase):
         loading = {"terminal": {"preview": "model: loading /model to change"}}
         ready = {
             "terminal": {
-                "preview": "Summarize recent commits gpt-5.6-sol medium · ~/src/dotfiles"
+                "preview": "Summarize recent commits gpt-6-astra medium · ~/src/dotfiles"
             }
         }
         with (
@@ -1241,7 +1241,7 @@ class AgentTeamMcpTest(unittest.TestCase):
             "role_specs": {
                 "worker": {
                     "provider": "codex",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-6-astra",
                     "effort": "medium",
                 }
             }

@@ -31,8 +31,8 @@ The current configuration uses this team:
 |---|---|---|---|
 | Main | Claude / `direct` | `fable` / `high` | `orchestrator` |
 | Planner | Claude / `acp` | `fable` / `high` | `read-only` |
-| Worker | Codex / `direct` | `gpt-5.6-sol` / `medium` | `workspace-write` |
-| Reviewer | Codex / `direct` | `gpt-5.6-sol` / `high` | `read-only` |
+| Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
+| Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
 
 Only Main starts immediately. Planner, Worker, and Reviewer start on demand,
 and only one background role may be active at a time.
