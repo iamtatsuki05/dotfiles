@@ -787,6 +787,7 @@ class OpenCodeReadOnlyAdapter:
         config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
         config = {
             "$schema": "https://opencode.ai/config.json",
+            "autoupdate": False,
             "instructions": [],
             "plugin": [],
             "mcp": {},
