@@ -11,7 +11,7 @@ English version: [README.md](README.md)
 |---|---|
 | `agent_context_reminder.sh` | 対応 agent の prompt / session hook で、この repo 向け reminder context を出力する。 |
 | `agent_turn_done_notify.sh` | turn 完了通知に対応する agent で使う共有完了音を鳴らす。 |
-| `japanese_prose_lint.sh` | 日本語の Markdown / text 文書を検査し、対応する file edit 後に修正候補を返す。 |
+| `japanese_prose_lint.sh` | 日本語の Markdown / text 文書を検査し、対応する file edit 後に修正候補を返す。in-place edit(Edit / MultiEdit / apply_patch)では編集で入った行だけを報告するため、繰り返し語のような文書全体の集計は初出行を編集したときだけ出る。file 全体の write は全文が対象で、`.agent/work/` 配下は対象外。 |
 | `jupytext_sync.sh` | agent が paired `.py` を編集したあと、対応する Jupyter notebook を同期する。 |
 
 agent 固有の hook 登録は `../apps/` 配下にあり、agent によって JSON hook map または hook directory の shell script を読みます。

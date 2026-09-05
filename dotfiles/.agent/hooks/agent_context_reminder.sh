@@ -137,7 +137,7 @@ if normalized_event == "UserPromptSubmit":
 
 if normalized_event not in {"SubagentStart", "SubagentStop"}:
     lines.append(
-        "- 大きめの作業の区切りやユーザー修正フィードバックの対応後は、retrospective-codify で学びの棚卸し (skill 新規作成・使用 skill / AGENTS.md の改善提案) を短く提案する。書き出しは承認後のみ、不要と言われた session では繰り返さない。"
+        "- 学びの棚卸し (retrospective-codify) の自発提案は session に 1 回まで、追記先と文案を示せる場合だけ、追記先と文案を含めて 3 行以内で行う。返答がなければ再提案しない。書き出しは承認後のみ。"
     )
 
 lines.append(

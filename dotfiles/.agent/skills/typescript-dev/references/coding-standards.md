@@ -2,38 +2,11 @@
 
 ## 目次
 
-1. [tsconfig.json参照](#tsconfigjson参照)
-2. [命名規則](#命名規則)
-3. [型定義](#型定義)
-4. [インポート](#インポート)
-5. [クラス設計](#クラス設計)
-6. [ESLint/Biomeルール対応](#eslintbiomeルール対応)
-
-## tsconfig.json参照
-
-実装前に必ずプロジェクトのtsconfig.jsonを確認する。主要な設定項目:
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    }
-  }
-}
-```
+1. [命名規則](#命名規則)
+2. [型定義](#型定義)
+3. [インポート](#インポート)
+4. [クラス設計](#クラス設計)
+5. [ESLint/Biomeルール対応](#eslintbiomeルール対応)
 
 ## 命名規則
 
