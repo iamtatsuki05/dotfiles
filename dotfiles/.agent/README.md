@@ -59,8 +59,8 @@ Config version 3 requires every role to explicitly set `transport = "direct"` or
 |---|---|---|---|
 | Main | Claude / `direct` | `fable` / `high` | `orchestrator` |
 | Planner | Claude / `acp` | `fable` / `high` | `read-only` |
-| Worker | Codex / `direct` | `gpt-5.6-sol` / `medium` | `workspace-write` |
-| Reviewer | Codex / `direct` | `gpt-5.6-sol` / `high` | `read-only` |
+| Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
+| Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
 
 Initial ACP support is limited to Claude read-only background roles. Main ACP, Codex ACP, and workspace-write ACP fail fast because a compatibility probe found that Codex ACP `deny-all`/`read-only` settings did not block writes by Codex internal tools. ACP permission mediation is not a provider or OS sandbox; write roles therefore retain direct Codex permissions.
 
