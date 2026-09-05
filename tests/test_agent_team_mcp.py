@@ -16,6 +16,7 @@ SCRIPTS_DIR = REPO_ROOT / "scripts" / "agent-team"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 agent_team_mcp = importlib.import_module("agent_team.mcp_server")
+agent_team_orca = importlib.import_module("agent_team.orca")
 MCP_SERVER = REPO_ROOT / "scripts" / "agent-team" / "agent-team"
 
 
@@ -25,6 +26,7 @@ class AgentTeamMcpTest(unittest.TestCase):
         fake_bin.mkdir()
         log_path = root / "orca-log.jsonl"
         fake = fake_bin / "orca"
+        fake_linux = fake_bin / "orca-ide"
         fake.write_text(
             textwrap.dedent(
                 f"""\
@@ -86,6 +88,8 @@ class AgentTeamMcpTest(unittest.TestCase):
             encoding="utf-8",
         )
         fake.chmod(0o755)
+        fake_linux.write_text(fake.read_text(encoding="utf-8"), encoding="utf-8")
+        fake_linux.chmod(0o755)
         state = root / "state.json"
         state.write_text(
             json.dumps(
@@ -696,6 +700,185 @@ class AgentTeamMcpTest(unittest.TestCase):
 
         self.assertFalse(parent_exists)
 
+    def test_raw_mcp_reporter_uses_the_shared_linux_orca_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state = {"workspace": str(root)}
+            completed = subprocess.CompletedProcess(
+                ["orca-ide", "status", "--json"],
+                0,
+                '{"ok": true, "result": {}}',
+                "",
+            )
+            with (
+                mock.patch.object(
+                    agent_team_mcp,
+                    "orca_executable",
+                    return_value="orca-ide",
+                    create=True,
+                ),
+                mock.patch.object(
+                    agent_team_mcp.subprocess,
+                    "run",
+                    return_value=completed,
+                ) as run,
+            ):
+                agent_team_mcp.run_orca(state, ["status", "--json"])
+
+        self.assertEqual(run.call_args.args[0], ["orca-ide", "status", "--json"])
+
+    def test_stateful_tool_holds_reservation_over_remote_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _, _, state_path = self.make_fixture(root)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["pending_delivery_id"] = "delivery_1"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            state_path.chmod(0o600)
+            observed_lock = False
+
+            def fake_orca(
+                state_value: dict[str, object],
+                args: list[str],
+                *,
+                timeout_ms: int = 30_000,
+            ) -> dict[str, object]:
+                del state_value, args, timeout_ms
+                nonlocal observed_lock
+                probe = agent_team_orca._LifecycleReservation(
+                    state_path, create_parent=False
+                )
+                try:
+                    probe.acquire()
+                except agent_team_mcp.RuntimeFailure as exc:
+                    observed_lock = (
+                        exc.code is agent_team_mcp.ErrorCode.TEAM_ALREADY_RUNNING
+                    )
+                else:
+                    probe.release()
+                return {}
+
+            with (
+                mock.patch.dict(os.environ, {"AGENT_TEAM_STATE_PATH": str(state_path)}),
+                mock.patch.object(agent_team_mcp, "run_orca", side_effect=fake_orca),
+            ):
+                agent_team_mcp.execute_tool(
+                    "delivery_ack", {"delivery_id": "delivery_1"}
+                )
+
+        self.assertTrue(observed_lock)
+
+    def test_stateful_tool_rejects_generation_change_before_stale_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _, _, state_path = self.make_fixture(root)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["pending_delivery_id"] = "delivery_1"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            state_path.chmod(0o600)
+
+            def mutate_generation(
+                state_value: dict[str, object],
+                args: list[str],
+                *,
+                timeout_ms: int = 30_000,
+            ) -> dict[str, object]:
+                del state_value, args, timeout_ms
+                replacement = dict(state)
+                replacement["run_id"] = "run_new"
+                replacement["main_terminal"] = "term_new"
+                state_path.write_text(json.dumps(replacement), encoding="utf-8")
+                state_path.chmod(0o600)
+                return {}
+
+            with (
+                mock.patch.dict(os.environ, {"AGENT_TEAM_STATE_PATH": str(state_path)}),
+                mock.patch.object(
+                    agent_team_mcp, "run_orca", side_effect=mutate_generation
+                ),
+                self.assertRaises(agent_team_mcp.ToolInputError),
+            ):
+                agent_team_mcp.execute_tool(
+                    "delivery_ack", {"delivery_id": "delivery_1"}
+                )
+            current = json.loads(state_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(current["run_id"], "run_new")
+        self.assertEqual(current["main_terminal"], "term_new")
+
+    def test_stateful_remote_reply_rejects_generation_change_after_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _, _, state_path = self.make_fixture(root)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+
+            def mutate_generation(
+                state_value: dict[str, object],
+                args: list[str],
+                *,
+                timeout_ms: int = 30_000,
+            ) -> dict[str, object]:
+                del state_value, args, timeout_ms
+                replacement = dict(state)
+                replacement["run_id"] = "run_new"
+                replacement["main_terminal"] = "term_new"
+                state_path.write_text(json.dumps(replacement), encoding="utf-8")
+                state_path.chmod(0o600)
+                return {}
+
+            with (
+                mock.patch.dict(os.environ, {"AGENT_TEAM_STATE_PATH": str(state_path)}),
+                mock.patch.object(
+                    agent_team_mcp, "run_orca", side_effect=mutate_generation
+                ),
+                self.assertRaises(agent_team_mcp.ToolInputError),
+            ):
+                agent_team_mcp.execute_tool(
+                    "message_reply", {"message_id": "message_1", "body": "answer"}
+                )
+
+    def test_stateful_tool_rejects_metadata_generation_change_before_stale_save(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _, _, state_path = self.make_fixture(root)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["pending_delivery_id"] = "delivery_1"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            state_path.chmod(0o600)
+
+            def mutate_metadata(
+                state_value: dict[str, object],
+                args: list[str],
+                *,
+                timeout_ms: int = 30_000,
+            ) -> dict[str, object]:
+                del state_value, args, timeout_ms
+                replacement = dict(state)
+                replacement["team_id"] = "agent-team-foreign"
+                replacement["workspace"] = str(root / "foreign-project")
+                replacement["config_path"] = str(root / "foreign-config.toml")
+                state_path.write_text(json.dumps(replacement), encoding="utf-8")
+                state_path.chmod(0o600)
+                return {}
+
+            with (
+                mock.patch.dict(os.environ, {"AGENT_TEAM_STATE_PATH": str(state_path)}),
+                mock.patch.object(
+                    agent_team_mcp, "run_orca", side_effect=mutate_metadata
+                ),
+                self.assertRaises(agent_team_mcp.ToolInputError),
+            ):
+                agent_team_mcp.execute_tool(
+                    "delivery_ack", {"delivery_id": "delivery_1"}
+                )
+            current = json.loads(state_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(current["team_id"], "agent-team-foreign")
+        self.assertEqual(current["workspace"], str(root / "foreign-project"))
+        self.assertEqual(current["config_path"], str(root / "foreign-config.toml"))
+
     def test_dispatch_response_identity_mismatch_rolls_back_before_send(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -858,6 +1041,7 @@ class AgentTeamMcpTest(unittest.TestCase):
                 return {}
 
             with (
+                mock.patch.dict(os.environ, {"AGENT_TEAM_STATE_PATH": str(state)}),
                 mock.patch.object(
                     agent_team_mcp, "load_state", return_value=(state, saved)
                 ),

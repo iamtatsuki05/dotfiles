@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import signal
 import subprocess
@@ -24,6 +23,28 @@ from .adapters import (
     background_adapter,
     remove_owned_tree,
 )
+from .backend import OrcaBackend, OrcaClient
+from .cleanup import StartupCleanup
+from .config_v4 import (
+    V4Config,
+    V4ConfigError,
+    build_v4_launch_plan,
+    load_v4_config_data,
+    read_config_file,
+    render_v4_team,
+    select_v4_team,
+    v4_teams_json,
+)
+from .contracts import (
+    Attach,
+    ErrorCode,
+    Role,
+    RoleSpec,
+    RuntimeFailure,
+    StartSpec,
+    Status,
+)
+from .orca import orca_executable
 from .registry import (
     CANONICAL_HARNESSES,
     adapter_id_for_profile,
@@ -32,7 +53,6 @@ from .registry import (
     status_rows,
 )
 from .runtime import (
-    STATE_VERSION,
     RuntimeValidationError,
     acp_environment,
     build_acp_agent_command,
@@ -41,8 +61,6 @@ from .runtime import (
     build_acp_session_name,
     build_role_command,
     read_prompt_file,
-    remove_state_tree,
-    validate_state_tree,
 )
 from .runtime import (
     create_prompt_file as runtime_create_prompt_file,
@@ -59,6 +77,7 @@ from .runtime import (
 from .runtime import (
     write_state as runtime_write_state,
 )
+from .workflow import WorkflowEngine
 
 SUPPORTED_TRANSPORTS: Final = frozenset({"direct", "acp"})
 SUPPORTED_PROVIDERS: Final = frozenset(CANONICAL_HARNESSES)
@@ -68,6 +87,8 @@ ACP_CLEANUP_TIMEOUT_SECONDS: Final = 15
 ACP_TERMINATE_WAIT_SECONDS: Final = 2
 ACP_KILL_WAIT_SECONDS: Final = 2
 MAX_ACP_OUTPUT_CHARS: Final = 100_000
+MAX_RUNTIME_ERROR_CHARS: Final = 240
+MAX_CLI_ERROR_CHARS: Final = 16_384
 PROVIDER_EFFORTS: Final = {
     "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
     "codex": frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
@@ -84,6 +105,11 @@ ALL_ROLES: Final = ("main", "planner", "worker", "reviewer")
 
 class ConfigError(ValueError):
     pass
+
+
+def _runtime_failure_message(error: RuntimeFailure) -> str:
+    safe = "".join(character for character in str(error) if character.isprintable())
+    return safe[:MAX_RUNTIME_ERROR_CHARS]
 
 
 @dataclass(frozen=True)
@@ -186,13 +212,8 @@ def parse_role(
     )
 
 
-def load_config(config_path: Path) -> TeamConfig:
+def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
     resolved_path = config_path.expanduser().resolve()
-    if not resolved_path.is_file():
-        raise ConfigError(f"config does not exist: {resolved_path}")
-    with resolved_path.open("rb") as config_file:
-        data = tomllib.load(config_file)
-
     version = data.get("version")
     if (
         not isinstance(version, int)
@@ -200,6 +221,10 @@ def load_config(config_path: Path) -> TeamConfig:
         or version != CONFIG_VERSION
     ):
         raise ConfigError(f"version must be integer {CONFIG_VERSION}")
+    if "teams" in data:
+        raise ConfigError(
+            "v4 field 'teams' requires config version 4; v3 config is unchanged"
+        )
     runtime = require_string(data, "runtime", "config")
     if runtime != "orca":
         raise ConfigError("runtime must be 'orca'")
@@ -244,6 +269,17 @@ def load_config(config_path: Path) -> TeamConfig:
         main=main,
         roles=roles,
     )
+
+
+def load_config(config_path: Path) -> TeamConfig:
+    """Load the unchanged version-3 configuration contract."""
+
+    resolved_path = config_path.expanduser().resolve()
+    if not resolved_path.is_file():
+        raise ConfigError(f"config does not exist: {resolved_path}")
+    with resolved_path.open("rb") as config_file:
+        data = tomllib.load(config_file)
+    return _load_config_data(resolved_path, data)
 
 
 def slugify(value: str) -> str:
@@ -711,6 +747,66 @@ def prepare_codex_homes(plan: dict[str, object]) -> None:
                 create_managed_symlink(source, runtime_home / source.name)
 
 
+def prepare_codex_homes_with_rollback(
+    plan: dict[str, object],
+) -> StartupCleanup:
+    roles = plan.get("roles")
+    if not isinstance(roles, dict):
+        raise TypeError("launch plan contains invalid roles")
+    homes = {
+        Path(role["env"]["CODEX_HOME"])
+        for role in roles.values()
+        if isinstance(role, dict)
+        and role.get("provider") == "codex"
+        and isinstance(role.get("env"), dict)
+        and isinstance(role["env"].get("CODEX_HOME"), str)
+    }
+    tracked = {
+        path: (
+            path.is_symlink() or path.exists(),
+            "dir" if path in {home, home.parent} else "link",
+        )
+        for home in homes
+        for path in (
+            home,
+            home.parent,
+            home / "auth.json",
+            home / "AGENTS.md",
+            home / "skills",
+        )
+    }
+
+    def rollback() -> None:
+        for path, (existed, kind) in sorted(
+            tracked.items(), key=lambda item: len(item[0].parts), reverse=True
+        ):
+            if existed or not (path.is_symlink() or path.exists()):
+                continue
+            if kind == "link":
+                if not path.is_symlink():
+                    raise RuntimeError("Codex home rollback found an unexpected file")
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+            else:
+                raise RuntimeError("Codex home rollback found an unexpected path")
+
+    try:
+        prepare_codex_homes(plan)
+    except Exception:
+        try:
+            rollback()
+        except OSError as rollback_error:
+            raise RuntimeError(
+                "Codex home preparation rollback failed"
+            ) from rollback_error
+        raise
+    return StartupCleanup(
+        tuple((str(path), existed, kind) for path, (existed, kind) in tracked.items()),
+        rollback,
+    )
+
+
 def run_orca(
     args: list[str],
     *,
@@ -719,7 +815,7 @@ def run_orca(
     timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        ["orca", *args],
+        [orca_executable(), *args],
         check=False,
         capture_output=True,
         cwd=cwd,
@@ -730,22 +826,6 @@ def run_orca(
         detail = result.stderr.strip() or result.stdout.strip() or "no error output"
         raise RuntimeError(f"orca {' '.join(args)} failed: {detail}")
     return result
-
-
-def parse_orca_json(
-    result: subprocess.CompletedProcess[str], context: str
-) -> dict[str, object]:
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"{context} returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise TypeError(f"{context} returned a non-object JSON value")
-    if payload.get("ok") is not True:
-        error = payload.get("error")
-        detail = error.get("message") if isinstance(error, dict) else None
-        raise RuntimeError(f"{context} failed: {detail or 'unknown Orca error'}")
-    return payload
 
 
 def nested_string(
@@ -1343,91 +1423,72 @@ def read_state(path: Path) -> dict[str, object]:
         raise ConfigError(f"{exc}: {path}") from exc
 
 
-def orca_user_data_path() -> Path:
-    override = os.environ.get("ORCA_USER_DATA_PATH")
-    if override:
-        return Path(override).expanduser()
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "orca"
-    if sys.platform == "win32":
-        app_data = os.environ.get("APPDATA")
-        if not app_data:
-            raise ConfigError("APPDATA is required to locate the Orca runtime")
-        return Path(app_data) / "orca"
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return config_home / "orca"
-
-
-def current_orca_socket() -> Path:
-    metadata_path = orca_user_data_path() / "orca-runtime.json"
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigError(
-            f"Orca runtime metadata is unavailable: {metadata_path}"
-        ) from exc
-    if not isinstance(metadata, dict):
-        raise ConfigError(f"Orca runtime metadata is invalid: {metadata_path}")
-    transports = metadata.get("transports")
-    if not isinstance(transports, list):
-        legacy = metadata.get("transport")
-        transports = [legacy] if isinstance(legacy, dict) else []
-    for transport in transports:
-        if not isinstance(transport, dict) or transport.get("kind") != "unix":
-            continue
-        endpoint = transport.get("endpoint")
-        if isinstance(endpoint, str) and Path(endpoint).is_absolute():
-            return Path(endpoint)
-    raise ConfigError(
-        "Orca does not expose a Unix runtime socket; Codex role lifecycle reporting "
-        "cannot be isolated on this platform"
-    )
-
-
-def ensure_orca_ready(workspace: Path) -> tuple[str, Path]:
-    status = parse_orca_json(
-        run_orca(["status", "--json"], cwd=workspace), "orca status"
-    )
-    runtime_state = nested_string(status, ("result", "runtime", "state"), "orca status")
-    graph_state = nested_string(status, ("result", "graph", "state"), "orca status")
-    if runtime_state != "ready" or graph_state != "ready":
-        raise ConfigError(
-            f"Orca is not ready: runtime={runtime_state}, graph={graph_state}"
-        )
-    current = run_orca(["worktree", "current", "--json"], cwd=workspace, check=False)
-    if current.returncode != 0:
-        raise ConfigError(
-            "workspace is not managed by Orca; register it explicitly with "
-            f"`orca repo add --path {shlex.quote(str(workspace))}` and retry"
-        )
-    payload = parse_orca_json(current, "orca worktree current")
-    worktree_id = nested_string(
-        payload, ("result", "worktree", "id"), "orca worktree current"
-    )
-    return worktree_id, current_orca_socket()
-
-
-def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
-    require_binary("orca")
-    roles = plan.get("roles")
-    workspace_value = plan.get("workspace")
-    state_path_value = plan.get("state_path")
+def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
     team_id = plan.get("team_id")
-    if not isinstance(roles, dict) or not isinstance(roles.get("main"), dict):
-        raise TypeError("launch plan contains invalid roles")
-    if (
-        not isinstance(workspace_value, str)
-        or not isinstance(state_path_value, str)
-        or not isinstance(team_id, str)
+    workspace = plan.get("workspace")
+    config_path = plan.get("config_path")
+    state_path = plan.get("state_path")
+    roles = plan.get("roles")
+    if not all(
+        isinstance(value, str)
+        for value in (team_id, workspace, config_path, state_path)
     ):
         raise TypeError("launch plan contains invalid team metadata")
-    workspace = Path(workspace_value)
-    state_path = Path(state_path_value)
-    if state_path.exists():
-        raise ConfigError(
-            f"agent-team state already exists: {state_path}; use attach or stop"
+    if not isinstance(roles, dict):
+        raise TypeError("launch plan contains invalid roles")
+    config = load_config(Path(cast(str, config_path)))
+    role_specs: dict[Role, RoleSpec] = {}
+    for role_name in ALL_ROLES:
+        launch = roles.get(role_name)
+        if not isinstance(launch, dict):
+            raise TypeError(f"launch plan contains invalid role: {role_name}")
+        values = {
+            key: launch.get(key)
+            for key in (
+                "provider",
+                "transport",
+                "model",
+                "effort",
+                "permission",
+                "execution",
+            )
+        }
+        if not all(isinstance(value, str) and value for value in values.values()):
+            raise TypeError(f"launch plan contains invalid role metadata: {role_name}")
+        role_config = RoleSpec(
+            provider=cast(str, values["provider"]),
+            transport=cast(str, values["transport"]),
+            model=cast(str, values["model"]),
+            effort=cast(str, values["effort"]),
+            permission=cast(str, values["permission"]),
+            instructions=role_instructions(
+                role_name,
+                config,
+                Path(cast(str, state_path)),
+            ),
+            execution=cast(str, values["execution"]),
+            adapter_id=(
+                cast(str, launch["adapter_id"])
+                if isinstance(launch.get("adapter_id"), str)
+                else None
+            ),
         )
+        role_specs[Role(role_name)] = role_config
+    return StartSpec(
+        team_id=cast(str, team_id),
+        workspace=Path(cast(str, workspace)),
+        config_path=Path(cast(str, config_path)),
+        state_path=Path(cast(str, state_path)),
+        role_specs=role_specs,
+        attach=attach,
+    )
 
+
+def _start_prerequisites(plan: dict[str, object]) -> None:
+    require_binary(orca_executable())
+    roles = plan.get("roles")
+    if not isinstance(roles, dict):
+        raise TypeError("launch plan contains invalid roles")
     providers = {
         launch.get("provider")
         for launch in roles.values()
@@ -1448,376 +1509,79 @@ def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
         raise ConfigError(
             f"agent-team MCP server is not executable: {mcp_server_path()}"
         )
-    worktree_id, orca_socket = ensure_orca_ready(workspace)
+
+
+def _ensure_orca_platform() -> None:
+    if sys.platform == "win32":
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST,
+            "agent-team Orca lifecycle requires a POSIX runtime",
+        )
+
+
+def _runtime_engine(
+    plan: dict[str, object], *, resume_existing: bool
+) -> tuple[WorkflowEngine, OrcaBackend]:
     config_path = plan.get("config_path")
     if not isinstance(config_path, str):
         raise TypeError("launch plan contains invalid config path")
-    config = load_config(Path(config_path))
-    plan = build_plan(config, workspace, orca_socket)
-    roles = plan["roles"]
-    if not isinstance(roles, dict):
-        raise TypeError("launch plan contains invalid roles")
-    prepare_codex_homes(plan)
 
-    main_terminal: str | None = None
-    try:
-        created = parse_orca_json(
-            run_orca(
-                [
-                    "terminal",
-                    "create",
-                    "--worktree",
-                    f"id:{worktree_id}",
-                    "--title",
-                    f"{team_id}-main",
-                    "--command",
-                    role_command(plan, "main"),
-                    "--json",
-                ],
-                cwd=workspace,
-            ),
-            "orca terminal create",
-        )
-        main_terminal = nested_string(
-            created, ("result", "terminal", "handle"), "orca terminal create"
-        )
-        parse_orca_json(
-            run_orca(
-                [
-                    "terminal",
-                    "wait",
-                    "--terminal",
-                    main_terminal,
-                    "--for",
-                    "tui-idle",
-                    "--timeout-ms",
-                    "180000",
-                    "--json",
-                ],
-                cwd=workspace,
-            ),
-            "orca terminal wait",
-        )
-        run_payload = parse_orca_json(
-            run_orca(
-                [
-                    "orchestration",
-                    "run-create",
-                    "--objective",
-                    f"{team_id}: Planner / Worker / Reviewer coordination for {workspace}",
-                    "--from",
-                    main_terminal,
-                    "--json",
-                ],
-                cwd=workspace,
-            ),
-            "orca orchestration run-create",
-        )
-        run_id = nested_string(
-            run_payload, ("result", "run", "id"), "orca orchestration run-create"
-        )
-        state = {
-            "version": STATE_VERSION,
-            "runtime": "orca",
-            "team_id": team_id,
-            "workspace": str(workspace),
-            "config_path": plan["config_path"],
-            "state_path": str(state_path),
-            "launcher_path": str(launcher_path()),
-            "worktree_id": worktree_id,
-            "orca_socket": str(orca_socket),
-            "run_id": run_id,
-            "main_terminal": main_terminal,
-            "role_specs": {
-                role: {
-                    "provider": launch.get("provider"),
-                    "transport": launch.get("transport"),
-                    "model": launch.get("model"),
-                    "effort": launch.get("effort"),
-                    "permission": launch.get("permission"),
-                    "execution": launch.get("execution"),
-                    "adapter_id": launch.get("adapter_id"),
-                    "instructions": role_instructions(
-                        role,
-                        config,
-                        state_path,
-                    ),
-                }
-                for role, launch in roles.items()
-                if isinstance(launch, dict)
-            },
-            "roles": {},
-        }
-        write_state(state_path, state)
-    except BaseException as start_error:
-        if main_terminal is not None:
-            cleanup = run_orca(
-                [
-                    "terminal",
-                    "close",
-                    "--terminal",
-                    main_terminal,
-                    "--tab",
-                    "--json",
-                ],
-                cwd=workspace,
-                check=False,
-            )
-            if cleanup.returncode != 0:
-                raise RuntimeError(
-                    "team startup failed and main terminal cleanup also failed"
-                ) from start_error
-        raise
+    def main_command_factory(socket_path: Path) -> str:
+        launch_plan = dict(plan)
+        launch_plan["orca_socket"] = str(socket_path)
+        return role_command(launch_plan, "main")
 
-    focus_warning: str | None = None
-    if attach:
-        focus_result = run_orca(
-            ["terminal", "switch", "--terminal", main_terminal, "--json"],
-            cwd=workspace,
-            check=False,
+    backend = OrcaBackend(
+        OrcaClient(),
+        launcher_path=launcher_path() if not resume_existing else None,
+        main_command_factory=main_command_factory,
+        prepare_start=lambda: prepare_codex_homes_with_rollback(plan),
+        resume_existing=resume_existing,
+    )
+    return WorkflowEngine(backend), backend
+
+
+def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
+    _ensure_orca_platform()
+    _start_prerequisites(plan)
+    engine, backend = _runtime_engine(plan, resume_existing=False)
+    engine.start(_start_spec(plan, attach=attach))
+    response = backend.last_start_response
+    if response is None:
+        raise RuntimeFailure(
+            ErrorCode.BACKEND_PROTOCOL_FAILURE,
+            "Orca backend did not produce a start response",
         )
-        if focus_result.returncode != 0:
-            focus_warning = (
-                focus_result.stderr.strip()
-                or focus_result.stdout.strip()
-                or "Orca could not focus Main"
-            )
-        else:
-            parse_orca_json(focus_result, "orca terminal switch")
-    response: dict[str, object] = {
-        "status": "running",
-        "team_id": team_id,
-        "workspace": str(workspace),
-        "run_id": run_id,
-        "main_terminal": main_terminal,
-        "state_path": str(state_path),
-    }
-    if focus_warning is not None:
-        response["focus_warning"] = focus_warning
     return response
 
 
 def manage_team(
     command: str, plan: dict[str, object], role: str | None
 ) -> dict[str, object]:
-    workspace_value = plan.get("workspace")
-    state_path_value = plan.get("state_path")
-    if not isinstance(workspace_value, str) or not isinstance(state_path_value, str):
-        raise TypeError("launch plan contains invalid paths")
-    workspace = Path(workspace_value)
-    state_path = Path(state_path_value)
-    state = read_state(state_path)
-    run_id = nested_string(state, ("run_id",), "agent-team state")
-    main_terminal = nested_string(state, ("main_terminal",), "agent-team state")
+    _ensure_orca_platform()
+    engine, backend = _runtime_engine(plan, resume_existing=True)
+    engine.start(_start_spec(plan, attach=False))
     if command == "status":
-        run = parse_orca_json(
-            run_orca(
-                ["orchestration", "run-show", "--id", run_id, "--json"],
-                cwd=workspace,
-            ),
-            "orca orchestration run-show",
+        engine.request(Status())
+        response = backend.last_status_response
+    elif command == "attach":
+        if role is None:
+            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "attach requires a role")
+        engine.request(Attach(Role(role)))
+        response = backend.last_attach_response
+    elif command == "stop":
+        engine.stop()
+        response = backend.last_stop_response
+    else:
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST, f"unsupported command: {command}"
         )
-        terminal = parse_orca_json(
-            run_orca(
-                ["terminal", "show", "--terminal", main_terminal, "--json"],
-                cwd=workspace,
-            ),
-            "orca terminal show",
+    if response is None:
+        raise RuntimeFailure(
+            ErrorCode.BACKEND_PROTOCOL_FAILURE,
+            f"Orca backend did not produce a {command} response",
         )
-        workers = parse_orca_json(
-            run_orca(
-                ["orchestration", "worker-list", "--run", run_id, "--json"],
-                cwd=workspace,
-            ),
-            "orca orchestration worker-list",
-        )
-        return {
-            "status": "running",
-            "team_id": state.get("team_id"),
-            "run": run["result"],
-            "main": terminal["result"],
-            "workers": workers["result"],
-        }
-    if command == "attach":
-        terminal_handle = main_terminal
-        if role != "main":
-            roles = state.get("roles")
-            assignment = roles.get(role) if isinstance(roles, dict) else None
-            if not isinstance(assignment, dict) or not isinstance(
-                assignment.get("terminal_handle"), str
-            ):
-                raise ConfigError(f"role has no active Orca Dispatch: {role}")
-            terminal_handle = assignment["terminal_handle"]
-        parse_orca_json(
-            run_orca(
-                ["terminal", "switch", "--terminal", terminal_handle, "--json"],
-                cwd=workspace,
-            ),
-            "orca terminal switch",
-        )
-        return {"status": "focused", "role": role, "terminal": terminal_handle}
-    if command == "stop":
-        roles = state.get("roles")
-        if not isinstance(roles, dict):
-            raise ConfigError("agent-team state has invalid roles")
-        role_specs = state.get("role_specs")
-        if not isinstance(role_specs, dict):
-            raise ConfigError("agent-team state has invalid role_specs")
-        validated: list[tuple[str, dict[str, object], str, str, str, str]] = []
-        for role_name, assignment in roles.items():
-            if not isinstance(assignment, dict):
-                raise ConfigError("agent-team state has an invalid role assignment")
-            dispatch_id = assignment.get("dispatch_id")
-            role_terminal_handle = assignment.get("terminal_handle")
-            if not isinstance(dispatch_id, str) or not isinstance(
-                role_terminal_handle, str
-            ):
-                raise ConfigError("agent-team state is missing a Dispatch id")
-            if assignment.get("launcher_owned_terminal") is not True:
-                raise ConfigError(
-                    f"agent-team refuses to stop a terminal with unknown ownership: {role_name}"
-                )
-            role_spec = role_specs.get(role_name)
-            transport = (
-                role_spec.get("transport") if isinstance(role_spec, dict) else None
-            )
-            execution = (
-                role_spec.get("execution") if isinstance(role_spec, dict) else None
-            )
-            if execution == "background":
-                raw_prompt = assignment.get("prompt_path")
-                nonce = assignment.get("launch_nonce")
-                if not isinstance(raw_prompt, str) or not isinstance(nonce, str):
-                    raise ConfigError(
-                        f"background assignment is missing prompt cleanup identity: {role_name}"
-                    )
-                validate_prompt_file(
-                    Path(raw_prompt),
-                    state_path.parent,
-                    role=role_name,
-                    launch_nonce=nonce,
-                )
-                for root_key in ("provider_private_root", "snapshot_root"):
-                    raw_root = assignment.get(root_key)
-                    if not isinstance(raw_root, str):
-                        raise ConfigError(
-                            f"background assignment is missing {root_key}: {role_name}"
-                        )
-                    root = Path(raw_root).resolve(strict=False)
-                    try:
-                        root.relative_to(state_path.parent.resolve(strict=False))
-                    except ValueError:
-                        pass
-                    else:
-                        raise ConfigError(
-                            f"background {root_key} must stay outside agent-team state: {role_name}"
-                        )
-            elif transport not in {"direct", "acp"}:
-                raise ConfigError(
-                    f"role assignment has an unsupported transport: {role_name}"
-                )
-            validated.append(
-                (
-                    role_name,
-                    assignment,
-                    dispatch_id,
-                    role_terminal_handle,
-                    str(transport),
-                    str(execution),
-                )
-            )
-
-        try:
-            validate_state_tree(state_path, state)
-        except RuntimeValidationError as exc:
-            raise ConfigError(str(exc)) from exc
-
-        for (
-            role_name,
-            assignment,
-            dispatch_id,
-            role_terminal_handle,
-            transport,
-            execution,
-        ) in validated:
-            parse_orca_json(
-                run_orca(
-                    [
-                        "orchestration",
-                        "worker-stop",
-                        "--dispatch",
-                        dispatch_id,
-                        "--json",
-                    ],
-                    cwd=workspace,
-                ),
-                "orca orchestration worker-stop",
-            )
-            parse_orca_json(
-                run_orca(
-                    [
-                        "terminal",
-                        "close",
-                        "--terminal",
-                        role_terminal_handle,
-                        "--tab",
-                        "--json",
-                    ],
-                    cwd=workspace,
-                ),
-                f"orca terminal close for role {role_name}",
-            )
-            if execution == "background":
-                raw_prompt = assignment.get("prompt_path")
-                nonce = assignment.get("launch_nonce")
-                if isinstance(raw_prompt, str) and isinstance(nonce, str):
-                    prompt = Path(raw_prompt)
-                    if prompt.exists() or prompt.is_symlink():
-                        remove_prompt_file(
-                            prompt,
-                            state_path.parent,
-                            role=role_name,
-                            launch_nonce=nonce,
-                        )
-                for root_key in ("provider_private_root", "snapshot_root"):
-                    raw_root = assignment.get(root_key)
-                    if isinstance(raw_root, str):
-                        remove_owned_tree(Path(raw_root).resolve(strict=False))
-            elif transport == "acp":
-                raw_prompt = assignment.get("prompt_path")
-                nonce = assignment.get("launch_nonce")
-                if isinstance(raw_prompt, str) and isinstance(nonce, str):
-                    remove_prompt_file(
-                        Path(raw_prompt),
-                        state_path.parent,
-                        role=role_name,
-                        launch_nonce=nonce,
-                    )
-        parse_orca_json(
-            run_orca(
-                [
-                    "terminal",
-                    "close",
-                    "--terminal",
-                    main_terminal,
-                    "--tab",
-                    "--json",
-                ],
-                cwd=workspace,
-            ),
-            "orca terminal close",
-        )
-        try:
-            remove_state_tree(state_path, state)
-        except RuntimeValidationError as exc:
-            raise ConfigError(str(exc)) from exc
-        return {
-            "status": "stopped",
-            "team_id": state.get("team_id"),
-            "run_id": run_id,
-            "note": "Orca Run is retained as an audit record.",
-        }
-    raise RuntimeError(f"unsupported command: {command}")
+    return response
 
 
 def role_run(plan: dict[str, object], role: str) -> None:
@@ -1855,6 +1619,57 @@ def default_config_path() -> Path:
         ) from exc
 
 
+def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
+    """Dispatch pure v4 inspection commands without entering the v3 runtime."""
+
+    if args.command == "teams":
+        print(v4_teams_json(config), end="")
+        return 0 if all(team.validation.valid for team in config.teams) else 1
+    if args.command == "graph":
+        print(
+            render_v4_team(config, args.team, args.format),
+            end="",
+        )
+        return 0
+    if args.command == "start":
+        if args.no_attach:
+            raise ConfigError(
+                "config version 4 does not support --no-attach with dry-run"
+            )
+        launch_plan = build_v4_launch_plan(config, args.cwd, args.team)
+        if not args.dry_run:
+            raise ConfigError(
+                "config version 4 start currently supports --dry-run only"
+            )
+        print(json.dumps(launch_plan.as_dict(), ensure_ascii=False, indent=2))
+        return 0
+    if args.command in {"status", "attach", "stop"}:
+        config.require_valid()
+        select_v4_team(config, args.team)
+        raise ConfigError(
+            f"config version 4 {args.command} is not available before runtime integration"
+        )
+    raise ConfigError(f"command {args.command} requires config version 3")
+
+
+def render_cli_error(error: BaseException) -> str:
+    """Keep ordinary messages unchanged and escape only unsafe user text."""
+
+    if isinstance(error, UnicodeDecodeError):
+        return "config is not valid UTF-8"
+    message = str(error)
+    if not any(
+        ord(character) < 0x20
+        or 0x7F <= ord(character) <= 0x9F
+        or 0xD800 <= ord(character) <= 0xDFFF
+        for character in message
+    ):
+        return message
+    if len(message) > MAX_CLI_ERROR_CHARS:
+        message = message[:MAX_CLI_ERROR_CHARS] + "...<truncated>"
+    return json.dumps(message, ensure_ascii=True)
+
+
 def add_context_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", type=Path, default=default_config_path())
     caller_cwd = os.environ.get("AGENT_TEAM_CALLER_CWD")
@@ -1870,19 +1685,29 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     start = subparsers.add_parser("start", help="start an Orca-backed agent team")
     add_context_arguments(start)
+    start.add_argument("--team", action="append")
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--no-attach", action="store_true")
     status = subparsers.add_parser("status", help="show the derived Orca team state")
     add_context_arguments(status)
+    status.add_argument("--team", action="append")
     attach = subparsers.add_parser("attach", help="focus one role in Orca")
     attach.add_argument("role", choices=ALL_ROLES)
     add_context_arguments(attach)
+    attach.add_argument("--team", action="append")
     stop = subparsers.add_parser("stop", help="stop this team's exact Orca terminals")
     add_context_arguments(stop)
+    stop.add_argument("--team", action="append")
     harnesses = subparsers.add_parser(
         "harnesses", help="show recognized harnesses and static availability"
     )
     harnesses.add_argument("--json", action="store_true", dest="as_json")
+    teams = subparsers.add_parser("teams", help="list version-4 configured teams")
+    add_context_arguments(teams)
+    graph = subparsers.add_parser("graph", help="render one version-4 team topology")
+    add_context_arguments(graph)
+    graph.add_argument("--team", action="append", required=True)
+    graph.add_argument("--format", choices=("json", "ascii", "mermaid"), required=True)
     role = subparsers.add_parser("_role-run", help=argparse.SUPPRESS)
     role.add_argument("role", choices=ALL_ROLES)
     role.add_argument("--orca-socket", type=Path)
@@ -1942,8 +1767,14 @@ def main(argv: list[str] | None = None) -> int:
                 prompt_path=args.prompt,
                 launch_nonce=args.launch_nonce,
             )
-        except (ConfigError, RuntimeError, OSError, TypeError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+        except (
+            ConfigError,
+            RuntimeError,
+            OSError,
+            TypeError,
+            UnicodeDecodeError,
+        ) as exc:
+            print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
             return 1
     if args.command == "_background-run":
         try:
@@ -1956,14 +1787,45 @@ def main(argv: list[str] | None = None) -> int:
                 prompt_path=args.prompt,
                 launch_nonce=args.launch_nonce,
             )
-        except (ConfigError, RuntimeError, OSError, TypeError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+        except (
+            ConfigError,
+            RuntimeError,
+            OSError,
+            TypeError,
+            UnicodeDecodeError,
+        ) as exc:
+            print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
             return 1
     try:
+        if args.command in {"teams", "graph"}:
+            resolved_config_path, config_data = read_config_file(args.config)
+            version = config_data.get("version")
+            if (
+                isinstance(version, int)
+                and not isinstance(version, bool)
+                and version == 4
+            ):
+                return run_v4_command(
+                    args, load_v4_config_data(resolved_config_path, config_data)
+                )
+            raise ConfigError(f"{args.command} requires config version 4")
+
+        team_values = getattr(args, "team", None)
+        if team_values is not None:
+            resolved_config_path, config_data = read_config_file(args.config)
+            return run_v4_command(
+                args, load_v4_config_data(resolved_config_path, config_data)
+            )
         config = load_config(args.config)
         plan = build_plan(config, args.cwd, getattr(args, "orca_socket", None))
-    except (ConfigError, OSError, tomllib.TOMLDecodeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except (
+        ConfigError,
+        V4ConfigError,
+        OSError,
+        UnicodeDecodeError,
+        tomllib.TOMLDecodeError,
+    ) as exc:
+        print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
         return 2
 
     try:
@@ -1977,8 +1839,11 @@ def main(argv: list[str] | None = None) -> int:
             result = start_team(plan, attach=not args.no_attach)
         else:
             result = manage_team(args.command, plan, getattr(args, "role", None))
-    except (ConfigError, RuntimeError, OSError, TypeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except RuntimeFailure as exc:
+        print(f"ERROR: {_runtime_failure_message(exc)}", file=sys.stderr)
+        return 1
+    except (ConfigError, RuntimeError, OSError, TypeError, UnicodeDecodeError) as exc:
+        print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

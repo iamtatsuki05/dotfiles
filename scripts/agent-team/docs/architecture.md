@@ -33,11 +33,15 @@ make completion and cleanup ambiguous.
 | Component | Responsibility |
 |---|---|
 | `config.toml` | Declares fixed roles, providers, transports, models, efforts, prompts, and permissions. |
-| `agent_team/cli.py` | Validates config, starts/stops Main, creates state snapshots, and runs ACP turns. |
-| `agent_team/mcp_server.py` | Exposes seven fixed Main-facing tools and maps role operations to Orca. It is launched through the same `agent-team _mcp-server` entrypoint. |
-| `agent_team/runtime.py` | Shares identity, private-file, state, command, environment, and cleanup safety helpers. |
+| `agent_team/cli.py` | Parses and validates config/arguments, composes `WorkflowEngine(OrcaBackend)`, renders compatibility JSON, and runs ACP turns. |
+| `agent_team/backend.py` | Owns the CLI `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
+| `agent_team/orca.py` | Owns the fixed Orca argv/envelope decoder and stable per-team lifecycle reservation. It does not own MCP role operations. |
+| `agent_team/cleanup.py` | Owns the private stop journal, startup-recovery sidecar, and exact local cleanup/rollback phases. |
+| `agent_team/mcp_server.py` | Exposes seven fixed Main-facing tools, maps role operations to Orca, and holds the shared lifecycle reservation from state load through remote effect and save/rollback. It is launched through the same `agent-team _mcp-server` entrypoint. |
+| `agent_team/runtime.py` | Shares identity, private-file, state-v3, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |
 | `agent_team/adapters.py` | Provides the provider-independent background seam, bounded process runner, exact identity checks, and Copilot/OpenCode read-only adapters. It has no Orca lifecycle authority. |
+| `agent_team/workflow_effect_adapter.py` | Provides the private durable-effect seam between the Workflow Store and an injected backend; it does not widen public runtime ports or wire CLI/MCP. |
 | `agent_team/defaults/` | Bundled config and Japanese prompts used when no user config is selected. |
 | `prompts/*.md` | Defines the Japanese role contracts. |
 | Orca | Stores the Run/Task/Dispatch lifecycle and owns managed terminals. |
@@ -50,6 +54,48 @@ lifecycle are verified live. A background profile runs one fixed provider
 invocation against a fresh read snapshot rather than a TUI terminal or ACP
 session. The snapshot excludes `.git`, symlinks, special files, ignored files,
 secret-like paths, provider configuration, and agent instructions.
+
+## Durable effects stay behind a private adapter seam
+
+Issue #73 adds `workflow_effect_adapter.py` between the v3 Workflow Store and
+an injected durable effect backend. The public `TeamRuntime` and `BackendPort`
+remain the same three-method surface (`start`, `request`, `stop`), as do the
+existing request/result types and CLI/MCP envelopes. The adapter is not wired
+into the CLI or MCP path. The current public `BackendPort` and Orca backend
+fail before an effect with `DurabilityUnsupported`: they lack role-effect
+metadata, consumer generation, exact Delivery/read lookup, and provider proof.
+Current Orca STOP is also unsupported because it cannot provide an ordered
+composite-stop proof and pure lookup. Durable `StartSpec.attach=True` is
+unsupported for the same reason: its focus stage has no composite proof.
+
+The private execution sequence is:
+
+```text
+load -> authority -> begin -> backend once -> validate post-effect authority/observation
+     -> Store receipt -> projector -> commit
+```
+
+The common backend capability is effect-key idempotency or pure lookup,
+attempt/fence enforcement, and consumer generation. The requested action then
+adds its own proof: WAIT requires exact Delivery lookup, READ requires exact
+read lookup, and STOP requires composite-stop proof plus pure lookup. START and
+PROMPT bind the effect-allocated post-effect identity, including generation.
+Receipt and observation fields are snapshotted and checked across the
+projector boundary; raw prompt/reply/output bodies are bounded to 1 MiB of
+UTF-8 and represented durably only by digests and opaque references. This
+prevents raw persistence, not equality inference for low-entropy inputs.
+
+Only committed effects replay. Replay calls neither backend execute nor the
+projector; WAIT/READ/RELEASE/STOP may make one digest-bound pure backend lookup.
+`INTENT`, `UNKNOWN_EFFECT`, response loss, and restart ambiguity remain
+`RecoveryRequired` for explicit stable-ID recovery owned by #32. The
+origin-only `DurableDeliveryLookup` does not reconstruct a Delivery's
+ACK/reply lifecycle; `DurableReadLookup` obtains read output through the
+backend's pure lookup. Deterministic fake authority/backend/projector tests
+with the real Store establish adapter call counts and validation boundaries,
+not provider-side exactly-once or a #31 cross-store atomic join. WorkflowEngine
+reducer wiring belongs to #33, while review/verification policy handoff
+belongs to #74.
 
 ## Canonical Main is direct Claude and the only user-facing agent
 
@@ -136,19 +182,52 @@ assignment. Model, effort, permission, and instructions are copied at launch;
 an ACP runner does not reinterpret a changed config during the same team run.
 
 ACP prompt sidecars and state files are current-user-owned private files.
-State writes are atomic. Prompt reads use non-following file descriptors.
+State writes are atomic and fsync their parent directory after replace. Prompt
+reads use non-following file descriptors.
 Codex runtime homes are isolated below the same team directory.
+If the replacement succeeds but directory durability is unknown, the state is
+treated as published and the startup marker is retained for management retry.
 
 ## Failure handling is fail-closed
 
 - A partial start stops or closes only resources whose exact IDs were returned.
 - Cleanup errors are reported together with the original failure.
-- ACP subprocesses run in their own process group and are terminated on timeout.
+- CLI and MCP stateful operations share a stable per-team reservation outside
+  the removable state root; management operations re-read state under that
+  lock and MCP holds it through remote effects and save/rollback.
+- Worker-stop and terminal-close require typed identity/process-stop verdicts;
+  an agent terminal already closed by worker-stop is not closed twice, and an
+  unconfirmed PTY keeps the journal and local resources for recovery.
+- Method-specific `terminal_*`, `dispatch_not_found`, `run_not_found`, and
+  `task_not_found` absence codes are normalized as read-only absence; stop
+  persists the affected stage as unknown and never treats absence as process
+  success.
+- A durable startup marker is written before Main terminal creation; a lost
+  create response keeps local preparation and blocks the next start until an
+  explicit no-tab close receipt proves `ptyKilled=true`.
+- Startup recovery never treats a stale/gone read-only terminal show as process
+  stop proof; local homes remain until a verified close receipt is durable.
+- CLI runtime errors use fixed classifications and the existing `ERROR: <message>`
+  body with an explicit bound; Orca stderr/stdout, argv, IDs, paths, and control
+  characters are never rendered. The redaction/legacy-body golden is covered by
+  the CLI compatibility tests.
+- ACP subprocesses run in their own process group; normal parent exit and
+  timeout/output-limit paths verify and reap descendants before returning.
+- The Orca lifecycle and bounded provider runner fail fast on Windows; the
+  current contract requires a Unix socket and POSIX process-group semantics.
+- Orca CLI selection is deterministic: `orca` on macOS and `orca-ide` on Linux;
+  there is no silent PATH fallback or environment override.
 - The ACP child receives a small environment allowlist, including `HOME` for
   ambient Claude login but excluding API keys and Orca control variables.
 - `stop` validates the exact private team root and removes entries without
   following symlinks. Special files and ownership mismatches are rejected.
 - The Orca Run remains after stop as an audit record.
+
+The MCP role lifecycle intentionally remains on its pre-#18 raw path. In
+particular, `role_release` retained/no-owned semantics and role-start response
+loss recovery are not solved by this CLI slice; Issue #34 owns the later
+MCP-to-BackendPort/durable-state work. This document does not claim those MCP
+paths are safe-complete.
 
 ## Security limits remain explicit
 
