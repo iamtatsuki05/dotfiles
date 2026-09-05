@@ -1,5 +1,5 @@
 {{- $shell := .shell -}}
-{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell) -}}
+{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell "features" .features) -}}
 if not set -q EDITOR; or test -z "$EDITOR"
     set -gx EDITOR {{ shellQuote .shell.editor }}
 end
@@ -30,6 +30,7 @@ end
 
 set -l dotfiles_macos_arch (uname -m 2>/dev/null)
 if test (uname -s 2>/dev/null) = Darwin
+{{- if .features.macos }}
     if test "$dotfiles_macos_arch" = arm64; and test -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
         dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}"
         dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
@@ -43,6 +44,7 @@ if test (uname -s 2>/dev/null) = Darwin
         dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}"
         dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
     end
+{{- end }}
 else if test -d "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}"
     dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_sbin }}"
     dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}"

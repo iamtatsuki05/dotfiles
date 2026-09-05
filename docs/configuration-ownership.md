@@ -57,14 +57,49 @@ fallback for an old schema.
 `builtins.fromTOML`. Change the TOML when a default value changes; do not copy
 the value into the Nix module.
 
+### Disable optional macOS features
+
+Set the following value in `home/.chezmoidata.toml` to `false`. Its initial
+value is `true`.
+
+```toml
+[features]
+macos = false
+```
+
+This disables macOS Homebrew PATH additions, the `intel`/`arm` aliases, and
+Homebrew completion directories in Zsh. It also disables optional OS settings
+such as Dock and Touch ID, Nix GUI packages and app copying, Homebrew/Rosetta/
+Mac App Store installation, and managed Homebrew updates.
+On macOS, `false` overrides `full` and `--with-gui-apps`, without changing the
+profile name or Darwin backend. Nix infrastructure, CLI packages (including
+platform-specific CLI tools), shared environment variables, mise, and build SDK
+handling remain enabled. Linux GUI selection is unaffected.
+
+Re-render the shell files with chezmoi after changing the flag, and reapply
+the Nix configuration for Zsh completions. Nix reads the same flag through
+`config/nix/features.nix`. Missing values, the string `"false"`, and unknown
+keys are errors. Existing aliases in a running shell and inherited PATH
+entries are not removed.
+
+Turning this off is not a rollback. It does not uninstall existing applications
+or infer previous Dock, DNS, or other OS settings to restore. Nix-managed files
+and launchd definitions are updated or removed by normal generation activation.
+Unmanaged cron jobs and manual `brew` commands are outside its scope.
+Pre-install scripts use a dependency-free reader for the canonical bare
+`[features]` table and `macos = true` / `macos = false` entry. Unlike Nix's full
+TOML parser, this reader only validates that section; quoted/inline feature
+forms are unsupported. There is no environment-variable override.
+
 ### Shell-specific behavior
 
 `home/.chezmoitemplates/dotfiles-shell-common.sh` owns the shared non-secret
 environment, PATH, safe aliases, Bash/Zsh-only `DOTFILES_REPO_ROOT`, and one
 interactive mise activation for Bash or Zsh. The Zsh prompt, completion,
-options, and oh-my-zsh configuration remain owned by
+options, oh-my-zsh configuration, and the `_ssh` completion function are owned by
 `config/nix/home-manager/zsh.nix`; that module does not duplicate the common
 environment or mise activation.
+Re-sourcing the common file does not overwrite Zsh SSH completion.
 
 Fish is an optional native adapter at
 `~/.config/fish/conf.d/zz-dotfiles.fish`. It provides the shared non-secret
@@ -74,8 +109,15 @@ failures stay visible as failures.
 
 csh/tcsh use the standalone adapter at
 `~/.config/shell/dotfiles-shell-common.csh`. It provides only the limited
-non-secret environment, PATH, and prompt safe aliases. Activation is
-unsupported; use mise shims or `mise exec`/`mise run`. Neither optional adapter
+non-secret environment, PATH, and prompt safe aliases. Startup adds the existing
+mise shim directory to PATH, so tools with installed shims can be invoked by
+their normal command names. Shim-launched tools also receive `mise.toml`
+environment variables. Official mise activation does not support csh/tcsh:
+directory changes do not update the shell's own environment or run prompt hooks.
+Use `mise exec` or `mise run` to pass the environment to commands without shims.
+The adapter selects one root using non-empty `MISE_DATA_DIR`, then non-empty
+`XDG_DATA_HOME`, then `HOME`. If its shim directory is missing, it does not
+fall back to a lower-priority root. Neither optional adapter
 provides `DOTFILES_REPO_ROOT` or reads `secrets.env`.
 
 The Bash/Zsh common file, Fish adapter, and csh/tcsh adapter set
@@ -102,12 +144,22 @@ derived Fish loader at
 the canonical Fish adapter under `$HOME/.config`; it is not a second chezmoi
 source file. Re-run the bootstrap after changing the custom XDG path.
 
-The csh/tcsh adapter is not added to an existing startup file automatically.
-Opt in manually from `.cshrc` or `.tcshrc`:
+Run `scripts/setup_shell.sh`, described below, to register automatic csh/tcsh
+startup. A chezmoi apply alone does not register it. The bootstrap adds a
+managed source block to `.cshrc` and to `.tcshrc` only if the latter already
+exists. It creates a missing `.cshrc`, but never creates a new `.tcshrc`, which
+would stop tcsh from reading an existing `.cshrc`.
 
-```csh
-if (-r "$HOME/.config/shell/dotfiles-shell-common.csh") source "$HOME/.config/shell/dotfiles-shell-common.csh"
-```
+Existing file content and modes are preserved. A separating newline is added
+when the original file has no final newline. If an older manual `source` line
+loads this adapter, remove that line before running the bootstrap; the bootstrap preserves
+user text and does not detect, migrate, or remove that line. User settings added
+after the managed block are also preserved. The managed block's `df_csh_loaded`
+guard loads the common adapter once per shell process, including when `.tcshrc`
+sources `.cshrc`; this exact-once guarantee applies only through that managed
+block. `df_csh_loaded` is reserved for the managed block and should not be set
+by user startup code. Start a new
+shell after re-rendering the configuration.
 
 ## Bash-only shell bootstrap
 
@@ -122,11 +174,11 @@ bash scripts/setup_shell.sh --verify
 
 The bootstrap requires Bash, chezmoi, and standard Unix utilities. It does not
 install packages, Nix, Homebrew, mise, or another shell; it does not change the
-login shell or run `chsh`. It also does not modify `.profile`, `.cshrc`,
-`.tcshrc`, `~/.config/fish/config.fish`, `secrets.env`, or unrelated application
+login shell or run `chsh`. It also does not modify `.profile`,
+`~/.config/fish/config.fish`, `secrets.env`, or unrelated application
 files.
 
-The normal apply allowlist is exactly these six targets:
+The chezmoi apply allowlist is exactly these six targets:
 
 | Target | Role |
 |---|---|
@@ -140,12 +192,18 @@ The normal apply allowlist is exactly these six targets:
 With a custom `XDG_CONFIG_HOME`, the Fish loader described above is an
 additional derived file. It is generated only for that custom path and is not
 counted as another managed source target.
+The csh/tcsh startup blocks described above are also registered separately
+from these six rendered targets.
 
 Before writing, the bootstrap compares existing targets and refuses a foreign
 or different file. The same rule applies to the custom-XDG Fish loader. An
 identical existing file is safe to reuse; `--force` is required to replace a
-different file. `--dry-run` writes nothing, `--verify` reports whether the
-allowlisted targets already match, and `--help` prints the current interface.
+different file. `--dry-run` writes nothing. `--verify` checks the rendered
+targets, csh/tcsh startup blocks, and Fish loader. A malformed or duplicate
+csh/tcsh marker, symlink, hard link, or directory is rejected even with `--force`.
+Hard-linked startup files are not appended to because other file names would
+also be modified.
+`--help` prints the current interface.
 Read the command's `--help` output if this page and the installed script ever
 disagree.
 

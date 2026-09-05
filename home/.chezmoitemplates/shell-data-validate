@@ -1,4 +1,8 @@
 {{- $shell := .shell -}}
+{{- $features := .features -}}
+{{- if not (kindIs "map" $features) }}{{ fail "invalid canonical feature flags" }}{{ end -}}
+{{- if or (ne (len $features) 1) (not (hasKey $features "macos")) }}{{ fail "invalid canonical feature flag keys" }}{{ end -}}
+{{- if not (kindIs "bool" $features.macos) }}{{ fail "features.macos must be a boolean" }}{{ end -}}
 {{- $safeWord := "^[A-Za-z0-9._+%:@/-]+$" -}}
 {{- $safeXdgPath := "^\\.[A-Za-z0-9._/-]+$" -}}
 {{- $safeRelativePath := "^[A-Za-z0-9._/-]+$" -}}

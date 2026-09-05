@@ -24,7 +24,11 @@ repo root の `.chezmoiroot` はここを指しています。
 - 実 secret は commit しません。secret 関連は template または example にします。
 - live home に適用する前に `scripts/chezmoi_apply.sh --dry-run` を使います。
 - shell 専用 host では `bash scripts/setup_shell.sh --dry-run` を使います。
-  対象は6つの target に固定され、無関係な home file は適用しません。
+  chezmoiの展開対象は6つです。既存の本文を保持してcsh/tcshの起動部分も登録します。
+  `.tcshrc` は新規作成しません。
+- `home/.chezmoidata.toml` の `[features] macos` でMac用のシェルPATH・aliasと
+  ZshのHomebrew補完、追加OS設定、Macアプリの導入・更新を切り替えます。
+  OFFにしても、以前のOS設定には復元しません。
 - shell の管理境界、固定 managed path、custom XDG、起動ルールは、[設定の管理境界](../docs/configuration-ownership_JA.md) にまとめています。
 
 ## よく使う確認コマンド

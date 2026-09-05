@@ -6,5 +6,5 @@
 {{- fail "DOTFILES_REPO_ROOT contains a control byte" -}}
 {{- end -}}
 {{- $dotfilesRepoRoot := dict "raw" $repoRoot "prequoted" (shellQuote $repoRoot) -}}
-{{- $shellCommonContext := dict "shell" .shell "dotfilesRepoRoot" $dotfilesRepoRoot -}}
+{{- $shellCommonContext := dict "shell" .shell "features" .features "dotfilesRepoRoot" $dotfilesRepoRoot -}}
 {{- includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" $shellCommonContext -}}
