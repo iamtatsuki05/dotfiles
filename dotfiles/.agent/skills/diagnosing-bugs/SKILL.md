@@ -1,6 +1,6 @@
 ---
 name: diagnosing-bugs
-description: Build a reproducible diagnosis loop for intermittent bugs, performance regressions, or failures without a reliable reproduction. Use auto-debugger for a concrete reproducible error.
+description: Diagnosis loop for hard bugs and performance regressions. Use when the user says "diagnose"/"debug this", or reports something broken/throwing/failing/slow.
 ---
 
 # Diagnosing Bugs

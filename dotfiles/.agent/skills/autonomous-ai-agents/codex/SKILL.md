@@ -1,6 +1,6 @@
 ---
 name: codex
-description: "Operate Codex CLI when the user names it as the execution tool or explicitly authorizes delegation to it."
+description: "Delegate coding to OpenAI Codex CLI (features, PRs)."
 version: 1.0.1
 author: Hermes Agent
 license: MIT
@@ -13,11 +13,9 @@ metadata:
 
 # Codex CLI
 
-Use this workflow only for a request to operate or delegate to Codex CLI. A generic implementation or review request does not select an external CLI. Preserve the authorized scope; setup, account changes, and publication need their own authorization. For a read-only external opinion, use `agent-cli-consult`. The modes below apply after this boundary is met.
-
 Delegate coding tasks to [Codex](https://github.com/openai/codex) via the Hermes terminal. Codex is OpenAI's autonomous coding agent CLI.
 
-## Tasks after Codex CLI delegation is authorized
+## When to use
 
 - Building features
 - Refactoring

@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: "Use when repeated fixes fail and a structured root-cause investigation is needed. Use auto-debugger for a concrete failure and diagnosing-bugs to build an unstable reproduction loop."
+description: "4-phase root cause debugging: understand bugs before fixing."
 license: MIT
 metadata:
   hermes:
@@ -36,7 +36,25 @@ When a flaky asynchronous test waits for elapsed time instead of an observable s
 
 ## When to Use
 
-Use this workflow when previous fixes failed or the user requests a structured root-cause investigation. For a concrete reproducible failure, start with `auto-debugger`. If the central problem is building a stable reproduction or measuring a performance regression, use `diagnosing-bugs` instead. Choose one primary debugging workflow; do not stack their phases merely because their descriptions overlap.
+Use for ANY technical issue:
+- Test failures
+- Bugs in production
+- Unexpected behavior
+- Performance problems
+- Build failures
+- Integration issues
+
+**Use this ESPECIALLY when:**
+- Under time pressure (emergencies make guessing tempting)
+- "Just one quick fix" seems obvious
+- You've already tried multiple fixes
+- Previous fix didn't work
+- You don't fully understand the issue
+
+**Don't skip when:**
+- Issue seems simple (simple bugs have root causes too)
+- You're in a hurry (rushing guarantees rework)
+- Someone wants it fixed NOW (systematic is faster than thrashing)
 
 ## The Four Phases
 

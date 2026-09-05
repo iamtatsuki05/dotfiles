@@ -1,6 +1,6 @@
 ---
 name: google-workspace
-description: "Use the configured Hermes Google Workspace wrapper for Gmail, Calendar, Drive, Docs, or Sheets, or manage its OAuth setup. Direct gws CLI requests use gws."
+description: "Gmail, Calendar, Drive, Docs, Sheets via gws CLI or Python."
 version: 1.2.0
 author: Nous Research
 license: MIT
@@ -18,10 +18,6 @@ metadata:
 ---
 
 # Google Workspace
-
-This skill covers the Hermes wrapper and its existing authentication contract. An explicit request to use the standalone `gws` CLI belongs to `gws`; do not start a second OAuth setup or switch credential stores just because both tools support the same service.
-
-For requests that name only a service, choose the already configured tool and account that fit the task. Use this workflow when that tool is the Hermes wrapper; do not initiate OAuth setup merely to prefer this skill over a working CLI or connector.
 
 Gmail, Calendar, Drive, Contacts, Sheets, and Docs — through Hermes-managed OAuth and a thin CLI wrapper. When `gws` is installed, the skill uses it as the execution backend for broader Google Workspace coverage; otherwise it falls back to the bundled Python client implementation.
 
