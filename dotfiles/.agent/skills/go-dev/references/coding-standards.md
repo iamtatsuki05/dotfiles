@@ -11,19 +11,6 @@
 
 ## プロジェクト設定
 
-### go.mod
-
-```go
-module example.com/myproject
-
-go 1.22
-
-require (
-    github.com/go-chi/chi/v5 v5.0.10
-    golang.org/x/sync v0.5.0
-)
-```
-
 ### .golangci.yml（推奨設定）
 
 ```yaml

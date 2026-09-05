@@ -1,152 +1,77 @@
 ---
 name: terraform-dev
-description: "Use when the user asks to implement, refactor, validate, review, or troubleshoot Terraform/OpenTofu code, modules, providers, variables, state, plans, imports, security, or infrastructure changes."
+description: "Use when the user asks to implement, refactor, validate, review, or troubleshoot Terraform/OpenTofu code, modules, providers, variables, state, plans, imports, or infrastructure security. Read once per session. Do not use for cloud CLI/console operations, Kubernetes manifests without a Terraform provider, or CI YAML that only runs terraform."
 ---
 
-# Terraform開発スキル
+# Terraform 開発スキル
 
-Terraformコードの実装、検証、リファクタリング、モジュール設計を効率的に行うためのガイド。
+Terraform / OpenTofu の実装、検証、リファクタリング、モジュール設計を、対象の backend と環境の制約に合わせて進めるための手順と判断基準。既定は `plan` までで、`apply` は明示依頼がある場合だけ行う。
 
-## 実装前の必須確認
+この skill は session につき 1 回だけ読む。compaction 後は `checkpoint.md` の「適用中の skill と解決済みの実行形」を見て続け、SKILL.md を読み直さない。`$terraform-dev` で本文が注入済みの場合も再読しない。
 
-**プロジェクト構成ファイルを必ず確認する。** Terraformバージョン、プロバイダ、バックエンド設定を把握する。
+## 着手前の確認
 
-確認項目:
-- `versions.tf` / `terraform.tf`: required_version, required_providers
-- `backend.tf`: S3/GCS/Azure Blob等のバックエンド設定
-- `.terraform-version`: tfenvで使用するバージョン
-- `terragrunt.hcl`: Terragrunt使用時の設定
-- `.tflint.hcl`: TFLint設定
-- workspace / backend / state の場所、対象環境、production 影響
-- `terraform plan` を安全に実行できる認証・変数・backend 初期化状態
+次の順に読み、決めた内容を `checkpoint.md` に 1〜2 行で残す。repo が無く相談だけの依頼では設定ファイルを探さず、前提にしたバージョンや設定を回答に明記する。
 
-`apply`、`destroy`、`import`、state 操作、production workspace への変更、リソース削除を含む plan は、対象環境・影響・戻し方を示してユーザー承認を取る。原則としてこの skill では plan までを標準にし、apply は明示依頼がある場合だけ行う。
+1. `versions.tf` / `terraform.tf`: `required_version` と `required_providers`。`.terraform-version` / `.tool-versions` があれば tfenv / mise のバージョン。`import` ブロック(1.5+)、`moved`(1.1+)、`removed`(1.7+)、ephemeral values(1.10+)は対象バージョンが対応する場合だけ使う。
+2. `backend.tf` と workspace: state の場所(S3 / GCS / Azure Blob / Terraform Cloud)、`terraform workspace show`、対象環境(dev / staging / production)。`terragrunt.hcl` があれば実行形は `terragrunt` に合わせる。
+3. `.tflint.hcl`、`.pre-commit-config.yaml`、CI の設定: fmt / validate / lint / scan の実行形。あればそれに従う。
+4. `plan` を安全に実行できるか: 認証(環境変数、profile、assume role)、`*.tfvars` の所在、`terraform init` 済みか。認証が無ければ `validate` までにとどめ、その旨を報告する。
+5. 既存のディレクトリ構成と分割方針(`environments/<env>/` + `modules/<name>/` か否か)。既存構成はこの skill の既定より優先する。
 
-### プロジェクト構造
+`apply`、`destroy`、`terraform import`、`state mv` / `state rm`、production workspace への変更、削除・置換を含む plan の適用は、対象環境、影響、戻し方を示してユーザー承認を取る。承認前に実行しない。`import` / `moved` ブロックの `plan` による差分確認は承認不要で、state に反映する `apply` が承認対象。
 
-既存プロジェクトでは既存のディレクトリ構成と分割方針を優先する。新規なら `environments/<env>/`（env ごとの root module）+ `modules/<name>/` の構成を基本とする。モジュール内のファイル分割や大規模構成の例は [references/module-design.md](references/module-design.md) の「ディレクトリ構成」を参照。
+## 進め方
 
-## コーディング規約
+1. 変更を書いたら `terraform fmt -recursive` → `terraform validate` → `terraform plan -out=tfplan` の順に回し、plan の add / change / destroy 件数と destroy / replace 対象を読む。`tfplan` には sensitive 値が平文で入るので、`.gitignore` 済みか確認し共有しない。意図しない replace は `terraform plan` の `# forces replacement` 行から原因を特定する。
+2. リソース名や module の移動は `moved` ブロックで state を追従させ、`state mv` の手作業を避ける。既存リソースの取り込みは `import` ブロック(1.5+)を優先し、旧バージョンだけ `terraform import`。state lock、不整合、置換の回避策は [references/troubleshooting.md](references/troubleshooting.md) を見る。
+3. 互換のための変数 alias(新旧名を両方受ける)、default 値補完、legacy の分岐は、移行計画と削除予定がある場合だけ追加する。実際に書きそうになった時点でだけ `compatibility-safety` を読む。
+4. 検証は `terraform test`(1.6+、`tests/*.tftest.hcl`)か既存の Terratest に合わせる。テスト基盤が無い場合は `plan` の結果を検証の代わりにし、その旨を報告する。
 
-### 基本スタイル
+## 規約と判断基準
 
-- 共通タグや共通値は `locals` に一元化し、リソース側で `merge()` する。AWS なら provider の `default_tags` も検討する。
-- 環境や既存リソースへの依存は ID のハードコードでなく data source で参照する。
-- 条件付きリソース作成は `count = 条件 ? 1 : 0` を使う（ただし後から `for_each` に変えると置換が起きる点に注意）。
+プロジェクトに規約や既存パターンがあればそれに従う。無い場合の既定:
 
-実例は [references/module-design.md](references/module-design.md) と [references/provider-patterns.md](references/provider-patterns.md) を参照。
+HCL:
 
-### 変数と出力
+- 変数には `description` と `type` を必ず書き、取りうる値が限られるなら `validation` を付ける。秘匿値の variable / output には `sensitive = true`。object 型と `optional()`、構造化出力は [references/module-design.md](references/module-design.md) の「変数設計」「出力設計」。
+- 共通タグや共通値は `locals` に一元化し、リソース側で `merge()` する。AWS なら provider の `default_tags` も候補。
+- 同種リソースの繰り返しは、順序変更で置換が起きる `count` よりキーが安定する `for_each` を優先する。条件付き作成だけ `count = 条件 ? 1 : 0`(後から `for_each` に変えると置換が起きる)。`dynamic` はネストブロックの繰り返しにだけ使う。
+- 既存リソースや別 state の値は ID をハードコードせず、data source か `terraform_remote_state` で参照する。マルチリージョン・マルチアカウントは provider alias で明示する。実例は [references/provider-patterns.md](references/provider-patterns.md) の「プロバイダ共通パターン」。
 
-変数には `description` と `type` を必ず書き、取りうる値が限られるなら `validation` を付ける。秘匿値の出力には `sensitive = true` を付ける。
+モジュール:
 
-```hcl
-# variables.tf
-variable "environment" {
-  description = "Environment name (dev, staging, production)"
-  type        = string
+- 1 モジュール 1 責務。モジュール間は必要な値だけを input / output で受け渡し、モジュール全体を渡さない。
+- 新規の構成は `environments/<env>/`(env ごとの root module)+ `modules/<name>/`。モジュールの実装・呼び出しの完全な例は [references/module-design.md](references/module-design.md) の「モジュール実装と呼び出し例」。
+- 外部モジュールは `version` か git の `ref` で固定する。
 
-  validation {
-    condition     = contains(["dev", "staging", "production"], var.environment)
-    error_message = "Environment must be dev, staging, or production."
-  }
-}
+セキュリティ:
 
-# outputs.tf
-output "database_endpoint" {
-  description = "RDS endpoint"
-  value       = aws_db_instance.main.endpoint
-  sensitive   = true
-}
-```
+- シークレットは `.tf` / `.tfvars` に平文で書かず、Secrets Manager / SSM Parameter Store の data source 参照か ephemeral values(1.10+)を使う。
+- `lifecycle { ignore_changes = [password] }` と `sensitive = true` は差分検出や表示を止めるだけで、値は state に平文で残る。state 自体の保護(S3 backend の `encrypt = true`、state バケットのアクセス制御)を優先する。
+- ストレージ(S3 など)は SSE-KMS と public access block を既定にし、public ACL は明示要件がある場合だけ。実装例は [references/provider-patterns.md](references/provider-patterns.md) の AWS 節。
+- 手動で作られたリソースや手動 import は、`import` ブロックでコード化し、plan に差分が出ないところまで揃えてから扱う。
 
-object 型・`optional()`・構造化出力などの詳細は [references/module-design.md](references/module-design.md) 参照。
+## 完了前の確認
 
-## モジュール設計と HCL パターン
-
-判断基準:
-
-- 1 モジュール 1 責務。モジュール間は必要な値だけを input/output で受け渡す
-- 同種リソースの繰り返しは、順序変更で置換が起きる `count` よりキーが安定する `for_each` を優先する
-- `dynamic` はネストブロックの繰り返しにだけ使い、可読性が落ちるなら列挙する
-- 別 state の値は `terraform_remote_state` か data source で参照し、ID をハードコードしない
-- マルチリージョン・マルチアカウントは provider alias で明示する
-
-最小例:
-
-```hcl
-# environments/production/main.tf
-module "vpc" {
-  source = "../../modules/vpc"
-
-  name       = "${var.project_name}-${var.environment}"
-  cidr_block = var.vpc_cidr
-  tags       = local.common_tags
-}
-
-# for_each でリソースを動的に作成（aws_security_group.main は別途定義済みの前提）
-resource "aws_security_group_rule" "ingress" {
-  for_each = var.ingress_rules
-
-  type              = "ingress"
-  from_port         = each.value.from_port
-  to_port           = each.value.to_port
-  protocol          = each.value.protocol
-  cidr_blocks       = each.value.cidr_blocks
-  security_group_id = aws_security_group.main.id
-}
-```
-
-モジュール実装・呼び出しの完全な例、`dynamic` ブロック、for 式は [references/module-design.md](references/module-design.md)、remote state 参照と provider alias は [references/provider-patterns.md](references/provider-patterns.md) 参照。
-
-## セキュリティベストプラクティス
-
-- シークレットは `.tf` / `.tfvars` に平文で書かず、Secrets Manager / SSM Parameter Store の data source 参照か、Terraform 1.10+ の ephemeral values を使う。
-- **`lifecycle { ignore_changes = [password] }` は差分検出を止めるだけで、値は state に平文で保存される。** state に入る秘匿値対策としては不十分なので、state 自体の保護（S3 backend の `encrypt = true`、state バケットへのアクセス制御）と ephemeral / secrets manager 参照を優先する。
-- ストレージ（S3 等）は SSE-KMS による暗号化とパブリックアクセスブロックを既定とする。
-- 秘匿値を含む variable / output には `sensitive = true` を付ける（これも state への平文保存は防がない）。
-
-Secrets Manager 連携・S3 暗号化・パブリックアクセスブロックの実装例は [references/provider-patterns.md](references/provider-patterns.md) の AWS 節を参照。
-
-## CL/PR 運用（eng-practices）
-
-Small CL、Why の残し方などの共通原則は `eng-practices` スキル参照。Terraform 固有には以下を徹底する。
-
-- **Blast radius を明示**: PR 本文に対象 workspace、影響リソース、`plan` 要約（add/change/destroy 件数）、特に destroy/replace の対象、権限変更、公開設定変更を必ず書く。
-- **段階適用**: production の変更は dev → staging → production の順で適用し、CL を分けるか、同一 CL なら適用順を明記する。
-
-## コード品質チェック
-
-実装後に確認:
-- `terraform fmt -recursive` でフォーマット
-- `terraform validate` で構文チェック
-- `terraform plan` で変更内容を確認
-- `tflint` でベストプラクティス違反を検出
-- `trivy config` / `checkov` でセキュリティスキャン（tfsec は開発終了し Trivy に統合済み。既存 CI に残っていれば移行を提案する）
-- `tflint` / `trivy` / `checkov` が未導入の場合は `missing-tools` skill で一時実行する
-- plan には add/change/destroy の件数、削除・置換リソース、権限変更、公開設定変更がないか確認する
-- 最終報告には対象 workspace/backend、plan 要約、実行した検証、未実行の理由、承認が必要な操作を含める
-
-### 推奨チェックコマンド
+決めた実行形で次を実行する(Terragrunt なら `terragrunt` に置き換える)。
 
 ```bash
-# フォーマットと検証
-terraform fmt -recursive
+terraform fmt -recursive -check
 terraform validate
-
-# プラン確認
-terraform plan -out=tfplan
-
-# セキュリティスキャン
-tflint --recursive
-trivy config .
-checkov -d .
+terraform plan -out=tfplan    # 認証と init が整っている場合
+tflint --recursive            # .tflint.hcl がある場合
+trivy config .                # または checkov -d .
 ```
 
-## リファレンス
+- `tflint` / `trivy` / `checkov` が未導入なら `missing-tools` を読んで一時実行する。tfsec は Trivy に統合済みなので、CI に残っていれば移行を提案する。
+- plan の add / change / destroy 件数、削除・置換対象、IAM や権限の変更、公開設定の変更を確認した。
+- 実行できない検証(認証なし、backend 未初期化など)は、コマンド、理由、残るリスクを報告に回す。
 
-詳細なガイドは以下を参照:
+## 報告に含めること
 
-- **プロバイダ別パターン**: [references/provider-patterns.md](references/provider-patterns.md)
-- **モジュール設計ガイド**: [references/module-design.md](references/module-design.md)
-- **よくあるエラーと対処法**: [references/troubleshooting.md](references/troubleshooting.md)
+- 対象 workspace / backend / 環境と、変更したリソース・モジュール。
+- plan の要約(add / change / destroy 件数、destroy / replace 対象、権限変更、公開設定変更)。production の変更は dev → staging → production の適用順。
+- 実行した検証コマンドと結果。未実行の検証とその理由。
+- 承認が必要な操作(`apply`、`destroy`、`terraform import`、state 操作)とその状態。
+- PR description を書く段階になったら `eng-practices` を読む。それ以外の場面では読まない。

@@ -14,4 +14,4 @@ security、correctness、data loss、access control、concurrency、error handli
 
 comment、inline review、approve、request changesは外部writeなので、明示的に投稿を求められた場合だけ行う。投稿前に対象PR、commit SHA、全comment、review eventを提示し、可能なら1件のatomic reviewとして送る。送信後はGitHubからreview/comment URLとstateをreadbackする。
 
-自分の未commit変更のpre-commit検証はこのreferenceではなく `requesting-code-review` を使う。
+自分の未commit変更の最終報告前レビューはこのreferenceではなく、AGENTS.md の read-only reviewer 手順に従う。

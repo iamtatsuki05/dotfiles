@@ -20,14 +20,15 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 8"
+  assert_contains_text "$output" "registered upstream skills: 9"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
   assert_contains_text "$output" "modern-web-guidance"
   assert_contains_text "$output" "herdr"
   assert_contains_text "$output" "stop-slop"
-  assert_contains_text "$output" "eli5"
+  assert_contains_text "$output" "delegate-skills"
+  assert_contains_text "$output" "chatgpt-pro-line"
 }
 
 test_tree_hash_ignores_generated_python_bytecode() {
@@ -158,22 +159,6 @@ test_superpowers_selection_has_five_non_conflicting_workflows() {
   assert_file "$eval_root/superpowers-systematic-debugging/tasks/replace-fixed-sleep.yaml"
   assert_file "$eval_root/superpowers-brainstorming/model.yaml"
   assert_file "$eval_root/superpowers-brainstorming/tasks/route-three-request-shapes.yaml"
-}
-
-test_eli5_is_pinned_and_licensed() {
-  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
-  local pin
-
-  pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" eli5)"
-  [[ "$pin" == "f4c9452f5ca091f1be7064d9faab1b001ea21645" ]] || fail "unexpected eli5 pin: $pin"
-
-  assert_file "$skills_root/eli5/SKILL.md"
-  assert_file "$skills_root/eli5/LICENSE"
-  assert_contains "$skills_root/eli5/SKILL.md" 'name: eli5'
-  assert_contains "$skills_root/eli5/SKILL.md" 'using a HTML artifact with big pictures and few words'
-  assert_contains "$skills_root/eli5/SKILL.md" 'Local modification notice:'
-  assert_not_contains "$skills_root/eli5/SKILL.md" '<topic>'
-  assert_contains "$skills_root/eli5/LICENSE" 'Apache License'
 }
 
 test_mattpocock_skills_use_current_names_and_resolve_dependencies() {
@@ -344,7 +329,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit natural-japanese=cccccccccccccccccccccccccccccccccccccccc \
       --latest-commit herdr=7777777777777777777777777777777777777777 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -361,8 +347,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 7777777777777777777777777777777777777777"
   assert_contains_text "$output" "Skill ID: stop-slop"
   assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
-  assert_contains_text "$output" "Skill ID: eli5"
-  assert_contains_text "$output" "candidate_commit: 1313131313131313131313131313131313131313"
+  assert_contains_text "$output" "Skill ID: delegate-skills"
+  assert_contains_text "$output" "candidate_commit: 1515151515151515151515151515151515151515"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -377,7 +363,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed natural-japanese" > "$report_dir/natural-japanese.md"
   print -r -- "reviewed herdr" > "$report_dir/herdr.md"
   print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
-  print -r -- "reviewed eli5" > "$report_dir/eli5.md"
+  print -r -- "reviewed delegate-skills" > "$report_dir/delegate-skills.md"
+  print -r -- "reviewed chatgpt-pro-line" > "$report_dir/chatgpt-pro-line.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -393,7 +380,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit natural-japanese=4444444444444444444444444444444444444444 \
       --latest-commit herdr=6666666666666666666666666666666666666666 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -410,8 +398,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_contains_text "$output" "stop-slop: plan update"
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
-  assert_contains_text "$output" "eli5: plan update"
-  assert_contains_text "$output" "candidate=1313131313131313131313131313131313131313"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -605,7 +591,8 @@ EOF'
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -615,7 +602,6 @@ EOF'
   assert_contains_text "$output" "natural-japanese: review approved"
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "stop-slop: review approved"
-  assert_contains_text "$output" "eli5: review approved"
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_contains_text "$output" "empirical-prompt-tuning: plan update"
@@ -628,8 +614,6 @@ EOF'
   assert_contains_text "$output" "candidate=9999999999999999999999999999999999999999"
   assert_contains_text "$output" "stop-slop: plan update"
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
-  assert_contains_text "$output" "eli5: plan update"
-  assert_contains_text "$output" "candidate=1313131313131313131313131313131313131313"
   assert_not_contains_text "$output" "manifest updated"
   rm -rf "$review_dir"
 }
@@ -669,7 +653,8 @@ PY
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -694,7 +679,6 @@ PY
   assert_contains_text "$output" "natural-japanese: review approved"
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "stop-slop: review approved"
-  assert_contains_text "$output" "eli5: review approved"
   rm -rf "$review_dir"
 }
 
@@ -726,7 +710,8 @@ EOF'
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
-      --latest-commit eli5=1313131313131313131313131313131313131313 2>&1
+      --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 2>&1
   )"
   local exit_status=$?
   set -e
@@ -813,7 +798,6 @@ main() {
   test_manifest_tracks_current_upstream_skill_paths
   test_reviewed_updates_preserve_local_security_and_compatibility_overlays
   test_superpowers_selection_has_five_non_conflicting_workflows
-  test_eli5_is_pinned_and_licensed
   test_mattpocock_skills_use_current_names_and_resolve_dependencies
   test_regular_skill_names_are_unique_and_related_skills_resolve
   test_updates_accepts_fixture_ls_remote_output

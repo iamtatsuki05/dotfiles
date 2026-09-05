@@ -405,6 +405,75 @@ def hook_paths(payload: object, agent: str) -> list[Path]:
     return paths
 
 
+def changed_text_lines(payload: object, agent: str) -> set[str] | None:
+    """Return stripped lines introduced by an in-place edit, or None to lint the whole file.
+
+    Only in-place edit tools (Edit / MultiEdit / apply_patch) are scoped; Write and
+    create tools return None because their whole content is new.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if agent == "copilot":
+        tool_name = payload.get("toolName")
+        tool_input = payload.get("toolArgs")
+    else:
+        tool_name = payload.get("tool_name")
+        tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+
+    texts: list[str] = []
+    saw_edit_content = False
+    if tool_name in {"Edit", "MultiEdit", "edit"}:
+        candidates: list[object] = [tool_input]
+        edits = tool_input.get("edits")
+        if isinstance(edits, list):
+            candidates.extend(edits)
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in ("new_string", "newString", "new_str"):
+                value = candidate.get(key)
+                if isinstance(value, str):
+                    saw_edit_content = True
+                    texts.append(value)
+    elif tool_name == "apply_patch":
+        for key in ("command", "patch", "patchText"):
+            value = tool_input.get(key)
+            if not isinstance(value, str):
+                continue
+            for line in value.splitlines():
+                if line.startswith("*** ") or line.startswith("+++") or line.startswith("---"):
+                    continue
+                if line.startswith("+"):
+                    saw_edit_content = True
+                    texts.append(line[1:])
+                elif line.startswith("-"):
+                    saw_edit_content = True
+    else:
+        return None
+    if not saw_edit_content:
+        # The payload does not carry the edited text, so lint the whole file.
+        return None
+    # An in-place edit that introduced no text (a deletion) has nothing to report.
+    return {line.strip() for text in texts for line in text.splitlines() if line.strip()}
+
+
+def restrict_to_changed_lines(path: Path, findings: list[Finding], changed: set[str] | None) -> list[Finding]:
+    if changed is None:
+        return findings
+    file_lines = path.read_text(encoding="utf-8").splitlines()
+    kept: list[Finding] = []
+    for finding in findings:
+        if not 1 <= finding.line <= len(file_lines):
+            continue
+        line = file_lines[finding.line - 1]
+        # Substring match so a partial-line replacement still counts as touching the line.
+        if any(fragment in line for fragment in changed):
+            kept.append(finding)
+    return kept
+
+
 def run_hook(agent: str, profile: str) -> int:
     try:
         payload = json.load(sys.stdin)
@@ -413,13 +482,18 @@ def run_hook(agent: str, profile: str) -> int:
         print(f"japanese-prose-lint: invalid hook payload: {error}", file=sys.stderr)
         return 2
 
+    # Whole-file findings on untouched lines get re-reported on every edit of a
+    # long document, so in-place edits only report lines the edit introduced.
+    changed = changed_text_lines(payload, agent)
     output: list[str] = []
     for path in paths:
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             continue
+        if "/.agent/work/" in path.as_posix():
+            continue
         try:
             validate_file(path)
-            findings = lint_file(path, profile)
+            findings = restrict_to_changed_lines(path, lint_file(path, profile), changed)
         except (OSError, UnicodeError, ValueError) as error:
             print(f"japanese-prose-lint: {error}", file=sys.stderr)
             return 2
