@@ -35,14 +35,30 @@ jobs:
       - name: Select genuine csh on Ubuntu
         if: runner.os == 'Linux'
         run: |
-          test -x /usr/bin/bsd-csh
-          dpkg -L csh | grep -Fx '/usr/bin/bsd-csh'
-          test "$(stat -c '%d:%i' /usr/bin/bsd-csh)" != "$(stat -c '%d:%i' /usr/bin/tcsh)"
+          package_files="$RUNNER_TEMP/csh-package-files"
+          dpkg-query -L csh > "$package_files"
+          bsd_csh_path=""
+          while IFS= read -r package_path; do
+            case "$package_path" in
+              */bsd-csh)
+                if test -z "$bsd_csh_path" && test -f "$package_path" && test -x "$package_path"; then
+                  bsd_csh_path="$package_path"
+                fi
+                ;;
+            esac
+          done < "$package_files"
+          test -n "$bsd_csh_path"
+          test -f "$bsd_csh_path" && test -x "$bsd_csh_path"
+          tcsh_path="$(command -v tcsh)"
+          test -n "$tcsh_path" && test -x "$tcsh_path"
+          csh_realpath="$(realpath "$bsd_csh_path")"
+          tcsh_realpath="$(realpath "$tcsh_path")"
+          test "$csh_realpath" != "$tcsh_realpath"
           csh_bin_dir="$RUNNER_TEMP/dotfiles-csh-bin"
           mkdir -p "$csh_bin_dir"
-          ln -sf /usr/bin/bsd-csh "$csh_bin_dir/csh"
+          ln -sf "$bsd_csh_path" "$csh_bin_dir/csh"
           echo "$csh_bin_dir" >> "$GITHUB_PATH"
-          echo 'DOTFILES_TEST_CSH_BIN=/usr/bin/bsd-csh' >> "$GITHUB_ENV"
+          echo "DOTFILES_TEST_CSH_BIN=$bsd_csh_path" >> "$GITHUB_ENV"
 
       - name: Install Bash 5 and Fish on macOS
         if: runner.os == 'macOS'
@@ -110,10 +126,26 @@ jobs:
         if: matrix.require_csh == '1'
         shell: bash
         run: |
-          test -x /usr/bin/bsd-csh
-          dpkg -L csh | grep -Fx '/usr/bin/bsd-csh'
-          test "$(stat -c '%d:%i' /usr/bin/bsd-csh)" != "$(stat -c '%d:%i' /usr/bin/tcsh)"
-          echo 'DOTFILES_TEST_CSH_BIN=/usr/bin/bsd-csh' >> "$GITHUB_ENV"
+          package_files=/tmp/csh-package-files
+          dpkg-query -L csh > "$package_files"
+          bsd_csh_path=""
+          while IFS= read -r package_path; do
+            case "$package_path" in
+              */bsd-csh)
+                if test -z "$bsd_csh_path" && test -f "$package_path" && test -x "$package_path"; then
+                  bsd_csh_path="$package_path"
+                fi
+                ;;
+            esac
+          done < "$package_files"
+          test -n "$bsd_csh_path"
+          test -f "$bsd_csh_path" && test -x "$bsd_csh_path"
+          tcsh_path="$(command -v tcsh)"
+          test -n "$tcsh_path" && test -x "$tcsh_path"
+          csh_realpath="$(realpath "$bsd_csh_path")"
+          tcsh_realpath="$(realpath "$tcsh_path")"
+          test "$csh_realpath" != "$tcsh_realpath"
+          echo "DOTFILES_TEST_CSH_BIN=$bsd_csh_path" >> "$GITHUB_ENV"
 
       - name: Checkout
         uses: actions/checkout@v4
