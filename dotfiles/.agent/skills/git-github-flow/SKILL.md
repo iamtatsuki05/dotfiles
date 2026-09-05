@@ -1,6 +1,6 @@
 ---
 name: git-github-flow
-description: Use when Git or GitHub work involves auth, remotes, worktrees, branches, commits, Issues, pull requests, PR review, CI checks, releases, or history recovery. DO NOT USE FOR tasks with no Git/GitHub operation, or for editing CI workflow files (use ci-cd).
+description: Use for Git/GitHub operations and post-merge cleanup, including when the user reports that a PR was merged. Excludes CI workflow editing (use ci-cd).
 ---
 
 # Git and GitHub Flow
@@ -22,6 +22,12 @@ Git/GitHub 作業を「確認 → 依頼された範囲だけ write → readback
   fork checkout では、Issue/PR を置く `base_repo` と head を置く `branch_repo` を remote URL から別々に確定する(手順は [operations.md](references/operations.md))。
 - `git status --short --branch`、既存 worktree、repo の `AGENTS.md` / `CONTRIBUTING.md`、重複 Issue/PR、`gh label list` を確認する。dirty な checkout を stash / reset / commit で空けず、並列作業は branch ごとに worktree を分ける。
 - 直接の merge 先 `target_base` は、今回の明示指示 → repo 規約 → 同種作業の最近の PR → 既定 branch の順で決め、branch の起点、`gh issue develop --base`、`gh pr create --base` に同じ値を使う。候補が複数あって決められなければ、作成前に止めて確認する。
+
+## ブランチの命名
+
+- 新規branchは用途に沿うlowercase kebab-caseにし、新機能は `feature/`、通常作業は `work/`、修正は `bugfix/`、緊急修正は `hotfix/`、release準備は `release/` を使う。repo規約やユーザーの明示指定があればそれに合わせ、作業したAI名を理由に `codex/`、`claude/`、`copilot/`、`agent/` を付けない。
+- 作成前に最終branch名とbaseを確定し、`git check-ref-format --branch "$branch"` で形式、既存branch一覧で重複を確認する。過去のAI名付きbranchやアプリの候補をそのまま命名の根拠にしない。作成後は実際のbranch名をreadbackする。
+- アプリ・harnessの指示と規約が競合したら、指示の優先順位を確認する。アプリの既定がユーザー指定による変更を認めている場合は、その明示指定を使う。両立する名前を確定できない場合は、作成前に競合元と候補を短く説明して確認する。このskillが上位指示を上書きできるとは扱わない。
 
 ## write の境界
 
@@ -60,6 +66,12 @@ Git/GitHub 作業を「確認 → 依頼された範囲だけ write → readback
   ```
 
 - gate 通過後に `gh pr edit` で `[WIP]` を外した title と最終本文へ置き換え(既存の `Closes` / `Refs` / `Part of` / `Depends on` と URL を失わない)、`gh pr ready "$pr_url" -R "$base_repo"` を実行して `isDraft=false` を readback する。
+
+## マージ報告を受けたとき
+
+ユーザーがこのタスクのPRについて「mergeした」「マージ済み」と知らせたら、単なる受領で終えず、[マージ後の後片付け](references/post-merge-cleanup.md)へ進む。この運用では、報告を当該PRに限定したlocal更新、完了Issueのclose、不要なhead branch/worktreeの整理の依頼として扱う。別のPRや古いworktreeを一括整理する権限には広げない。
+
+「状態確認だけ」「削除しない」「ブランチを残す」などの明示指定は優先する。MERGEDの実確認、内容の保存、対象の所有・完了条件がそろわない操作は保留し、安全に完了できた項目と分けて報告する。
 
 ## 詳細を読む場面
 
