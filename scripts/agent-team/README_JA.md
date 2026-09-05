@@ -30,8 +30,8 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
 |---|---|---|---|
 | Main | Claude / `direct` | `fable` / `high` | `orchestrator` |
 | Planner | Claude / `acp` | `fable` / `high` | `read-only` |
-| Worker | Codex / `direct` | `gpt-5.6-sol` / `medium` | `workspace-write` |
-| Reviewer | Codex / `direct` | `gpt-5.6-sol` / `high` | `read-only` |
+| Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
+| Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
 
 起動直後に動くのはMainだけです。Planner、Worker、Reviewerは必要なときだけ
 起動し、background roleは同時に1つしか動きません。

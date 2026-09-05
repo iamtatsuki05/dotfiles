@@ -67,7 +67,7 @@ class AgentTeamTestCase(unittest.TestCase):
                 [roles.worker]
                 provider = "{worker_provider}"
                 transport = "direct"
-                model = "gpt-5.6-sol"
+                model = "gpt-6-astra"
                 effort = "medium"
                 prompt = "prompts/worker.md"
                 permission = "workspace-write"
@@ -75,7 +75,7 @@ class AgentTeamTestCase(unittest.TestCase):
                 [roles.reviewer]
                 provider = "codex"
                 transport = "direct"
-                model = "gpt-5.6-sol"
+                model = "gpt-6-astra"
                 effort = "high"
                 prompt = "prompts/reviewer.md"
                 permission = "read-only"

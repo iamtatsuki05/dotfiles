@@ -134,7 +134,7 @@ class ProjectSmokeTest(unittest.TestCase):
                 (PROJECT_ROOT / "agent_team" / "defaults" / "config.toml")
                 .read_text(encoding="utf-8")
                 .replace(
-                    'provider = "codex"\ntransport = "direct"\nmodel = "gpt-5.6-sol"',
+                    'provider = "codex"\ntransport = "direct"\nmodel = "gpt-6-astra"',
                     'provider = "cursor"\ntransport = "direct"\nmodel = "fable"',
                     1,
                 )

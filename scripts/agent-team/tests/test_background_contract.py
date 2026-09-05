@@ -52,7 +52,7 @@ def state_fixture(root: Path, *, version: int = 3) -> dict[str, object]:
         "worker": {
             "provider": "codex",
             "transport": "direct",
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-astra",
             "effort": "medium",
             "permission": "workspace-write",
             "instructions": "worker",
@@ -61,7 +61,7 @@ def state_fixture(root: Path, *, version: int = 3) -> dict[str, object]:
         "reviewer": {
             "provider": "codex",
             "transport": "direct",
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-astra",
             "effort": "high",
             "permission": "read-only",
             "instructions": "reviewer",

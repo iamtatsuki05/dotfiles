@@ -33,7 +33,7 @@ class McpLifecycleTest(unittest.TestCase):
                 "worker": {
                     "provider": "codex",
                     "transport": "direct",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-6-astra",
                     "effort": "medium",
                     "permission": "workspace-write",
                     "instructions": "worker instructions",
@@ -146,7 +146,7 @@ class McpLifecycleTest(unittest.TestCase):
                     return {
                         "terminal": {
                             "preview": (
-                                "OpenAI Codex task gpt-5.6-sol medium · ~/src/dotfiles"
+                                "OpenAI Codex task gpt-6-astra medium · ~/src/dotfiles"
                             )
                         }
                     }
