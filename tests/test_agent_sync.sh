@@ -662,15 +662,15 @@ assert "セキュリティ、権限変更、個人情報、課金、法的・契
 PY
 }
 
-test_codex_subagent_default_matches_configured_max_contract() {
+test_codex_subagent_defaults_match_configured_contract() {
   python3 - "$REPO_ROOT/dotfiles/.agent/apps/codex/config.toml" <<'PY'
 import sys
 import tomllib
 from pathlib import Path
 
 config = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert config["agents"]["default_subagent_model"] == "gpt-5.6-luna"
-assert config["agents"]["default_subagent_reasoning_effort"] == "max"
+assert config["agents"]["default_subagent_model"] == "gpt-6-astra"
+assert config["agents"]["default_subagent_reasoning_effort"] == "low"
 assert config["agents"]["max_concurrent_threads_per_session"] == 100
 PY
 }
@@ -846,7 +846,7 @@ main() {
   test_claude_completion_notification_uses_stop_hook
   test_static_context_is_not_reinjected_on_every_claude_and_codex_prompt
   test_claude_stop_hook_contract_covers_completion_and_safety_boundaries
-  test_codex_subagent_default_matches_configured_max_contract
+  test_codex_subagent_defaults_match_configured_contract
   test_agent_prompt_separates_task_boundary_triggers_from_signals
   test_agent_prompt_probes_shared_causes_before_parallel_dispatch
   test_agent_sync_wrapper_delegates_to_setup_script
