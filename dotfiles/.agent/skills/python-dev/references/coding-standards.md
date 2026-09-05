@@ -2,65 +2,11 @@
 
 ## 目次
 
-1. [pyproject.toml参照](#pyprojecttoml参照)
-2. [命名規則](#命名規則)
-3. [型ヒント](#型ヒント)
-4. [インポート](#インポート)
-5. [docstring](#docstring)
-6. [クラス設計](#クラス設計)
-7. [ruffルール対応](#ruffルール対応)
-
-## pyproject.toml参照
-
-実装前に必ずプロジェクトのpyproject.tomlを確認する。主要な設定項目:
-
-```toml
-[tool.ruff]
-target-version = "py313"  # Pythonバージョン
-line-length = 119         # 行の最大長
-indent-width = 4
-
-[tool.ruff.format]
-quote-style = "single"    # シングル or ダブル
-indent-style = "space"
-
-[tool.ruff.lint]
-select = ["ALL"]          # 有効なルール
-ignore = ["D100", ...]    # 無視するルール
-
-[tool.mypy]
-python_version = "3.13"
-disallow_untyped_defs = true  # 型定義必須
-```
-
-## 命名規則
-
-```python
-# モジュール: snake_case
-# user_authentication.py
-
-# クラス: PascalCase
-class UserAuthentication:
-    pass
-
-# 関数・メソッド: snake_case
-def validate_user_input(data: dict[str, Any]) -> bool:
-    pass
-
-# 変数: snake_case
-user_count = 0
-is_valid = True
-
-# 定数: UPPER_SNAKE_CASE
-MAX_RETRY_COUNT = 3
-DEFAULT_TIMEOUT = 30
-
-# プライベート: 先頭にアンダースコア
-_internal_cache: dict[str, Any] = {}
-
-def _helper_function() -> None:
-    pass
-```
+1. [型ヒント](#型ヒント)
+2. [インポート](#インポート)
+3. [docstring](#docstring)
+4. [クラス設計](#クラス設計)
+5. [ruffルール対応](#ruffルール対応)
 
 ## 型ヒント
 
