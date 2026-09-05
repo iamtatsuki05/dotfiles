@@ -69,25 +69,11 @@
       PROMPT='%F{33}%~%f `git-current-branch`
        ''${PROMPT_MACHINE_EMOJI}  ▶  '
 
-      dotfiles_shell_common="''${XDG_CONFIG_HOME:-$HOME/.config}/shell/dotfiles-shell-common.sh"
+      dotfiles_shell_common="$HOME/.config/shell/dotfiles-shell-common.sh"
       if [ -r "$dotfiles_shell_common" ]; then
         . "$dotfiles_shell_common"
       fi
       unset dotfiles_shell_common
-
-      for dotfiles_hm_vars in \
-        "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
-        "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
-      do
-        if [ -r "$dotfiles_hm_vars" ]; then
-          . "$dotfiles_hm_vars"
-        fi
-      done
-      unset dotfiles_hm_vars
-
-      if command -v mise >/dev/null 2>&1; then
-        eval "$(command mise activate zsh)"
-      fi
     '')
   ];
 }

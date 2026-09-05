@@ -1,0 +1,86 @@
+{{- $shell := .shell -}}
+{{- $safeWord := "^[A-Za-z0-9._+%:@/-]+$" -}}
+{{- $safeXdgPath := "^\\.[A-Za-z0-9._/-]+$" -}}
+{{- $safeRelativePath := "^[A-Za-z0-9._/-]+$" -}}
+{{- $safeAbsolutePath := "^/[A-Za-z0-9._/-]+$" -}}
+{{- if not (kindIs "map" $shell) }}{{ fail "invalid canonical shell data" }}{{ end -}}
+{{- $shellKeys := dict "editor" true "xdg" true "path" true "aliases" true "mise" true -}}
+{{- if ne (len $shell) (len $shellKeys) }}{{ fail "invalid canonical shell key set" }}{{ end -}}
+{{- range $name, $value := $shell -}}
+  {{- if not (hasKey $shellKeys $name) }}{{ fail "invalid canonical shell key set" }}{{ end -}}
+{{- end -}}
+{{- if not (kindIs "string" $shell.editor) }}{{ fail "invalid canonical shell editor" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._+-]+$" $shell.editor) }}{{ fail "invalid canonical shell editor" }}{{ end -}}
+
+{{- if not (kindIs "map" $shell.xdg) }}{{ fail "invalid canonical shell XDG data" }}{{ end -}}
+{{- $xdgKeys := dict "config" true "cache" true "data" true "state" true -}}
+{{- if ne (len $shell.xdg) (len $xdgKeys) }}{{ fail "invalid canonical shell XDG key set" }}{{ end -}}
+{{- range $name, $value := $shell.xdg -}}
+  {{- if not (hasKey $xdgKeys $name) }}{{ fail "invalid canonical shell XDG key set" }}{{ end -}}
+  {{- if not (kindIs "string" $value) }}{{ fail "invalid canonical shell XDG value" }}{{ end -}}
+  {{- if not (regexMatch $safeXdgPath $value) }}{{ fail "invalid canonical shell XDG value" }}{{ end -}}
+  {{- if or (contains ".." $value) (contains "//" $value) (contains ":" $value) }}{{ fail "invalid canonical shell XDG value" }}{{ end -}}
+{{- end -}}
+
+{{- if not (kindIs "map" $shell.path) }}{{ fail "invalid canonical shell PATH data" }}{{ end -}}
+{{- $pathKeys := dict
+  "home_local_bin" true
+  "home_nix_profile_bin" true
+  "darwin_arm64_homebrew_sbin" true
+  "darwin_arm64_homebrew_bin" true
+  "darwin_x86_64_homebrew_sbin" true
+  "darwin_x86_64_homebrew_bin" true
+  "linuxbrew_user_sbin" true
+  "linuxbrew_user_bin" true
+  "linuxbrew_system_sbin" true
+  "linuxbrew_system_bin" true
+  "nix_user_profile_root" true
+  "nix_user_profile_bin" true
+  "nix_system_bin" true
+  "nix_default_bin" true
+  "nix_state_relative" true
+-}}
+{{- if ne (len $shell.path) (len $pathKeys) }}{{ fail "invalid canonical shell PATH key set" }}{{ end -}}
+{{- $relativePathKeys := dict
+  "home_local_bin" true
+  "home_nix_profile_bin" true
+  "linuxbrew_user_sbin" true
+  "linuxbrew_user_bin" true
+  "nix_user_profile_bin" true
+  "nix_state_relative" true
+-}}
+{{- range $name, $value := $shell.path -}}
+  {{- if not (hasKey $pathKeys $name) }}{{ fail "invalid canonical shell PATH key set" }}{{ end -}}
+  {{- if not (kindIs "string" $value) }}{{ fail "invalid canonical shell PATH value" }}{{ end -}}
+  {{- if hasKey $relativePathKeys $name -}}
+    {{- if not (regexMatch $safeRelativePath $value) }}{{ fail "invalid canonical shell relative PATH" }}{{ end -}}
+    {{- if or (contains ".." $value) (contains "//" $value) (contains ":" $value) (hasPrefix "/" $value) (hasPrefix "~" $value) }}{{ fail "invalid canonical shell relative PATH" }}{{ end -}}
+  {{- else -}}
+    {{- if not (regexMatch $safeAbsolutePath $value) }}{{ fail "invalid canonical shell absolute PATH" }}{{ end -}}
+    {{- if or (contains ".." $value) (contains "//" $value) (contains ":" $value) }}{{ fail "invalid canonical shell absolute PATH" }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if not (kindIs "map" $shell.aliases) }}{{ fail "invalid canonical shell aliases" }}{{ end -}}
+{{- $aliasKeys := dict "ginit" 2 "gauth" 3 "gls" 4 -}}
+{{- if ne (len $shell.aliases) (len $aliasKeys) }}{{ fail "invalid canonical shell alias set" }}{{ end -}}
+{{- range $name, $argv := $shell.aliases -}}
+  {{- if not (hasKey $aliasKeys $name) }}{{ fail "invalid canonical shell alias name" }}{{ end -}}
+  {{- if not (kindIs "slice" $argv) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+  {{- if ne (len $argv) (index $aliasKeys $name) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+  {{- range $value := $argv -}}
+    {{- if not (kindIs "string" $value) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+    {{- if not (regexMatch $safeWord $value) }}{{ fail "invalid canonical shell alias argv" }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if not (kindIs "map" $shell.mise) }}{{ fail "invalid shell.mise policy" }}{{ end -}}
+{{- $miseKeys := dict "fish" true "csh" true "tcsh" true "shim_root_precedence" true -}}
+{{- if ne (len $shell.mise) (len $miseKeys) }}{{ fail "invalid shell.mise policy key set" }}{{ end -}}
+{{- if ne $shell.mise.fish "interactive-only" }}{{ fail "invalid shell.mise fish policy" }}{{ end -}}
+{{- if ne $shell.mise.csh "unsupported-activation" }}{{ fail "invalid shell.mise csh policy" }}{{ end -}}
+{{- if ne $shell.mise.tcsh "unsupported-activation" }}{{ fail "invalid shell.mise tcsh policy" }}{{ end -}}
+{{- $shimRootPrecedence := $shell.mise.shim_root_precedence -}}
+{{- if not (kindIs "slice" $shimRootPrecedence) }}{{ fail "invalid shell.mise shim root precedence" }}{{ end -}}
+{{- if ne (len $shimRootPrecedence) 3 }}{{ fail "invalid shell.mise shim root precedence" }}{{ end -}}
+{{- if or (ne (index $shimRootPrecedence 0) "MISE_DATA_DIR") (ne (index $shimRootPrecedence 1) "XDG_DATA_HOME") (ne (index $shimRootPrecedence 2) "HOME") }}{{ fail "invalid shell.mise shim root precedence" }}{{ end -}}

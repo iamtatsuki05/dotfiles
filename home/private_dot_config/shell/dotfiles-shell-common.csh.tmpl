@@ -1,0 +1,104 @@
+{{- $shell := .shell -}}
+{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell) -}}
+if ( ! $?EDITOR ) then
+  setenv EDITOR "{{ shellQuote .shell.editor }}"
+else if ( "$EDITOR" == "" ) then
+  setenv EDITOR "{{ shellQuote .shell.editor }}"
+endif
+
+set df_sc = ""
+if ( $?MISE_DATA_DIR ) then
+  if ( "$MISE_DATA_DIR" != "" ) set df_sc = "$MISE_DATA_DIR/shims"
+endif
+if ( "$df_sc" == "" ) then
+  if ( $?XDG_DATA_HOME ) then
+    if ( "$XDG_DATA_HOME" != "" ) set df_sc = "$XDG_DATA_HOME/mise/shims"
+  endif
+endif
+if ( "$df_sc" == "" ) set df_sc = "$HOME/{{ shellQuote .shell.xdg.data }}/mise/shims"
+
+if ( ! $?XDG_CONFIG_HOME ) then
+  setenv XDG_CONFIG_HOME "$HOME/{{ shellQuote .shell.xdg.config }}"
+else if ( "$XDG_CONFIG_HOME" == "" ) then
+  setenv XDG_CONFIG_HOME "$HOME/{{ shellQuote .shell.xdg.config }}"
+endif
+if ( ! $?XDG_CACHE_HOME ) then
+  setenv XDG_CACHE_HOME "$HOME/{{ shellQuote .shell.xdg.cache }}"
+else if ( "$XDG_CACHE_HOME" == "" ) then
+  setenv XDG_CACHE_HOME "$HOME/{{ shellQuote .shell.xdg.cache }}"
+endif
+if ( ! $?XDG_DATA_HOME ) then
+  setenv XDG_DATA_HOME "$HOME/{{ shellQuote .shell.xdg.data }}"
+else if ( "$XDG_DATA_HOME" == "" ) then
+  setenv XDG_DATA_HOME "$HOME/{{ shellQuote .shell.xdg.data }}"
+endif
+if ( ! $?XDG_STATE_HOME ) then
+  setenv XDG_STATE_HOME "$HOME/{{ shellQuote .shell.xdg.state }}"
+else if ( "$XDG_STATE_HOME" == "" ) then
+  setenv XDG_STATE_HOME "$HOME/{{ shellQuote .shell.xdg.state }}"
+endif
+set df_mgc = "`printenv MISE_GLOBAL_CONFIG_FILE`"
+if ( "$df_mgc" == "" ) then
+  if ( -r "$HOME/.config/mise/config.toml" ) setenv MISE_GLOBAL_CONFIG_FILE "$HOME/.config/mise/config.toml"
+endif
+unset df_mgc
+
+if ( $?path ) then
+else
+  set path = ( )
+endif
+
+set df_ma = ""
+if ( "`uname -s`" == "Darwin" ) then
+  set df_ma = "`uname -m`"
+  if ( "$df_ma" == "arm64" && -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" ) then
+    set df_pc = ( "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}" "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" )
+  else if ( "$df_ma" == "x86_64" && -d "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}" ) then
+    set df_pc = ( "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}" "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}" )
+  else if ( -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" ) then
+    set df_pc = ( "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}" "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" )
+  else if ( -d "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}" ) then
+    set df_pc = ( "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}" "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}" )
+  else
+    set df_pc = ( )
+  endif
+else
+  if ( -d "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}" ) then
+    set df_pc = ( "$HOME/{{ shellQuote .shell.path.linuxbrew_user_sbin }}" "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}" )
+  else if ( -d "{{ shellQuote .shell.path.linuxbrew_system_bin }}" ) then
+    set df_pc = ( "{{ shellQuote .shell.path.linuxbrew_system_sbin }}" "{{ shellQuote .shell.path.linuxbrew_system_bin }}" )
+  else
+    set df_pc = ( )
+  endif
+endif
+
+unset df_ma
+set df_pc = ( $df_pc:q "$HOME/{{ shellQuote .shell.path.home_local_bin }}" "$HOME/{{ shellQuote .shell.path.home_nix_profile_bin }}" )
+if ( $?USER ) then
+  if ( "$USER" != "" ) set df_pc = ( $df_pc "{{ shellQuote .shell.path.nix_user_profile_root }}/$USER/{{ shellQuote .shell.path.nix_user_profile_bin }}" )
+endif
+set df_pc = ( $df_pc:q "{{ shellQuote .shell.path.nix_system_bin }}" "{{ shellQuote .shell.path.nix_default_bin }}" "$XDG_STATE_HOME/{{ shellQuote .shell.path.nix_state_relative }}" "$df_sc" )
+
+@ df_ci = 1
+while ( $df_ci <= $#df_pc )
+  set df_ca = "$df_pc[$df_ci]"
+  if ( -d "$df_ca" ) then
+    set df_ps = 0
+    @ df_pi = 1
+    while ( $df_pi <= $#path )
+      set df_pe = "$path[$df_pi]"
+      if ( "$df_pe" == "$df_ca" ) set df_ps = 1
+      @ df_pi++
+    end
+    if ( $df_ps == 0 ) set path = ( "$df_ca" $path:q )
+  endif
+  @ df_ci++
+end
+
+if ( $?prompt ) then
+  alias ginit {{ shellQuote (printf "%s %s" (index .shell.aliases.ginit 0) (index .shell.aliases.ginit 1)) }}
+  alias gauth {{ shellQuote (printf "%s %s %s" (index .shell.aliases.gauth 0) (index .shell.aliases.gauth 1) (index .shell.aliases.gauth 2)) }}
+  alias gls {{ shellQuote (printf "%s %s %s %s" (index .shell.aliases.gls 0) (index .shell.aliases.gls 1) (index .shell.aliases.gls 2) (index .shell.aliases.gls 3)) }}
+endif
+
+unset df_sc df_pc df_ca df_ps df_ci df_pi df_pe

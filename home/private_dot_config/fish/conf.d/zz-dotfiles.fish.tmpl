@@ -1,0 +1,99 @@
+{{- $shell := .shell -}}
+{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell) -}}
+if not set -q EDITOR; or test -z "$EDITOR"
+    set -gx EDITOR {{ shellQuote .shell.editor }}
+end
+if not set -q XDG_CONFIG_HOME; or test -z "$XDG_CONFIG_HOME"
+    set -gx XDG_CONFIG_HOME "$HOME/{{ shellQuote .shell.xdg.config }}"
+end
+if not set -q XDG_CACHE_HOME; or test -z "$XDG_CACHE_HOME"
+    set -gx XDG_CACHE_HOME "$HOME/{{ shellQuote .shell.xdg.cache }}"
+end
+if not set -q XDG_DATA_HOME; or test -z "$XDG_DATA_HOME"
+    set -gx XDG_DATA_HOME "$HOME/{{ shellQuote .shell.xdg.data }}"
+end
+if not set -q XDG_STATE_HOME; or test -z "$XDG_STATE_HOME"
+    set -gx XDG_STATE_HOME "$HOME/{{ shellQuote .shell.xdg.state }}"
+end
+if not set -q MISE_GLOBAL_CONFIG_FILE; or test -z "$MISE_GLOBAL_CONFIG_FILE"
+    if test -r "$HOME/.config/mise/config.toml"
+        set -gx MISE_GLOBAL_CONFIG_FILE "$HOME/.config/mise/config.toml"
+    end
+end
+
+function dotfiles_prepend_path
+    set -l candidate $argv[1]
+    test -d "$candidate"; or return 0
+    contains -- "$candidate" $PATH; and return 0
+    set -gx PATH "$candidate" $PATH
+end
+
+set -l dotfiles_macos_arch (uname -m 2>/dev/null)
+if test (uname -s 2>/dev/null) = Darwin
+    if test "$dotfiles_macos_arch" = arm64; and test -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
+    else if test "$dotfiles_macos_arch" = x86_64; and test -d "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
+    else if test -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
+    else if test -d "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}"
+        dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
+    end
+else if test -d "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}"
+    dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_sbin }}"
+    dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}"
+else if test -d "{{ shellQuote .shell.path.linuxbrew_system_bin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.linuxbrew_system_sbin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.linuxbrew_system_bin }}"
+end
+set -e dotfiles_macos_arch
+dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.home_local_bin }}"
+dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.home_nix_profile_bin }}"
+if set -q USER; and test -n "$USER"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.nix_user_profile_root }}/$USER/{{ shellQuote .shell.path.nix_user_profile_bin }}"
+end
+dotfiles_prepend_path "{{ shellQuote .shell.path.nix_system_bin }}"
+dotfiles_prepend_path "{{ shellQuote .shell.path.nix_default_bin }}"
+dotfiles_prepend_path "$XDG_STATE_HOME/{{ shellQuote .shell.path.nix_state_relative }}"
+functions -e dotfiles_prepend_path
+
+set -g DOTFILES_MISE_ACTIVATE_FISH_FAILED 0
+
+{{- if eq .shell.mise.fish "interactive-only" }}
+if status is-interactive
+    alias ginit={{ shellQuote (printf "%s %s" (index .shell.aliases.ginit 0) (index .shell.aliases.ginit 1)) }}
+    alias gauth={{ shellQuote (printf "%s %s %s" (index .shell.aliases.gauth 0) (index .shell.aliases.gauth 1) (index .shell.aliases.gauth 2)) }}
+    alias gls={{ shellQuote (printf "%s %s %s %s" (index .shell.aliases.gls 0) (index .shell.aliases.gls 1) (index .shell.aliases.gls 2) (index .shell.aliases.gls 3)) }}
+
+    function dotfiles_mise_activate_fish
+        set -l dotfiles_mise_output (mise activate fish | string collect)
+        set -l dotfiles_mise_generator_status $pipestatus[1]
+        if test "$dotfiles_mise_generator_status" -ne 0; or test -z "$dotfiles_mise_output"
+            set -g DOTFILES_MISE_ACTIVATE_FISH_FAILED 1
+            echo 'dotfiles: mise activate fish failed' >&2
+            return 1
+        end
+        source (printf '%s\n' "$dotfiles_mise_output" | psub)
+        set -l dotfiles_mise_source_status $status
+        if test "$dotfiles_mise_source_status" -ne 0
+            set -g DOTFILES_MISE_ACTIVATE_FISH_FAILED 1
+            echo 'dotfiles: mise activate fish failed' >&2
+            return 1
+        end
+    end
+
+    set -l dotfiles_mise_activation_status 0
+    if command -q mise
+        dotfiles_mise_activate_fish
+        set dotfiles_mise_activation_status $status
+    end
+    functions -e dotfiles_mise_activate_fish
+    return $dotfiles_mise_activation_status
+end
+{{- else }}
+{{ fail "unsupported shell.mise.fish policy" }}
+{{- end }}
