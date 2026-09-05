@@ -1,6 +1,6 @@
 ---
 name: opencode
-description: "Delegate coding to OpenCode CLI (features, PR review)."
+description: "Operate OpenCode CLI when the user names it as the execution tool or explicitly authorizes delegation to it."
 version: 1.2.0
 author: Hermes Agent
 license: MIT
@@ -13,14 +13,15 @@ metadata:
 
 # OpenCode CLI
 
+Use this workflow only for a request to operate or delegate to OpenCode CLI. A generic implementation or review request does not select an external CLI. Preserve the authorized scope; setup, account changes, and publication need their own authorization. For a read-only opinion, keep OpenCode as requested and verify its available permission controls before execution; if read-only operation cannot be established, report that limitation without switching providers. The modes below apply after this boundary is met.
+
 Use [OpenCode](https://opencode.ai) as an autonomous coding worker orchestrated by Hermes terminal/process tools. OpenCode is a provider-agnostic, open-source AI coding agent with a TUI and CLI.
 
-## When to Use
+## Tasks after OpenCode delegation is authorized
 
-- User explicitly asks to use OpenCode
-- You want an external coding agent to implement/refactor/review code
-- You need long-running coding sessions with progress checks
-- You want parallel task execution in isolated workdirs/worktrees
+- Implement, refactor, or review the code within the authorized scope
+- Run long coding sessions with progress checks
+- Execute independent tasks in isolated workdirs/worktrees when delegation is authorized
 
 ## Prerequisites
 

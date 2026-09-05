@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Write a markdown plan to .hermes/plans/; no execution.
+description: "Write a saved implementation plan when the user requests planning without execution. Do not impose plan mode on an implementation request."
 version: 2.0.0
 author: Hermes Agent (writing-craft adapted from obra/superpowers)
 license: MIT
@@ -65,7 +65,7 @@ The rest of this skill is the craft of authoring a *good* implementation plan �
 
 ## Overview
 
-Write comprehensive implementation plans assuming the implementer has zero context for the codebase and questionable taste. Document everything they need: which files to touch, complete code, testing commands, docs to check, how to verify. Give them bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.
+Write comprehensive implementation plans assuming the implementer has zero context for the codebase and questionable taste. Document everything they need: which files to touch, complete code, testing commands, docs to check, how to verify. Give them bite-sized tasks. DRY. YAGNI. Use test-first steps where appropriate. Include commit steps only when committing is part of the authorized workflow.
 
 Assume the implementer is a skilled developer but knows almost nothing about the toolset or problem domain. Assume they don't know good test design very well.
 
@@ -73,26 +73,18 @@ Assume the implementer is a skilled developer but knows almost nothing about the
 
 ## When a Full Implementation Plan Helps
 
-**Always use before:**
-- Implementing multi-step features
-- Breaking down complex requirements
-- Delegating independent tasks to subagents
-
-**Don't skip when:**
-- Feature seems simple (assumptions cause bugs)
-- You plan to implement it yourself (future you needs guidance)
-- Working alone (documentation matters)
+Within a planning request, include enough detail to resolve consequential design choices, dependencies, and verification. Use the existing context and scale detail to the task. This section does not activate plan mode for ordinary implementation or delegation, and does not require a separate approval for already-authorized work.
 
 ## Bite-Sized Task Granularity
 
-**Each task = 2-5 minutes of focused work.**
+**Choose task boundaries by a verifiable outcome and dependencies.**
 
 Every step is one action:
 - "Write the failing test" — step
 - "Run it to make sure it fails" — step
 - "Implement the minimal code to make the test pass" — step
 - "Run the tests and make sure they pass" — step
-- "Commit" — step
+- "Commit the scoped change" — step only if committing is authorized
 
 **Too big:**
 ```markdown
@@ -114,9 +106,9 @@ Every step is one action:
 
 ## Plan Document Structure
 
-### Header (Required)
+### Header Example
 
-Every plan MUST start with:
+A possible header:
 
 ```markdown
 # [Feature Name] Implementation Plan
@@ -134,7 +126,7 @@ Every plan MUST start with:
 
 ### Task Structure
 
-Each task follows this format:
+Use the following example only where it fits the requested work; omit inapplicable steps, including unauthorized commits:
 
 ````markdown
 ### Task N: [Descriptive Name]
@@ -171,7 +163,7 @@ def function(input):
 Run: `pytest tests/path/test.py::test_specific_behavior -v`
 Expected: PASS
 
-**Step 5: Commit**
+**Step 5: Commit (only when authorized)**
 
 ```bash
 git add tests/path/test.py src/path/file.py
@@ -281,9 +273,9 @@ Every task that produces code should include the full TDD cycle:
 
 See `test-driven-development` skill for details.
 
-### Frequent Commits
+### Authorized Commits
 
-Commit after every task:
+If the user authorized commits, include commit points at coherent, verified milestones and stage only the agreed scope. Otherwise omit commit steps from the plan:
 ```bash
 git add [files]
 git commit -m "type: description"
@@ -332,7 +324,7 @@ Complete code (copy-pasteable)
 Exact commands with expected output
 Verification steps
 DRY, YAGNI, TDD
-Frequent commits
+Commit points only when authorized
 ```
 
 **A good plan makes implementation obvious.**
