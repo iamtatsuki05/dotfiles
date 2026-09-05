@@ -10,9 +10,11 @@ English version: [README.md](README.md)
 | Path | 用途 |
 |---|---|
 | `run.sh` | local と CI で使う main test runner。 |
-| `lib/` | shell test 向けの共通 assertion と fixture helper。 |
+| `lib/` | shell test 向けの共通 assertion、fixture、runtime matrix helper。 |
 | `test_agent_*.sh` | AI agent config、support matrix、upstream skill の check。 |
 | `test_chezmoi_*.sh` | chezmoi source state と rendered-home の check。 |
+| `test_multi_shell_config.sh` | Bash、Zsh、Fish、csh、tcsh adapter の public source/render check。 |
+| `test_setup_shell.sh` | Bash 専用 bootstrap の allowlist、preflight、dry-run、verify、runtime check。 |
 | `test_nix_migration.sh` | Nix / Homebrew migration と package config の check。 |
 | `test_dotfiles_test_runner.sh` | test runner 自体の self-check。 |
 
@@ -20,6 +22,8 @@ English version: [README.md](README.md)
 
 - shared script、sync behavior、generated config を変更した場合は focused test を追加・更新します。
 - 可能な限り macOS と Ubuntu の両方で動く形にします。
+- shell runtime の check は identity を区別します。optional runtime がなければ `SKIP`、
+  runtime があるのに失敗した場合は `FAIL` とします。
 - skip は、必要な外部 tool が本当に利用できない場合に限ります。
 - local command は `.github/workflows/` と揃えます。
 
@@ -29,5 +33,6 @@ English version: [README.md](README.md)
 zsh tests/run.sh
 zsh tests/test_agent_sync.sh
 zsh tests/test_chezmoi_rendered_home.sh
+bash tests/test_setup_shell.sh
 zsh tests/test_nix_migration.sh
 ```

@@ -129,6 +129,8 @@
 - skill と CLI コマンドを MCP より優先してください。MCP は、必要な context が外部サービス側にある場合など、限られた場面でだけ使ってください。
 - 次に必要な取得・検索・読み取りのうち、互いの結果に依存しないものはまとめて実行してください。結果を確認して決める後続処理、共有状態の変更、承認が必要な操作は分けてください。
 - コマンドが見つからない場合や、global install せずに一時実行したい場合は、`missing-tools` skill を使ってください。
+- shell の役割と起動境界は、[設定の管理境界](../../docs/configuration-ownership_JA.md#shell-の役割と起動境界)を正とします。ローカルは zsh、server は Bash、新しい portable script は Bash と対応する shebang、既存 script は宣言済み shell を保ちます。
+- Fish と csh/tcsh は optional adapter です。Fish は interactive 時だけ mise を activate し、csh/tcsh は shim または `mise exec` / `mise run` を使って手動 opt-in します。
 - 同一 session で一度読んだ skill は、ユーザーの指示や skill 自体の更新がない限り再読しないでください。compaction 後は `checkpoint.md` の「適用中の skill と解決済みの実行形」を参照し、必要な skill だけ読み直してください。`$skill` 指定で本文が注入済みの場合も再読しないでください。実装開始時に複数の skill をまとめて読む定型手順は作らないでください。
 
 # Skill 作成

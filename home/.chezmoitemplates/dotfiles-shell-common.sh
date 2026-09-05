@@ -1,4 +1,61 @@
-export DOTFILES_REPO_ROOT="${DOTFILES_REPO_ROOT:-__DOTFILES_REPO_ROOT__}"
+{{- $dotfilesRepoRoot := .dotfilesRepoRoot -}}
+{{- if not (kindIs "map" $dotfilesRepoRoot) }}{{ fail "invalid DOTFILES_REPO_ROOT template context" }}{{ end -}}
+{{- if not (kindIs "string" $dotfilesRepoRoot.raw) }}{{ fail "invalid DOTFILES_REPO_ROOT raw template context" }}{{ end -}}
+{{- if not (kindIs "string" $dotfilesRepoRoot.prequoted) }}{{ fail "invalid DOTFILES_REPO_ROOT quoted template context" }}{{ end -}}
+{{- $shell := .shell -}}
+{{- includeTemplate ".chezmoitemplates/shell-data-validate" (dict "shell" $shell) -}}
+if [ -z "${DOTFILES_REPO_ROOT:-}" ]; then
+  DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}
+fi
+export DOTFILES_REPO_ROOT
+
+dotfiles_saved_editor=${EDITOR:-}
+dotfiles_saved_xdg_config_home=${XDG_CONFIG_HOME:-}
+dotfiles_saved_xdg_cache_home=${XDG_CACHE_HOME:-}
+dotfiles_saved_xdg_data_home=${XDG_DATA_HOME:-}
+dotfiles_saved_xdg_state_home=${XDG_STATE_HOME:-}
+
+for dotfiles_hm_vars in \
+  "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
+do
+  if [ -r "$dotfiles_hm_vars" ]; then
+    . "$dotfiles_hm_vars"
+  fi
+done
+if [ -n "${USER:-}" ]; then
+  dotfiles_hm_vars="{{ shellQuote .shell.path.nix_user_profile_root }}/$USER/etc/profile.d/hm-session-vars.sh"
+  if [ -r "$dotfiles_hm_vars" ]; then
+    . "$dotfiles_hm_vars"
+  fi
+fi
+unset dotfiles_hm_vars
+
+if [ -n "$dotfiles_saved_editor" ]; then
+  EDITOR="$dotfiles_saved_editor"
+fi
+if [ -n "$dotfiles_saved_xdg_config_home" ]; then
+  XDG_CONFIG_HOME="$dotfiles_saved_xdg_config_home"
+fi
+if [ -n "$dotfiles_saved_xdg_cache_home" ]; then
+  XDG_CACHE_HOME="$dotfiles_saved_xdg_cache_home"
+fi
+if [ -n "$dotfiles_saved_xdg_data_home" ]; then
+  XDG_DATA_HOME="$dotfiles_saved_xdg_data_home"
+fi
+if [ -n "$dotfiles_saved_xdg_state_home" ]; then
+  XDG_STATE_HOME="$dotfiles_saved_xdg_state_home"
+fi
+unset dotfiles_saved_editor dotfiles_saved_xdg_config_home dotfiles_saved_xdg_cache_home \
+  dotfiles_saved_xdg_data_home dotfiles_saved_xdg_state_home
+
+export EDITOR="${EDITOR:-{{ shellQuote .shell.editor }}}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/{{ shellQuote .shell.xdg.config }}}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/{{ shellQuote .shell.xdg.cache }}}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/{{ shellQuote .shell.xdg.data }}}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/{{ shellQuote .shell.xdg.state }}}"
+if [ -z "${MISE_GLOBAL_CONFIG_FILE:-}" ] && [ -r "$HOME/.config/mise/config.toml" ]; then
+  export MISE_GLOBAL_CONFIG_FILE="$HOME/.config/mise/config.toml"
+fi
 
 dotfiles_prepend_path() {
   local candidate="$1"
@@ -7,43 +64,51 @@ dotfiles_prepend_path() {
     return 0
   fi
 
-  case ":$PATH:" in
+  case ":${PATH:-}:" in
     *":$candidate:"*)
       ;;
     *)
-      PATH="$candidate:$PATH"
+      PATH="$candidate${PATH:+:$PATH}"
       ;;
   esac
 }
 
-if [ -d "/opt/homebrew/bin" ]; then
-  dotfiles_prepend_path "/opt/homebrew/sbin"
-  dotfiles_prepend_path "/opt/homebrew/bin"
-elif [ -d "$HOME/.linuxbrew/bin" ]; then
-  dotfiles_prepend_path "$HOME/.linuxbrew/sbin"
-  dotfiles_prepend_path "$HOME/.linuxbrew/bin"
-elif [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
-  dotfiles_prepend_path "/home/linuxbrew/.linuxbrew/sbin"
-  dotfiles_prepend_path "/home/linuxbrew/.linuxbrew/bin"
-fi
-
-dotfiles_prepend_path "$HOME/.local/bin"
-dotfiles_prepend_path "$HOME/.nix-profile/bin"
-dotfiles_prepend_path "/etc/profiles/per-user/$USER/bin"
-dotfiles_prepend_path "/run/current-system/sw/bin"
-dotfiles_prepend_path "/nix/var/nix/profiles/default/bin"
-dotfiles_prepend_path "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin"
-export PATH
-
-for dotfiles_hm_vars in \
-  "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" \
-  "/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh"
-do
-  if [ -r "$dotfiles_hm_vars" ]; then
-    . "$dotfiles_hm_vars"
+dotfiles_macos_arch=""
+if [ "$(uname -s)" = "Darwin" ]; then
+  dotfiles_macos_arch="$(uname -m)"
+  if [ "$dotfiles_macos_arch" = "arm64" ] && [ -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" ]; then
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
+  elif [ "$dotfiles_macos_arch" = "x86_64" ] && [ -d "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}" ]; then
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
+  elif [ -d "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}" ]; then
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_sbin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_arm64_homebrew_bin }}"
+  elif [ -d "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}" ]; then
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_sbin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.darwin_x86_64_homebrew_bin }}"
   fi
-done
-unset dotfiles_hm_vars
+else
+  if [ -d "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}" ]; then
+    dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_sbin }}"
+    dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.linuxbrew_user_bin }}"
+  elif [ -d "{{ shellQuote .shell.path.linuxbrew_system_bin }}" ]; then
+    dotfiles_prepend_path "{{ shellQuote .shell.path.linuxbrew_system_sbin }}"
+    dotfiles_prepend_path "{{ shellQuote .shell.path.linuxbrew_system_bin }}"
+  fi
+fi
+unset dotfiles_macos_arch
+
+dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.home_local_bin }}"
+dotfiles_prepend_path "$HOME/{{ shellQuote .shell.path.home_nix_profile_bin }}"
+if [ -n "${USER:-}" ]; then
+  dotfiles_prepend_path "{{ shellQuote .shell.path.nix_user_profile_root }}/$USER/{{ shellQuote .shell.path.nix_user_profile_bin }}"
+fi
+dotfiles_prepend_path "{{ shellQuote .shell.path.nix_system_bin }}"
+dotfiles_prepend_path "{{ shellQuote .shell.path.nix_default_bin }}"
+dotfiles_prepend_path "${XDG_STATE_HOME:-$HOME/{{ shellQuote .shell.xdg.state }}}/{{ shellQuote .shell.path.nix_state_relative }}"
+export PATH
 
 if [ -r "$HOME/.nix-profile/etc/profile.d/z.sh" ]; then
   . "$HOME/.nix-profile/etc/profile.d/z.sh"
@@ -220,9 +285,9 @@ fgrs() {
   done
 }
 
-alias ginit='gcloud init'
-alias gauth='gcloud auth login'
-alias gls='gcloud compute instances list'
+alias ginit={{ shellQuote (printf "%s %s" (index .shell.aliases.ginit 0) (index .shell.aliases.ginit 1)) }}
+alias gauth={{ shellQuote (printf "%s %s %s" (index .shell.aliases.gauth 0) (index .shell.aliases.gauth 1) (index .shell.aliases.gauth 2)) }}
+alias gls={{ shellQuote (printf "%s %s %s %s" (index .shell.aliases.gls 0) (index .shell.aliases.gls 1) (index .shell.aliases.gls 2) (index .shell.aliases.gls 3)) }}
 
 if command -v claude >/dev/null 2>&1; then
   alias claude-auto='claude --dangerously-skip-permissions'
@@ -232,12 +297,67 @@ claude-account() {
   "$DOTFILES_REPO_ROOT/scripts/claude_account.sh" "$@"
 }
 
-if command -v mise >/dev/null 2>&1; then
-  if [ "$dotfiles_shell_name" = "bash" ]; then
-    eval "$(command mise activate "$dotfiles_shell_name")"
+if [ -z "${dotfiles_mise_activation_bash+x}" ]; then
+  dotfiles_mise_activation_bash=0
+fi
+if [ -z "${dotfiles_mise_activation_zsh+x}" ]; then
+  dotfiles_mise_activation_zsh=0
+fi
+typeset +x dotfiles_mise_activation_bash dotfiles_mise_activation_zsh 2>/dev/null || true
+
+dotfiles_mise_activate_posix() {
+  local dotfiles_mise_output dotfiles_mise_status
+
+  case "$-" in
+    *i*) ;;
+    *) return 0 ;;
+  esac
+
+  case "$dotfiles_shell_name" in
+    bash)
+      [ "$dotfiles_mise_activation_bash" -eq 0 ] || return 0
+      dotfiles_mise_activation_bash=1
+      ;;
+    zsh)
+      [ "$dotfiles_mise_activation_zsh" -eq 0 ] || return 0
+      dotfiles_mise_activation_zsh=1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  if ! command -v mise >/dev/null 2>&1; then
+    return 0
   fi
+
+  dotfiles_mise_output="$(command mise activate "$dotfiles_shell_name")" || {
+    dotfiles_mise_status=$?
+    echo "dotfiles: mise activate $dotfiles_shell_name failed" >&2
+    return "$dotfiles_mise_status"
+  }
+  if [ -z "$dotfiles_mise_output" ]; then
+    echo "dotfiles: mise activate $dotfiles_shell_name returned no hook" >&2
+    return 1
+  fi
+  eval "$dotfiles_mise_output" || {
+    dotfiles_mise_status=$?
+    echo "dotfiles: mise activate $dotfiles_shell_name hook failed" >&2
+    return "$dotfiles_mise_status"
+  }
+}
+
+dotfiles_mise_activation_status=0
+dotfiles_mise_activate_posix || dotfiles_mise_activation_status=$?
+
+dotfiles_secrets_status=0
+if [ -r "$HOME/.config/shell/secrets.env" ]; then
+  . "$HOME/.config/shell/secrets.env" || dotfiles_secrets_status=$?
 fi
 
-if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env" ]; then
-  . "${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
+if [ "$dotfiles_mise_activation_status" -ne 0 ]; then
+  return "$dotfiles_mise_activation_status"
+fi
+if [ "$dotfiles_secrets_status" -ne 0 ]; then
+  return "$dotfiles_secrets_status"
 fi

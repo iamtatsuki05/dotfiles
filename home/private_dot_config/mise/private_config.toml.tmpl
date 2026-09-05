@@ -1,5 +1,10 @@
-{{- $repoRoot := .chezmoi.sourceDir -}}
+{{- $repoRoot := dir .chezmoi.sourceDir -}}
 {{- if ne (env "DOTFILES_REPO_ROOT") "" -}}
 {{- $repoRoot = env "DOTFILES_REPO_ROOT" -}}
 {{- end -}}
-{{ include ".chezmoitemplates/mise-config.toml" | replace "__DOTFILES_REPO_ROOT__" $repoRoot | replace "__MISE_OPEN__" "{{" | replace "__MISE_CLOSE__" "}}" }}
+{{- if regexMatch "[[:cntrl:]]" $repoRoot -}}
+{{- fail "DOTFILES_REPO_ROOT contains a control byte" -}}
+{{- end -}}
+{{- $repoRootToml := toToml $repoRoot -}}
+{{- $miseTemplate := include ".chezmoitemplates/mise-config.toml" | replace "__MISE_OPEN__" "{{" | replace "__MISE_CLOSE__" "}}" -}}
+{{ $miseTemplate | replace (printf "\"%s\"" "__DOTFILES_REPO_ROOT__") $repoRootToml }}

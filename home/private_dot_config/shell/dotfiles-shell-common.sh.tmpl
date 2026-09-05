@@ -1,5 +1,10 @@
-{{- $repoRoot := .chezmoi.sourceDir -}}
+{{- $repoRoot := dir .chezmoi.sourceDir -}}
 {{- if ne (env "DOTFILES_REPO_ROOT") "" -}}
 {{- $repoRoot = env "DOTFILES_REPO_ROOT" -}}
 {{- end -}}
-{{ include ".chezmoitemplates/dotfiles-shell-common.sh" | replace "__DOTFILES_REPO_ROOT__" $repoRoot }}
+{{- if regexMatch "[[:cntrl:]]" $repoRoot -}}
+{{- fail "DOTFILES_REPO_ROOT contains a control byte" -}}
+{{- end -}}
+{{- $dotfilesRepoRoot := dict "raw" $repoRoot "prequoted" (shellQuote $repoRoot) -}}
+{{- $shellCommonContext := dict "shell" .shell "dotfilesRepoRoot" $dotfilesRepoRoot -}}
+{{- includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" $shellCommonContext -}}
