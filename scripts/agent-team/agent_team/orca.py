@@ -62,8 +62,8 @@ def _absence_code(operation: tuple[str, ...], error_code: object) -> str | None:
 def _operation_name(operation: tuple[str, ...]) -> str:
     if operation[:2] == ("status", "--json"):
         return "status"
-    if operation[:3] == ("worktree", "current", "--json"):
-        return "worktree current"
+    if operation[:2] == ("worktree", "show"):
+        return "worktree show"
     if operation[:2] == ("terminal", "create"):
         return "terminal create"
     if operation[:2] == ("terminal", "wait"):
@@ -411,8 +411,18 @@ class OrcaClient:
     def status(self, cwd: Path) -> dict[str, object]:
         return self._call(("status", "--json"), cwd=cwd)
 
-    def worktree_current(self, cwd: Path) -> dict[str, object]:
-        return self._call(("worktree", "current", "--json"), cwd=cwd)
+    def worktree_show(self, cwd: Path) -> dict[str, object]:
+        worktree_path = cwd.expanduser().resolve(strict=False)
+        return self._call(
+            (
+                "worktree",
+                "show",
+                "--worktree",
+                f"path:{worktree_path}",
+                "--json",
+            ),
+            cwd=cwd,
+        )
 
     def terminal_create(
         self,

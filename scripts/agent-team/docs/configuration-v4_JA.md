@@ -2,9 +2,9 @@
 
 [English](configuration-v4.md) · [Version 3の設定](configuration_JA.md)
 
-Version 4は、1つ以上のteam topologyを不変な定義として記述します。
-これは確認と選択のための契約であり、provider、Orca resource、Task、lease、
-state storeを起動しません。
+Version 4は、名前付きteamの構成を管理する一覧です。各teamからversion 3の起動設定を
+明示参照すると、既存のOrca runtimeで起動できます。起動設定のないteamは、graphの確認と
+選択内容のdry runに使えます。
 
 ## 最小のschema
 
@@ -106,7 +106,7 @@ agent-team teams --config /absolute/path/to/config-v4.toml
 
 このcommandの出力は常にJSONです。`--json`の互換optionは用意していません。
 
-PR #20のrendererで、選択したtopologyを描画します。
+選択したtopologyを描画します。
 
 ```bash
 agent-team graph \
@@ -118,25 +118,62 @@ agent-team graph \
 `--format`は`json`、`ascii`、`mermaid`だけを受け付けます。rendererの出力は
 topology dataだけで、shell commandやOrca payloadは含みません。
 
-v4のdry runは、将来のruntime/store seamへtypedな選択planだけを渡します。
+`launch_config`がない場合、dry runは選択した`config_path`、`team_id`、
+正規化した`workspace`だけを返します。
 
 ```bash
-agent-team start \
-  --config /absolute/path/to/config-v4.toml \
-  --cwd /absolute/path/to/project \
-  --team build \
-  --dry-run
+agent-team start --config /absolute/path/to/teams.toml --team build --dry-run
 ```
 
-出力のfieldは`config_path`、`team_id`、`workspace`だけです。configの
-`runtime = "orca"`は検証しますが、runtime/backendの選択はこの狭いplanへ渡しません。
-workspaceはabsoluteかつcanonicalです。state path、lease、backend ownership、
-provider command、role起動引数は含めません。`--dry-run`なしのv4 `start`と、v4の
-`status`、`attach`、`stop`は、後続のruntime/store統合が完了するまで明示的に失敗します。
+`teams`、`graph`、すべてのdry runは外部processを起動しません。一覧内に不正なtopologyが
+ある場合は、graph描画と起動planの生成を拒否します。起動設定のないteamでは、実際の起動や
+管理commandも拒否します。
 
-3つの確認commandとv4 dry runは、外部processを実行しません。config内のどれかのteamが
-不正なら`teams`で報告し、launch planやgraphは作成できません。
-`--no-attach`はversion 3の起動optionなので、v4 dry runでは無視せず拒否します。
+## 名前を指定してteamを起動する
+
+同梱の[teams.toml](../agent_team/defaults/teams.toml)は、そのまま使える一覧の例です。
+隣の`config.toml`を参照し、モデル、effort、prompt、permission、review回数の上限は
+既存の起動設定から読みます。リポジトリ内では、次のcommandで確認できます。
+
+```bash
+scripts/agent-team/agent-team start \
+  --config scripts/agent-team/agent_team/defaults/teams.toml \
+  --team agent-team --dry-run
+```
+
+通常のdotfiles sync後は、同じ一覧を`~/.config/agent-team/teams.toml`から使えます。
+`XDG_CONFIG_HOME`を変更している場合は、その配下を指定してください。
+
+```bash
+agent-team start --config ~/.config/agent-team/teams.toml --team agent-team --no-attach
+agent-team status --config ~/.config/agent-team/teams.toml --team agent-team
+agent-team attach main --config ~/.config/agent-team/teams.toml --team agent-team
+agent-team stop --config ~/.config/agent-team/teams.toml --team agent-team
+```
+
+起動可能なteamを増やすには、一覧と同じdirectory配下に起動設定をcopyし、固有の
+`team_prefix`を付けます。このprefixを一覧のteam IDにも使い、相対pathを`launch_config`に
+指定してください。モデル、effort、promptは参照先の起動設定で変更します。同じworkspaceで
+別のteamへ切り替えるときは、動いているteamを先に停止してください。
+
+起動可能な項目は、実装済みの逐次workflowと一致する必要があります。
+
+- node IDは`main`、`planner`、`worker`、`reviewer`の4つに限定し、`main`だけを
+  `main = true`にします。
+- 各nodeのprovider、transport、permissionは、起動設定の対応roleと一致させます。
+- edgeは8本です。Mainから3つのroleへ`delegates-to`、PlannerとWorkerからReviewerへ
+  `reviewed-by`、3つのroleからMainへ`escalates-to`を定義します。
+- `launch_config`は一覧のdirectory配下にある通常fileへの相対pathです。path内にsymlinkは
+  使えません。参照先はversion 3の
+  通常の検証にも通る必要があります。
+- 選択するteam IDと参照先の`team_prefix`を一致させます。異なるteam IDが、暗黙に同じ
+  runtime stateを選ぶことを防ぐためです。
+
+これらの項目では、`start --dry-run`がroleのcommandとstate pathを含む実際の起動planを
+表示し、`--no-attach`も使えます。実際の`start`、`status`、`attach`、`stop`は既存の
+version-3 lifecycleを使います。planの`config_path`は参照先の起動設定を指すため、
+子roleも同じ設定を読みます。未対応のgraphは確認用に保持できますが、runtime resourceを
+作る前に起動を拒否します。任意graphの実行とroleの並列実行は未実装です。
 
 ## versionの境界
 

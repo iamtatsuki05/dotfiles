@@ -539,7 +539,12 @@ class AgentTeamMcpTest(unittest.TestCase):
             prompt_paths = list(root.glob("prompt-*.md"))
 
         self.assertTrue(response["result"]["isError"])
-        self.assertIn("forced send failure", response["result"]["content"][0]["text"])
+        self.assertEqual(
+            response["result"]["content"][0]["text"], "Orca command failed"
+        )
+        self.assertNotIn(
+            "forced send failure", response["result"]["content"][0]["text"]
+        )
         self.assertEqual(
             commands,
             [

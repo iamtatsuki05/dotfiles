@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ MAX_V4_ERROR_MESSAGE_CHARS: Final = 512
 MAX_V4_ERROR_TOTAL_CHARS: Final = 16_384
 MAX_V4_DIAGNOSTIC_CHARS: Final = 160
 _TOP_LEVEL_FIELDS: Final = frozenset({"version", "runtime", "teams"})
-_TEAM_FIELDS: Final = frozenset({"name", "nodes", "edges"})
+_TEAM_FIELDS: Final = frozenset({"name", "nodes", "edges", "launch_config"})
 _NODE_FIELDS: Final = frozenset({"id", "label", "main", "profile"})
 _PROFILE_FIELDS: Final = frozenset({"provider", "transport", "permission"})
 _EDGE_FIELDS: Final = frozenset({"source", "target", "kind"})
@@ -150,6 +151,7 @@ class V4Team:
     name: str
     definition: TeamDefinition
     validation: ValidationResult
+    launch_config: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +200,7 @@ class V4LaunchPlan:
     config_path: Path
     team_id: TeamId
     workspace: Path
+    launch_config: Path | None = None
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -255,6 +258,49 @@ def _required_string(
     if key not in table:
         raise V4ConfigError(f"{context} is missing {key}")
     return _safe_string(table[key], f"{context}.{key}", maximum=maximum)
+
+
+def _resolve_launch_config(
+    config_dir: Path,
+    raw_path: object,
+    context: str,
+) -> Path:
+    """Resolve one v3 launch config without following a catalog symlink."""
+
+    relative = _safe_string(raw_path, f"{context}.launch_config")
+    candidate = Path(relative)
+    if candidate.is_absolute():
+        raise V4ConfigError(f"{context}.launch_config must be a relative catalog path")
+    catalog = config_dir.resolve()
+    raw_candidate = config_dir / candidate
+    current = config_dir
+    for part in candidate.parts:
+        current /= part
+        try:
+            if current.is_symlink():
+                raise V4ConfigError(f"{context}.launch_config must not use a symlink")
+        except OSError as exc:
+            raise V4ConfigError(
+                f"{context}.launch_config is unavailable in the catalog"
+            ) from exc
+    resolved = raw_candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(catalog)
+    except ValueError as exc:
+        raise V4ConfigError(
+            f"{context}.launch_config must stay inside the catalog directory"
+        ) from exc
+    try:
+        file_stat = resolved.stat()
+    except OSError as exc:
+        raise V4ConfigError(
+            f"{context}.launch_config is unavailable in the catalog"
+        ) from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise V4ConfigError(
+            f"{context}.launch_config must be a regular file in the catalog"
+        )
+    return resolved
 
 
 def _parse_profile(value: object, context: str) -> ProfileRef:
@@ -349,6 +395,7 @@ def _parse_team(
     team_id: str,
     value: object,
     resolver: ProfileResolver,
+    config_dir: Path,
 ) -> V4Team:
     context = f"teams.{team_id}"
     table = _table(value, context)
@@ -363,7 +410,12 @@ def _parse_team(
     definition = TeamDefinition(TeamId(team_id), nodes, edges)
     validation = validate_team(definition, resolver)
     _validate_diagnostic_budget(validation, context)
-    return V4Team(TeamId(team_id), name, definition, validation)
+    launch_config = None
+    if "launch_config" in table:
+        launch_config = _resolve_launch_config(
+            config_dir, table["launch_config"], context
+        )
+    return V4Team(TeamId(team_id), name, definition, validation, launch_config)
 
 
 def _validate_diagnostic_budget(result: ValidationResult, context: str) -> None:
@@ -449,7 +501,9 @@ def load_v4_config_data(
                 f"{_diagnostic(team_ids[key])} and {_diagnostic(team_id)}"
             )
         team_ids[key] = team_id
-        teams.append(_parse_team(team_id, raw_team, profile_resolver))
+        teams.append(
+            _parse_team(team_id, raw_team, profile_resolver, resolved_path.parent)
+        )
     teams.sort(key=lambda team: (str(team.team_id).casefold(), str(team.team_id)))
     _validate_config_diagnostic_budget(teams)
     return V4Config(resolved_path, runtime, tuple(teams), profile_resolver)
@@ -508,6 +562,7 @@ def build_v4_launch_plan(
         config.config_path,
         selected.team_id,
         resolved_workspace,
+        selected.launch_config,
     )
 
 
