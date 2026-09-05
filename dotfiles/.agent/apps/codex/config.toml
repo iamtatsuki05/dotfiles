@@ -40,6 +40,7 @@ default_subagent_model = "gpt-6-astra"
 default_subagent_reasoning_effort = "low"
 
 [features]
+context_management.experimental_mode = true
 fast_mode = true
 external_migration = true
 hooks = true
