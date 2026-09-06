@@ -543,6 +543,10 @@ read_default_profile() {
 
 default_profile() {
   local selection="${1:-}"
+  if [[ "$CONFIG_DIR" != /* ]]; then
+    echo 'ERROR: XDG_CONFIG_HOME must be an absolute path' >&2
+    return 1
+  fi
   case "$selection" in
     '')
       if [[ -e "$CONFIG_DIR/default-profile" || -L "$CONFIG_DIR/default-profile" ]]; then

@@ -425,6 +425,7 @@ test_remote_launch_flags_fail_before_session_start() {
 }
 
 main() {
+  test_default_clear_rejects_relative_config_without_deleting_files
   test_replace_requires_confirmation_and_preserves_mapping_on_failure
   test_replace_changes_only_the_selected_identity
   test_default_selection_routes_future_launches_and_can_be_cleared
@@ -451,6 +452,17 @@ main() {
   test_settings_cannot_redirect_profile_or_enable_shared_daemon
   test_remote_launch_flags_fail_before_session_start
   echo "claude account tests passed"
+}
+
+test_default_clear_rejects_relative_config_without_deleting_files() {
+  setup_fixture
+  mkdir -p "$FIXTURE_ROOT/relative/claude-account"
+  printf 'keep\n' > "$FIXTURE_ROOT/relative/claude-account/default-profile"
+  if (cd "$FIXTURE_ROOT" && HOME="$FIXTURE_HOME" XDG_CONFIG_HOME=relative "$SCRIPT" default --clear) > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'default clear accepted a relative config path'
+  fi
+  assert_contains "$FIXTURE_ROOT/output" 'XDG_CONFIG_HOME must be an absolute path'
+  assert_line "$FIXTURE_ROOT/relative/claude-account/default-profile" keep
 }
 
 test_replace_requires_confirmation_and_preserves_mapping_on_failure() {
