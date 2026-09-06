@@ -617,6 +617,8 @@ test_managed_update_script_delegates_hermes_scope() {
 
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
   cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$REPO_ROOT/scripts/lib/features.sh" "$repo/scripts/lib/features.sh"
+  cp "$REPO_ROOT/home/.chezmoidata.toml" "$repo/home/.chezmoidata.toml"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$REPO_ROOT/scripts/lib/command.sh" "$repo/scripts/lib/command.sh"
   cp "$REPO_ROOT/scripts/lib/homebrew.sh" "$repo/scripts/lib/homebrew.sh"
@@ -660,6 +662,8 @@ test_managed_update_script_delegates_real_hermes_through_bash() {
 
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
   cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$REPO_ROOT/scripts/lib/features.sh" "$repo/scripts/lib/features.sh"
+  cp "$REPO_ROOT/home/.chezmoidata.toml" "$repo/home/.chezmoidata.toml"
   cp "$SETUP_HERMES_SCRIPT" "$repo/scripts/setup_hermes_agent.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$REPO_ROOT/scripts/lib/command.sh" "$repo/scripts/lib/command.sh"
@@ -780,6 +784,8 @@ test_managed_update_script_rejects_nix_input_with_hermes_scope() {
 
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir"
   cp "$UPDATE_MANAGED_VERSIONS_SCRIPT" "$repo/scripts/update_managed_versions.sh"
+  cp "$REPO_ROOT/scripts/lib/features.sh" "$repo/scripts/lib/features.sh"
+  cp "$REPO_ROOT/home/.chezmoidata.toml" "$repo/home/.chezmoidata.toml"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$REPO_ROOT/scripts/lib/command.sh" "$repo/scripts/lib/command.sh"
   cp "$REPO_ROOT/scripts/lib/homebrew.sh" "$repo/scripts/lib/homebrew.sh"

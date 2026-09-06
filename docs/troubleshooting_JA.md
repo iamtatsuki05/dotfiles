@@ -43,6 +43,10 @@ zsh scripts/nix_install.sh --cli-only
 影響します。cask と VS Code extension は GUI application の適用時に影響します。
 entry が意図したものなら、選択 profile 用の Homebrew を導入します。
 
+macOS では、まず `features.macos` が `true`（既定値）であることを確認してください。
+`false` の場合は、任意の fallback が意図的に停止するため、この Homebrew 復旧経路を
+使いません。詳細は[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
+
 1つ目のコマンドは installer の preview です。2つ目は Homebrew を導入し、マシンの
 状態を変更します。
 
@@ -84,10 +88,14 @@ zsh scripts/nix_install.sh --cli-only
 
 ## Mac App Store アプリが skip される、または個別に失敗する
 
-Mac App Store にサインインしているか、現在のアカウントで対象アプリを取得できるか
-確認します。installer は意図的に各アプリを best-effort で処理するため、1件の
-失敗で setup 全体は失敗しません。アカウント状態を直した後、対象スクリプトを
-再実行します。
+macOS で `features.macos` が `false` の場合、Mac App Store の処理停止は想定された挙動です。
+この停止を解消するために、サインインやインストーラの再実行を行う必要はありません。詳しくは
+[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
+
+`features.macos` が `true` の場合は、Mac App Store にサインインしているか、現在の
+アカウントで対象アプリを取得できるか確認します。installer は意図的に各アプリを
+best-effort で処理するため、1件の失敗で setup 全体は失敗しません。アカウント状態を
+直した後、対象スクリプトを再実行します。
 
 次のコマンドはアプリをインストールし、マシンの状態を変更します。
 

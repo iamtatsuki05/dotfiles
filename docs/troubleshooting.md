@@ -43,6 +43,10 @@ Inspect `config/nix/homebrew-fallback.nix`. Formula fallback entries can affect
 the CLI profile; casks and VS Code extensions affect GUI application runs.
 Install Homebrew for the selected profile only if those entries are intended:
 
+On macOS, first confirm that `features.macos` is `true` (the default). If it is
+`false`, skip this Homebrew recovery path because the optional fallback is
+intentionally disabled. See [Disable optional macOS features](configuration-ownership.md#disable-optional-macos-features).
+
 The first command previews the installer. The second command installs
 Homebrew and changes the machine.
 
@@ -85,10 +89,14 @@ zsh scripts/nix_install.sh --cli-only
 
 ## Mac App Store apps were skipped or failed individually
 
-Confirm that the Mac App Store is signed in and that the listed app is
-available to the current account. The installer intentionally treats each app
-as best-effort, so one failure does not fail the complete setup. Re-run the
-focused script after correcting the account state:
+On macOS when `features.macos` is `false`, a skipped Mac App Store step is expected.
+Signing in or rerunning the installer is not needed to resolve that skip.
+See [Disable optional macOS features](configuration-ownership.md#disable-optional-macos-features).
+
+When `features.macos` is `true`, confirm that the Mac App Store is signed in and
+that the listed app is available to the current account. The installer
+intentionally treats each app as best-effort, so one failure does not fail the
+complete setup. Re-run the focused script after correcting the account state:
 
 The following command installs applications and changes the machine.
 

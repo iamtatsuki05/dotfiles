@@ -15,6 +15,12 @@ readonly NIX_INSTALL_SHELL="${DOTFILES_NIX_INSTALL_SHELL:-/bin/sh}"
 SUDO_KEEPALIVE_PID=""
 SKIP_MAS_APPS=0
 
+source "$LIB_DIR/features.sh"
+dotfiles_load_features "$REPO_ROOT" || {
+  feature_status=$?
+  echo "ERROR: failed to load feature flags for dotfiles setup." >&2
+  exit "$feature_status"
+}
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
 
@@ -120,10 +126,28 @@ prepare_sudo_authentication() {
 
 install_rosetta_if_needed() {
   local profile="$1"
+  local feature_status
 
   if ! dotfiles_is_macos || [[ "$profile" != "full" ]]; then
     return 0
   fi
+
+  if dotfiles_macos_features_enabled; then
+    feature_status=0
+  else
+    feature_status=$?
+  fi
+  case "$feature_status" in
+    0)
+      ;;
+    1)
+      log_skip "Rosetta 2 install disabled because features.macos=false"
+      return 0
+      ;;
+    *)
+      return "$feature_status"
+      ;;
+  esac
 
   if [[ "${DOTFILES_SKIP_ROSETTA_INSTALL:-0}" == "1" ]]; then
     log_skip "Rosetta 2 install disabled"
@@ -205,6 +229,26 @@ install_nix_daemon_if_needed() {
 
 install_homebrew_if_needed() {
   local profile="$1"
+  local feature_status
+
+  if dotfiles_is_macos; then
+    if dotfiles_macos_features_enabled; then
+      feature_status=0
+    else
+      feature_status=$?
+    fi
+    case "$feature_status" in
+      0)
+        ;;
+      1)
+        log_skip "Homebrew install disabled because features.macos=false"
+        return 0
+        ;;
+      *)
+        return "$feature_status"
+        ;;
+    esac
+  fi
 
   log_step "Ensuring Homebrew is available when required"
   zsh "$SCRIPTS_DIR/install_homebrew.sh" --profile "$profile"
@@ -306,6 +350,26 @@ sync_agent_files() {
 
 install_mas_apps_best_effort() {
   local profile="$1"
+  local feature_status
+
+  if dotfiles_is_macos; then
+    if dotfiles_macos_features_enabled; then
+      feature_status=0
+    else
+      feature_status=$?
+    fi
+    case "$feature_status" in
+      0)
+        ;;
+      1)
+        log_skip "Mac App Store apps disabled because features.macos=false"
+        return 0
+        ;;
+      *)
+        return "$feature_status"
+        ;;
+    esac
+  fi
 
   log_step "Installing Mac App Store apps best-effort"
   if (( SKIP_MAS_APPS )); then

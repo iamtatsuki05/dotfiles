@@ -9,6 +9,12 @@ readonly HOMEBREW_FALLBACK_CONFIG="$REPO_ROOT/config/nix/homebrew-fallback.nix"
 readonly MAS_APPS_CONFIG="$REPO_ROOT/config/nix/mas-apps.nix"
 readonly HOMEBREW_INSTALL_URL="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
 
+source "$LIB_DIR/features.sh"
+dotfiles_load_features "$REPO_ROOT" || {
+  feature_status=$?
+  echo "ERROR: failed to load feature flags for Homebrew setup." >&2
+  exit "$feature_status"
+}
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
 source "$LIB_DIR/homebrew_fallback.sh"
@@ -67,10 +73,29 @@ parse_args() {
 }
 
 install_homebrew() {
+  local feature_status
+
   if ! dotfiles_is_macos; then
     log "Skipping Homebrew install because this host is not macOS"
     return 0
   fi
+
+  if dotfiles_macos_features_enabled; then
+    feature_status=0
+  else
+    feature_status=$?
+  fi
+  case "$feature_status" in
+    0)
+      ;;
+    1)
+      log "Skipping Homebrew install because features.macos=false"
+      return 0
+      ;;
+    *)
+      return "$feature_status"
+      ;;
+  esac
 
   dotfiles_prepend_homebrew_to_path || true
 
