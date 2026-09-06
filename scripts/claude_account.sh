@@ -13,6 +13,7 @@ usage() {
 Usage:
   claude-account auth-login <profile> [--replace]
   claude-account default [<profile>|--clear]
+  claude-account repair <profile>
   claude-account list
   claude-account <profile> [claude arguments...]
 
@@ -34,7 +35,7 @@ validate_profile() {
       echo "ERROR: invalid profile name: $profile" >&2
       return 2
       ;;
-    auth-login|default|run-default|list|help|add|add-token|token|__auth-login|__run-login|__list-login)
+    auth-login|repair|default|run-default|list|help|add|add-token|token|__auth-login|__repair-login|__run-login|__list-login)
       echo "ERROR: reserved profile name: $profile" >&2
       return 2
       ;;
@@ -416,6 +417,37 @@ PY
   chmod 600 "$LOGIN_PROFILES_FILE"
 }
 
+complete_profile_onboarding() {
+  require_login_lock exclusive
+  # Browser auth login in 2.1.261 saves credentials but omits the TUI completion flag.
+  python3 - "$PROFILE_DIR/.claude.json" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if path.is_symlink():
+    raise SystemExit('ERROR: profile state must not be a symlink')
+data = json.loads(path.read_text()) if path.exists() else {}
+if data.get('hasCompletedOnboarding') is True:
+    raise SystemExit(0)
+data['hasCompletedOnboarding'] = True
+descriptor, temporary = tempfile.mkstemp(prefix='.onboarding.', dir=path.parent)
+try:
+    with os.fdopen(descriptor, 'w') as stream:
+        json.dump(data, stream, indent=2)
+        stream.write('\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
 auth_login_profile() {
   local profile="$1"
   local replace="${2:-}"
@@ -463,10 +495,11 @@ auth_login_profile() {
   fi
 
   write_registered_profile "$profile" "$identity_sha256" "$subscription_type"
+  complete_profile_onboarding
   echo "Registered full-login profile: $profile ($subscription_type)"
 }
 
-run_login_profile() {
+verify_login_profile() {
   local profile="$1"
   shift
   local registered_info
@@ -498,6 +531,11 @@ run_login_profile() {
     return 1
   fi
 
+}
+
+run_login_profile() {
+  verify_login_profile "$@"
+  shift
   exec "${AUTH_ENV_COMMAND[@]}" \
     DISABLE_LOGIN_COMMAND=1 \
     DISABLE_LOGOUT_COMMAND=1 \
@@ -593,6 +631,19 @@ main() {
   local profile
 
   case "$command_name" in
+    repair)
+      [[ $# -eq 2 ]] || { usage >&2; return 2; }
+      select_profile "$2"
+      run_with_login_lock exclusive __repair-login "$2"
+      ;;
+    __repair-login)
+      require_login_lock exclusive
+      [[ $# -eq 2 ]] || return 2
+      select_profile "$2"
+      verify_login_profile "$2"
+      complete_profile_onboarding
+      echo "Profile ready for interactive launch: $2"
+      ;;
     default)
       [[ $# -le 2 ]] || { usage >&2; return 2; }
       default_profile "${2:-}"

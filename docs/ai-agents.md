@@ -87,6 +87,8 @@ Add `--fork-session` if you want to keep the original session open. Do not updat
 
 Only repeat `claude-account auth-login work` when authentication needs renewal. Login is blocked while that profile has running sessions; other profiles are unaffected. Switching profiles does not require logging in each time.
 
+Successful login also records interactive onboarding completion. If an older registered profile shows the first-run login screen despite being authenticated, exit that profile's sessions and run `claude-account repair work`. This verifies the current identity before setting only the onboarding-completion flag; it does not log in again or copy credentials or project trust settings.
+
 If the first registration used the wrong account, run `claude-account auth-login personal --replace`. Type `personal` at the confirmation prompt, then choose the correct account and organization in the browser. Ordinary login rejects a different identity. Replacement is also blocked while that profile has running sessions. Cancellation or login failure preserves the registry, but Claude itself may already have changed its saved credentials; log in again if needed.
 
 Select the account used by ordinary `claude` launches:

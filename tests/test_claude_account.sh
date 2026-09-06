@@ -293,6 +293,12 @@ PY
   fi
   assert_contains "$FIXTURE_ROOT/output" 'profile login lock is busy'
   assert_not_exists "$CLAUDE_CALL_LOG"
+  if run_account repair personal > "$FIXTURE_ROOT/output" 2>&1; then
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    fail 'repair ignored the shared login lock'
+  fi
+  assert_contains "$FIXTURE_ROOT/output" 'profile login lock is busy'
   if ! run_account auth-login work > "$FIXTURE_ROOT/other-output" 2>&1; then
     kill "$holder_pid" 2>/dev/null || true
     wait "$holder_pid" 2>/dev/null || true
@@ -425,6 +431,8 @@ test_remote_launch_flags_fail_before_session_start() {
 }
 
 main() {
+  test_login_completes_onboarding_without_copying_account_or_trust
+  test_repair_requires_matching_identity_and_preserves_other_config
   test_default_clear_rejects_relative_config_without_deleting_files
   test_replace_requires_confirmation_and_preserves_mapping_on_failure
   test_replace_changes_only_the_selected_identity
@@ -452,6 +460,40 @@ main() {
   test_settings_cannot_redirect_profile_or_enable_shared_daemon
   test_remote_launch_flags_fail_before_session_start
   echo "claude account tests passed"
+}
+
+test_login_completes_onboarding_without_copying_account_or_trust() {
+  setup_fixture
+  run_account auth-login personal > "$FIXTURE_ROOT/output"
+  python3 - "$FIXTURE_HOME/.config/claude-account/accounts/personal/.claude.json" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+assert path.exists(), 'login did not create onboarding state'
+assert json.loads(path.read_text()) == {'hasCompletedOnboarding': True}
+PY
+}
+
+test_repair_requires_matching_identity_and_preserves_other_config() {
+  setup_fixture
+  write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+  local config="$FIXTURE_HOME/.config/claude-account/accounts/personal/.claude.json"
+  printf '%s\n' '{"oauthAccount":{"fixture":"keep"},"projects":{"fixture":{"hasTrustDialogAccepted":false}},"theme":"dark"}' > "$config"
+  if CLAUDE_AUTH_STATUS_EMAIL=other@example.test run_account repair personal > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'repair accepted mismatching identity'
+  fi
+  assert_not_contains "$config" hasCompletedOnboarding
+  run_account repair personal > "$FIXTURE_ROOT/output"
+  python3 - "$config" <<'PY'
+import json, sys
+from pathlib import Path
+assert json.loads(Path(sys.argv[1]).read_text()) == {
+    'oauthAccount': {'fixture': 'keep'},
+    'projects': {'fixture': {'hasTrustDialogAccepted': False}},
+    'theme': 'dark', 'hasCompletedOnboarding': True,
+}
+PY
+  assert_not_contains "$CLAUDE_CALL_LOG" '<auth><login>'
 }
 
 test_default_clear_rejects_relative_config_without_deleting_files() {
