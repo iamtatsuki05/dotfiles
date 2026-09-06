@@ -160,7 +160,7 @@
   "effortLevel": "high",
   "autoMemoryEnabled": false,
   "skipDangerousModePermissionPrompt": true,
-  "autoCompactEnabled": false,
+  "autoCompactEnabled": true,
   "switchModelsOnFlag": false,
   "co_authored_commits": true,
   "BASH_DEFAULT_TIMEOUT_MS": 600000,
