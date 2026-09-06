@@ -24,6 +24,7 @@ from agent_team.adapters import (
     SnapshotError,
     _exact_version_present,
     _extract_opencode_final,
+    _process_group_exited,
     _safe_source_path,
     create_read_snapshot,
     remove_owned_tree,
@@ -389,6 +390,107 @@ class AdapterSafetyTest(unittest.TestCase):
                 )
             time.sleep(0.2)
             self.assertFalse(marker.exists())
+
+    def test_process_group_exited_ignores_macos_zombie_members(self) -> None:
+        group_id = 42_001
+        ps_result = subprocess.CompletedProcess(
+            ("/bin/ps", "-axo", "pgid=,stat="),
+            0,
+            " 42001 Z\n 42001 Zs\n 0 ?\n",
+            "",
+        )
+        with (
+            mock.patch("agent_team.adapters.sys.platform", "darwin"),
+            mock.patch("agent_team.adapters.os.killpg"),
+            mock.patch(
+                "agent_team.adapters.subprocess.run", return_value=ps_result
+            ) as ps_run,
+        ):
+            self.assertTrue(_process_group_exited(group_id))
+        ps_run.assert_called_once_with(
+            ("/bin/ps", "-axo", "pgid=,stat="),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5.0,
+        )
+
+    def test_process_group_exited_keeps_macos_live_members_alive(self) -> None:
+        group_id = 42_002
+        ps_result = subprocess.CompletedProcess(
+            ("/bin/ps", "-axo", "pgid=,stat="),
+            0,
+            " 42002 Z\n 42002 S+\n",
+            "",
+        )
+        with (
+            mock.patch("agent_team.adapters.sys.platform", "darwin"),
+            mock.patch("agent_team.adapters.os.killpg"),
+            mock.patch("agent_team.adapters.subprocess.run", return_value=ps_result),
+        ):
+            self.assertFalse(_process_group_exited(group_id))
+
+    def test_process_group_exited_uses_macos_ps_after_permission_error(self) -> None:
+        group_id = 42_005
+        ps_result = subprocess.CompletedProcess(
+            ("/bin/ps", "-axo", "pgid=,stat="),
+            0,
+            " 42005 Z\n",
+            "",
+        )
+        with (
+            mock.patch("agent_team.adapters.sys.platform", "darwin"),
+            mock.patch(
+                "agent_team.adapters.os.killpg",
+                side_effect=PermissionError(1, "operation not permitted"),
+            ),
+            mock.patch(
+                "agent_team.adapters.subprocess.run", return_value=ps_result
+            ) as ps_run,
+        ):
+            self.assertTrue(_process_group_exited(group_id))
+        ps_run.assert_called_once()
+
+    def test_process_group_exited_does_not_treat_macos_ps_failure_as_exit(self) -> None:
+        group_id = 42_003
+        with (
+            mock.patch("agent_team.adapters.sys.platform", "darwin"),
+            mock.patch("agent_team.adapters.os.killpg"),
+            mock.patch(
+                "agent_team.adapters.subprocess.run",
+                side_effect=OSError("ps unavailable"),
+            ),
+        ):
+            self.assertFalse(_process_group_exited(group_id))
+
+    def test_process_group_exited_does_not_treat_macos_invalid_ps_row_as_exit(
+        self,
+    ) -> None:
+        group_id = 42_004
+        ps_result = subprocess.CompletedProcess(
+            ("/bin/ps", "-axo", "pgid=,stat="),
+            0,
+            " 42004 unknown-state\n",
+            "",
+        )
+        with (
+            mock.patch("agent_team.adapters.sys.platform", "darwin"),
+            mock.patch("agent_team.adapters.os.killpg"),
+            mock.patch("agent_team.adapters.subprocess.run", return_value=ps_result),
+        ):
+            self.assertFalse(_process_group_exited(group_id))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS process-group behavior")
+    def test_process_group_exited_handles_real_macos_zombie_group(self) -> None:
+        process = subprocess.Popen(
+            (sys.executable, "-c", "import os; os._exit(0)"),
+            start_new_session=True,
+        )
+        try:
+            time.sleep(0.2)
+            self.assertTrue(_process_group_exited(process.pid))
+        finally:
+            process.wait(timeout=2.0)
 
     def test_snapshot_excludes_secrets_ignored_metadata_and_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -2,10 +2,12 @@
 
 [日本語](README_JA.md)
 
-`agent-team` starts a project-scoped Planner → Worker → Reviewer workflow on
-Orca without changing ordinary `claude` or `codex` sessions. Orca owns task,
-message, terminal, and lifecycle coordination. Each role uses either its normal
-CLI (`direct`) or an Agent Client Protocol client (`acp`).
+`agent-team` starts a project-scoped team on an explicitly selected runtime
+without changing ordinary `claude` or `codex` sessions. The bundled
+`runtime = "orca"` path provides the Planner → Worker → Reviewer workflow, with
+Orca owning Task, message, terminal, and lifecycle coordination. The experimental
+`runtime = "tmux"` path provides Main and optional Claude ACP read-only
+Planner/Reviewer roles. Native Worker is not available.
 
 Read the install, prerequisite, and start sections to launch a team. Use the
 linked reference documents when changing the implementation or configuration.
@@ -34,17 +36,24 @@ The current configuration uses this team:
 | Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
 | Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
 
-Only Main starts immediately. Planner, Worker, and Reviewer start on demand,
-and only one background role may be active at a time.
+In the bundled Orca configuration, only Main starts immediately. Planner,
+Worker, and Reviewer start on demand, and only one background role may be active
+at a time.
+
+The bundled configuration remains the four-role Orca configuration above. A
+custom tmux configuration must select direct Claude Main with `orchestrator`
+permission and may include Planner and Reviewer only when each is verified
+Claude ACP with `read-only` permission. Worker and every other native profile
+are rejected before state, Task, Dispatch, or process effects are created.
 
 ## Run from a checkout or install the project
 
 The project has no third-party Python dependency. Python 3.11 or newer is
 required. From a checkout, the launcher is directly executable:
 
-The Orca lifecycle backend and bounded provider runner are POSIX-only; they
-fail fast on Windows because the current runtime metadata contract requires a
-Unix socket and process-group semantics.
+The Orca lifecycle backend, experimental tmux backend, and bounded provider
+runner are POSIX-only. They fail fast on Windows because their runtime metadata
+contracts require Unix sockets or private process-group semantics.
 The CLI name is selected deterministically by platform: `orca` on macOS and
 `orca-ide` on Linux, with no PATH fallback or environment override.
 
@@ -81,36 +90,51 @@ leaves it untouched and the bundled defaults remain available.
 
 ## Meet the prerequisites
 
-The current implementation has been smoke-tested against a live Orca runtime on
-macOS. The Linux executable mapping is implemented as `orca-ide`, but this
-checkout has not had a live Linux Orca smoke test. Windows is unsupported and
-fails fast. Orca executable selection is exact by platform, with no PATH
-fallback or environment override:
+The current implementation has been smoke-tested against a live Orca runtime
+on macOS. The model-free native tmux CLI start/status/stop path also succeeded
+with Orca and Codex absent, a workspace path containing spaces, and a deleted
+config file. A separate real-tmux test with disposable provider fixtures passed the
+public MCP read/release/ack cycle and active cancellation from another CLI
+process, including independent cleanup checks. These tests do not verify a real
+provider turn. A real Claude 2.1.112 native
+Main launch with `fable`/`high` and a logged-in `claude.ai` account reached the
+provider, which rejected `fable` as absent or inaccessible. No alternative
+model was used; supply a model ID that your account exposes before claiming a
+native/provider end-to-end run. The Linux executable mapping is implemented as
+`orca-ide`, but this checkout has not had a live Linux Orca smoke test. Windows
+is unsupported and fails fast. Orca executable selection is exact by platform,
+with no PATH fallback or environment override:
 
 - macOS: `orca`
 - Linux: `orca-ide`
 
 Before starting a team:
 
-1. Make sure the selected backend and harness commands are available. The bundled
-   team uses the Orca executable above, `claude`, `codex`, and the ACP tools below.
-2. Open Orca and confirm that the platform-specific `status --json` command
-   reports a ready runtime and graph.
-3. Log in to Claude and Codex with the accounts you intend to use.
-4. Register the target repository with Orca once.
+1. Make sure the selected runtime and harness commands are available. The bundled
+   team uses the Orca executable above, `claude`, `codex`, and the ACP tools below;
+   a tmux configuration also requires `tmux`.
+2. For `runtime = "orca"`, open Orca and confirm that the platform-specific
+   `status --json` command reports a ready runtime and graph. For `runtime =
+   "tmux"`, confirm that `tmux` is available; Orca is not required.
+3. Log in to the selected providers with the accounts you intend to use. The
+   bundled Orca roles require both Claude and Codex; native tmux requires Claude.
+4. For `runtime = "orca"`, register the target repository with Orca once.
 
 ```bash
+# Providers for the bundled Orca configuration
 claude auth status
 codex login status
-# macOS
+# Orca runtime on macOS
 orca status --json
 orca repo add --path "$PWD"
-# Linux
+# Orca runtime on Linux
 orca-ide status --json
 orca-ide repo add --path "$PWD"
+# Native tmux runtime
+tmux -V
 ```
 
-The ACP Planner requires Node.js 22.13 or later and the installed commands from
+Any config that selects an ACP role requires Node.js 22.13 or later and the installed commands from
 `acpx@0.13.2` and `@agentclientprotocol/claude-agent-acp@0.70.0`. Install the
 selected tools explicitly, for example into a directory you choose:
 
@@ -139,7 +163,7 @@ agent-team start --dry-run
 The dry run does not render the task-specific ACP command. That command is
 created only when an ACP role is dispatched.
 
-Start Main and focus its Orca terminal:
+Start Main and focus its managed terminal:
 
 ```bash
 agent-team start
@@ -151,9 +175,11 @@ Use `--no-attach` when the terminal should remain in the background:
 agent-team start --no-attach
 ```
 
-Ask Main for the development task. Main decides whether to run Planner first,
-then dispatches Worker and Reviewer through the `agent_team` MCP server. Main
-is the only role that talks to the user.
+Ask Main for the development task. In the bundled Orca configuration, Main
+decides whether to run Planner first, then dispatches Worker and Reviewer
+through the `agent_team` MCP server. In native tmux, Main can request only the
+configured Claude ACP Planner/Reviewer roles; native Worker is not available.
+Main is the only role that talks to the user.
 
 For named teams, use the bundled catalog or the synced `teams.toml`:
 
@@ -167,21 +193,22 @@ to register more teams, inspect their graphs, and start a selected team.
 ## Operate and stop a team
 
 ```bash
-# Inspect the Run, Main terminal, and worker accounting.
+# Inspect the selected runtime, Main terminal, and active-role accounting.
 agent-team status
 
 # Focus Main.
 agent-team attach main
 
-# Focus a background role only after Main has dispatched it.
+# Orca only: focus a background role after Main has dispatched it.
 agent-team attach worker
 
 # Stop this team's owned terminals and remove its runtime state.
 agent-team stop
 ```
 
-`stop` keeps the Orca Run as an audit record. It does not commit, push,
-publish, or delete project files.
+`stop` routes to the selected runtime's backend and removes only its owned
+resources. The Orca path keeps the Run as an audit record. It does not commit,
+push, publish, or delete project files.
 
 Management commands use the saved launch snapshot, even if the original config
 or prompt files have been changed or deleted. Use the same `--cwd` and, when
@@ -205,10 +232,18 @@ combined with `--team`; an additional `--config` must match the saved path.
 
 ## Know the safety boundary
 
-- Unsupported provider, transport, permission, config version, or state format
-  fails before launch. The launcher never silently switches transports.
-- ACP is enabled only for read-only Claude background roles. Main ACP, Codex
-  ACP, and workspace-write ACP are rejected.
+- Unsupported runtime, provider, transport, permission, config version, or state
+  format fails before launch. The launcher never silently switches backends or
+  transports.
+- Orca keeps its fixed four-role contract. Native tmux requires Main and allows
+  only optional verified Claude ACP read-only Planner/Reviewer roles; native
+  Worker and all other native profiles are rejected before startup effects.
+- Native `start`, `status`, `attach`, and `stop` use `TmuxBackend`; `attach` is
+  valid only for Main. `native_main` supervises the owned Main process group.
+- Native ACP completion comes from `publish_completion`, not tmux pane text.
+  The lifecycle order remains `role_read` → `role_release` → `delivery_ack`.
+  Native `last_ack` stores one receipt marker and does not mean that a Task or
+  the user's overall goal is complete.
 - ACP permission mediation is not an operating-system sandbox. Write access
   remains on direct Codex with its isolated permission profile.
 - Agent output is untrusted data. Matching Task, Dispatch, terminal, sender,
@@ -233,7 +268,8 @@ The tracked limitation is [#11](https://github.com/iamtatsuki05/dotfiles/issues/
 |---|---|
 | `workspace is not managed by Orca` | Run `orca repo add --path "$PWD"` on macOS, or `orca-ide repo add --path "$PWD"` on Linux. |
 | `agent-team state already exists` | Use `agent-team status`, `attach`, or `stop`; do not start a second owner. |
-| `role has no active Orca Dispatch` | Main has not started that background role, or it has already been released. |
+| `role has no active Orca Dispatch` | In the Orca runtime, Main has not started that background role, or it has already been released. |
+| `native role is not a Claude ACP role` | The native tmux runtime accepts only configured Planner/Reviewer Claude ACP roles. |
 | Authentication is required | Run `claude auth status` or `codex login status` outside agent-team. |
 | ACP dependency check fails | Install the pinned ACP packages explicitly and include their `node_modules/.bin` directory and Node >=22.13 in `PATH`. |
 | A role reports `escalation` | Inspect the retained terminal and Run; do not treat escalation as completion. |
@@ -241,13 +277,16 @@ The tracked limitation is [#11](https://github.com/iamtatsuki05/dotfiles/issues/
 ## Prepare a useful failure report
 
 When this guide does not resolve a failure, report it to the repository
-maintainer with the command, config path, workspace, Orca version, Run/Task/
-Dispatch IDs, and the smallest relevant error. Do not include authentication
-tokens, prompt contents, or unrelated terminal output.
+maintainer with the command, config path, workspace, selected runtime, and the
+smallest relevant error. Include Orca version and Run/Task/Dispatch IDs when
+the Orca runtime is selected; include the native run/assignment IDs when tmux
+is selected. Do not include authentication tokens, prompt contents, or
+unrelated terminal output.
 
 Useful terms:
 
-- **Run**: the Orca namespace and coordinator inbox for one team execution.
+- **Run**: the runtime identity for one team execution; Orca also provides its
+  coordinator namespace and inbox.
 - **Task**: one bounded Planner, Worker, or Reviewer assignment.
 - **Dispatch**: one attempt that binds a Task to a terminal.
 - **Delivery**: a message batch that Main must process and acknowledge.
@@ -288,9 +327,9 @@ After intentionally editing development dependencies, run
 an out-of-date lock instead of silently updating it. See the
 [uv locking documentation](https://docs.astral.sh/uv/concepts/projects/sync/).
 
-When changing Orca or ACP integration, repeat a real bounded smoke test and
-confirm that terminals, state, prompt files, sessions, and adapter processes
-are gone after `stop`.
+When changing Orca, native tmux, or ACP integration, repeat a real bounded
+smoke test and confirm that the selected runtime's terminals, state, prompt
+files, sessions, and adapter processes are gone after `stop`.
 
 To verify the tmux terminal driver on a machine with tmux installed, explicitly
 run this test from the repository root:
@@ -303,3 +342,15 @@ It creates a private tmux server, checks literal arguments and process exit
 status, and reclaims its own resources. Missing tmux is an error in this test.
 The default suite exercises the driver contract without requiring tmux. This
 live test covers terminal operations; it does not prove the full team workflow.
+
+To exercise the native CLI/MCP lifecycle and active cancellation with disposable
+provider fixtures, run:
+
+```bash
+AGENT_TEAM_RUN_LIVE_NATIVE=1 uv run --locked --project scripts/agent-team python -m unittest scripts/agent-team/tests/live_native_contract.py -v
+```
+
+This test uses real tmux with fake Claude, Node, ACPX, and ACP adapter commands.
+It excludes the other backends and harnesses from PATH, verifies read → release
+→ ack, and checks process, socket, configuration, prompt, and session cleanup.
+It does not call a model or prove the full creation/review workflow.

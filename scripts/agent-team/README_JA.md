@@ -2,10 +2,11 @@
 
 [English](README.md)
 
-`agent-team`は、通常の`claude`や`codex`の設定を変えずに、project単位の
-Planner → Worker → ReviewerフローをOrca上で起動します。Task、message、terminal、
-lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはAgent Client Protocol
-経由の`acp`で動く構成です。
+`agent-team`は、通常の`claude`や`codex`の設定を変えずに、選択した実行環境で
+プロジェクト単位のチームを起動します。既定の`runtime = "orca"`では、
+Planner → Worker → Reviewerの流れと、Task・メッセージ・端末・実行状態をOrcaが管理します。
+実験的な`runtime = "tmux"`ではMainと、任意のClaude ACP read-only Planner/Reviewerを
+利用できます。native Workerには対応していません。
 
 初めて使う場合は、「managed commandを導入する」「起動前の条件を満たす」
 「teamを起動する」を読んでください。実装や設定を変える場合は、詳細ドキュメントも
@@ -33,16 +34,22 @@ lifecycleはOrcaが管理し、各roleは通常のCLIを使う`direct`またはA
 | Worker | Codex / `direct` | `gpt-6-astra` / `medium` | `workspace-write` |
 | Reviewer | Codex / `direct` | `gpt-6-astra` / `high` | `read-only` |
 
-起動直後に動くのはMainだけです。Planner、Worker、Reviewerは必要なときだけ
-起動し、background roleは同時に1つしか動きません。
+bundled Orca configでは起動直後に動くのはMainだけです。Planner、Worker、Reviewerは
+必要なときだけ起動し、background roleは同時に1つしか動きません。
+
+bundled configは、これまでどおり4 roleのOrca構成です。customなtmux configでは、
+Mainをdirect Claude・permission `orchestrator`として定義し、必要に応じてPlannerと
+Reviewerだけをverified Claude ACP・permission `read-only`として追加できます。Workerと
+その他のnative profileは、state、Task、Dispatch、processに影響する前に拒否します。
 
 ## checkoutから実行する、またはprojectをinstallする
 
 このprojectはPython標準libraryだけで動きます。Python 3.11以降が必要です。checkoutからは
 launcherを直接実行できます。
 
-Orcaのライフサイクルbackendとbounded provider runnerはPOSIX専用です。現在のruntime metadataが
-Unix socketとprocess groupを必要とするため、Windowsでは実行前に明示的に拒否します。
+Orcaのライフサイクルbackend、実験的なtmux backend、bounded provider runnerはPOSIX専用です。
+runtime metadataがUnix socketまたはprivateなprocess groupを必要とするため、Windowsでは
+実行前に明示的に拒否します。
 CLI名はplatformごとに固定し、macOSでは`orca`、Linuxでは`orca-ide`を使います。PATH fallbackや環境変数overrideは行いません。
 
 ```bash
@@ -76,34 +83,47 @@ config/promptsを`$XDG_CONFIG_HOME/agent-team`へlinkします。Python package�
 
 ## 起動前の条件を満たす
 
-現在の実装でlive Orca runtimeを使ったsmoke testを行ったのはmacOSです。
-Linuxの実行ファイルは実装上`orca-ide`に固定されていますが、このcheckoutではLinuxの
-Orca実機smoke testを行っていません。Windowsは非対応で、実行前に明示的に拒否します。
-Orcaの実行ファイルはplatformごとに固定し、PATH fallbackや環境変数overrideは行いません。
+Orcaの実機確認はmacOSで行っています。tmuxでは、OrcaとCodexがない環境、空白を含む
+作業パス、削除済み設定ファイルを使い、CLIの起動・状態確認・停止に成功しました。
+さらに実tmuxと模擬providerを使い、MCPでのread→release→ack、別CLIからの実行中処理の
+中断・停止、所有資源の回収を確認しました。これらは実モデルを使った検証ではありません。
+
+Claude Code 2.1.112のMainを`fable`/`high`、ログイン済みの`claude.ai`アカウントで起動すると、
+`fable`が存在しないか利用できないという応答になりました。代替モデルは使っていません。
+実モデルで全工程を試すには、アカウントで利用できる正式なモデルIDの指定が必要です。
+LinuxのOrca実行ファイルは`orca-ide`に固定していますが、Linuxでの実機確認は未実施です。
+Windowsは非対応で、実行前に拒否します。Orcaの実行ファイルはOSごとに固定し、
+別名のPATH探索や環境変数による置き換えは行いません。
 
 - macOS: `orca`
 - Linux: `orca-ide`
 
 起動前に次を確認してください。
 
-1. 選択したbackendとharnessのcommandを利用できる。既定のteamは上記のOrca実行ファイル、
-   `claude`、`codex`と、後述のACP toolを使います。
-2. Orcaを起動し、platform固有の`status --json`でruntimeとgraphがreadyである。
-3. 利用するClaude/Codex accountへloginしている。
-4. 対象repositoryをOrcaへ一度登録している。
+1. 選択したruntimeとharnessのcommandを利用できる。既定のteamは上記のOrca実行ファイル、
+   `claude`、`codex`と、後述のACP toolを使います。tmux configでは`tmux`も必要です。
+2. `runtime = "orca"`ではOrcaを起動し、platform固有の`status --json`でruntimeとgraphが
+   readyであることを確認します。`runtime = "tmux"`では`tmux`が利用できることを確認し、
+   Orcaは必要ありません。
+3. 選択したproviderを使うaccountへloginしている。bundled Orca roleではClaudeとCodexの両方、
+   native tmuxではClaudeが必要です。
+4. `runtime = "orca"`では対象repositoryをOrcaへ一度登録している。
 
 ```bash
+# bundled Orca configのprovider
 claude auth status
 codex login status
-# macOS
+# macOSのOrca runtime
 orca status --json
 orca repo add --path "$PWD"
-# Linux
+# LinuxのOrca runtime
 orca-ide status --json
 orca-ide repo add --path "$PWD"
+# native tmux runtime
+tmux -V
 ```
 
-ACP PlannerにはNode.js 22.13以降と、`acpx@0.13.2`、
+ACP roleを選択するconfigにはNode.js 22.13以降と、`acpx@0.13.2`、
 `@agentclientprotocol/claude-agent-acp@0.70.0`のcommandが必要です。
 利用するtoolは、例えば次のように指定したdirectoryへ事前に導入してください。
 
@@ -130,7 +150,7 @@ agent-team start --dry-run
 dry runでは、Taskごとに生成するACP commandまでは表示しません。ACP commandは、
 ACP roleをDispatchするときに作ります。
 
-Mainを起動し、Orca上のterminalへfocusします。
+Mainを起動し、管理対象のterminalへfocusします。
 
 ```bash
 agent-team start
@@ -142,8 +162,10 @@ backgroundで起動する場合は`--no-attach`を付けます。
 agent-team start --no-attach
 ```
 
-Mainへ開発作業を依頼してください。MainはPlannerが必要か判断し、`agent_team`
-MCP serverを通じてWorkerとReviewerを起動します。ユーザーと対話するroleはMainだけです。
+Mainへ開発作業を依頼してください。bundled Orca configでは、MainがPlannerの要否を判断し、
+`agent_team` MCP serverを通じてWorkerとReviewerを起動します。native tmuxでは、configに
+含まれるClaude ACPのPlanner/Reviewerだけを依頼できます。native Workerは利用できません。
+ユーザーと対話するroleはMainだけです。
 
 team名で選ぶ場合は、同梱の一覧、またはsync後の`teams.toml`を指定します。
 
@@ -157,21 +179,22 @@ teamの追加、graphの確認、選択したteamの起動は、[Version 4の設
 ## teamを確認して停止する
 
 ```bash
-# Run、Main terminal、workerの状態を確認する。
+# 選択したruntime、Main terminal、active roleの状態を確認する。
 agent-team status
 
 # Mainへfocusする。
 agent-team attach main
 
-# Mainがbackground roleを起動した後だけ、そのroleへfocusできる。
+# Orcaの場合だけ: Mainがbackground roleを起動した後に、そのroleへfocusする。
 agent-team attach worker
 
 # teamが所有するterminalを停止し、runtime stateを削除する。
 agent-team stop
 ```
 
-`stop`後も、Orca Runは監査記録として残ります。project fileのcommit、push、
-publish、削除は行いません。
+`stop`は選択したruntimeのbackendを使い、そのruntimeが所有するresourceだけを削除します。
+Orcaの場合はRunを監査記録として残します。project fileのcommit、push、publish、削除は
+行いません。
 
 管理コマンドは、起動時に保存した設定を使います。元の設定やpromptファイルを
 変更・削除しても管理できます。対象の実行を選ぶには、`start`と同じ`--cwd`と、
@@ -195,10 +218,16 @@ agent-team status \
 
 ## 安全境界を理解する
 
-- 未対応のprovider、transport、permission、config version、state formatは、
-  起動前に拒否します。別transportへ自動で切り替えません。
-- ACPを使えるのはClaudeのread-only background roleだけです。Main ACP、
-  Codex ACP、workspace-write ACPは拒否します。
+- 未対応のruntime、provider、transport、permission、config version、state formatは、起動前に
+  拒否します。別backendや別transportへ自動で切り替えません。
+- Orcaは4 role固定です。native tmuxはMainを必須とし、verified Claude ACPのread-only
+  Planner/Reviewerだけを任意に追加できます。native Workerとその他のnative profileは、
+  起動処理の効果が発生する前に拒否します。
+- nativeの`start`、`status`、`attach`、`stop`は`TmuxBackend`を使います。`attach`できるのは
+  Mainだけです。`native_main`が所有するMainのprocess groupを監督します。
+- native ACPの完了はtmux paneの文字列ではなく`publish_completion`で通知します。lifecycleの
+  順序は`role_read` → `role_release` → `delivery_ack`です。nativeの`last_ack`は1つのreceipt
+  markerを記録するだけで、Taskやユーザーのgoal全体の完了を意味しません。
 - ACPのpermission制御はOS sandboxではありません。書き込みは、専用permission
   profileを持つdirect Codexに限定します。
 - Agentの出力は信頼しません。Task、Dispatch、terminal、sender、Deliveryの
@@ -221,18 +250,20 @@ Orca 1.4.190では、非表示の検出済みworktreeに作ったterminalの終�
 |---|---|
 | `workspace is not managed by Orca` | macOSでは`orca repo add --path "$PWD"`、Linuxでは`orca-ide repo add --path "$PWD"`を実行する。 |
 | `agent-team state already exists` | 2つ目を起動せず、`status`、`attach`、`stop`を使う。 |
-| `role has no active Orca Dispatch` | Mainがそのroleを未起動か、すでにrelease済み。 |
+| `role has no active Orca Dispatch` | Orca runtimeで、Mainがそのbackground roleを未起動か、すでにrelease済み。 |
+| `native role is not a Claude ACP role` | native tmux runtimeでは、configにあるPlanner/ReviewerのClaude ACP roleだけを使う。 |
 | authenticationを求められる | agent-team外で`claude auth status`か`codex login status`を確認する。 |
 | ACPの依存検査に失敗する | 固定したACP packageを明示的にインストールし、その`node_modules/.bin`とNode >=22.13を`PATH`に含める。 |
 | roleが`escalation`を返す | 保持されたterminalとRunを調べる。完了として扱わない。 |
 
 ## 用語と問い合わせ時の情報を揃える
 
-このガイドで解決しない場合は、repository maintainerへ次の情報を渡してください。
-実行command、config path、workspace、Orca version、Run/Task/Dispatch ID、関係する
-最小限のerrorです。認証token、prompt本文、無関係なterminal出力は含めません。
+このガイドで解決しない場合は、repository maintainerへ実行command、config path、workspace、
+選択したruntime、関係する最小限のerrorを渡してください。Orca runtimeではOrca versionと
+Run/Task/Dispatch IDを、tmux runtimeではnativeのrun/assignment IDを添えます。認証token、
+prompt本文、無関係なterminal出力は含めません。
 
-- **Run**: 1回のteam実行で使うOrcaのnamespaceとcoordinator inbox。
+- **Run**: 1回のteam実行を識別するruntime identity。Orcaではnamespaceとcoordinator inboxも含む。
 - **Task**: Planner、Worker、Reviewerへ渡す、範囲を限定した1件の作業。
 - **Dispatch**: Taskとterminalを結ぶ1回の実行attempt。
 - **Delivery**: Mainが内容を処理し、acknowledgeするmessage batch。
@@ -270,9 +301,9 @@ CIもPython 3.11と3.13で同じlockを使います。buildではlockから導�
 commitしてください。`--locked`は不整合のあるlockを自動更新せず、エラーにします。
 詳しくは[uvのlock管理ドキュメント](https://docs.astral.sh/uv/concepts/projects/sync/)を参照してください。
 
-OrcaやACPの連携を変更した場合は、実環境で範囲を限定したsmoke testも行います。
-`stop`後にterminal、state、prompt file、session、adapter processが残っていないことを
-確認してください。
+Orca、native tmux、ACPの連携を変更した場合は、実環境で範囲を限定したsmoke testも行います。
+`stop`後に選択したruntimeのterminal、state、prompt file、session、adapter processが残って
+いないことを確認してください。
 
 tmux端末driverの実機確認は、tmuxを導入した環境で、リポジトリのrootから明示的に実行します。
 
@@ -283,3 +314,13 @@ uv run --locked --project scripts/agent-team python scripts/agent-team/tests/liv
 専用tmux serverを作り、引数の保持とprocessの終了状態を検証して、自分の資源を回収します。
 このtestではtmux未導入をエラーとします。通常のsuiteはtmuxを要求せずdriverの契約を検証します。
 実機testの対象は端末操作であり、チーム全工程の動作を証明するものではありません。
+
+模擬providerによるnative CLI/MCPの一巡と中断処理は、次のコマンドで検証できます。
+
+```bash
+AGENT_TEAM_RUN_LIVE_NATIVE=1 uv run --locked --project scripts/agent-team python -m unittest scripts/agent-team/tests/live_native_contract.py -v
+```
+
+実tmuxと、試験用のClaude・Node・ACPX・ACP adapterコマンドを使います。他のbackendと
+ハーネスをPATHから除外し、read→release→ackの順序と、プロセス・socket・設定・prompt・
+sessionの回収を確認します。モデルへの問い合わせや、作成・レビューの全工程は対象外です。

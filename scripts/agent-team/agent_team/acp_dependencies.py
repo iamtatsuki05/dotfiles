@@ -143,3 +143,20 @@ class AcpExecutables:
             paths.append(Path(raw))
             digests.append(digest)
         return cls(paths[0], paths[1], paths[2], digests[0], digests[1], digests[2])
+
+
+def adapter_snapshot(executables: AcpExecutables) -> dict[str, object]:
+    identity = executables.client.stat()
+    return {
+        "adapter_id": "claude-acp-0.70.0",
+        "revision": "acpx@0.13.2",
+        "executable": str(executables.client),
+        "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
+        "identity": {
+            "device": identity.st_dev,
+            "inode": identity.st_ino,
+            "size": identity.st_size,
+            "mtime_ns": identity.st_mtime_ns,
+            "sha256": executables.client_sha256,
+        },
+    }

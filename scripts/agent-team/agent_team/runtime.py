@@ -469,9 +469,43 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
         raise RuntimeValidationError(
             f"agent-team state has an unsupported format (expected version {STATE_VERSION})"
         )
-    if state.get("runtime") != "orca":
-        raise RuntimeValidationError("agent-team state runtime must be 'orca'")
-    for key in _STATE_REQUIRED_KEYS:
+    runtime = state.get("runtime")
+    if not isinstance(runtime, str) or runtime not in {"orca", "tmux"}:
+        raise RuntimeValidationError(
+            "agent-team state runtime must be 'orca' or 'tmux'"
+        )
+    required: tuple[str, ...] = _STATE_REQUIRED_KEYS
+    if runtime == "tmux":
+        if "worktree_id" in state or "orca_socket" in state:
+            raise RuntimeValidationError("native state must not contain Orca metadata")
+        required = tuple(
+            key for key in required if key not in {"worktree_id", "orca_socket"}
+        )
+        native = state.get("native")
+        if (
+            not isinstance(native, dict)
+            or not isinstance(native.get("phase"), str)
+            or native.get("phase")
+            not in {
+                "starting",
+                "running",
+                "stopping",
+                "stopped",
+            }
+        ):
+            raise RuntimeValidationError("native state has an invalid lifecycle phase")
+        nonce = native.get("run_nonce")
+        if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
+            raise RuntimeValidationError("native state has an invalid run nonce")
+        main_argv = native.get("main_argv")
+        if (
+            not isinstance(main_argv, list)
+            or not main_argv
+            or any(not isinstance(arg, str) or "\0" in arg for arg in main_argv)
+            or not Path(main_argv[0]).is_absolute()
+        ):
+            raise RuntimeValidationError("native state has an invalid Main command")
+    for key in required:
         value = state.get(key)
         if key in {"role_specs", "roles"}:
             if not isinstance(value, dict):
@@ -530,7 +564,10 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
                 raise RuntimeValidationError(
                     f"agent-team state role assignment is missing {role}.{key}"
                 )
-        if assignment.get("launcher_owned_terminal") is not True:
+        ownership_key = (
+            "launcher_owned_runner" if runtime == "tmux" else "launcher_owned_terminal"
+        )
+        if assignment.get(ownership_key) is not True:
             raise RuntimeValidationError(
                 f"agent-team state role assignment has unknown ownership: {role}"
             )

@@ -324,7 +324,7 @@ class OrcaClientContractTest(unittest.TestCase):
             mock.patch.object(cli_module, "require_binary") as require_binary,
             mock.patch.object(cli_module.os, "access", return_value=True),
         ):
-            cli_module._start_prerequisites({"roles": {}})
+            cli_module._start_prerequisites({"runtime": "orca", "roles": {}})
 
         require_binary.assert_any_call("orca-ide")
 
@@ -3638,52 +3638,24 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
     def test_timeout_does_not_add_second_term_grace_for_ignoring_parent(
         self,
     ) -> None:
-        real_popen = subprocess.Popen
-        process: subprocess.Popen[bytes] | None = None
-
-        def capture_popen(
-            args: Sequence[str],
-            *,
-            cwd: Path,
-            env: Mapping[str, str],
-            stdin: int | None,
-            stdout: int | None,
-            stderr: int | None,
-            shell: bool,
-            start_new_session: bool,
-        ) -> subprocess.Popen[bytes]:
-            nonlocal process
-            process = real_popen(
-                args,
-                cwd=cwd,
-                env=env,
-                stdin=stdin,
-                stdout=stdout,
-                stderr=stderr,
-                shell=shell,
-                start_new_session=start_new_session,
-            )
-            return process
-
         with tempfile.TemporaryDirectory() as temp_dir:
             marker = Path(temp_dir) / "child-marker"
+            pid_path = Path(temp_dir) / "parent-pid"
             child = (
                 "import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
                 "time.sleep(5); "
                 f"pathlib.Path({str(marker)!r}).write_text('residual')"
             )
             parent = (
-                "import signal,subprocess,sys,time; "
+                "import os,pathlib,signal,subprocess,sys,time; "
+                f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid())); "
                 "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
                 f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
                 "time.sleep(10)"
             )
             runner = ProcessRunner()
             started = time.monotonic()
-            with (
-                mock.patch.object(subprocess, "Popen", side_effect=capture_popen),
-                self.assertRaisesRegex(Exception, "timed out"),
-            ):
+            with self.assertRaisesRegex(Exception, "timed out"):
                 runner.run(
                     (sys.executable, "-c", parent),
                     cwd=Path(temp_dir),
@@ -3693,11 +3665,11 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
             elapsed = time.monotonic() - started
             time.sleep(0.2)
             marker_exists = marker.exists()
+            pid = int(pid_path.read_text())
 
-        self.assertIsNotNone(process)
-        assert process is not None
-        self.assertIsNotNone(process.returncode)
-        self.assertTrue(adapters_module._process_group_exited(process.pid))
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        self.assertTrue(adapters_module._process_group_exited(pid))
         self.assertLess(elapsed, 3.0)
         self.assertFalse(marker_exists)
 

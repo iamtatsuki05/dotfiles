@@ -4,8 +4,11 @@
 [Architecture](architecture.md)
 
 `agent-team` keeps the existing version-3 fixed-role configuration and also
-accepts the explicit version-4 topology configuration. Missing values and
-unsupported combinations fail before any role starts. See
+accepts the explicit version-4 topology configuration. Version-3 `runtime =
+"orca"` retains the fixed four-role contract; version-3 `runtime = "tmux"` is
+an experimental native subset with Main and optional Claude ACP read-only
+background roles. Missing values and unsupported combinations fail before any
+role starts. See
 [Version-4 configuration](configuration-v4.md) for the separate topology
 schema and pure inspection commands.
 
@@ -54,16 +57,58 @@ The bundled config uses `fable` for Main and Planner and `gpt-6-astra` for
 Worker and Reviewer. The canonical Planner is the Claude read-only ACP role;
 the canonical Worker and Reviewer remain direct Codex roles.
 
+## Select the experimental native tmux subset explicitly
+
+Use `runtime = "tmux"` only in a custom version-3 config. Main is required and
+must be direct Claude with `orchestrator` permission. Planner and Reviewer may
+be omitted or may each be verified Claude ACP with `read-only` permission and
+the pinned `claude-acp-0.70.0` adapter. Worker and every other native profile
+are rejected before state, Task, Dispatch, or process effects are created.
+Native startup requires the `tmux` executable and does not require Orca or
+Codex. A config that selects an ACP role still requires the pinned Node.js and
+ACP dependencies described below.
+
+```toml
+version = 3
+runtime = "tmux"
+team_prefix = "native-experiment"
+max_review_rounds = 2
+
+[main]
+provider = "claude"
+transport = "direct"
+model = "<available-claude-model>"
+effort = "high"
+prompt = "prompts/orchestrator.md"
+permission = "orchestrator"
+```
+
+Replace `<available-claude-model>` with a model ID exposed by the Claude
+account used for this run. It is a user-supplied placeholder and does not
+change the bundled `fable`/`gpt-6-astra` defaults. Native `start`, `status`,
+`attach`, and `stop` route to `TmuxBackend`; only Main can be attached. Native
+ACP completion is published by the runner and is independent of tmux pane
+text. The lifecycle still requires `role_read` → `role_release` →
+`delivery_ack`; `native.last_ack` is one receipt marker, not Task or goal
+completion.
+
+The model-free native tmux CLI start/status/stop path has succeeded with Orca
+and Codex absent, a workspace path containing spaces, and a deleted config. A
+real Claude 2.1.112 Main launch with `fable`/`high` and a logged-in
+`claude.ai` account was rejected by the provider because `fable` was absent or
+inaccessible. No alternative model was used, so this does not establish a
+native/provider end-to-end run.
+
 ## Top-level fields define one team contract
 
 | Field | Contract |
 |---|---|
 | `version` | Must be integer `3`. No automatic migration is performed. |
-| `runtime` | Must be `"orca"`. There is no Herdr fallback. |
+| `runtime` | Must be `"orca"` or `"tmux"`. `orca` uses four roles; `tmux` is the experimental native subset. There is no Herdr or Zellij fallback. |
 | `team_prefix` | Must match `[a-z][a-z0-9-]{0,23}`. It contributes to the runtime team ID. |
 | `max_review_rounds` | Positive integer. Counts the first Reviewer decision and every retry for one stage. |
 | `main` | Required Main role table. |
-| `roles` | Must contain exactly `planner`, `worker`, and `reviewer`. |
+| `roles` | `orca` must contain exactly `planner`, `worker`, and `reviewer`; `tmux` may contain only optional `planner` and `reviewer`. Main is declared separately and is always required. |
 
 The runtime team ID combines `team_prefix` with the workspace name and a hash
 of the absolute workspace path. The config path is not part of the ID. Two
@@ -88,7 +133,7 @@ team before changing it.
 Prompt paths must stay inside the config directory and must name existing
 files. Absolute escapes and `..` escapes are rejected.
 
-## The capability matrix is intentionally small
+## The Orca capability matrix is intentionally small
 
 | Role | Allowed provider / transport | Required permission |
 |---|---|---|
@@ -106,6 +151,17 @@ and all workspace-write ACP combinations fail fast.
 Adding a new provider or ACP adapter is not a config-only operation. It requires
 a code change, capability and permission tests, an exact version policy, and a
 real lifecycle/cleanup smoke test.
+
+The native tmux capability matrix is smaller:
+
+| Role | Allowed provider / transport | Required permission |
+|---|---|---|
+| Main | Claude / `direct` | `orchestrator` |
+| Planner | Claude / `acp` (optional) | `read-only` |
+| Reviewer | Claude / `acp` (optional) | `read-only` |
+
+Native Worker, direct Reviewer, Codex ACP, Main ACP, workspace-write ACP, and
+all other native provider profiles fail before startup effects.
 
 ## ACP dependencies are explicit and selected-only
 
@@ -149,7 +205,9 @@ The config cannot promote a role by changing only its permission string:
 For direct Codex, agent-team creates an isolated `CODEX_HOME` and derives a
 profile from `:read-only` or `:workspace`. For Claude ACP, the client limits
 tools to `Read`, `Grep`, and `Glob`, approves reads, and fails when a
-non-interactive permission question cannot be resolved.
+non-interactive permission question cannot be resolved. Native tmux has no
+direct Worker or Reviewer; its direct Main is supervised by `native_main`, and
+its optional ACP roles run as launcher-owned background processes.
 
 ## Prompts define role behavior, not process authority
 
@@ -160,9 +218,9 @@ non-interactive permission question cannot be resolved.
 | `prompts/worker.md` | Minimal implementation, verification, and prohibited operations. |
 | `prompts/reviewer.md` | Independent review and `APPROVED` / `CHANGES_REQUESTED` / `ASK_USER`. |
 
-Process authority remains in the launcher, MCP allowlist, Orca Dispatch, and
-provider permission profile. Changing prose cannot grant a role a new tool,
-transport, or permission.
+Process authority remains in the launcher, shared MCP allowlist, selected
+backend, Dispatch or native assignment, and provider permission profile.
+Changing prose cannot grant a role a new tool, transport, or permission.
 
 ## Default and custom config precedence
 
@@ -187,7 +245,8 @@ agent-team start \
 ```
 
 Use the same values for `status`, `attach`, and `stop`. The default workspace
-is the current directory.
+is the current directory. All four commands route through the backend named by
+the saved `runtime`; `attach` supports Main only for native tmux.
 
 Before making a config active:
 
