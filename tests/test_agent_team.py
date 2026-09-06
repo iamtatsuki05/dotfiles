@@ -745,6 +745,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
 
     def test_acp_runner_requires_nonempty_bounded_prompt_stdout(self) -> None:
         state = {
+            "runtime": "orca",
             "team_id": "agent-team-test",
             "workspace": "/tmp/project",
             "run_id": "run_1",

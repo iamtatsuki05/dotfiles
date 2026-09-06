@@ -3,12 +3,20 @@
 [日本語](architecture_JA.md) · [README](../README.md) ·
 [Configuration](configuration.md)
 
-## Orca is the only orchestration backend
+## Runtime selection is explicit
 
-`agent-team` separates orchestration from agent execution. Orca owns the Run,
-Tasks, Dispatches, messages, and terminals. The launcher owns role-specific
-arguments, private runtime state, and the bridge between ACP completion and an
-Orca `worker_done` message.
+`agent-team` separates orchestration from agent execution and selects the
+backend from the version-3 `runtime` field. `runtime = "orca"` keeps the
+existing four-role Orca contract. `runtime = "tmux"` is an experimental native
+path that requires Main and accepts only optional verified Claude ACP
+read-only Planner/Reviewer roles. Worker and every other native profile are
+rejected before state, Task, Dispatch, or process effects are created.
+
+### Orca runtime
+
+Orca owns the Run, Tasks, Dispatches, messages, and terminals. The launcher owns
+role-specific arguments, private runtime state, and the bridge between ACP
+completion and an Orca `worker_done` message.
 
 ```mermaid
 flowchart TD
@@ -24,13 +32,24 @@ flowchart TD
     Done --> Main
 ```
 
-Herdr and Zellij can host an outer terminal, but they are not agent-team
-orchestration backends. Giving two systems ownership of the same worker would
-make completion and cleanup ambiguous.
+### Experimental native tmux runtime
 
-The repository also contains an isolated tmux terminal driver and a live driver
-test. It is not wired into team launch or orchestration; passing that test
-covers terminal operations only and does not prove the full team workflow.
+`TmuxBackend` owns one private tmux server for Main. `native_main` supervises
+the owned Main process group, while the shared MCP framing layer lazily selects
+the Orca or native backend from saved state. Native ACP Planner/Reviewer turns
+run as launcher-owned background processes. They publish completion through
+`publish_completion`; tmux pane text is never interpreted as a lifecycle event.
+Only Main has a TTY to attach. The native path has passed a model-free
+start/status/stop smoke with Orca and Codex absent, a workspace path containing
+spaces, and a deleted config. That does not establish a native/provider
+end-to-end turn.
+
+Herdr and Zellij are not current agent-team runtimes. The broader direction
+still includes them, together with native Worker support, all ten harnesses,
+arbitrary role graphs, no-Main configurations, and TaskSpec/review/verification/
+parallel workflows; those capabilities are not implemented here. Giving two
+systems ownership of the same worker would make completion and cleanup
+ambiguous.
 
 ## Components have narrow responsibilities
 
@@ -38,13 +57,18 @@ covers terminal operations only and does not prove the full team workflow.
 |---|---|
 | `config.toml` | Declares fixed roles, providers, transports, models, efforts, prompts, and permissions. |
 | `agent_team/config_v4.py`, `topology.py` | Validate named team catalogs and render their graphs. Runnable catalog entries explicitly reference a matching version-3 launch configuration. |
-| `agent_team/cli.py` | Parses and validates config/arguments, composes `WorkflowEngine(OrcaBackend)`, renders compatibility JSON, and runs ACP turns. |
-| `agent_team/backend.py` | Owns the CLI `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
+| `agent_team/cli.py` | Parses and validates config/arguments, selects `WorkflowEngine(OrcaBackend)` or `WorkflowEngine(TmuxBackend)`, renders compatibility JSON, and runs ACP turns. |
+| `agent_team/backend.py` | Owns the Orca `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
+| `agent_team/native_backend.py` | Owns the experimental tmux `start`/`status`/`attach`/`stop` path, native ACP assignments, completion publication, and native cleanup checks. |
+| `agent_team/native_main.py` | Supervises the owned native Main process group and publishes its exit receipt. |
 | `agent_team/orca.py` | Owns the fixed Orca argv/envelope decoder. It does not own MCP role operations. |
+| `agent_team/tmux.py` | Creates and inspects one private, nonce-tagged tmux server and its Main pane. |
 | `agent_team/locking.py` | Owns the stable per-team lifecycle reservation, shared by state writes and runtime operations without importing a backend. |
 | `agent_team/cleanup.py` | Owns the private stop journal, startup-recovery sidecar, and exact local cleanup/rollback phases. |
-| `agent_team/mcp_server.py` | Exposes seven fixed Main-facing tools, maps role operations to Orca, and holds the shared lifecycle reservation from state load through remote effect and save/rollback. It is launched through the same `agent-team _mcp-server` entrypoint. |
+| `agent_team/mcp_protocol.py` | Owns shared MCP schemas, JSON-RPC framing, and lazy backend-independent serving. |
+| `agent_team/mcp_server.py`, `native_mcp.py` | Map the seven fixed Main-facing tools to the selected Orca or native backend while preserving the shared lifecycle reservation. |
 | `agent_team/runtime.py` | Shares identity, private-file, state-v3, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
+| `agent_team/process_identity.py` | Reads exact argv tuples on Linux and macOS so native ownership checks do not rely on display text. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |
 | `agent_team/adapters.py` | Provides the provider-independent background seam, bounded process runner, exact identity checks, and Copilot/OpenCode read-only adapters. It has no Orca lifecycle authority. |
 | `agent_team/acp_dependencies.py` | Resolves selected ACP dependencies, verifies exact package manifests, and records absolute executable paths with SHA-256 fingerprints. |
@@ -53,10 +77,12 @@ covers terminal operations only and does not prove the full team workflow.
 | Orca | Stores the Run/Task/Dispatch lifecycle and owns managed terminals. |
 | Node.js, `acpx`, `claude-agent-acp` | Run the pinned Claude ACP adapter through the saved executable binding and return final text plus an exit status. |
 
-Copilot read-only Planner and Reviewer profiles run through the common Orca
-lifecycle and state-v3 snapshot integration. The OpenCode provider adapter is
-also implemented, but remains rejected until its profile-specific boundary and
-lifecycle are verified live. A background profile runs one fixed provider
+Orca's Copilot read-only Planner and Reviewer profiles run through the common
+Orca lifecycle and state-v3 snapshot integration. The OpenCode provider adapter
+is also implemented, but remains rejected until its profile-specific boundary
+and lifecycle are verified live. Native tmux does not enable these profiles: it
+accepts only direct Claude Main and the optional verified Claude ACP
+read-only Planner/Reviewer roles. A background profile runs one fixed provider
 invocation against a fresh read snapshot rather than a TUI terminal or ACP
 session. The snapshot excludes `.git`, symlinks, special files, ignored files,
 secret-like paths, provider configuration, and agent instructions.
@@ -85,9 +111,9 @@ The MCP server exposes only:
 Main cannot choose an arbitrary command or role name through this MCP surface.
 The fixed surface keeps agent output separate from process-control authority.
 
-## Direct roles use Orca-supervised terminals
+## Orca direct roles use Orca-supervised terminals
 
-Worker and Reviewer currently use direct Codex.
+In `runtime = "orca"`, Worker and Reviewer use direct Codex.
 
 1. The MCP bridge creates an Orca Task.
 2. It starts a launcher-owned Codex terminal with an isolated `CODEX_HOME`.
@@ -100,21 +126,29 @@ Codex roles inherit either the built-in `:workspace` or `:read-only` profile.
 Only the current Orca Unix socket is added to the profile; no external domain
 is allowed by agent-team.
 
+In `runtime = "tmux"`, direct Claude Main runs under the private tmux server and
+the `native_main` supervisor. Native tmux does not provide a direct Worker or
+Reviewer role.
+
 ## ACP roles use a bare Dispatch and a trusted runner
 
-Planner currently uses Claude through ACP. acpx is not an Orca-recognized TUI,
-so agent-team uses a bare terminal without pretending that it is a supervised
-native agent.
+In `runtime = "orca"`, the canonical Planner uses Claude through ACP. acpx is
+not an Orca-recognized TUI, so agent-team uses a bare terminal without
+pretending that it is a supervised native agent. In `runtime = "tmux"`, the
+same trusted runner is used for each selected Planner or Reviewer, without a
+TTY or pane-based completion path.
 
-Before creating the Orca Run, ACP startup requires Node.js `22.13.0` or newer
-and the exact `acpx@0.13.2` and
+Before starting an ACP role, startup requires Node.js `22.13.0` or newer and
+the exact `acpx@0.13.2` and
 `@agentclientprotocol/claude-agent-acp@0.70.0` packages. It resolves only the
 selected ACP roles' `node`, `acpx`, and `claude-agent-acp` files, verifies their
 package manifests, and stores absolute paths with SHA-256 fingerprints. The
-role-start path rechecks that binding before creating the Orca Task. The runner
-rechecks it before starting ACP execution and uses the same files for each
-session operation. It never invokes `npm` or `npx`; a direct-only launch does
-not resolve ACP dependencies.
+Orca role-start path rechecks that binding before creating the Orca Task; the
+native role-start path rechecks it before starting its ACP runner. The runner
+uses the same files for each session operation. It never invokes `npm` or
+`npx`; a direct-only launch does not resolve ACP dependencies.
+
+For the Orca path:
 
 1. The MCP bridge creates a Task and a private prompt sidecar.
 2. It creates a launcher-owned bare terminal.
@@ -125,8 +159,15 @@ not resolve ACP dependencies.
 6. The runner closes and prunes its exact acpx session.
 7. The runner, not the agent text, sends one matching Orca `worker_done`.
 
+For the native path, the backend saves the assignment before starting the
+launcher-owned ACP runner. The runner performs the same pinned ACP operations
+and calls `publish_completion` with the matching Run, Task, Dispatch, terminal,
+and nonce identity. `native_backend` turns that durable result into the shared
+`worker_done` event; tmux pane text is never used as completion evidence.
+
 The agent command includes a team/role/nonce marker. Pruning is restricted to
-that exact command, so unrelated acpx sessions are not removed.
+that exact command, so unrelated acpx sessions are not removed. Native cleanup
+also requires the runner's exact argv and private process group to be proven.
 
 ## Lifecycle advances only on matching identities
 
@@ -145,6 +186,11 @@ role_prompt
 match the active assignment. `question` and `escalation` are not completion.
 A failed worker outcome is terminal for that Dispatch but is not successful
 work.
+
+The native backend follows the same `role_read` → `role_release` →
+`delivery_ack` order. Its `native.last_ack` field stores the one acknowledged
+Delivery receipt marker; it is an audit marker, not Task completion or proof
+that the user's overall goal is complete.
 
 ## State is private and launch-scoped
 
@@ -170,6 +216,12 @@ reads use non-following file descriptors.
 Codex runtime homes are isolated below the same team directory.
 If the replacement succeeds but directory durability is unknown, the state is
 treated as published and the startup marker is retained for management retry.
+
+Native state stores a nonce-tagged tmux receipt and the supervised Main process
+receipt. Native ownership checks compare the saved executable, private process
+group, and exact argv; `process_identity.py` supports these argv checks on Linux
+and macOS. ACP assignments store their runner PID, process group, argv, prompt
+sidecar, and private cleanup roots until `role_release` confirms cleanup.
 
 ## Failure handling is fail-closed
 
@@ -199,33 +251,39 @@ treated as published and the startup marker is retained for management retry.
   body with an explicit bound; Orca stderr/stdout, argv, IDs, paths, and control
   characters are never rendered. The redaction/legacy-body golden is covered by
   the CLI compatibility tests.
-- ACP subprocesses run in their own process group; normal parent exit and
-  timeout/output-limit paths verify and reap descendants before returning.
-- The Orca lifecycle and bounded provider runner fail fast on Windows; the
-  current contract requires a Unix socket and POSIX process-group semantics.
+- ACP subprocesses and native Main run in private process groups; normal exit,
+  cancellation, and timeout/output-limit paths verify and reap descendants
+  before returning.
+- The Orca and native tmux runtimes fail fast on Windows. Their contracts
+  require POSIX Unix-socket or process-group semantics.
 - Orca CLI selection is deterministic: `orca` on macOS and `orca-ide` on Linux;
   there is no silent PATH fallback or environment override.
 - The ACP child receives a small environment allowlist, including `HOME` for
   ambient Claude login but excluding API keys and Orca control variables.
 - `stop` validates the exact private team root and removes entries without
   following symlinks. Special files and ownership mismatches are rejected.
-- The Orca Run remains after stop as an audit record.
+- The Orca Run remains after stop as an audit record. Native tmux removes its
+  local state only after the owned Main and ACP resources have verified exit.
 
-CLI lifecycle operations use `WorkflowEngine(OrcaBackend)`. Role operations
-use the MCP server's Orca implementation and the same state and reservation
-helpers. The role methods on the abstract backend contract are not an
-implemented replacement for this MCP path.
+CLI lifecycle operations use `WorkflowEngine` with the backend selected by
+`runtime`. Orca role operations use `mcp_server`; native role operations use
+`native_backend` through `native_mcp`. Both paths share the typed contract,
+state, and reservation helpers. The role methods on the abstract backend
+contract are not a separate user-facing protocol.
 
-The MCP path records each observed Delivery and enforces reading the result,
-releasing the owned role resources, and then acknowledging completion. Questions
-must be answered before acknowledgment; escalations remain pending. Failed
-operations retain their pending state. CLI inspection commands load no Orca
-implementation and start no external process.
+The shared MCP protocol records each observed Delivery and enforces reading the
+result, releasing the owned role resources, and then acknowledging completion.
+Questions must be answered before acknowledgment; escalations remain pending.
+Failed operations retain their pending state. MCP framing and tool schemas load
+without selecting a backend; the first stateful call selects Orca or native
+tmux from saved state. Native `status`, `attach`, and `stop` inspect or operate
+the owned tmux resources.
 
 When Orca returns `retained`, the assignment stays pending and the launcher does
-not close the terminal. A `no_owned_resource` result for a launcher-created
+not close the terminal. A `no_owned_resource` result for an Orca launcher-created
 background terminal still needs an ownership-aware release path; its cleanup is
-not treated as successful.
+not treated as successful. Native release requires the ACP runner to have
+exited and its cleanup receipt to be confirmed before the assignment is removed.
 
 If a role-start or release response is lost, inspect the recorded Dispatch and
 terminal before retrying. Role operations do not provide automatic crash
@@ -241,14 +299,22 @@ read-only/deny-all settings. For that reason, Codex ACP and workspace-write ACP
 are rejected. The write-capable role remains direct Codex with provider-native
 permissions.
 
-The Claude ACP turn was verified with an ambient `claude.ai` Max login and no
-API-key environment. This proves the observed authentication path, not the
-provider's subscription billing ledger.
+The native model-free tmux lifecycle was verified with Orca and Codex absent,
+including a workspace path containing spaces and a deleted config. A real
+Claude 2.1.112 native Main launch with `fable`/`high` and a logged-in
+`claude.ai` account reached the provider, but the API rejected `fable` as absent
+or inaccessible. No alternative model was used. This does not establish a
+native/provider end-to-end turn; use a model ID exposed by the account before
+making that claim. The ambient login path is supported without passing an API
+key, but the provider's subscription billing ledger is not verified.
 
 ## Non-goals keep the runtime small
 
-- No Herdr fallback
-- No arbitrary role graph or concurrent background roles
+- No Herdr or Zellij runtime
+- No native Worker or Reviewer direct role
+- No support for all ten harnesses on the native backend
+- No arbitrary role graph, no-Main configuration, or concurrent background roles
+- No TaskSpec/review/verification/parallel workflow beyond the current fixed contract
 - No arbitrary ACP server command in config
 - No automatic provider or transport fallback
 - No automatic commit, push, publishing, or deployment

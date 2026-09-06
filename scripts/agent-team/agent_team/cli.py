@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
+from types import FrameType
 from typing import TYPE_CHECKING, Final, cast
 
 from .acp_dependencies import AcpDependencyError, AcpExecutables
@@ -23,6 +24,7 @@ from .adapters import (
     AdapterSnapshot,
     FileIdentity,
     ProcessRunner,
+    _terminate_process_group,
     background_adapter,
     remove_owned_tree,
 )
@@ -86,6 +88,7 @@ from .workflow import WorkflowEngine
 
 if TYPE_CHECKING:
     from .backend import OrcaBackend
+    from .native_backend import TmuxBackend
 
 SUPPORTED_TRANSPORTS: Final = frozenset({"direct", "acp"})
 SUPPORTED_PROVIDERS: Final = frozenset(CANONICAL_HARNESSES)
@@ -124,6 +127,14 @@ V4_RUNTIME_EDGES: Final = frozenset(
 
 
 class ConfigError(ValueError):
+    pass
+
+
+class AcpProcessCleanupError(RuntimeError):
+    pass
+
+
+class NativeAcpCancelled(RuntimeError):
     pass
 
 
@@ -246,8 +257,8 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
             "v4 field 'teams' requires config version 4; v3 config is unchanged"
         )
     runtime = require_string(data, "runtime", "config")
-    if runtime != "orca":
-        raise ConfigError("runtime must be 'orca'")
+    if runtime not in {"orca", "tmux"}:
+        raise ConfigError("runtime must be 'orca' or 'tmux'")
     team_prefix = require_string(data, "team_prefix", "config")
     if re.fullmatch(r"[a-z][a-z0-9-]{0,23}", team_prefix) is None:
         raise ConfigError("team_prefix must match [a-z][a-z0-9-]{0,23}")
@@ -280,6 +291,7 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
             expected_permission=permission,
         )
         for role, permission in ROLE_PERMISSIONS.items()
+        if runtime == "orca" or role in raw_roles
     }
     return TeamConfig(
         config_path=resolved_path,
@@ -448,7 +460,12 @@ def _management_state(
 
 
 def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
-    required = ("team_id", "workspace", "config_path", "state_path", "orca_socket")
+    runtime = state.get("runtime")
+    if runtime not in {"orca", "tmux"}:
+        raise ConfigError("saved state has an unsupported runtime")
+    required: tuple[str, ...] = ("team_id", "workspace", "config_path", "state_path")
+    if runtime == "orca":
+        required += ("orca_socket",)
     values: dict[str, str] = {}
     for key in required:
         value = state.get(key)
@@ -457,12 +474,17 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
         values[key] = value
 
     raw_specs = state.get("role_specs")
-    if not isinstance(raw_specs, dict) or set(raw_specs) != set(ALL_ROLES):
+    if (
+        not isinstance(raw_specs, dict)
+        or "main" not in raw_specs
+        or not set(raw_specs).issubset(ALL_ROLES)
+        or (runtime == "orca" and set(raw_specs) != set(ALL_ROLES))
+    ):
         raise ConfigError(
             "saved state must contain role_specs for exactly " + ", ".join(ALL_ROLES)
         )
     roles: dict[str, dict[str, object]] = {}
-    for role in ALL_ROLES:
+    for role in raw_specs:
         raw_spec = raw_specs.get(role)
         if not isinstance(raw_spec, dict):
             raise ConfigError(f"saved state is missing role_specs.{role}")
@@ -472,12 +494,12 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
         launch.setdefault("argv", [])
         roles[role] = launch
     return {
-        "runtime": "orca",
+        "runtime": runtime,
         "team_id": values["team_id"],
         "workspace": values["workspace"],
         "config_path": values["config_path"],
         "state_path": values["state_path"],
-        "orca_socket": values["orca_socket"],
+        **({"orca_socket": values["orca_socket"]} if runtime == "orca" else {}),
         "roles": roles,
     }
 
@@ -490,11 +512,18 @@ def role_instructions(role: str, config: TeamConfig, state_path: Path) -> str:
     return (
         f"{base}\n\n"
         "## 実行時の契約\n"
-        "ユーザーと対話するのはあなたのみです。Planner、Worker、Reviewerは必要な時だけ、"
-        "agent_team MCPの固定ツールから起動してください。各`role_prompt`はOrcaのTaskを作り、"
-        "専用terminalを起動してsupervised Dispatchへ接続します。同時にactiveにできるroleは"
+        f"runtimeは{config.runtime}、利用可能なroleは{', '.join(config.roles) or 'なし'}です。"
+        "構成されていないroleへ依頼してはいけません。\n"
+        + (
+            "Workerがない読み取り専用の構成では、変更実装を始めず調査・レビュー結果を報告してください。\n"
+            if "worker" not in config.roles
+            else ""
+        )
+        + "ユーザーと対話するのはあなたのみです。Planner、Worker、Reviewerは必要な時だけ、"
+        "agent_team MCPの固定ツールから起動してください。各`role_prompt`は選択したruntimeでTaskを作り、"
+        "構成された実行方式でroleとDispatchを結び付けます。同時にactiveにできるroleは"
         "1つだけです。現在のroleをreleaseし、Deliveryをacknowledgeしてから次を起動してください。\n"
-        "`role_wait`でOrcaの`worker_done`、`question`、`escalation`を待ち、通知を分類してから"
+        "`role_wait`で`worker_done`、`question`、`escalation`を待ち、通知を分類してから"
         "次へ進んでください。`worker_done`だけが終端通知です。受信後は`role_read`で証拠を読み、"
         "その後に`role_release`で解放し、最後に`delivery_ack`でDelivery全体を確認済みにします。"
         "`worker_done`の`outcome=failed`は終端でも成功ではありません。read、release、ack後も"
@@ -753,8 +782,7 @@ def build_plan(
     state_path = state_path_for(team_id)
     role_configs = {"main": config.main, **config.roles}
     roles: dict[str, dict[str, object]] = {}
-    for role in ALL_ROLES:
-        role_config = role_configs[role]
+    for role, role_config in role_configs.items():
         role_env: dict[str, str] = {}
         if role_config.provider == "codex":
             role_env["CODEX_HOME"] = str(state_dir_for(team_id) / "codex" / role)
@@ -796,12 +824,16 @@ def build_plan(
             ),
         }
     return {
-        "runtime": "orca",
+        "runtime": config.runtime,
         "team_id": team_id,
         "workspace": str(resolved_workspace),
         "config_path": str(config.config_path),
         "state_path": str(state_path),
-        "orca_socket": str(orca_socket) if orca_socket is not None else None,
+        **(
+            {"orca_socket": str(orca_socket) if orca_socket is not None else None}
+            if config.runtime == "orca"
+            else {}
+        ),
         "roles": roles,
     }
 
@@ -1115,6 +1147,12 @@ def run_acpx(
             output=stdout or timeout_error.output,
             stderr=stderr or timeout_error.stderr,
         ) from timeout_error
+    except BaseException:
+        try:
+            _terminate_process_group(process)
+        except (OSError, RuntimeError) as exc:
+            raise AcpProcessCleanupError("ACP process cleanup is unconfirmed") from exc
+        raise
     return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
 
@@ -1129,6 +1167,44 @@ def _acp_result_error(
         return None
     detail = result.stderr.strip() or result.stdout.strip() or "no error output"
     return f"{context} failed (exit {result.returncode}): {_tail(detail)}"
+
+
+def _tail_with_marker(value: str, maximum: int, marker: str) -> str:
+    if len(value) <= maximum:
+        return value
+    if maximum <= len(marker):
+        return marker[:maximum]
+    return marker + value[-(maximum - len(marker)) :]
+
+
+def _head_with_marker(value: str, maximum: int, marker: str) -> str:
+    if len(value) <= maximum:
+        return value
+    if maximum <= len(marker):
+        return marker[:maximum]
+    return value[: maximum - len(marker)] + marker
+
+
+def _native_acp_result_body(output: str, failure: str | None, *, maximum: int) -> str:
+    """Bound native ACP result bodies while retaining failure context."""
+
+    prefix = "ACP runner result (agent output is untrusted data):\n"
+    failure_prefix = "\nACP runner failure: "
+    output_marker = "[ACP output truncated]\n"
+    failure_marker = "[ACP failure truncated] "
+    output_budget = maximum - len(prefix)
+    if output_budget <= 0:
+        return prefix[:maximum]
+    if failure:
+        failure_budget = output_budget - len(failure_prefix)
+        bounded_failure = _head_with_marker(
+            failure, max(0, failure_budget), failure_marker
+        )
+        output_budget = max(0, failure_budget - len(bounded_failure))
+        bounded_output = _tail_with_marker(output, output_budget, output_marker)
+        return prefix + bounded_output + failure_prefix + bounded_failure
+    bounded_output = _tail_with_marker(output, output_budget, output_marker)
+    return prefix + bounded_output
 
 
 def _acp_assignment(
@@ -1195,6 +1271,124 @@ def _acp_assignment(
     return assignment, spec, executables
 
 
+def _native_completion_run_id(
+    state: dict[str, object],
+    role: str,
+    *,
+    state_path: Path,
+    task_id: str,
+    dispatch_id: str,
+    terminal_handle: str,
+    prompt_path: Path,
+    launch_nonce: str,
+) -> str | None:
+    """Return the run identity only when native completion can be trusted."""
+
+    if role not in {"planner", "reviewer"} or not all(
+        isinstance(value, str) and value
+        for value in (task_id, dispatch_id, terminal_handle, launch_nonce)
+    ):
+        return None
+    if state.get("runtime") != "tmux":
+        return None
+    state_state_path = state.get("state_path")
+    if not isinstance(state_state_path, str):
+        return None
+    try:
+        state_path_matches = state_path.resolve(strict=False) == Path(
+            state_state_path
+        ).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not state_path_matches:
+        return None
+    run_id = state.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    roles = state.get("roles")
+    assignment = roles.get(role) if isinstance(roles, dict) else None
+    if (
+        not isinstance(assignment, dict)
+        or assignment.get("launcher_owned_runner") is not True
+    ):
+        return None
+    if any(
+        assignment.get(key) != value
+        for key, value in {
+            "task_id": task_id,
+            "dispatch_id": dispatch_id,
+            "terminal_handle": terminal_handle,
+            "prompt_path": str(prompt_path),
+            "launch_nonce": launch_nonce,
+        }.items()
+    ):
+        return None
+    specs = state.get("role_specs")
+    spec = specs.get(role) if isinstance(specs, dict) else None
+    if not isinstance(spec, dict):
+        return None
+    expected_spec = {
+        "provider": "claude",
+        "transport": "acp",
+        "permission": "read-only",
+        "execution": "background",
+        "adapter_id": "claude-acp-0.70.0",
+    }
+    if any(spec.get(key) != value for key, value in expected_spec.items()):
+        return None
+    return run_id
+
+
+def _publish_native_validation_failure(
+    state: dict[str, object],
+    *,
+    role: str,
+    state_path: Path,
+    task_id: str,
+    dispatch_id: str,
+    terminal_handle: str,
+    prompt_path: Path,
+    launch_nonce: str,
+    error: Exception,
+) -> None:
+    run_id = _native_completion_run_id(
+        state,
+        role,
+        state_path=state_path,
+        task_id=task_id,
+        dispatch_id=dispatch_id,
+        terminal_handle=terminal_handle,
+        prompt_path=prompt_path,
+        launch_nonce=launch_nonce,
+    )
+    if run_id is None:
+        return
+    detail = "".join(character for character in str(error) if character.isprintable())
+    body = (
+        "ACP runner validation failed before provider launch; "
+        "ACP session cleanup is confirmed: " + detail[:MAX_RUNTIME_ERROR_CHARS]
+    )
+    try:
+        from .native_backend import publish_completion
+
+        publish_completion(
+            state_path,
+            role=role,
+            run_id=run_id,
+            task_id=task_id,
+            dispatch_id=dispatch_id,
+            terminal_handle=terminal_handle,
+            launch_nonce=launch_nonce,
+            outcome="failed",
+            body=body,
+            cleanup_confirmed=True,
+        )
+    except (RuntimeFailure, RuntimeError, TypeError, OSError) as exc:
+        print(
+            f"could not publish native ACP validation failure: {exc}", file=sys.stderr
+        )
+
+
 def _send_worker_done(
     state: dict[str, object],
     assignment: dict[str, object],
@@ -1242,10 +1436,76 @@ def acp_run(
     prompt_path: Path,
     launch_nonce: str,
 ) -> int:
-    """Run one Claude ACP turn and report exactly one Orca worker_done."""
-
     try:
         state = read_state(state_path)
+    except (ConfigError, OSError, TypeError, RuntimeValidationError) as exc:
+        print(f"ACP runner validation failed: {exc}", file=sys.stderr)
+        return 1
+    native = state.get("runtime") == "tmux"
+    previous = (
+        {
+            number: signal.getsignal(number)
+            for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+        }
+        if native
+        else {}
+    )
+
+    def cancel(_number: int, _frame: FrameType | None) -> None:
+        for number in previous:
+            signal.signal(number, signal.SIG_IGN)
+        raise NativeAcpCancelled("native ACP cancellation requested")
+
+    try:
+        for number in previous:
+            signal.signal(number, cancel)
+        return _acp_run_turn(
+            state=state,
+            role=role,
+            state_path=state_path,
+            task_id=task_id,
+            dispatch_id=dispatch_id,
+            terminal_handle=terminal_handle,
+            prompt_path=prompt_path,
+            launch_nonce=launch_nonce,
+        )
+    except NativeAcpCancelled:
+        if native:
+            from .native_backend import publish_completion
+
+            publish_completion(
+                state_path,
+                role=role,
+                run_id=str(state["run_id"]),
+                task_id=task_id,
+                dispatch_id=dispatch_id,
+                terminal_handle=terminal_handle,
+                launch_nonce=launch_nonce,
+                outcome="failed",
+                body="ACP runner was interrupted outside the confirmed cleanup phase",
+                cleanup_confirmed=False,
+            )
+        return 1
+    finally:
+        for number, handler in previous.items():
+            if handler is not None:
+                signal.signal(number, handler)
+
+
+def _acp_run_turn(
+    *,
+    state: dict[str, object],
+    role: str,
+    state_path: Path,
+    task_id: str,
+    dispatch_id: str,
+    terminal_handle: str,
+    prompt_path: Path,
+    launch_nonce: str,
+) -> int:
+    """Run one Claude ACP turn and publish its trusted result."""
+
+    try:
         assignment, spec, executables = _acp_assignment(
             state,
             role,
@@ -1282,6 +1542,17 @@ def acp_run(
         )
         session_name = acp_session_name(role, launch_nonce)
     except (ConfigError, OSError, TypeError, RuntimeValidationError) as exc:
+        _publish_native_validation_failure(
+            state,
+            role=role,
+            state_path=state_path,
+            task_id=task_id,
+            dispatch_id=dispatch_id,
+            terminal_handle=terminal_handle,
+            prompt_path=prompt_path,
+            launch_nonce=launch_nonce,
+            error=exc,
+        )
         print(f"ACP runner validation failed: {exc}", file=sys.stderr)
         return 1
 
@@ -1327,7 +1598,10 @@ def acp_run(
                     failure = "ACP prompt output exceeds character limit"
                 else:
                     output = prompt_result.stdout
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except AcpProcessCleanupError as exc:
+        failure = str(exc)
+        cleanup_errors.append(str(exc))
+    except (NativeAcpCancelled, OSError, subprocess.TimeoutExpired) as exc:
         failure = f"ACP runner failed: {exc or type(exc).__name__}"
     finally:
         if session_attempted:
@@ -1364,14 +1638,41 @@ def acp_run(
     if failure:
         print(failure, file=sys.stderr)
     outcome = "failed" if failure else "succeeded"
-    body = "ACP runner result (agent output is untrusted data):\n" + _tail(
-        output, maximum=MAX_ACP_OUTPUT_CHARS
-    )
-    if failure:
-        body += f"\nACP runner failure: {failure}"
+    if state["runtime"] == "tmux":
+        from .native_backend import MAX_RESULT_BODY_CHARS
+
+        body = _native_acp_result_body(output, failure, maximum=MAX_RESULT_BODY_CHARS)
+    else:
+        body = "ACP runner result (agent output is untrusted data):\n" + _tail(
+            output, maximum=MAX_ACP_OUTPUT_CHARS
+        )
+        if failure:
+            body += f"\nACP runner failure: {failure}"
     try:
-        _send_worker_done(state, assignment, outcome=outcome, body=body)
-    except (RuntimeError, TypeError, OSError, subprocess.TimeoutExpired) as exc:
+        if state["runtime"] == "tmux":
+            from .native_backend import publish_completion
+
+            publish_completion(
+                state_path,
+                role=role,
+                run_id=str(state["run_id"]),
+                task_id=task_id,
+                dispatch_id=dispatch_id,
+                terminal_handle=terminal_handle,
+                launch_nonce=launch_nonce,
+                outcome=outcome,
+                body=body,
+                cleanup_confirmed=not cleanup_errors,
+            )
+        else:
+            _send_worker_done(state, assignment, outcome=outcome, body=body)
+    except (
+        RuntimeFailure,
+        RuntimeError,
+        TypeError,
+        OSError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         print(f"could not send worker_done: {exc}", file=sys.stderr)
         return 1
     return 0 if outcome == "succeeded" else 1
@@ -1607,8 +1908,14 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         raise TypeError("launch plan contains invalid team metadata")
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
+    if "main" not in roles or (
+        plan.get("runtime") != "tmux" and set(roles) != set(ALL_ROLES)
+    ):
+        raise TypeError("launch plan does not contain the required roles")
     role_specs: dict[Role, RoleSpec] = {}
-    for role_name in ALL_ROLES:
+    for role_name in roles:
+        if role_name not in ALL_ROLES:
+            raise TypeError(f"launch plan contains an unknown role: {role_name}")
         launch = roles.get(role_name)
         if not isinstance(launch, dict):
             raise TypeError(f"launch plan contains invalid role: {role_name}")
@@ -1664,9 +1971,14 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
 
 
 def _start_prerequisites(plan: dict[str, object]) -> None:
-    from .orca import orca_executable
+    if plan.get("runtime") == "tmux":
+        require_binary("tmux")
+    elif plan.get("runtime") == "orca":
+        from .orca import orca_executable
 
-    require_binary(orca_executable())
+        require_binary(orca_executable())
+    else:
+        raise ConfigError("launch plan has an unsupported runtime")
     roles = plan.get("roles")
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
@@ -1732,7 +2044,15 @@ def _ensure_orca_platform() -> None:
 
 def _runtime_engine(
     plan: dict[str, object], *, resume_existing: bool
-) -> tuple[WorkflowEngine, OrcaBackend]:
+) -> tuple[WorkflowEngine, OrcaBackend | TmuxBackend]:
+    if plan.get("runtime") == "tmux":
+        from .native_backend import TmuxBackend
+
+        native = TmuxBackend(
+            launcher_path=launcher_path() if not resume_existing else None,
+            resume_existing=resume_existing,
+        )
+        return WorkflowEngine(native), native
     from .backend import OrcaBackend, OrcaClient
 
     config_path = plan.get("config_path")
@@ -1916,7 +2236,7 @@ def add_context_arguments(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-team")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    start = subparsers.add_parser("start", help="start an Orca-backed agent team")
+    start = subparsers.add_parser("start", help="start the configured agent team")
     add_context_arguments(start)
     start.add_argument("--team", action="append")
     start.add_argument("--dry-run", action="store_true")
@@ -1960,17 +2280,39 @@ def build_parser() -> argparse.ArgumentParser:
     background.add_argument("--terminal", required=True)
     background.add_argument("--prompt", type=Path, required=True)
     background.add_argument("--launch-nonce", required=True)
+    native_main = subparsers.add_parser("_native-main", help=argparse.SUPPRESS)
+    native_main.add_argument("--state", type=Path, required=True)
+    native_main.add_argument("--run-id", required=True)
     subparsers.add_parser("_mcp-server", help=argparse.SUPPRESS)
     return parser
+
+
+def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
+    raw_path = os.environ.get("AGENT_TEAM_STATE_PATH")
+    if not raw_path:
+        raise ConfigError("AGENT_TEAM_STATE_PATH is required")
+    path = Path(raw_path)
+    state = read_state(path)
+    if state["runtime"] == "tmux":
+        from .native_mcp import execute_tool
+
+        return execute_tool(name, arguments, path)
+    from .mcp_server import execute_tool as execute_orca_tool
+
+    return execute_orca_tool(name, arguments)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "_mcp-server":
-        from .mcp_server import main as mcp_main
+        from .mcp_protocol import serve
 
-        return mcp_main()
+        return serve(_execute_mcp_tool)
+    if args.command == "_native-main":
+        from .native_main import run
+
+        return run(args.state, args.run_id)
     if args.command == "harnesses":
         rows = status_rows()
         if args.as_json:

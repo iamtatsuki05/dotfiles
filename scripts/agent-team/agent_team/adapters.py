@@ -368,7 +368,8 @@ def _bounded_communicate(
 
 
 def _terminate_process_group(
-    process: subprocess.Popen[bytes], process_group_id: int | None = None
+    process: subprocess.Popen[bytes] | subprocess.Popen[str],
+    process_group_id: int | None = None,
 ) -> None:
     if os.name == "nt":
         if process.poll() is None:
@@ -417,7 +418,7 @@ def _wait_for_process_group_exit(
     group_id: int,
     *,
     timeout_seconds: float,
-    process: subprocess.Popen[bytes] | None = None,
+    process: subprocess.Popen[bytes] | subprocess.Popen[str] | None = None,
 ) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while _process_group_exited(group_id) is False:
@@ -439,12 +440,15 @@ def _process_group_exited(group_id: int) -> bool:
     except ProcessLookupError:
         return True
     except PermissionError:
-        return False
+        if not sys.platform.startswith("darwin"):
+            return False
     if sys.platform.startswith("linux"):
         live_member = _linux_process_group_has_live_member(group_id)
-        if live_member is False:
-            return True
-    return False
+    elif sys.platform.startswith("darwin"):
+        live_member = _darwin_process_group_has_live_member(group_id)
+    else:
+        live_member = None
+    return live_member is False
 
 
 def _linux_process_group_has_live_member(group_id: int) -> bool | None:
@@ -469,6 +473,50 @@ def _linux_process_group_has_live_member(group_id: int) -> bool | None:
         except (OSError, UnicodeDecodeError, ValueError):
             continue
     return False
+
+
+def _darwin_process_group_has_live_member(group_id: int) -> bool | None:
+    try:
+        result = subprocess.run(
+            ("/bin/ps", "-axo", "pgid=,stat="),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not isinstance(result.stdout, str):
+        return None
+    if not result.stdout.strip():
+        return None
+
+    saw_member = False
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) != 2:
+            return None
+        raw_group_id, state = fields
+        if not raw_group_id.isascii() or not raw_group_id.isdigit():
+            return None
+        try:
+            observed_group_id = int(raw_group_id)
+        except ValueError:
+            return None
+        if observed_group_id < 0:
+            return None
+        if observed_group_id != group_id:
+            continue
+        if observed_group_id == 0:
+            return None
+        if state[0] not in "IRSTUZWX":
+            return None
+        saw_member = True
+        if state[0] != "Z":
+            return True
+    return False if saw_member else None
 
 
 def safe_environment(

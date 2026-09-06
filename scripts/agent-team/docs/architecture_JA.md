@@ -3,10 +3,17 @@
 [English](architecture.md) · [README](../README_JA.md) ·
 [設定リファレンス](configuration_JA.md)
 
-## オーケストレーションはOrcaだけが担当する
+## runtimeを明示的に選択する
 
-`agent-team`は、オーケストレーションとAgent実行を分けています。Run、Task、
-Dispatch、message、terminalはOrcaが管理します。launcherはrole別の起動引数と
+`agent-team`はオーケストレーションとAgent実行を分け、version 3の`runtime`でbackendを
+選択します。`runtime = "orca"`は既存の4 role固定のOrca contractを使います。
+`runtime = "tmux"`は実験的なnative pathで、Mainを必須とし、verified Claude ACPの
+read-only Planner/Reviewerだけを任意に追加できます。Workerとその他のnative profileは、
+state、Task、Dispatch、processに影響する前に拒否します。
+
+### Orca runtime
+
+OrcaはRun、Task、Dispatch、message、terminalを管理します。launcherはrole別の起動引数と
 private runtime stateを管理し、ACPの完了をOrcaの`worker_done`へ変換します。
 
 ```mermaid
@@ -23,13 +30,21 @@ flowchart TD
     Done --> Main
 ```
 
-HerdrやZellijは外側のterminalとして使えます。ただし、agent-teamの
-オーケストレーションbackendではありません。2つのsystemが同じworkerを所有すると、
-完了判定とcleanupの責任が曖昧になるためです。
+### 実験的なnative tmux runtime
 
-repositoryにはtmuxのterminal driverと、そのdriverだけを検証する実機testもあります。
-teamの起動やオーケストレーションにはまだ接続していません。このtestに通っても端末操作の
-確認にとどまり、team全体のworkflowを証明するものではありません。
+`TmuxBackend`はMain用のprivate tmux serverを1つ所有します。`native_main`は所有する
+Mainのprocess groupを監督し、共有MCP framing layerは保存済みstateからOrcaまたはnative
+backendを遅延選択します。native ACPのPlanner/Reviewerはlauncherが所有するbackground
+processとして動き、完了を`publish_completion`で通知します。tmux paneの文字列はlifecycle
+eventとして解釈しません。TTYへattachできるのはMainだけです。native pathでは、Orcaと
+Codexがない環境、空白を含むworkspace path、削除済みconfigを使ったmodelなしの
+start/status/stop smokeが成功しています。ただしnative/provider end-to-end turnの証明では
+ありません。
+
+HerdrとZellijは、現在のagent-team runtimeではありません。今後の方向には、これらに加えて
+10 harness、native Worker、任意のrole graph、Mainなしの構成、TaskSpec/review/verification/
+parallel workflowを含めていますが、このcheckoutでは未実装です。2つのsystemが同じworkerを
+所有すると、完了判定とcleanupの責任が曖昧になります。
 
 ## componentごとに責務を限定する
 
@@ -37,13 +52,18 @@ teamの起動やオーケストレーションにはまだ接続していませ�
 |---|---|
 | `config.toml` | 固定role、provider、transport、model、effort、prompt、permissionを宣言する。 |
 | `agent_team/config_v4.py`, `topology.py` | 名前付きteam一覧を検証し、graphを描画する。起動可能な項目は、対応するversion-3起動設定を明示参照する。 |
-| `agent_team/cli.py` | config/引数をparse・検証し、`WorkflowEngine(OrcaBackend)`を構成し、互換JSONを描画し、ACP turnを実行する。 |
-| `agent_team/backend.py` | CLIの`start`/`status`/`attach`/`stop` adapter、state v3のidentity検証、互換receiptを担当する。 |
+| `agent_team/cli.py` | config/引数をparse・検証し、`WorkflowEngine(OrcaBackend)`または`WorkflowEngine(TmuxBackend)`を選択し、互換JSONを描画し、ACP turnを実行する。 |
+| `agent_team/backend.py` | Orcaの`start`/`status`/`attach`/`stop` adapter、state v3のidentity検証、互換receiptを担当する。 |
+| `agent_team/native_backend.py` | 実験的なtmuxの`start`/`status`/`attach`/`stop`、native ACP assignment、完了通知、cleanup確認を担当する。 |
+| `agent_team/native_main.py` | 所有するnative Mainのprocess groupを監督し、終了receiptを保存する。 |
 | `agent_team/orca.py` | 固定Orca argv/envelope decoderを担当する。MCP role操作は持たない。 |
+| `agent_team/tmux.py` | nonceを付けたprivate tmux serverとMain paneの作成・検査を担当する。 |
 | `agent_team/locking.py` | teamごとのstable lifecycle reservationを担当する。backendをimportせず、stateの書き込みとruntime操作で共有する。 |
 | `agent_team/cleanup.py` | private stop journal、startup recovery sidecar、local cleanup/rollbackのexact phaseを担当する。 |
-| `agent_team/mcp_server.py` | Main向けの7 toolを公開しrole操作をOrcaへ変換する。state loadからremote effect、save/rollbackまで共有lifecycle reservationを保持する。同じ`agent-team _mcp-server` entrypointから起動する。 |
+| `agent_team/mcp_protocol.py` | 共通MCP schema、JSON-RPC framing、backendに依存しない遅延serveを担当する。 |
+| `agent_team/mcp_server.py`, `native_mcp.py` | Main向けの7 toolを選択したOrcaまたはnative backendへ変換し、共通のlifecycle reservationを維持する。 |
 | `agent_team/runtime.py` | identity、private file、state v3、command、environment、cleanupの安全helperを共有する。state writeは、callerがreservationを保持していない限り共有lockを取得する。 |
+| `agent_team/process_identity.py` | LinuxとmacOSでprocessのexact argvを読み、表示文字列に依存しないnative所有権検査を提供する。 |
 | `agent_team/registry.py` | 認識済みharnessと検証済みrole profileを記録し、別providerへのfallthroughを行わない。 |
 | `agent_team/adapters.py` | provider非依存のbackground seam、出力制限付きprocess runner、exact identity検証、Copilot/OpenCode read-only adapterを提供する。Orca lifecycleの権限は持たない。 |
 | `agent_team/acp_dependencies.py` | 選択したACPの依存関係だけを解決し、exact package manifestと、absoluteな実行ファイルpath・SHA-256 fingerprintを検証する。 |
@@ -52,11 +72,12 @@ teamの起動やオーケストレーションにはまだ接続していませ�
 | Orca | Run、Task、Dispatch、terminalのlifecycleを保存・管理する。 |
 | Node.js、`acpx`、`claude-agent-acp` | 保存した実行ファイルbindingを通じて固定したClaude ACP adapterを実行し、最終本文とexit statusを返す。 |
 
-Copilotのread-only Planner/Reviewerは、Orca共通lifecycleとstate v3のsnapshot統合を通して実行できます。
+OrcaのCopilot read-only Planner/Reviewerは、Orca共通lifecycleとstate v3のsnapshot統合を通して実行できます。
 OpenCodeのprovider adapterも実装済みですが、profile固有の境界とlifecycleを実機で検証するまでは拒否します。
-background profileはTUI terminalやACP sessionではなく、各turnで新しいread snapshotに固定provider commandを
-実行します。snapshotからは`.git`、symlink、special file、gitignore対象、secret-like path、provider設定、
-Agent instructionを除外します。
+native tmuxではこれらのprofileを有効にしません。direct ClaudeのMainと、任意のverified Claude ACP
+read-only Planner/Reviewerだけを受け付けます。background profileはTUI terminalやACP sessionではなく、
+各turnで新しいread snapshotに固定provider commandを実行します。snapshotからは`.git`、symlink、special
+file、gitignore対象、secret-like path、provider設定、Agent instructionを除外します。
 
 ## canonical Mainはdirect Claudeで、ユーザーと対話するroleは1つだけ
 
@@ -81,9 +102,9 @@ MCP serverが公開するtoolは次の7つです。
 このMCP経由では、任意commandや任意role名を指定できません。固定したsurfaceに
 よって、Agentの出力とprocess controlの権限を分離します。
 
-## direct roleはOrcaが監督するterminalで動く
+## Orcaのdirect roleはOrcaが監督するterminalで動く
 
-現在のWorkerとReviewerはdirect Codexです。
+`runtime = "orca"`では、WorkerとReviewerはdirect Codexです。
 
 1. MCP bridgeがOrca Taskを作ります。
 2. launcher専用のCodex terminalを、隔離した`CODEX_HOME`で起動します。
@@ -96,17 +117,24 @@ Codex roleは組み込みの`:workspace`か`:read-only`を継承します。追�
 network endpointは、現在のOrca Unix socketだけです。agent-teamは外部domainを
 許可しません。
 
+`runtime = "tmux"`では、direct ClaudeのMainをprivate tmux serverと`native_main`が
+監督します。native tmuxにはdirect Workerやdirect Reviewerはありません。
+
 ## ACP roleはbare Dispatchとtrusted runnerで動く
 
-現在のPlannerはClaude ACPです。acpxはOrcaが認識するTUIではないため、native agentに
-見せかけず、bare terminalで実行します。
+`runtime = "orca"`では、canonical PlannerがClaude ACPで動きます。acpxはOrcaが認識する
+TUIではないため、native agentに見せかけず、bare terminalで実行します。`runtime = "tmux"`
+では、選択したPlannerまたはReviewerに同じtrusted runnerを使います。TTYやpaneの文字列を
+完了判定には使いません。
 
-Orca Runを作る前のACP起動検査では、Node.js `22.13.0`以降と、exactな
-`acpx@0.13.2`、`@agentclientprotocol/claude-agent-acp@0.70.0` packageが必要です。
-選択したACP roleについてだけ`node`、`acpx`、`claude-agent-acp`を解決し、package manifestを
-確認したうえで、absoluteなpathとSHA-256 fingerprintを保存します。role起動経路はOrca Taskを作る
-前にbindingを再検証し、runnerもACP実行の前に再検証して、各session operationで同じfileを使います。
+ACP roleを起動する前に、Node.js `22.13.0`以降と、exactな`acpx@0.13.2`、
+`@agentclientprotocol/claude-agent-acp@0.70.0` packageが必要です。選択したACP roleについてだけ
+`node`、`acpx`、`claude-agent-acp`を解決し、package manifestを確認したうえで、absoluteなpathと
+SHA-256 fingerprintを保存します。Orcaのrole起動経路はOrca Taskを作る前に、nativeのrole起動経路は
+ACP runnerを起動する前にbindingを再検証します。runnerは各session operationで同じfileを使います。
 `npm`や`npx`は呼び出さず、directだけの起動ではACP依存関係を解決しません。
+
+Orcaの場合:
 
 1. MCP bridgeがTaskとprivate prompt sidecarを作ります。
 2. launcherが所有するbare terminalを作ります。
@@ -117,8 +145,14 @@ Orca Runを作る前のACP起動検査では、Node.js `22.13.0`以降と、exac
 6. runnerが自分のacpx sessionをcloseし、exact commandでpruneします。
 7. Agentの本文ではなくrunnerが、対応するOrca `worker_done`を1回だけ送ります。
 
+nativeの場合、backendがassignmentを保存してからlauncher所有のACP runnerを起動します。
+runnerは同じpinned ACP操作を行い、Run、Task、Dispatch、terminal、nonceが一致する
+`publish_completion`を呼びます。`native_backend`はこの永続化された結果を共通の
+`worker_done` eventへ変換します。tmux paneの文字列は完了証拠になりません。
+
 Agent commandにはteam、role、nonceのmarkerを含めます。prune対象をそのcommandへ
-限定するため、他のacpx sessionを削除しません。
+限定するため、他のacpx sessionを削除しません。native cleanupではrunnerのexact argvと
+private process groupも検証します。
 
 ## identityが一致したときだけlifecycleを進める
 
@@ -136,6 +170,10 @@ role_prompt
 `worker_done`は、Task、Dispatch、sender terminal、Runがactive assignmentと一致した
 場合だけ受理します。`question`と`escalation`は完了ではありません。failed outcomeは
 そのDispatchの終端ですが、作業成功ではありません。
+
+native backendも`role_read` → `role_release` → `delivery_ack`の順序を使います。
+`native.last_ack`はacknowledgeしたDeliveryのreceipt markerを1つ記録するだけです。
+Taskの完了や、ユーザーのgoal全体の完了を示すものではありません。
 
 ## stateはprivateなlaunch snapshotとして保存する
 
@@ -159,6 +197,12 @@ atomicに書き込み、replace後にparent directoryをfsyncします。prompt�
 Codexのruntime homeも同じteam directoryの下へ隔離します。
 replace後のdurabilityが不明でもstateはpublish済みとして扱い、startup markerを残して管理操作で再試行します。
 
+native stateにはnonce付きのtmux receiptと、監督対象のMain process receiptを保存します。
+nativeの所有権検査はsaved executable、private process group、exact argvを比較します。
+`process_identity.py`はLinuxとmacOSでこのargv検査を行います。ACP assignmentのrunner PID、
+process group、argv、prompt sidecar、private cleanup rootは、`role_release`でcleanupを
+確認するまで保持します。
+
 ## 失敗時はfail-closedで後始末する
 
 - role起動の取り消しで停止効果を確認できない場合は、assignmentとprivate資源を保持します。
@@ -173,29 +217,34 @@ replace後のdurabilityが不明でもstateはpublish済みとして扱い、sta
 - Main terminal作成前にdurableなstartup markerを置きます。create responseを失った場合はlocal preparationを保持し、no-tab closeの`ptyKilled=true` receiptをdurableに確認するまで次のstartを拒否します。
 - startup recoveryでは、read-onlyなterminal showのstale/goneだけをprocess停止証拠とはみなしません。verifiedなclose receiptを保持するまでlocal homeを残します。
 - CLIのruntime errorは固定分類と上限付きの既存`ERROR: <message>`本文を使い、Orcaのstderr/stdout、argv、ID、path、制御文字を表示しません。redactionと旧本文のgoldenはCLI互換テストで確認します。
-- ACP subprocessは独立process groupで動かし、正常終了時もtimeout/output-limit時もdescendantを確認・reapしてから戻します。
-- Orca lifecycleとbounded provider runnerはWindowsで即時に拒否します。現在のcontractはUnix socketと
-  POSIX process groupを必要とします。
+- ACP subprocessとnative Mainはprivateなprocess groupで動かし、正常終了、cancel、
+  timeout/output-limit時にdescendantを確認・reapしてから戻します。
+- Orcaとnative tmux runtimeはWindowsで即時に拒否します。contractはPOSIXのUnix socketまたは
+  process groupを必要とします。
 - Orca CLI名はplatformごとに固定します。macOSは`orca`、Linuxは`orca-ide`で、暗黙のPATH fallbackや
   環境変数overrideは行いません。
 - ACP childへ渡す環境変数を限定します。ambient Claude loginに必要な`HOME`は残し、
   API keyとOrca control用の変数は渡しません。
 - `stop`はprivate team rootを検証し、symlinkを辿らずに削除します。special fileや
   owner不一致がある場合は削除を拒否します。
-- stop後もOrca Runは監査記録として残します。
+- stop後もOrca Runは監査記録として残します。native tmuxは、所有するMainとACP resourceの
+  終了を確認した後にlocal stateを削除します。
 
-CLIの起動・管理操作は`WorkflowEngine(OrcaBackend)`を使います。role操作はMCP server内の
-Orca実装を使い、stateと排他制御のhelperを共有します。抽象backend contractのroleメソッドは、
-このMCP経路を置き換える実装にはなっていません。
+CLIの起動・管理操作は`runtime`で選択したbackendを`WorkflowEngine`へ渡します。Orcaのrole操作は
+`mcp_server`、nativeのrole操作は`native_mcp`を通じて`native_backend`が処理します。両方の
+pathがtyped contract、state、reservation helperを共有します。抽象backend contractのrole
+methodは、別のuser-facing protocolではありません。
 
-MCP経路では観測したDeliveryを記録し、結果の読み取り、所有するroleリソースの解放、
+共通MCP protocolでは観測したDeliveryを記録し、結果の読み取り、所有するrole resourceの解放、
 完了通知の受領確認という順序を強制します。質問は回答後に受領確認し、escalationは保留します。
-操作が失敗した場合は未処理状態を保持します。CLIの設定確認や一覧表示ではOrca実装を
-読み込まず、外部プロセスも起動しません。
+操作が失敗した場合は未処理状態を保持します。MCPのframingとtool schemaはbackendを選択せずに
+読み込めます。最初のstateful callで保存済みstateからOrcaまたはnative tmuxを選択します。
+nativeの`status`、`attach`、`stop`は所有するtmux resourceを検査または操作します。
 
-`retained`が返った場合は割り当てを保持し、terminalを閉じません。launcherが作った
-background terminalで`no_owned_resource`になる経路は、所有権を確認して解放する処理が
-未接続です。この場合の後始末を成功とは扱いません。
+Orcaで`retained`が返った場合は割り当てを保持し、terminalを閉じません。launcherが作った
+Orca background terminalで`no_owned_resource`になる経路は、所有権を確認して解放する処理が
+未接続です。この場合の後始末を成功とは扱いません。nativeのreleaseは、ACP runnerの終了と
+cleanup receiptの確認が済むまでassignmentを削除しません。
 
 role起動やreleaseの応答を受け取れなかった場合は、再試行前に記録されたDispatchとterminalを
 確認してください。role操作には、crash後の自動再実行やexactly-onceの保証はありません。
@@ -209,14 +258,20 @@ read-only/deny-allにしても、Codex internal toolの書き込みを止めら�
 このためCodex ACPとworkspace-write ACPを拒否しています。書き込み可能なroleは、
 provider native permissionを使うdirect Codexのままです。
 
-Claude ACPは、API keyを渡さず、ambientな`claude.ai` Max loginで実turnを確認しました。
-これは観測した認証経路の証拠であり、providerのsubscription billing ledgerを確認した
-ものではありません。
+modelなしのnative tmux lifecycleは、OrcaとCodexがない環境、空白を含むworkspace path、
+削除済みconfigで確認しました。Claude 2.1.112のnative Mainを`fable`/`high`、ログイン済みの
+`claude.ai` accountで起動したところ、provider APIは`fable`を存在しない、または利用できない
+modelとして拒否しました。代替modelは使っていません。これはnative/provider end-to-end turnの
+証明ではありません。実行する場合はaccountが公開しているmodel IDを指定してください。ambient
+loginの経路はAPI keyなしで利用しますが、providerのsubscription billing ledgerは確認していません。
 
 ## non-goalを決めてruntimeを小さく保つ
 
-- Herdr fallback
-- 任意role graphとbackground roleの並列実行
+- HerdrまたはZellij runtime
+- native Workerやdirect Reviewer
+- native backendで10 harnessすべてを使うこと
+- 任意role graph、Mainなしの構成、background roleの並列実行
+- 現在の固定contractを超えるTaskSpec/review/verification/parallel workflow
 - configからの任意ACP server command登録
 - provider/transportの自動fallback
 - commit、push、publish、deployの自動実行

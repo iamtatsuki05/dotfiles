@@ -71,6 +71,103 @@ class TmuxReceipt:
     socket_identity: _PathIdentity
     config_identity: _PathIdentity
 
+    def as_dict(self) -> dict[str, object]:
+        """Return the strict, JSON-compatible receipt representation."""
+
+        values = {
+            "executable": self.executable,
+            "socket_path": self.socket_path,
+            "config_path": self.config_path,
+            "run_nonce": self.run_nonce,
+            "session_name": self.session_name,
+            "session_id": self.session_id,
+            "window_id": self.window_id,
+            "pane_id": self.pane_id,
+            "pane_pid": self.pane_pid,
+            "server_pid": self.server_pid,
+        }
+        for name, value in values.items():
+            if name in {"pane_pid", "server_pid"}:
+                _receipt_pid(value, name)
+            elif name in {"run_nonce", "session_name"}:
+                _identifier(value, name)
+            elif name in {"session_id", "window_id", "pane_id"}:
+                _receipt_id(
+                    value,
+                    {
+                        "session_id": "session ID",
+                        "window_id": "window ID",
+                        "pane_id": "pane ID",
+                    }[name],
+                )
+            else:
+                _receipt_path_object(value, name)
+        return {
+            **{
+                name: str(value) if isinstance(value, Path) else value
+                for name, value in values.items()
+            },
+            "socket_identity": _path_identity_as_dict(
+                self.socket_identity, "socket_identity"
+            ),
+            "config_identity": _path_identity_as_dict(
+                self.config_identity, "config_identity"
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> TmuxReceipt:
+        """Parse a receipt without accepting aliases or unknown fields."""
+
+        if not isinstance(data, Mapping):
+            raise TmuxValidationError("tmux receipt must be an object")
+        expected = {
+            "executable",
+            "socket_path",
+            "config_path",
+            "run_nonce",
+            "session_name",
+            "session_id",
+            "window_id",
+            "pane_id",
+            "pane_pid",
+            "server_pid",
+            "socket_identity",
+            "config_identity",
+        }
+        if set(data) != expected:
+            raise TmuxValidationError("tmux receipt has unsupported or missing fields")
+        executable = _receipt_path(data["executable"], "executable")
+        socket_path = _receipt_path(data["socket_path"], "socket_path")
+        config_path = _receipt_path(data["config_path"], "config_path")
+        run_nonce = _identifier(data["run_nonce"], "run nonce")
+        session_name = _identifier(data["session_name"], "session name")
+        session_id = _receipt_id(data["session_id"], "session ID")
+        window_id = _receipt_id(data["window_id"], "window ID")
+        pane_id = _receipt_id(data["pane_id"], "pane ID")
+        pane_pid = _receipt_pid(data["pane_pid"], "pane PID")
+        server_pid = _receipt_pid(data["server_pid"], "server PID")
+        socket_identity = _path_identity_from_dict(
+            data["socket_identity"], "socket_identity"
+        )
+        config_identity = _path_identity_from_dict(
+            data["config_identity"], "config_identity"
+        )
+        return cls(
+            executable=executable,
+            socket_path=socket_path,
+            config_path=config_path,
+            run_nonce=run_nonce,
+            session_name=session_name,
+            session_id=session_id,
+            window_id=window_id,
+            pane_id=pane_id,
+            pane_pid=pane_pid,
+            server_pid=server_pid,
+            socket_identity=socket_identity,
+            config_identity=config_identity,
+        )
+
 
 @dataclass(frozen=True)
 class TmuxInspection:
@@ -128,6 +225,82 @@ _CONTROL_CONFIG: Final = (
 _COMMAND_TIMEOUT_SECONDS: Final = 10.0
 _SERVER_EXIT_TIMEOUT_SECONDS: Final = 2.0
 _SERVER_EXIT_POLL_SECONDS: Final = 0.05
+_PATH_IDENTITY_FIELDS: Final = frozenset({"device", "inode", "mode", "uid"})
+
+
+def _receipt_path(value: object, context: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise TmuxValidationError(f"tmux receipt {context} must be a path string")
+    if "\x00" in value:
+        raise TmuxValidationError(f"tmux receipt {context} must not contain NUL")
+    path = Path(value)
+    if not path.is_absolute():
+        raise TmuxValidationError(f"tmux receipt {context} must be absolute")
+    return path
+
+
+def _receipt_path_object(value: object, context: str) -> Path:
+    if not isinstance(value, Path):
+        raise TmuxValidationError(f"tmux receipt {context} must be a Path")
+    return _receipt_path(str(value), context)
+
+
+def _receipt_pid(value: object, context: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise TmuxValidationError(f"tmux receipt {context} must be a positive integer")
+    return value
+
+
+def _receipt_id(value: object, context: str) -> str:
+    text = _text(value, f"tmux receipt {context}")
+    pattern = {
+        "session ID": _SESSION_ID_RE,
+        "window ID": _WINDOW_ID_RE,
+        "pane ID": _PANE_ID_RE,
+    }.get(context)
+    if pattern is None or pattern.fullmatch(text) is None:
+        raise TmuxValidationError(f"tmux receipt {context} is invalid")
+    return text
+
+
+def _path_identity_from_dict(value: object, context: str) -> _PathIdentity:
+    if not isinstance(value, Mapping) or set(value) != _PATH_IDENTITY_FIELDS:
+        raise TmuxValidationError(f"tmux receipt {context} is invalid")
+    fields: list[int] = []
+    for name in ("device", "inode", "mode", "uid"):
+        field = value[name]
+        if not isinstance(field, int) or isinstance(field, bool) or field < 0:
+            raise TmuxValidationError(f"tmux receipt {context}.{name} is invalid")
+        fields.append(field)
+    if fields[2] > 0o777:
+        raise TmuxValidationError(f"tmux receipt {context}.mode is invalid")
+    return _PathIdentity(
+        device=fields[0], inode=fields[1], mode=fields[2], uid=fields[3]
+    )
+
+
+def _path_identity_as_dict(value: object, context: str) -> dict[str, int]:
+    if not isinstance(value, _PathIdentity):
+        raise TmuxValidationError(f"tmux receipt {context} is invalid")
+    return {
+        "device": _receipt_nonnegative_int(value.device, f"{context}.device"),
+        "inode": _receipt_nonnegative_int(value.inode, f"{context}.inode"),
+        "mode": _receipt_mode(value.mode, f"{context}.mode"),
+        "uid": _receipt_nonnegative_int(value.uid, f"{context}.uid"),
+    }
+
+
+def _receipt_nonnegative_int(value: object, context: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise TmuxValidationError(f"tmux receipt {context} is invalid")
+    return value
+
+
+def _receipt_mode(value: object, context: str) -> int:
+    result = _receipt_nonnegative_int(value, context)
+    if result > 0o777:
+        raise TmuxValidationError(f"tmux receipt {context} is invalid")
+    return result
 
 
 def _text(value: object, context: str) -> str:
@@ -307,6 +480,43 @@ class TmuxDriver:
         self._receipt: TmuxReceipt | None = None
         self._config_path: Path | None = None
         self._config_identity: _PathIdentity | None = None
+
+    @classmethod
+    def from_receipt(cls, receipt: TmuxReceipt) -> TmuxDriver:
+        """Reopen a live driver from a previously persisted owned receipt."""
+
+        if not isinstance(receipt, TmuxReceipt):
+            raise TmuxValidationError("tmux receipt has an invalid type")
+        restored = TmuxReceipt.from_dict(receipt.as_dict())
+        executable = cls._resolve_executable(restored.executable)
+        if executable != restored.executable:
+            raise TmuxOwnershipError("tmux executable path is not canonical")
+        if len(os.fsencode(str(restored.socket_path))) > _MAX_SOCKET_BYTES:
+            raise TmuxValidationError("tmux socket path is too long")
+        _private_directory(restored.socket_path.parent)
+        if not _same_path_identity(
+            restored.socket_path, restored.socket_identity, socket=True
+        ):
+            raise TmuxOwnershipError("tmux socket identity changed")
+        if not _same_path_identity(
+            restored.config_path, restored.config_identity, socket=False
+        ):
+            raise TmuxOwnershipError("tmux config identity changed")
+
+        driver = object.__new__(cls)
+        driver._executable = executable
+        driver._socket_path = restored.socket_path
+        driver._run_nonce = restored.run_nonce
+        driver._session_name = restored.session_name
+        driver._receipt = restored
+        driver._config_path = restored.config_path
+        driver._config_identity = restored.config_identity
+        inspected = driver.inspect(restored)
+        if not inspected.identity_verified:
+            raise TmuxOwnershipError(
+                inspected.reason or "tmux pane ownership could not be verified"
+            )
+        return driver
 
     @staticmethod
     def _resolve_executable(value: str | Path) -> Path:

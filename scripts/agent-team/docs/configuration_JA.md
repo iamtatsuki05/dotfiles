@@ -4,8 +4,10 @@
 [アーキテクチャ](architecture_JA.md)
 
 `agent-team`は既存のversion 3固定role設定を維持しながら、明示的なversion 4の
-topology設定も受け付けます。必須値の欠落や未対応の組み合わせは、roleを起動する
-前に拒否します。topology schemaとresourceを起動しない確認commandは
+topology設定も受け付けます。version 3の`runtime = "orca"`は4 role固定のcontractを
+使い、version 3の`runtime = "tmux"`はMainと任意のClaude ACP read-only background
+roleだけを持つ実験的なnative subsetです。必須値の欠落や未対応の組み合わせは、roleを
+起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
 [Version 4の設定](configuration-v4_JA.md)を参照してください。
 
 ## canonical configから始める
@@ -52,16 +54,55 @@ permission = "read-only"
 bundled configでは、MainとPlannerに`fable`、WorkerとReviewerに`gpt-6-astra`を使います。
 canonical PlannerはClaudeのread-only ACP roleで、canonical WorkerとReviewerはdirect Codexのままです。
 
+## 実験的なnative tmux subsetを明示的に選ぶ
+
+`runtime = "tmux"`はcustomなversion 3 configでだけ指定します。Mainは必須で、direct
+Claude・permission `orchestrator`でなければなりません。PlannerとReviewerは省略するか、
+それぞれverified Claude ACP・permission `read-only`・pinned `claude-acp-0.70.0` adapterで
+定義できます。Workerとその他のnative profileは、state、Task、Dispatch、processに影響する
+前に拒否します。
+nativeの起動には`tmux` commandが必要で、OrcaやCodexは必要ありません。ACP roleを選ぶconfig
+では、後述するpinned Node.jsとACP dependencyも必要です。
+
+```toml
+version = 3
+runtime = "tmux"
+team_prefix = "native-experiment"
+max_review_rounds = 2
+
+[main]
+provider = "claude"
+transport = "direct"
+model = "<available-claude-model>"
+effort = "high"
+prompt = "prompts/orchestrator.md"
+permission = "orchestrator"
+```
+
+`<available-claude-model>`は、このrunで使うClaude accountが公開しているmodel IDへ
+置き換えてください。これはuserが指定するplaceholderであり、bundled defaultの
+`fable`/`gpt-6-astra`は変更しません。nativeの`start`、`status`、`attach`、`stop`は
+`TmuxBackend`へ送られ、`attach`できるのはMainだけです。native ACPの完了はrunnerが
+publishし、tmux paneの文字列には依存しません。lifecycleには`role_read` → `role_release`
+→ `delivery_ack`の順序が必要です。`native.last_ack`は1つのreceipt markerであり、Taskや
+goal全体の完了を示しません。
+
+modelなしのnative tmux CLI start/status/stopは、OrcaとCodexがない環境、空白を含むworkspace
+path、削除済みconfigで成功しました。Claude 2.1.112のMainを`fable`/`high`、ログイン済みの
+`claude.ai` accountで起動した実行は、providerが`fable`を存在しない、または利用できない
+modelとして拒否しました。代替modelは使っていないため、native/provider end-to-end runは
+まだ確認できていません。
+
 ## top-level fieldで1つのteam contractを定義する
 
 | Field | Contract |
 |---|---|
 | `version` | 整数`3`だけを受け付ける。自動migrationは行わない。 |
-| `runtime` | `"orca"`だけを受け付ける。Herdr fallbackはない。 |
+| `runtime` | `"orca"`または`"tmux"`だけを受け付ける。`orca`は4 role、`tmux`は実験的なnative subset。HerdrやZellijへのfallbackはない。 |
 | `team_prefix` | `[a-z][a-z0-9-]{0,23}`に一致する値。runtime team IDの一部になる。 |
 | `max_review_rounds` | 正の整数。各段階の初回判定と再判定を数える。 |
 | `main` | 必須のMain role table。 |
-| `roles` | `planner`、`worker`、`reviewer`を過不足なく含める。 |
+| `roles` | `orca`は`planner`、`worker`、`reviewer`を過不足なく含める。`tmux`は任意の`planner`と`reviewer`だけを含められます。Mainは別に宣言し、常に必須です。 |
 
 runtime team IDは、`team_prefix`、workspace名、workspaceのabsolute pathのhashから
 作ります。config pathはIDに含みません。同じprefixとworkspaceを使う2つのconfigは、
@@ -84,7 +125,7 @@ agent-teamが調整しません。
 prompt pathはconfig directoryの内側にあり、実在するfileを指定する必要があります。
 absolute pathや`..`で外へ出る指定は拒否します。
 
-## 対応matrixを小さく保つ
+## Orcaの対応matrixを小さく保つ
 
 | Role | 対応するprovider / transport | 必須permission |
 |---|---|---|
@@ -100,6 +141,17 @@ workspace-write Claude、すべてのworkspace-write ACPはfail-fastで拒否し
 
 新しいproviderやACP adapterの追加は、configだけでは完了しません。code変更、
 capability/permission test、exact version policy、実lifecycle/cleanup smokeが必要です。
+
+native tmuxの対応matrixはさらに小さくなります。
+
+| Role | 対応するprovider / transport | 必須permission |
+|---|---|---|
+| Main | Claude / `direct` | `orchestrator` |
+| Planner | Claude / `acp`（任意） | `read-only` |
+| Reviewer | Claude / `acp`（任意） | `read-only` |
+
+native Worker、direct Reviewer、Codex ACP、Main ACP、workspace-write ACP、その他のnative
+provider profileは、起動処理の効果が発生する前に拒否します。
 
 ## ACP依存関係は明示し、選択したroleだけで解決する
 
@@ -139,6 +191,8 @@ configのpermission文字列だけではroleを昇格できません。
 direct Codexでは、隔離した`CODEX_HOME`を作り、`:read-only`または`:workspace`から
 permission profileを派生させます。Claude ACPではtoolを`Read`、`Grep`、`Glob`へ
 限定し、readを許可します。non-interactive permissionを解決できない場合は失敗します。
+native tmuxにはdirect Workerやdirect Reviewerはありません。direct Mainは`native_main`が
+監督し、任意のACP roleはlauncher所有のbackground processとして動きます。
 
 ## promptはroleの振る舞いだけを定義する
 
@@ -149,8 +203,9 @@ permission profileを派生させます。Claude ACPではtoolを`Read`、`Grep`
 | `prompts/worker.md` | 最小実装、検証、禁止操作。 |
 | `prompts/reviewer.md` | 独立reviewと`APPROVED` / `CHANGES_REQUESTED` / `ASK_USER`。 |
 
-process authorityはlauncher、MCP allowlist、Orca Dispatch、provider permission profileが
-管理します。promptの文章を変えても、新しいtool、transport、permissionは付与されません。
+process authorityはlauncher、共通MCP allowlist、選択したbackend、Dispatchまたはnative
+assignment、provider permission profileが管理します。promptの文章を変えても、新しいtool、
+transport、permissionは付与されません。
 
 ## defaultとcustom configの優先順位
 
@@ -173,6 +228,8 @@ agent-team start \
 ```
 
 `status`、`attach`、`stop`でも同じ値を使います。`--cwd`の既定値は現在のdirectoryです。
+4つのcommandは保存した`runtime`が選んだbackendへ送られ、native tmuxで`attach`できるのは
+Mainだけです。
 
 configを有効にする前にdry runを実行します。
 

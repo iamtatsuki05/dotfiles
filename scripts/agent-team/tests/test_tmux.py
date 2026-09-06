@@ -369,6 +369,48 @@ import agent_team.tmux
         self.assertFalse(result.descendants_stopped)
         self.assertFalse((self.root / "private-socket").exists())
 
+    def test_receipt_round_trips_through_strict_json_shape(self) -> None:
+        receipt = self.receipt()
+
+        restored = TmuxReceipt.from_dict(receipt.as_dict())
+
+        self.assertEqual(restored, receipt)
+        self.assertIsInstance(restored.executable, Path)
+        self.assertIsInstance(restored.socket_identity.device, int)
+
+    def test_from_receipt_reopens_and_can_close_the_owned_session(self) -> None:
+        receipt = self.receipt()
+
+        reopened = TmuxDriver.from_receipt(TmuxReceipt.from_dict(receipt.as_dict()))
+
+        self.assertEqual(reopened.inspect(receipt).identity_verified, True)
+        result = reopened.close(receipt)
+        self.assertTrue(result.session_terminated)
+        self.assertTrue(result.server_terminated)
+        self.assertFalse(result.descendants_stopped)
+
+    def test_from_receipt_rejects_live_identity_change_before_effects(self) -> None:
+        receipt = self.receipt()
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        state["nonce"] = "other-run"
+        self.state.write_text(json.dumps(state), encoding="utf-8")
+
+        with self.assertRaises(TmuxError):
+            TmuxDriver.from_receipt(receipt)
+
+        self.assertTrue(json.loads(self.state.read_text(encoding="utf-8"))["session"])
+
+    def test_receipt_parser_rejects_unknown_and_wrong_typed_fields(self) -> None:
+        receipt = self.receipt()
+        encoded = receipt.as_dict()
+
+        with self.assertRaises(TmuxError):
+            TmuxReceipt.from_dict({**encoded, "unexpected": True})
+        with self.assertRaises(TmuxError):
+            TmuxReceipt.from_dict({**encoded, "pane_pid": True})
+        with self.assertRaises(TmuxError):
+            TmuxReceipt.from_dict({**encoded, "socket_path": "relative.sock"})
+
 
 if __name__ == "__main__":
     unittest.main()

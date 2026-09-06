@@ -5,13 +5,12 @@ import os
 import re
 import secrets
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Final, cast
 
-from .acp_dependencies import AcpDependencyError, AcpExecutables
+from .acp_dependencies import AcpDependencyError, AcpExecutables, adapter_snapshot
 from .adapters import (
     AdapterContext,
     AdapterSnapshot,
@@ -23,6 +22,18 @@ from .adapters import (
 from .contracts import ErrorCode, RuntimeFailure
 from .harness_launch import build_snapshot_role_command
 from .locking import _LifecycleReservation
+from .mcp_protocol import (
+    MAX_READ_LINES,
+    MAX_TIMEOUT_MS,
+    MIN_TIMEOUT_MS,
+    ToolInputError,
+    bounded_integer,
+    bounded_text,
+    require_role,
+    serve,
+)
+from .mcp_protocol import call_tool as protocol_call_tool
+from .mcp_protocol import handle as protocol_handle
 from .orca import (
     OrcaClient,
     OrcaCommandError,
@@ -51,150 +62,13 @@ from .runtime import (
     write_state as runtime_write_state,
 )
 
-ROLES: Final = ("planner", "worker", "reviewer")
 StateGeneration = tuple[str, str, str, str, str, str, str]
 MAX_REPLY_CHARS: Final = 20_000
-MIN_TIMEOUT_MS: Final = 1_000
-MAX_TIMEOUT_MS: Final = 900_000
-MAX_READ_LINES: Final = 2_000
 DELIVERY_MESSAGE_TYPES: Final = frozenset({"worker_done", "question", "escalation"})
 PENDING_DELIVERY_KIND: Final = "pending_delivery_kind"
 PENDING_DELIVERY_STAGE: Final = "pending_delivery_stage"
 PENDING_QUESTION_IDS: Final = "pending_question_ids"
 REPLIED_QUESTION_IDS: Final = "replied_question_ids"
-
-
-class ToolInputError(ValueError):
-    pass
-
-
-def role_schema() -> dict[str, object]:
-    return {"type": "string", "enum": list(ROLES)}
-
-
-def tools() -> list[dict[str, object]]:
-    role_only = {
-        "type": "object",
-        "properties": {"role": role_schema()},
-        "required": ["role"],
-        "additionalProperties": False,
-    }
-    return [
-        {
-            "name": "role_get",
-            "description": "Orcaで監督中の1 roleのTaskとDispatch状態を取得します。",
-            "inputSchema": role_only,
-        },
-        {
-            "name": "role_prompt",
-            "description": "1 role用のOrca Taskを作り、専用terminalをsupervised Dispatchとして起動します。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "role": role_schema(),
-                    "text": {"type": "string", "minLength": 1},
-                },
-                "required": ["role", "text"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "role_wait",
-            "description": "指定roleを含むOrca Runの完了、質問、escalation通知を待ちます。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "role": role_schema(),
-                    "timeout_ms": {
-                        "type": "integer",
-                        "minimum": MIN_TIMEOUT_MS,
-                        "maximum": MAX_TIMEOUT_MS,
-                        "default": 300_000,
-                    },
-                },
-                "required": ["role"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "role_read",
-            "description": "指定roleのOrca worker出力を読みます。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "role": role_schema(),
-                    "lines": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": MAX_READ_LINES,
-                        "default": 400,
-                    },
-                },
-                "required": ["role"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "role_release",
-            "description": "完了確認済みのOrca worker terminalをarchive後に解放します。",
-            "inputSchema": role_only,
-        },
-        {
-            "name": "delivery_ack",
-            "description": "処理済みのOrca Delivery全体をacknowledgeします。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"delivery_id": {"type": "string", "minLength": 1}},
-                "required": ["delivery_id"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "message_reply",
-            "description": "Orca workerから届いたquestion messageへ回答します。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "message_id": {"type": "string", "minLength": 1},
-                    "body": {"type": "string", "minLength": 1},
-                },
-                "required": ["message_id", "body"],
-                "additionalProperties": False,
-            },
-        },
-    ]
-
-
-def require_role(arguments: dict[str, object]) -> str:
-    role = arguments.get("role")
-    if not isinstance(role, str) or role not in ROLES:
-        raise ToolInputError(f"role must be one of: {', '.join(ROLES)}")
-    return role
-
-
-def bounded_integer(
-    arguments: dict[str, object],
-    key: str,
-    *,
-    default: int,
-    minimum: int,
-    maximum: int,
-) -> int:
-    value = arguments.get(key, default)
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ToolInputError(f"{key} must be an integer")
-    if value < minimum or value > maximum:
-        raise ToolInputError(f"{key} must be between {minimum} and {maximum}")
-    return value
-
-
-def bounded_text(arguments: dict[str, object], key: str, *, maximum: int) -> str:
-    value = arguments.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ToolInputError(f"{key} must be a non-empty string")
-    if len(value) > maximum:
-        raise ToolInputError(f"{key} must be at most {maximum} characters")
-    return value
 
 
 def state_path() -> Path:
@@ -747,23 +621,6 @@ def _saved_acp_executables(spec: dict[str, object]) -> AcpExecutables:
     except AcpDependencyError as exc:
         raise ToolInputError(str(exc)) from exc
     return executables
-
-
-def _acp_adapter_snapshot(executables: AcpExecutables) -> dict[str, object]:
-    identity = executables.client.stat()
-    return {
-        "adapter_id": "claude-acp-0.70.0",
-        "revision": "acpx@0.13.2",
-        "executable": str(executables.client),
-        "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
-        "identity": {
-            "device": identity.st_dev,
-            "inode": identity.st_ino,
-            "size": identity.st_size,
-            "mtime_ns": identity.st_mtime_ns,
-            "sha256": executables.client_sha256,
-        },
-    }
 
 
 def acp_session_name(role: str, launch_nonce: str) -> str:
@@ -1362,7 +1219,7 @@ def start_acp_role(
             "adapter_id": spec.get("adapter_id"),
             "provider_private_root": str(provider_private_root),
             "snapshot_root": str(snapshot_root),
-            "adapter_snapshot": _acp_adapter_snapshot(executables),
+            "adapter_snapshot": adapter_snapshot(executables),
         }
         roles[role] = assignment
         save_state(
@@ -2164,89 +2021,16 @@ def _execute_tool_locked(
     raise ToolInputError(f"unknown tool: {name}")
 
 
-def tool_result(text: str, *, is_error: bool) -> dict[str, object]:
-    return {"content": [{"type": "text", "text": text}], "isError": is_error}
-
-
 def call_tool(name: str, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict):
-        return tool_result("arguments must be an object", is_error=True)
-    try:
-        result = execute_tool(name, arguments)
-    except (
-        ToolInputError,
-        RuntimeError,
-        TypeError,
-        OSError,
-        subprocess.TimeoutExpired,
-    ) as exc:
-        return tool_result(str(exc)[:4_000], is_error=True)
-    return tool_result(
-        json.dumps(result, ensure_ascii=False, separators=(",", ":")),
-        is_error=False,
-    )
-
-
-def success(request_id: object, result: object) -> dict[str, object]:
-    return {"jsonrpc": "2.0", "id": request_id, "result": result}
-
-
-def error(request_id: object, code: int, message: str) -> dict[str, object]:
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "error": {"code": code, "message": message},
-    }
+    return protocol_call_tool(name, arguments, execute_tool)
 
 
 def handle(request: object) -> dict[str, object] | None:
-    if not isinstance(request, dict):
-        return error(None, -32600, "request must be an object")
-    request_id = request.get("id")
-    method = request.get("method")
-    if not isinstance(method, str):
-        return error(request_id, -32600, "method must be a string")
-    if request_id is None:
-        return None
-    if method == "initialize":
-        params = request.get("params")
-        protocol_version = "2025-06-18"
-        if isinstance(params, dict) and isinstance(params.get("protocolVersion"), str):
-            protocol_version = params["protocolVersion"]
-        return success(
-            request_id,
-            {
-                "protocolVersion": protocol_version,
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agent-team", "version": "2.0.0"},
-            },
-        )
-    if method == "tools/list":
-        return success(request_id, {"tools": tools()})
-    if method == "tools/call":
-        params = request.get("params")
-        if not isinstance(params, dict) or not isinstance(params.get("name"), str):
-            return error(request_id, -32602, "tools/call requires a tool name")
-        return success(
-            request_id, call_tool(params["name"], params.get("arguments", {}))
-        )
-    return error(request_id, -32601, f"unknown method: {method}")
-
-
-def emit(response: dict[str, object]) -> None:
-    print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
+    return protocol_handle(request, execute_tool)
 
 
 def main() -> int:
-    for line in sys.stdin:
-        try:
-            request = json.loads(line)
-            response = handle(request)
-        except json.JSONDecodeError:
-            response = error(None, -32700, "invalid JSON")
-        if response is not None:
-            emit(response)
-    return 0
+    return serve(execute_tool)
 
 
 if __name__ == "__main__":

@@ -255,7 +255,7 @@ class ResolvedAcpTest(unittest.TestCase):
                 "adapter_id": "claude-acp-0.70.0",
                 "provider_private_root": str(root / "provider-private"),
                 "snapshot_root": str(root / "snapshot"),
-                "adapter_snapshot": mcp_server._acp_adapter_snapshot(executables),
+                "adapter_snapshot": mcp_server.adapter_snapshot(executables),
             }
             state = {
                 "version": 3,
