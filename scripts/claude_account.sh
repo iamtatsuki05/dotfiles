@@ -539,7 +539,6 @@ run_login_profile() {
   exec "${AUTH_ENV_COMMAND[@]}" \
     DISABLE_LOGIN_COMMAND=1 \
     DISABLE_LOGOUT_COMMAND=1 \
-    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
     claude "$@"
 }
 
