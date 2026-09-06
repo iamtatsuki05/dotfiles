@@ -5,9 +5,10 @@
 
 `agent-team`は既存のversion 3固定role設定を維持しながら、明示的なversion 4の
 topology設定も受け付けます。version 3の`runtime = "orca"`は4 role固定のcontractを
-使い、version 3の`runtime = "tmux"`はMainと任意のClaude ACP read-only background
-roleだけを持つ実験的なnative subsetです。必須値の欠落や未対応の組み合わせは、roleを
-起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
+使い、version 3の`runtime = "tmux"`はdirect Claude Mainと任意のClaude ACP Planner、
+Worker、Reviewerを持つ実験的なnative subsetです。native Workerのassignmentにはconfigの
+`[[tasks]]` catalogにあるTaskSpecとの完全一致が必要です。必須値の欠落や未対応の組み合わせは、
+roleを起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
 [Version 4の設定](configuration-v4_JA.md)を参照してください。
 
 ## canonical configから始める
@@ -59,8 +60,10 @@ canonical PlannerはClaudeのread-only ACP roleで、canonical WorkerとReviewer
 `runtime = "tmux"`はcustomなversion 3 configでだけ指定します。Mainは必須で、direct
 Claude・permission `orchestrator`でなければなりません。PlannerとReviewerは省略するか、
 それぞれverified Claude ACP・permission `read-only`・pinned `claude-acp-0.70.0` adapterで
-定義できます。Workerとその他のnative profileは、state、Task、Dispatch、processに影響する
-前に拒否します。
+定義できます。Workerはscoped Claude ACPの`workspace-write` profileとして選択できますが、
+選択にはReviewerも必要です。Workerへ作業をdispatchするときは、一致する`[[tasks]]` entryが
+必要です。direct Worker/Reviewerとその他のnative
+profileは、state、Task、Dispatch、processに影響する前に拒否します。
 nativeの起動には`tmux` commandが必要で、OrcaやCodexは必要ありません。ACP roleを選ぶconfig
 では、後述するpinned Node.jsとACP dependencyも必要です。
 
@@ -78,7 +81,47 @@ effort = "high"
 prompt = "prompts/orchestrator.md"
 permission = "orchestrator"
 
-[roles]
+[roles.planner]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/planner.md"
+permission = "read-only"
+
+[roles.worker]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/worker.md"
+permission = "workspace-write"
+
+[roles.reviewer]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/reviewer.md"
+permission = "read-only"
+
+[[tasks]]
+task_id = "addition-workflow"
+objective = "許可されたsource fileにadd(a, b)を実装する"
+acceptance_criteria = ["整数、負数、小数の加算が通る"]
+allowed_paths = ["workflow-fixture/calc.py"]
+forbidden_paths = [
+  "workflow-fixture/protected.txt",
+  "workflow-fixture/verify_calc.py",
+]
+dependencies = []
+evidence_requirements = ["変更pathとcommand結果"]
+consultation_conditions = []
+
+[[tasks.verification]]
+name = "check-addition"
+argv = ["python", "-B", "workflow-fixture/verify_calc.py"]
+timeout_seconds = 30
 ```
 
 この例は既定の`fable`を維持しています。起動前に`command -v claude`と`claude --version`を
@@ -94,9 +137,13 @@ path、削除済みconfigで成功しました。実際のClaude Code 2.1.261を
 Mainも、ログイン済みの`claude.ai` accountでClaude ACP Plannerを呼び出し、MCPの
 read/release/ackと公開stopを完了しました。所有資源の消滅を独立に確認しています。
 Python環境には`dotfiles-agent-team`だけを導入し、Orca、Codex、OpenCode、Zellij、Herdrを
-PATHから除外しました。これは読み取り専用のMain/Plannerの一巡であり、未実装の変更作成・
-レビューの全工程ではありません。以前の2.1.112での拒否はCLIの版が古いことによるもので、
-`fable`の利用不可を意味しません。
+PATHから除外しました。これは読み取り専用のMain/Plannerの一巡です。2026-09-07には、
+Python 3.13.15のwheel-only環境でnativeのPlanner、Worker、Reviewerを6 assignment実行し、
+意図的な`a-b`実装を差し戻し、`a+b`を同じworkspace revisionで承認して、trusted fixed-argv
+verificationまで完了しました。元のconfigとpromptを削除した後のpublic stopで、所有processと
+artifactは0件でした。約282秒の再試験は、起動時のTaskSpec catalog、PID/PGID/argvのgate、
+4 fileの依存bindingを含む実装で行い、catalogが最後まで変わらないことを確認しました。以前の2.1.112
+での拒否はCLIの版が古いことによるもので、`fable`の利用不可を意味しません。
 
 ## top-level fieldで1つのteam contractを定義する
 
@@ -107,7 +154,8 @@ PATHから除外しました。これは読み取り専用のMain/Plannerの一�
 | `team_prefix` | `[a-z][a-z0-9-]{0,23}`に一致する値。runtime team IDの一部になる。 |
 | `max_review_rounds` | 正の整数。各段階の初回判定と再判定を数える。 |
 | `main` | 必須のMain role table。 |
-| `roles` | `orca`は`planner`、`worker`、`reviewer`を過不足なく含める。`tmux`は任意の`planner`と`reviewer`だけを含められます。Mainは別に宣言し、常に必須です。 |
+| `roles` | `orca`は`planner`、`worker`、`reviewer`を過不足なく含める。`tmux`は任意の`planner`、`worker`、`reviewer`を含められますが、WorkerにはReviewerが必要です。Mainは別に宣言し、常に必須です。 |
+| `tasks` | native tmuxだけで使う任意の`[[tasks]]` TaskSpec catalogです。各taskの固定検証は`[[tasks.verification]]`で宣言します。Orcaはこのfieldを拒否します。未指定ならread-onlyの`role_prompt`は使えますが、structured `task_dispatch`は拒否します。 |
 
 runtime team IDは、`team_prefix`、workspace名、workspaceのabsolute pathのhashから
 作ります。config pathはIDに含みません。同じprefixとworkspaceを使う2つのconfigは、
@@ -153,14 +201,15 @@ native tmuxの対応matrixはさらに小さくなります。
 |---|---|---|
 | Main | Claude / `direct` | `orchestrator` |
 | Planner | Claude / `acp`（任意） | `read-only` |
+| Worker | Claude / `acp`（任意、scoped） | `workspace-write` |
 | Reviewer | Claude / `acp`（任意） | `read-only` |
 
-native Worker、direct Reviewer、Codex ACP、Main ACP、workspace-write ACP、その他のnative
-provider profileは、起動処理の効果が発生する前に拒否します。
+direct Worker/Reviewer、Codex ACP、Main ACP、scoped profile以外のworkspace-write ACP、
+その他のnative provider profileは、起動処理の効果が発生する前に拒否します。
 
 ## ACP依存関係は明示し、選択したroleだけで解決する
 
-Claudeの`acp`を選ぶconfigには、Node.js `22.13.0`以降と、exact packageの
+OrcaのClaude `acp`を選ぶconfigには、Node.js `22.13.0`以降と、exact packageの
 `acpx@0.13.2`、`@agentclientprotocol/claude-agent-acp@0.70.0`が必要です。`agent-team`の外で、
 たとえば次のように導入してください。
 
@@ -169,10 +218,18 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-ACP roleを選択した場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、exact package
-manifestを確認したうえで、absoluteなfile pathとSHA-256 fingerprintをlaunch snapshotへ保存します。
+Orcaでは起動時に`node`、`acpx`、`claude-agent-acp`を解決し、exact package manifestを確認したうえで、
+absoluteなfile pathとSHA-256 fingerprintをlaunch snapshotへ保存します。
 runnerは保存したbindingを検証して使います。fileの不足や変更はfail-closedで停止します。実行時の
 commandは`npm`や`npx`を呼び出さず、directだけのconfigではACP依存関係を解決しません。
+
+native tmuxは別のbindingを使います。Node.js `22.13.0`以降、導入済みの
+`@agentclientprotocol/claude-agent-acp@0.70.0` command、その依存の
+`@agentclientprotocol/sdk@1.3.0`と実際にimportする`dist/lib.js`を解決し、4 fileのabsolute pathとSHA-256 fingerprintを保存します。
+assignmentごとにpublic ACP SDK connectionを1本だけ使い、nativeでは`acpx`を選択せず、`npm`や
+`npx`をruntimeから呼びません。通常のSDK persistenceは`persistSession=false`、
+`autoMemoryEnabled=false`に固定し、interactive Mainの通常Claude historyは残します。これは
+public SDKへの直接接続であり、providerのdirect/model transportではありません。
 
 ## effortはproviderごとの値を使う
 
@@ -191,13 +248,80 @@ configのpermission文字列だけではroleを昇格できません。
 
 - Mainは`orchestrator`。
 - PlannerとReviewerは`read-only`。
-- Workerは`workspace-write`かつdirect Codex。
+- OrcaのWorkerは`workspace-write`かつdirect Codex。
+- native Workerはscoped Claude ACPの`workspace-write`です。
 
 direct Codexでは、隔離した`CODEX_HOME`を作り、`:read-only`または`:workspace`から
-permission profileを派生させます。Claude ACPではtoolを`Read`、`Grep`、`Glob`へ
+permission profileを派生させます。read-only Claude ACPではtoolを`Read`、`Grep`、`Glob`へ
 限定し、readを許可します。non-interactive permissionを解決できない場合は失敗します。
-native tmuxにはdirect Workerやdirect Reviewerはありません。direct Mainは`native_main`が
-監督し、任意のACP roleはlauncher所有のbackground processとして動きます。
+native tmuxのscoped Workerは、保護pathやlink・file typeの検査を除き、Read/Grep/Globで
+workspace内を読めます。TaskSpecの`allowed_paths`と`forbidden_paths`はWrite/Editだけを制限し、
+書き込みでは禁止pathを優先します。Bash、
+terminal、その他のRPCを拒否します。native Planner/Reviewerはread-onlyで、全native ACP roleは
+launcher所有のbackground processとして動きます。
+
+## TaskSpecはnative configで宣言する
+
+native tmuxのtask dispatchはcatalog方式です。taskごとに`[[tasks]]` tableを1つ宣言し、
+fixed argvごとに`[[tasks.verification]]` tableを1つ以上記述します。
+
+```toml
+[[tasks]]
+task_id = "addition-workflow"
+objective = "許可されたsource fileにadd(a, b)を実装する"
+acceptance_criteria = ["整数、負数、小数の加算が通る"]
+allowed_paths = ["workflow-fixture/calc.py"]
+forbidden_paths = [
+  "workflow-fixture/protected.txt",
+  "workflow-fixture/verify_calc.py",
+]
+dependencies = []
+evidence_requirements = ["変更pathとcommand結果"]
+consultation_conditions = []
+
+[[tasks.verification]]
+name = "check-addition"
+argv = ["python", "-B", "workflow-fixture/verify_calc.py"]
+timeout_seconds = 30
+```
+
+TaskSpec parserは、`task_id`、`objective`、`acceptance_criteria`、`allowed_paths`、
+`forbidden_paths`、`dependencies`、`verification`、`evidence_requirements`、
+`consultation_conditions`だけを受け付けます。verificationには`name`、`argv`、
+1〜900秒の`timeout_seconds`が必要です。pathはworkspace相対POSIX pathで、重なる場合は
+`forbidden_paths`が優先されます。起動前にtask ID重複、未宣言dependency、dependency cycleを
+拒否し、stateやprovider effectを作りません。
+
+native Mainにはcatalogをstartup instructionとして渡します。`task_dispatch`は宣言済み
+TaskSpecの1件と完全一致しなければならず、dispatch時にtask ID、path scope、dependency、
+evidence、fixed verification argvを追加・変更できません。native configに`[[tasks]]`が
+なければ、read-onlyの`role_prompt`は使えますが、structured task dispatchは拒否します。
+Orca configでは`tasks` fieldを拒否します。
+
+native task lifecycleの順序は次のとおりです。
+
+1. 宣言済みTaskSpecをPlanner、Worker、Reviewerへ渡すため`task_dispatch`を呼びます。
+2. `role_wait`、`role_read`、`role_release`、`delivery_ack`の順にresultを処理します。
+3. `task_get`で保存済みstage、review evidence、verification evidenceを確認します。
+4. Planner/Workerの成功は`awaiting_plan_review`または`awaiting_implementation_review`になります。
+5. Reviewerは`task_id`、`stage`、`revision`、`decision`、`findings`だけのexact JSONを返します。
+6. `approve`は次のstageへ進み、`request_changes`は元のwriterへ戻り、`consult`はuser判断で停止します。
+7. implementation approval後に`task_verify`が宣言済みfixed argvを実行します。
+
+planとimplementationのreview roundは別々に数え、どちらも`max_review_rounds`に従います。
+implementation reviewはReviewer assignment準備時のworkspace revisionに束縛されます。
+`task_verify`は同じrevision、active role/Deliveryなし、cleanup確認を要求します。`shell=False`
+でcommandを実行し、revisionを前後で確認し、stdout/stderr hashとbounded errorを保存します。
+全command成功とcleanup確認がそろった場合だけ`completed`になります。Reviewer approvalだけ
+では完了しません。
+
+verification中断またはcleanup不確認では、Taskは`verifying`または`verification_failed`に
+evidenceを残し、必要に応じて次のrole、verification、stopをblockします。自動recoveryは主張しません。
+`verification_failed`でも、実行済みcommandの証拠とcleanupを確認できれば、implementationのreview round
+上限内でWorkerへ戻せます。cleanupが不明な場合はユーザー相談が必要です。
+revisionの変化や中断で検証が途中までしか進まなかった場合も、実行済みの結果が宣言順に
+一致し、cleanupを確認できれば修正を再試行できます。実行前の中断なら結果は0件です。
+この扱いは修正の再試行に限り、成功判定には全commandの完了が必要です。
 
 ## promptはroleの振る舞いだけを定義する
 

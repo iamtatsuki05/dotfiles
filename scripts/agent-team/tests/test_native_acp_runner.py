@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import contextlib
 import io
-import subprocess
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from agent_team import cli, native_backend
-from agent_team.acp_dependencies import AcpExecutables, adapter_snapshot
+from agent_team.adapters import ExecutionError, ProcessResult
+from agent_team.native_acp_dependencies import NativeAcpExecutables, adapter_snapshot
 from agent_team.runtime import read_state
+from agent_team.scoped_acp import (
+    SCOPED_AGENT,
+    SCOPED_CLIENT,
+    checked_digest,
+    create_write_policy,
+)
 
 
 class NativeAcpRunnerTest(unittest.TestCase):
@@ -27,7 +34,7 @@ class NativeAcpRunnerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def _executables(self) -> AcpExecutables:
+    def _executables(self) -> NativeAcpExecutables:
         bin_dir = self.root / "bin"
         bin_dir.mkdir(mode=0o700)
         bin_dir.chmod(0o700)
@@ -35,7 +42,7 @@ class NativeAcpRunnerTest(unittest.TestCase):
         node.write_text("#!/bin/sh\n", encoding="utf-8")
         node.chmod(0o700)
         for package_name, version, command in (
-            ("acpx", "0.13.2", "acpx"),
+            ("@agentclientprotocol/sdk", "1.3.0", None),
             (
                 "@agentclientprotocol/claude-agent-acp",
                 "0.70.0",
@@ -44,25 +51,31 @@ class NativeAcpRunnerTest(unittest.TestCase):
         ):
             package = self.root / "node_modules" / package_name
             (package / "dist").mkdir(parents=True, mode=0o700)
+            entry_name = "acp.js" if command is None else "index.js"
+            metadata = {"name": package_name, "version": version}
+            if command is None:
+                metadata.update(
+                    main="dist/acp.js", exports={".": {"import": "./dist/acp.js"}}
+                )
+            else:
+                metadata.update(
+                    bin={command: "dist/index.js"},
+                    dependencies={"@agentclientprotocol/sdk": "1.3.0"},
+                )
             (package / "package.json").write_text(
-                (
-                    '{"name": "'
-                    + package_name
-                    + '", "version": "'
-                    + version
-                    + '", "bin": {"'
-                    + command
-                    + '": "dist/cli.js"}}'
-                ),
-                encoding="utf-8",
+                json.dumps(metadata), encoding="utf-8"
             )
-            entry = package / "dist" / "cli.js"
+            entry = package / "dist" / entry_name
             entry.write_text("#!/bin/sh\n", encoding="utf-8")
             entry.chmod(0o700)
-            (bin_dir / command).symlink_to(entry)
-        return AcpExecutables.resolve(path=str(bin_dir))
+            if command is not None:
+                (package / "dist" / "lib.js").write_text(
+                    "export {};\n", encoding="utf-8"
+                )
+                (bin_dir / command).symlink_to(entry)
+        return NativeAcpExecutables.resolve(path=str(bin_dir))
 
-    def _state(self) -> tuple[dict[str, object], AcpExecutables, Path]:
+    def _state(self) -> tuple[dict[str, object], NativeAcpExecutables, Path]:
         executables = self._executables()
         state_path = self.state_dir / "state.json"
         prompt_path = cli.create_prompt_file(
@@ -70,6 +83,14 @@ class NativeAcpRunnerTest(unittest.TestCase):
         )
         provider_root = self.root / "provider"
         provider_root.mkdir(mode=0o700)
+        policy, policy_digest = create_write_policy(
+            provider_root,
+            self.workspace,
+            state_path,
+            None,
+            executables.agent,
+            permission="read-only",
+        )
         snapshot_root = self.root / "snapshot"
         snapshot_root.mkdir(mode=0o700)
         assignment = {
@@ -87,11 +108,14 @@ class NativeAcpRunnerTest(unittest.TestCase):
                 "planner",
                 "planner1234",
                 executables=executables,
+                write_policy=policy,
             ),
             "session_name": "agent-team-planner-planner1234",
             "provider_private_root": str(provider_root),
             "snapshot_root": str(snapshot_root),
             "adapter_snapshot": adapter_snapshot(executables),
+            "write_policy_path": str(policy),
+            "write_policy_sha256": policy_digest,
         }
         state = {
             "version": 3,
@@ -123,6 +147,8 @@ class NativeAcpRunnerTest(unittest.TestCase):
                     "execution": "background",
                     "adapter_id": "claude-acp-0.70.0",
                     "acp_executables": executables.as_dict(),
+                    "scoped_wrapper_sha256": checked_digest(SCOPED_AGENT),
+                    "scoped_client_sha256": checked_digest(SCOPED_CLIENT),
                 },
             },
             "roles": {"planner": assignment},
@@ -207,20 +233,25 @@ class NativeAcpRunnerTest(unittest.TestCase):
         state, _executables, prompt_path = self._state()
         state_path = self.state_dir / "state.json"
         output = "x" * cli.MAX_ACP_OUTPUT_CHARS
-        completed = subprocess.CompletedProcess(["acpx"], 0, "", "")
-        prompt_completed = subprocess.CompletedProcess(["acpx"], 0, output, "")
+        prompt_completed = ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "output": output,
+                    "session_id": "test-session",
+                    "model": "fable",
+                    "effort": "high",
+                    "cleanup_confirmed": True,
+                }
+            ),
+            "",
+        )
 
         with (
             mock.patch.object(
-                cli,
-                "run_acpx",
-                side_effect=[
-                    completed,
-                    completed,
-                    prompt_completed,
-                    completed,
-                    completed,
-                ],
+                cli.ProcessRunner,
+                "run",
+                return_value=prompt_completed,
             ),
             mock.patch.object(native_backend, "publish_completion") as publish,
             contextlib.redirect_stdout(io.StringIO()),
@@ -238,18 +269,12 @@ class NativeAcpRunnerTest(unittest.TestCase):
         state, _executables, prompt_path = self._state()
         state_path = self.state_dir / "state.json"
         failure = "provider failure: " + ("reason " * 40_000)
-        completed = subprocess.CompletedProcess(["acpx"], 0, "", "")
 
         with (
             mock.patch.object(
-                cli,
-                "run_acpx",
-                side_effect=[completed, completed, completed, completed, completed],
-            ),
-            mock.patch.object(
-                cli,
-                "_acp_result_error",
-                side_effect=[None, None, failure, None, None],
+                cli.ProcessRunner,
+                "run",
+                side_effect=ExecutionError(failure, cleanup_confirmed=True),
             ),
             mock.patch.object(native_backend, "publish_completion") as publish,
             contextlib.redirect_stdout(io.StringIO()),

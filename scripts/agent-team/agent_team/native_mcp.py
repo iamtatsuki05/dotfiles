@@ -22,6 +22,9 @@ from .contracts import (
     RoleWait,
     RuntimeFailure,
     RuntimeRequest,
+    TaskDispatch,
+    TaskGet,
+    TaskVerify,
     _OpaqueRef,
 )
 from .mcp_protocol import (
@@ -35,6 +38,7 @@ from .mcp_protocol import (
 )
 from .native_backend import TmuxBackend
 from .runtime import MAX_PROMPT_CHARS, read_state
+from .task_spec import TaskSpec
 
 
 class NativeMcpSession:
@@ -55,7 +59,12 @@ class NativeMcpSession:
                 ErrorCode.IDENTITY_MISMATCH, "native MCP run identity changed"
             )
         request: RuntimeRequest
-        if name == "delivery_ack":
+        if name in {"task_get", "task_verify"}:
+            if set(arguments) != {"task_id"}:
+                raise ToolInputError(f"{name} requires exactly task_id")
+            task_id = bounded_text(arguments, "task_id", maximum=MAX_PROMPT_CHARS)
+            request = TaskGet(task_id) if name == "task_get" else TaskVerify(task_id)
+        elif name == "delivery_ack":
             request = DeliveryAck(
                 DeliveryRef(bounded_text(arguments, "delivery_id", maximum=256))
             )
@@ -68,6 +77,16 @@ class NativeMcpSession:
             role = Role(require_role(arguments))
             if name == "role_get":
                 request = RoleGet(role)
+            elif name == "task_dispatch":
+                if set(arguments) != {"role", "task", "message"}:
+                    raise ToolInputError(
+                        "task_dispatch requires exactly role, task, and message"
+                    )
+                request = TaskDispatch(
+                    role,
+                    TaskSpec.from_dict(arguments.get("task")),
+                    bounded_text(arguments, "message", maximum=MAX_PROMPT_CHARS),
+                )
             elif name == "role_prompt":
                 request = RolePrompt(
                     role, bounded_text(arguments, "text", maximum=MAX_PROMPT_CHARS)

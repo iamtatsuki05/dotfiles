@@ -46,6 +46,7 @@ _CLAUDE_PROFILES: Final[tuple[tuple[str, str, str], ...]] = (
     *_READ_ONLY,
     ("planner", "acp", "read-only"),
     ("reviewer", "acp", "read-only"),
+    ("worker", "acp", "workspace-write"),
 )
 _CODEX_PROFILES: Final[tuple[tuple[str, str, str], ...]] = (
     ("main", "direct", "orchestrator"),
@@ -192,6 +193,8 @@ def adapter_id_for_profile(
 ) -> str | None:
     profile_execution(provider, role, transport, permission)
     if provider == "claude" and transport == "acp":
+        if role == "worker":
+            return "claude-acp-scoped-0.70.0"
         return "claude-acp-0.70.0"
     if provider == "copilot":
         return "github-copilot-direct-readonly-1.0.81"

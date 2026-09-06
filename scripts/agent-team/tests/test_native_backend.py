@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 import agent_team.native_backend as native
+from agent_team import cli
 from agent_team.contracts import (
     Attach,
     DeliveryAck,
@@ -26,17 +28,23 @@ from agent_team.contracts import (
     RuntimeFailure,
     StartSpec,
     Status,
+    TaskDispatch,
+    TaskVerify,
 )
+from agent_team.native_mcp import NativeMcpSession
+from agent_team.task_spec import TaskSpec, VerificationSpec
 from agent_team.tmux import CloseEvidence, TmuxInspection, TmuxReceipt, _PathIdentity
 
 
 class FakeExecutables:
     node = Path("/bin/node")
-    client = Path("/bin/acpx")
+    sdk = Path("/bin/sdk.js")
     agent = Path("/bin/claude-agent-acp")
+    library = Path("/bin/lib.js")
     node_sha256 = "n" * 64
-    client_sha256 = "c" * 64
+    sdk_sha256 = "c" * 64
     agent_sha256 = "a" * 64
+    library_sha256 = "l" * 64
 
     def verify(self) -> None:
         return None
@@ -44,23 +52,32 @@ class FakeExecutables:
     def as_dict(self) -> dict[str, object]:
         return {
             "node": str(self.node),
-            "client": str(self.client),
+            "sdk": str(self.sdk),
             "agent": str(self.agent),
+            "library": str(self.library),
             "node_sha256": self.node_sha256,
-            "client_sha256": self.client_sha256,
+            "sdk_sha256": self.sdk_sha256,
             "agent_sha256": self.agent_sha256,
+            "library_sha256": self.library_sha256,
         }
 
 
 class FakePopen:
-    def __init__(self, _argv: list[str], **_kwargs: object) -> None:
+    def __init__(self, _argv: list[str], **kwargs: object) -> None:
         self.pid = 77_001
         self.returncode = 0
+        self._gate_fd: int | None = None
+        pass_fds = kwargs.get("pass_fds")
+        if isinstance(pass_fds, tuple) and pass_fds:
+            self._gate_fd = os.dup(pass_fds[0])
 
     def poll(self) -> int:
         return self.returncode
 
     def wait(self, **_kwargs: object) -> int:
+        if self._gate_fd is not None:
+            os.close(self._gate_fd)
+            self._gate_fd = None
         return self.returncode
 
 
@@ -155,6 +172,151 @@ def role_spec(
 
 
 class NativeBackendTest(unittest.TestCase):
+    def task_spec(self, *, dependencies: tuple[str, ...] = ()) -> TaskSpec:
+        return TaskSpec(
+            task_id="inspect-project",
+            objective="設定と実装の対応を確認する",
+            acceptance_criteria=("根拠となるファイルを示す",),
+            allowed_paths=(),
+            forbidden_paths=("private/",),
+            dependencies=dependencies,
+            verification=(VerificationSpec("check", ("python3", "-V"), 30),),
+            evidence_requirements=("確認したファイルと結論",),
+            consultation_conditions=(),
+        )
+
+    def test_task_dispatch_is_persisted_through_public_mcp(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            session = NativeMcpSession.__new__(NativeMcpSession)
+            session.path = self.state_path
+            session.run_id = native.runtime_read_state(self.state_path)["run_id"]
+            session.backend = backend
+            with (
+                mock.patch.object(native.subprocess, "Popen", FakePopen),
+                mock.patch.object(native.os, "getpgid", return_value=77_001),
+            ):
+                result = session.execute(
+                    "task_dispatch",
+                    {
+                        "role": "planner",
+                        "task": task.as_dict(),
+                        "message": "調査してください",
+                    },
+                )
+            state = native.runtime_read_state(self.state_path)
+            saved = state["roles"]["planner"]
+            self.addCleanup(
+                backend._cleanup_assignment, saved, self.state_path, Role.PLANNER
+            )
+            self.assertEqual(saved["task_spec"], task.as_dict())
+            self.assertNotEqual(result["task_id"], task.task_id)
+            self.assertEqual(state["tasks"][task.task_id]["status"], "running")
+            for damage in ("remove-spec", "change-spec", "change-digest"):
+                with self.subTest(damage=damage):
+                    changed = json.loads(json.dumps(state))
+                    if damage == "remove-spec":
+                        del changed["roles"]["planner"]["task_spec"]
+                    elif damage == "change-spec":
+                        changed["roles"]["planner"]["task_spec"]["objective"] = (
+                            "replaced"
+                        )
+                    else:
+                        changed["tasks"][task.task_id]["digest"] = "0" * 64
+                    with self.assertRaisesRegex(
+                        native.RuntimeValidationError, "TaskSpec"
+                    ):
+                        native.runtime_write_state(self.state_path, changed)
+            prompt = Path(saved["prompt_path"]).read_text()
+            self.assertIn(
+                json.dumps(task.as_dict(), ensure_ascii=False, sort_keys=True), prompt
+            )
+
+    def test_task_dispatch_rejects_unsatisfied_dependency_before_effects(self) -> None:
+        task = self.task_spec(dependencies=("missing",))
+        dependency = replace(self.task_spec(), task_id="missing")
+        with self.planner_backend(task_specs=(dependency, task)) as backend:
+            before = self.state_path.read_bytes()
+            with (
+                mock.patch.object(native.subprocess, "Popen") as popen,
+                mock.patch.object(native, "create_prompt_file") as prompt,
+                self.assertRaisesRegex(RuntimeFailure, "dependency.*not completed"),
+            ):
+                backend.request(
+                    TaskDispatch(
+                        Role.PLANNER,
+                        task,
+                        "inspect",
+                    )
+                )
+            popen.assert_not_called()
+            prompt.assert_not_called()
+            self.assertEqual(self.state_path.read_bytes(), before)
+
+    def test_task_dispatch_bad_spec_is_rejected_without_process_or_state_effect(
+        self,
+    ) -> None:
+        with self.planner_backend() as backend:
+            session = NativeMcpSession.__new__(NativeMcpSession)
+            session.path = self.state_path
+            session.run_id = native.runtime_read_state(self.state_path)["run_id"]
+            session.backend = backend
+            before = self.state_path.read_bytes()
+            with (
+                mock.patch.object(native.subprocess, "Popen") as popen,
+                self.assertRaisesRegex(ValueError, "unknown keys"),
+            ):
+                session.execute(
+                    "task_dispatch",
+                    {
+                        "role": "planner",
+                        "task": {**self.task_spec().as_dict(), "extra": True},
+                        "message": "inspect",
+                    },
+                )
+            popen.assert_not_called()
+            self.assertEqual(self.state_path.read_bytes(), before)
+
+    def test_public_dispatch_rejects_undeclared_or_replaced_verification_before_effects(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            session = NativeMcpSession.__new__(NativeMcpSession)
+            session.path = self.state_path
+            session.run_id = native.runtime_read_state(self.state_path)["run_id"]
+            session.backend = backend
+            for field, value in (
+                ("task_id", "unapproved"),
+                ("allowed_paths", ["private/"]),
+                (
+                    "verification",
+                    [
+                        {
+                            "name": "unapproved",
+                            "argv": ["python3", "-c", "print('unapproved')"],
+                            "timeout_seconds": 5,
+                        }
+                    ],
+                ),
+            ):
+                with self.subTest(field=field):
+                    supplied = task.as_dict()
+                    supplied[field] = value
+                    before = self.state_path.read_bytes()
+                    with (
+                        mock.patch.object(native.subprocess, "Popen") as popen,
+                        mock.patch.object(native, "create_prompt_file") as prompt,
+                        self.assertRaisesRegex(RuntimeFailure, "declared.*startup"),
+                    ):
+                        session.execute(
+                            "task_dispatch",
+                            {"role": "planner", "task": supplied, "message": "inspect"},
+                        )
+                    popen.assert_not_called()
+                    prompt.assert_not_called()
+                    self.assertEqual(self.state_path.read_bytes(), before)
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
@@ -190,6 +352,7 @@ class NativeBackendTest(unittest.TestCase):
             config_path=self.config_path,
             state_path=self.state_path,
             role_specs={role: role_spec(role) for role in (Role.MAIN, *roles)},
+            max_review_rounds=2,
         )
 
     def backend(self, spec: StartSpec) -> native.TmuxBackend:
@@ -211,10 +374,17 @@ class NativeBackendTest(unittest.TestCase):
         return backend
 
     @contextmanager
-    def planner_backend(self) -> Iterator[native.TmuxBackend]:
+    def planner_backend(
+        self,
+        *,
+        worker: bool = False,
+        reviewer: bool = False,
+        task_specs: tuple[TaskSpec, ...] = (),
+    ) -> Iterator[native.TmuxBackend]:
         executables = FakeExecutables()
         spec = replace(
             self.spec(),
+            task_specs=task_specs,
             role_specs={
                 Role.MAIN: role_spec(Role.MAIN),
                 Role.PLANNER: role_spec(
@@ -224,12 +394,41 @@ class NativeBackendTest(unittest.TestCase):
                     execution="background",
                     executables=executables.as_dict(),
                 ),
+                **(
+                    {
+                        Role.WORKER: replace(
+                            role_spec(
+                                Role.WORKER,
+                                transport="acp",
+                                permission="workspace-write",
+                                execution="background",
+                                executables=executables.as_dict(),
+                            ),
+                            adapter_id="claude-acp-scoped-0.70.0",
+                        )
+                    }
+                    if worker
+                    else {}
+                ),
+                **(
+                    {
+                        Role.REVIEWER: role_spec(
+                            Role.REVIEWER,
+                            transport="acp",
+                            permission="read-only",
+                            execution="background",
+                            executables=executables.as_dict(),
+                        )
+                    }
+                    if reviewer
+                    else {}
+                ),
             },
         )
         snapshot = {
             "adapter_id": "claude-acp-0.70.0",
-            "revision": "acpx@0.13.2",
-            "executable": str(executables.client),
+            "revision": "@agentclientprotocol/sdk@1.3.0",
+            "executable": str(executables.sdk),
             "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
             "identity": {
                 "device": 1,
@@ -247,17 +446,297 @@ class NativeBackendTest(unittest.TestCase):
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
             mock.patch.object(
-                native.acp_dependencies.AcpExecutables,
+                native.native_acp_dependencies.NativeAcpExecutables,
                 "from_dict",
                 return_value=executables,
             ),
             mock.patch.object(
-                native.acp_dependencies, "adapter_snapshot", return_value=snapshot
+                native.native_acp_dependencies,
+                "adapter_snapshot",
+                return_value=snapshot,
             ),
         ):
             backend = self.backend(spec)
             backend.start(spec)
             yield backend
+
+    def dispatch_task(
+        self, backend: native.TmuxBackend, role: Role, task: TaskSpec
+    ) -> dict[str, object]:
+        with (
+            mock.patch.object(native.subprocess, "Popen", FakePopen),
+            mock.patch.object(native.os, "getpgid", return_value=77_001),
+        ):
+            backend.request(TaskDispatch(role, task, "work"))
+        return native.runtime_read_state(self.state_path)["roles"][role.value]
+
+    def finish_task(
+        self,
+        backend: native.TmuxBackend,
+        role: Role,
+        body: str,
+        evidence: dict[str, object] | None = None,
+    ) -> None:
+        state = native.runtime_read_state(self.state_path)
+        saved = state["roles"][role.value]
+        with mock.patch.object(native, "_assert_publisher"):
+            native.publish_completion(
+                self.state_path,
+                role=role.value,
+                run_id=state["run_id"],
+                task_id=saved["task_id"],
+                dispatch_id=saved["dispatch_id"],
+                terminal_handle=saved["terminal_handle"],
+                launch_nonce=saved["launch_nonce"],
+                outcome="succeeded",
+                body=body,
+                cleanup_confirmed=True,
+                task_evidence=evidence,
+            )
+        wait = backend.request(RoleWait(role, 1_000))
+        backend.request(RoleRead(role, 2_000))
+        backend.request(RoleRelease(role))
+        backend.request(DeliveryAck(wait.delivery_id))
+
+    def test_plan_review_must_bind_verdict_then_route_back_to_planner(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(reviewer=True, task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.finish_task(backend, Role.PLANNER, "Plan: inspect config and source")
+            self.dispatch_task(backend, Role.REVIEWER, task)
+            state = native.runtime_read_state(self.state_path)
+            record = state["tasks"][task.task_id]
+            verdict = {
+                "task_id": task.task_id,
+                "stage": "plan",
+                "revision": record["revision"],
+                "decision": "request_changes",
+                "findings": ["Add the configuration source"],
+            }
+            before = self.state_path.read_bytes()
+            with self.assertRaisesRegex(RuntimeFailure, "revision"):
+                self.finish_task(
+                    backend, Role.REVIEWER, "review", {**verdict, "revision": "stale"}
+                )
+            self.assertEqual(self.state_path.read_bytes(), before)
+            self.finish_task(backend, Role.REVIEWER, "review", verdict)
+            state = native.runtime_read_state(self.state_path)
+            self.assertEqual(
+                state["tasks"][task.task_id]["status"], "plan_changes_requested"
+            )
+            with self.assertRaisesRegex(RuntimeFailure, "writer.*stage"):
+                backend.request(TaskDispatch(Role.WORKER, task, "skip revision"))
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.finish_task(
+                backend, Role.PLANNER, "Revised plan: config.toml and runtime.py"
+            )
+            self.dispatch_task(backend, Role.REVIEWER, task)
+            record = native.runtime_read_state(self.state_path)["tasks"][task.task_id]
+            self.finish_task(
+                backend,
+                Role.REVIEWER,
+                "approved",
+                {
+                    "task_id": task.task_id,
+                    "stage": "plan",
+                    "revision": record["revision"],
+                    "decision": "approve",
+                    "findings": [],
+                },
+            )
+            self.assertEqual(
+                native.runtime_read_state(self.state_path)["tasks"][task.task_id][
+                    "status"
+                ],
+                "plan_approved",
+            )
+
+    def test_fixed_verification_requires_implementation_approval_and_same_revision(
+        self,
+    ) -> None:
+        subprocess.run(["git", "init", "--quiet", str(self.workspace)], check=True)
+        task = replace(
+            self.task_spec(),
+            allowed_paths=("result.txt",),
+            verification=(
+                VerificationSpec(
+                    "check-result",
+                    (
+                        sys.executable,
+                        "-c",
+                        "from pathlib import Path; assert Path('result.txt').read_text() == 'done'; print('verified')",
+                    ),
+                    10,
+                ),
+            ),
+        )
+        with self.planner_backend(
+            worker=True, reviewer=True, task_specs=(task,)
+        ) as backend:
+            self.dispatch_task(backend, Role.WORKER, task)
+            (self.workspace / "result.txt").write_text("done")
+            self.finish_task(backend, Role.WORKER, "result.txt updated")
+            with self.assertRaisesRegex(
+                RuntimeFailure, "implementation review approval"
+            ):
+                backend.request(TaskVerify(task.task_id))
+            # Snapshot reads execute real fixed Git commands before the mocked runner spawn.
+            revision = native.snapshot_revision(self.workspace)
+            with mock.patch.object(native, "snapshot_revision", return_value=revision):
+                self.dispatch_task(backend, Role.REVIEWER, task)
+            verdict = {
+                "task_id": task.task_id,
+                "stage": "implementation",
+                "revision": revision,
+                "decision": "approve",
+                "findings": [],
+            }
+            self.finish_task(backend, Role.REVIEWER, "approved", verdict)
+            (self.workspace / "result.txt").write_text("changed")
+            with self.assertRaisesRegex(RuntimeFailure, "revision changed"):
+                backend.request(TaskVerify(task.task_id))
+            (self.workspace / "result.txt").write_text("done")
+            result = backend.request(TaskVerify(task.task_id))
+            self.assertEqual(result.status, "completed")
+            check = result.record["verification"]["commands"][0]
+            self.assertEqual(check["argv"], list(task.verification[0].argv))
+            self.assertEqual(check["returncode"], 0)
+
+    def test_worker_requires_task_spec_and_binds_scoped_policy(self) -> None:
+        task = replace(self.task_spec(), allowed_paths=("result.txt",))
+        with self.planner_backend(
+            worker=True, reviewer=True, task_specs=(task,)
+        ) as backend:
+            with (
+                mock.patch.object(native.subprocess, "Popen") as popen,
+                self.assertRaisesRegex(RuntimeFailure, "Worker requires task_dispatch"),
+            ):
+                backend.request(RolePrompt(Role.WORKER, "edit files"))
+            popen.assert_not_called()
+            with (
+                mock.patch.object(native.subprocess, "Popen", FakePopen),
+                mock.patch.object(native.os, "getpgid", return_value=77_001),
+            ):
+                backend.request(TaskDispatch(Role.WORKER, task, "create result.txt"))
+            state = native.runtime_read_state(self.state_path)
+            saved = state["roles"]["worker"]
+            self.addCleanup(
+                backend._cleanup_assignment, saved, self.state_path, Role.WORKER
+            )
+            policy = Path(saved["write_policy_path"])
+            self.assertEqual(policy.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                json.loads(policy.read_text())["allowed_paths"], ["result.txt"]
+            )
+            self.assertEqual(
+                json.loads(policy.read_text())["forbidden_paths"], ["private/"]
+            )
+            self.assertEqual(len(saved["write_policy_sha256"]), 64)
+            self.assertEqual(
+                len(state["role_specs"]["worker"]["scoped_wrapper_sha256"]), 64
+            )
+
+    def test_worker_preflight_failure_publishes_consumable_failed_result(self) -> None:
+        task = replace(self.task_spec(), allowed_paths=("result.txt",))
+        with self.planner_backend(
+            worker=True, reviewer=True, task_specs=(task,)
+        ) as backend:
+            saved = self.dispatch_task(backend, Role.WORKER, task)
+            state = native.runtime_read_state(self.state_path)
+            with (
+                mock.patch.object(
+                    cli,
+                    "_acp_assignment",
+                    side_effect=cli.ConfigError("adapter changed"),
+                ),
+                mock.patch.object(cli.ProcessRunner, "run") as provider,
+                mock.patch.object(native, "_assert_publisher"),
+            ):
+                result = cli._acp_run_turn(
+                    state=state,
+                    role="worker",
+                    state_path=self.state_path,
+                    task_id=saved["task_id"],
+                    dispatch_id=saved["dispatch_id"],
+                    terminal_handle=saved["terminal_handle"],
+                    prompt_path=Path(saved["prompt_path"]),
+                    launch_nonce=saved["launch_nonce"],
+                )
+            self.assertEqual(result, 1)
+            provider.assert_not_called()
+            completion = native.runtime_read_state(self.state_path)["native_result"]
+            self.assertEqual(completion["outcome"], "failed")
+            self.assertIs(completion["cleanup_confirmed"], True)
+            wait = backend.request(RoleWait(Role.WORKER, 1_000))
+            backend.request(RoleRead(Role.WORKER, 2_000))
+            backend.request(RoleRelease(Role.WORKER))
+            backend.request(DeliveryAck(wait.delivery_id))
+            state = native.runtime_read_state(self.state_path)
+            self.assertEqual(state["roles"], {})
+            self.assertEqual(state["tasks"][task.task_id]["status"], "failed")
+
+    def test_unconfirmed_verifier_cleanup_retains_state_and_blocks_new_work(
+        self,
+    ) -> None:
+        subprocess.run(["git", "init", "--quiet", str(self.workspace)], check=True)
+        task = replace(self.task_spec(), allowed_paths=("result.txt",))
+        with self.planner_backend(
+            worker=True, reviewer=True, task_specs=(task,)
+        ) as backend:
+            self.dispatch_task(backend, Role.WORKER, task)
+            (self.workspace / "result.txt").write_text("done")
+            self.finish_task(backend, Role.WORKER, "result.txt updated")
+            revision = native.snapshot_revision(self.workspace)
+            with mock.patch.object(native, "snapshot_revision", return_value=revision):
+                self.dispatch_task(backend, Role.REVIEWER, task)
+            self.finish_task(
+                backend,
+                Role.REVIEWER,
+                "approved",
+                {
+                    "task_id": task.task_id,
+                    "stage": "implementation",
+                    "revision": revision,
+                    "decision": "approve",
+                    "findings": [],
+                },
+            )
+            evidence = {
+                "revision": revision,
+                "passed": False,
+                "commands": [],
+                "error": "process cleanup could not be established",
+                "cleanup_confirmed": False,
+            }
+            with mock.patch(
+                "agent_team.task_verification.run_verification", return_value=evidence
+            ):
+                result = backend.request(TaskVerify(task.task_id))
+            self.assertEqual(result.status, "verifying")
+            before = self.state_path.read_bytes()
+            with (
+                mock.patch.object(native.subprocess, "Popen") as popen,
+                mock.patch.object(backend, "_cancel_runner") as cancel,
+                mock.patch.object(backend, "_stop_supervisor") as stop,
+            ):
+                for request in (
+                    TaskVerify(task.task_id),
+                    RolePrompt(Role.PLANNER, "start another task"),
+                ):
+                    with (
+                        self.subTest(request=type(request).__name__),
+                        self.assertRaisesRegex(RuntimeFailure, "verification"),
+                    ):
+                        backend.request(request)
+                with (
+                    mock.patch.object(backend, "_wait_for_main_process_receipt"),
+                    self.assertRaisesRegex(RuntimeFailure, "verification"),
+                ):
+                    backend.stop()
+            popen.assert_not_called()
+            cancel.assert_not_called()
+            stop.assert_not_called()
+            self.assertEqual(self.state_path.read_bytes(), before)
 
     def test_state_failure_before_spawn_reclaims_unpublished_resources(self) -> None:
         with self.planner_backend() as backend:
@@ -323,6 +802,126 @@ class NativeBackendTest(unittest.TestCase):
                     )
                     backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
 
+    def test_runner_provider_gate_is_released_only_after_owned_receipt(self) -> None:
+        events: list[str] = []
+        process = mock.Mock(pid=77_001)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        original_save = native._save_state
+
+        def save(*args: object, **kwargs: object) -> None:
+            events.append("state-save")
+            original_save(*args, **kwargs)
+
+        def read_identity(_pid: int) -> tuple[str, ...]:
+            events.append("identity")
+            argv = popen.call_args.args[0]
+            return tuple(argv)
+
+        def release(fd: int, data: bytes) -> int:
+            events.append("release")
+            del fd
+            return len(data)
+
+        with (
+            self.planner_backend() as backend,
+            mock.patch.object(native, "_save_state", side_effect=save),
+            mock.patch.object(
+                native.subprocess, "Popen", return_value=process
+            ) as popen,
+            mock.patch.object(native.os, "getpgid", return_value=77_001),
+            mock.patch.object(native.os, "getpgrp", return_value=1),
+            mock.patch.object(native, "_process_group_alive", return_value=True),
+            mock.patch.object(native, "read_process_argv", side_effect=read_identity),
+            mock.patch.object(native.os, "write", side_effect=release),
+        ):
+            backend.request(RolePrompt(Role.PLANNER, "inspect"))
+
+        self.assertEqual(events, ["state-save", "identity", "state-save", "release"])
+        launch = list(popen.call_args.args[0])
+        self.assertIn("-c", launch)
+        self.assertIn("_acp-run", launch)
+        self.assertEqual(popen.call_args.kwargs["pass_fds"], (int(launch[3]),))
+        saved = native.runtime_read_state(self.state_path)["roles"]["planner"]
+        self.assertEqual(tuple(saved["runner_argv"]), tuple(launch[4:]))
+        self.assertEqual(tuple(saved["runner_startup_argv"]), tuple(launch))
+        backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
+
+    def test_startup_state_failure_stops_owned_runner_group_before_provider_exec(
+        self,
+    ) -> None:
+        events: list[str] = []
+        process = mock.Mock(pid=77_001)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        original_save = native._save_state
+
+        def save(*args: object, **kwargs: object) -> None:
+            events.append("state-save")
+            if events.count("state-save") == 2:
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "post-spawn state save failed",
+                )
+            original_save(*args, **kwargs)
+
+        def read_identity(_pid: int) -> tuple[str, ...]:
+            return tuple(popen.call_args.args[0])
+
+        with (
+            self.planner_backend() as backend,
+            mock.patch.object(native, "_save_state", side_effect=save),
+            mock.patch.object(
+                native.subprocess, "Popen", return_value=process
+            ) as popen,
+            mock.patch.object(native.os, "getpgid", return_value=77_001),
+            mock.patch.object(native.os, "getpgrp", return_value=1),
+            mock.patch.object(native, "_process_group_alive", return_value=True),
+            mock.patch.object(native, "read_process_argv", side_effect=read_identity),
+            mock.patch.object(native, "_terminate_process_group") as terminate,
+            mock.patch.object(native.os, "write") as release,
+            self.assertRaisesRegex(RuntimeFailure, "post-spawn state save failed"),
+        ):
+            backend.request(RolePrompt(Role.PLANNER, "inspect"))
+
+        terminate.assert_called_once_with(
+            77_001,
+            77_001,
+            grace_seconds=native.ACP_CANCEL_GRACE_SECONDS,
+        )
+        process.terminate.assert_not_called()
+        process.wait.assert_called_once_with(timeout=native.PROCESS_WAIT_SECONDS)
+        release.assert_not_called()
+        self.assertEqual(events, ["state-save", "state-save"])
+        saved = native.runtime_read_state(self.state_path)["roles"]["planner"]
+        for key in ("prompt_path", "provider_private_root", "snapshot_root"):
+            self.assertTrue(Path(saved[key]).exists())
+        backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
+
+    def test_startup_pid_reuse_does_not_signal_unowned_runner_group(self) -> None:
+        process = mock.Mock(pid=77_001)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        with (
+            self.planner_backend() as backend,
+            mock.patch.object(native.subprocess, "Popen", return_value=process),
+            mock.patch.object(native.os, "getpgid", return_value=77_001),
+            mock.patch.object(native.os, "getpgrp", return_value=1),
+            mock.patch.object(native, "_process_group_alive", return_value=True),
+            mock.patch.object(native, "read_process_argv", return_value=("foreign",)),
+            mock.patch.object(native.os, "killpg") as killpg,
+            self.assertRaisesRegex(RuntimeFailure, "argv does not match state"),
+        ):
+            backend.request(RolePrompt(Role.PLANNER, "inspect"))
+
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=native.PROCESS_WAIT_SECONDS)
+        killpg.assert_not_called()
+        saved = native.runtime_read_state(self.state_path)["roles"]["planner"]
+        self.assertEqual(saved["runner_pid"], 77_001)
+        self.assertEqual(saved["runner_process_group_id"], 77_001)
+        backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
+
     def test_published_but_not_durable_assignment_keeps_its_resources(self) -> None:
         def published_failure(
             path: Path,
@@ -384,12 +983,13 @@ class NativeBackendTest(unittest.TestCase):
                     native, "python_process_argv", side_effect=framework_argv
                 ),
                 mock.patch.object(
-                    native.subprocess, "Popen", return_value=FakePopen([])
+                    native.subprocess, "Popen", side_effect=FakePopen
                 ) as popen,
                 mock.patch.object(native.os, "getpgid", return_value=77_001),
             ):
                 backend.request(RolePrompt(Role.PLANNER, "inspect"))
-            launch = popen.call_args.args[0]
+            gate = popen.call_args.args[0]
+            launch = gate[4:]
             self.assertEqual(launch[0], sys.executable)
             self.assertEqual(popen.call_args.kwargs["env"], {"PATH": "/bin"})
             saved = native.runtime_read_state(self.state_path)["roles"]["planner"]
@@ -502,12 +1102,14 @@ class NativeBackendTest(unittest.TestCase):
             config_path=self.config_path,
             state_path=self.state_path,
             role_specs={Role.MAIN: role_spec(Role.MAIN), Role.PLANNER: planner},
+            max_review_rounds=2,
+            task_specs=(self.task_spec(),),
         )
         backend = self.backend(spec)
         snapshot = {
             "adapter_id": "claude-acp-0.70.0",
-            "revision": "acpx@0.13.2",
-            "executable": str(executables.client),
+            "revision": "@agentclientprotocol/sdk@1.3.0",
+            "executable": str(executables.sdk),
             "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
             "identity": {
                 "device": 1,
@@ -522,12 +1124,14 @@ class NativeBackendTest(unittest.TestCase):
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
             mock.patch.object(
-                native.acp_dependencies.AcpExecutables,
+                native.native_acp_dependencies.NativeAcpExecutables,
                 "from_dict",
                 return_value=executables,
             ),
             mock.patch.object(
-                native.acp_dependencies, "adapter_snapshot", return_value=snapshot
+                native.native_acp_dependencies,
+                "adapter_snapshot",
+                return_value=snapshot,
             ),
         ):
             backend.start(spec)
@@ -540,7 +1144,9 @@ class NativeBackendTest(unittest.TestCase):
                     return_value="env AGENT_TEAM_ACP_MARKER=test /bin/node /bin/claude-agent-acp",
                 ),
             ):
-                assignment = backend.request(RolePrompt(Role.PLANNER, "inspect"))
+                assignment = backend.request(
+                    TaskDispatch(Role.PLANNER, self.task_spec(), "inspect")
+                )
         self.assertEqual(assignment.role, Role.PLANNER)
         state = native.runtime_read_state(self.state_path)
         roles = state["roles"]
@@ -621,6 +1227,10 @@ class NativeBackendTest(unittest.TestCase):
         self.assertEqual(final_state["roles"], {})
         self.assertNotIn("native_result", final_state)
         self.assertEqual(final_state["native"]["last_ack"], delivery._value)
+        self.assertEqual(
+            final_state["tasks"][self.task_spec().task_id]["status"],
+            "awaiting_plan_review",
+        )
 
     def test_acp_role_cannot_be_attached_as_a_tmux_pane(self) -> None:
         executables = FakeExecutables()
@@ -643,8 +1253,8 @@ class NativeBackendTest(unittest.TestCase):
         backend = self.backend(spec)
         snapshot = {
             "adapter_id": "claude-acp-0.70.0",
-            "revision": "acpx@0.13.2",
-            "executable": str(executables.client),
+            "revision": "@agentclientprotocol/sdk@1.3.0",
+            "executable": str(executables.sdk),
             "version": "@agentclientprotocol/claude-agent-acp@0.70.0",
             "identity": {
                 "device": 1,
@@ -659,12 +1269,14 @@ class NativeBackendTest(unittest.TestCase):
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
             mock.patch.object(
-                native.acp_dependencies.AcpExecutables,
+                native.native_acp_dependencies.NativeAcpExecutables,
                 "from_dict",
                 return_value=executables,
             ),
             mock.patch.object(
-                native.acp_dependencies, "adapter_snapshot", return_value=snapshot
+                native.native_acp_dependencies,
+                "adapter_snapshot",
+                return_value=snapshot,
             ),
         ):
             backend.start(spec)

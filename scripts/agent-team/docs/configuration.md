@@ -6,9 +6,10 @@
 `agent-team` keeps the existing version-3 fixed-role configuration and also
 accepts the explicit version-4 topology configuration. Version-3 `runtime =
 "orca"` retains the fixed four-role contract; version-3 `runtime = "tmux"` is
-an experimental native subset with Main and optional Claude ACP read-only
-background roles. Missing values and unsupported combinations fail before any
-role starts. See
+an experimental native subset with direct Claude Main and optional Claude ACP
+Planner, Worker, and Reviewer roles. Native Worker assignments require an
+exact TaskSpec from the config's `[[tasks]]` catalog. Missing values and
+unsupported combinations fail before any role starts. See
 [Version-4 configuration](configuration-v4.md) for the separate topology
 schema and pure inspection commands.
 
@@ -62,8 +63,10 @@ the canonical Worker and Reviewer remain direct Codex roles.
 Use `runtime = "tmux"` only in a custom version-3 config. Main is required and
 must be direct Claude with `orchestrator` permission. Planner and Reviewer may
 be omitted or may each be verified Claude ACP with `read-only` permission and
-the pinned `claude-acp-0.70.0` adapter. Worker and every other native profile
-are rejected before state, Task, Dispatch, or process effects are created.
+the pinned `claude-acp-0.70.0` adapter. Worker may be selected as the scoped
+Claude ACP `workspace-write` profile; selecting it requires a Reviewer.
+Dispatching its work requires a matching `[[tasks]]` entry. Direct Worker/Reviewer and every other native profile are
+rejected before state, Task, Dispatch, or process effects are created.
 Native startup requires the `tmux` executable and does not require Orca or
 Codex. A config that selects an ACP role still requires the pinned Node.js and
 ACP dependencies described below.
@@ -82,7 +85,47 @@ effort = "high"
 prompt = "prompts/orchestrator.md"
 permission = "orchestrator"
 
-[roles]
+[roles.planner]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/planner.md"
+permission = "read-only"
+
+[roles.worker]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/worker.md"
+permission = "workspace-write"
+
+[roles.reviewer]
+provider = "claude"
+transport = "acp"
+model = "fable"
+effort = "high"
+prompt = "prompts/reviewer.md"
+permission = "read-only"
+
+[[tasks]]
+task_id = "addition-workflow"
+objective = "Implement add(a, b) in the allowed source file."
+acceptance_criteria = ["integer, negative, and decimal addition passes"]
+allowed_paths = ["workflow-fixture/calc.py"]
+forbidden_paths = [
+  "workflow-fixture/protected.txt",
+  "workflow-fixture/verify_calc.py",
+]
+dependencies = []
+evidence_requirements = ["changed paths and command results"]
+consultation_conditions = []
+
+[[tasks.verification]]
+name = "check-addition"
+argv = ["python", "-B", "workflow-fixture/verify_calc.py"]
+timeout_seconds = 30
 ```
 
 The example retains the bundled `fable` alias. Check `command -v claude` and
@@ -100,9 +143,15 @@ real Claude Code 2.1.261 Main with `fable`/`high` and a logged-in `claude.ai`
 account also completed a Claude ACP Planner request through MCP, including
 read/release/ack and public stop with independent resource cleanup checks.
 The Python environment contained only `dotfiles-agent-team`; Orca, Codex,
-OpenCode, Zellij, and Herdr were absent from PATH. This proves the read-only
-Main/Planner cycle, not the unfinished write/review workflow. The older
-2.1.112 rejection was a CLI version error, not an unavailable `fable` alias.
+OpenCode, Zellij, and Herdr were absent from PATH. On 2026-09-07, a separate
+Python 3.13.15 wheel-only run completed six native Planner/Worker/Reviewer
+assignments: an intentional `a-b` Worker result was rejected, `a+b` was
+approved at the same workspace revision, and trusted fixed-argv verification
+succeeded. Public stop after removing the original config and prompts left
+zero owned processes and artifacts. The 282-second repeat included the
+startup TaskSpec catalog, durable PID/PGID/argv gate, and four-file dependency
+binding. The catalog remained unchanged throughout the run. The older 2.1.112 rejection was a CLI
+version error, not an unavailable `fable` alias.
 
 ## Top-level fields define one team contract
 
@@ -113,7 +162,8 @@ Main/Planner cycle, not the unfinished write/review workflow. The older
 | `team_prefix` | Must match `[a-z][a-z0-9-]{0,23}`. It contributes to the runtime team ID. |
 | `max_review_rounds` | Positive integer. Counts the first Reviewer decision and every retry for one stage. |
 | `main` | Required Main role table. |
-| `roles` | `orca` must contain exactly `planner`, `worker`, and `reviewer`; `tmux` may contain only optional `planner` and `reviewer`. Main is declared separately and is always required. |
+| `roles` | `orca` must contain exactly `planner`, `worker`, and `reviewer`; `tmux` may contain optional `planner`, `worker`, and `reviewer`. Main is declared separately and is always required. A native Worker requires a Reviewer. |
+| `tasks` | Native tmux only: optional `[[tasks]]` TaskSpec catalog with `[[tasks.verification]]` entries. Orca rejects this field. Without it, read-only `role_prompt` remains available but structured `task_dispatch` is rejected. |
 
 The runtime team ID combines `team_prefix` with the workspace name and a hash
 of the absolute workspace path. The config path is not part of the ID. Two
@@ -163,29 +213,42 @@ The native tmux capability matrix is smaller:
 |---|---|---|
 | Main | Claude / `direct` | `orchestrator` |
 | Planner | Claude / `acp` (optional) | `read-only` |
+| Worker | Claude / `acp` (optional, scoped) | `workspace-write` |
 | Reviewer | Claude / `acp` (optional) | `read-only` |
 
-Native Worker, direct Reviewer, Codex ACP, Main ACP, workspace-write ACP, and
-all other native provider profiles fail before startup effects.
+Direct Worker/Reviewer, Codex ACP, Main ACP, workspace-write ACP outside the
+scoped Claude profile, and all other native provider profiles fail before
+startup effects.
 
 ## ACP dependencies are explicit and selected-only
 
-A config that selects Claude `acp` requires Node.js `22.13.0` or newer and the
-exact packages `acpx@0.13.2` and
-`@agentclientprotocol/claude-agent-acp@0.70.0`. Install them explicitly outside
-`agent-team`, for example:
+An Orca config that selects Claude `acp` requires Node.js `22.13.0` or newer
+and the exact packages `acpx@0.13.2` and
+`@agentclientprotocol/claude-agent-acp@0.70.0`. Install them explicitly
+outside `agent-team`, for example:
 
 ```bash
 npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/claude-agent-acp@0.70.0
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-When an ACP role is selected, startup resolves `node`, `acpx`, and
+For Orca, startup resolves `node`, `acpx`, and
 `claude-agent-acp`, checks the exact package manifests, and saves absolute file
 paths with SHA-256 fingerprints in the launch snapshot. The runner verifies and
 uses that saved binding. Missing or changed files fail closed. Runtime commands
 never invoke `npm` or `npx`; a direct-only config does not resolve ACP
 dependencies.
+
+Native tmux uses a separate binding. It resolves Node.js `22.13.0` or newer,
+the installed `@agentclientprotocol/claude-agent-acp@0.70.0` command, and its
+dependency `@agentclientprotocol/sdk@1.3.0`. It also binds the actual
+`dist/lib.js` import, saving absolute paths and SHA-256 fingerprints for all four
+files, then uses one direct public ACP SDK
+connection per assignment. Native does not select `acpx` and does not invoke
+`npm` or `npx` at runtime. Normal SDK persistence is disabled with
+`persistSession=false` and `autoMemoryEnabled=false`; interactive Main history
+remains in the normal Claude store. This is a direct SDK connection, not the
+provider's direct/model transport.
 
 ## Effort values are provider-specific
 
@@ -205,14 +268,86 @@ The config cannot promote a role by changing only its permission string:
 
 - Main must use `orchestrator`.
 - Planner and Reviewer must use `read-only`.
-- Worker must use `workspace-write` and direct Codex.
+- Orca Worker must use `workspace-write` and direct Codex.
+- Native Worker must use the scoped Claude ACP `workspace-write` profile.
 
 For direct Codex, agent-team creates an isolated `CODEX_HOME` and derives a
-profile from `:read-only` or `:workspace`. For Claude ACP, the client limits
-tools to `Read`, `Grep`, and `Glob`, approves reads, and fails when a
-non-interactive permission question cannot be resolved. Native tmux has no
-direct Worker or Reviewer; its direct Main is supervised by `native_main`, and
-its optional ACP roles run as launcher-owned background processes.
+profile from `:read-only` or `:workspace`. For read-only Claude ACP, the client
+limits tools to `Read`, `Grep`, and `Glob`, approves reads, and fails when a
+non-interactive permission question cannot be resolved. Native tmux's scoped
+Worker can read the workspace with Read/Grep/Glob, subject to protected-path
+and link/file-type checks. TaskSpec `allowed_paths` and `forbidden_paths` apply
+to Write/Edit only, with forbidden paths taking precedence. It denies Bash,
+terminal, and other RPC operations. Its Planner and Reviewer are read-only.
+All native ACP roles run as launcher-owned background processes.
+
+## TaskSpec is declared in the native config
+
+Native tmux task dispatch is catalog-driven. Declare one `[[tasks]]` table per
+task and one or more `[[tasks.verification]]` tables for its fixed argv:
+
+```toml
+[[tasks]]
+task_id = "addition-workflow"
+objective = "Implement add(a, b) in the allowed source file."
+acceptance_criteria = ["integer, negative, and decimal addition passes"]
+allowed_paths = ["workflow-fixture/calc.py"]
+forbidden_paths = [
+  "workflow-fixture/protected.txt",
+  "workflow-fixture/verify_calc.py",
+]
+dependencies = []
+evidence_requirements = ["changed paths and command results"]
+consultation_conditions = []
+
+[[tasks.verification]]
+name = "check-addition"
+argv = ["python", "-B", "workflow-fixture/verify_calc.py"]
+timeout_seconds = 30
+```
+
+The TaskSpec parser accepts exactly these fields: `task_id`, `objective`,
+`acceptance_criteria`, `allowed_paths`, `forbidden_paths`, `dependencies`,
+`verification`, `evidence_requirements`, and `consultation_conditions`.
+Verification entries contain `name`, `argv`, and `timeout_seconds` from 1 to
+900. Paths are workspace-relative POSIX paths; a `forbidden_paths` match wins
+over an allowed match. Startup rejects duplicate task IDs, undeclared
+dependencies, and dependency cycles before state or provider effects.
+
+Main receives the catalog in its native startup instructions. `task_dispatch`
+must exactly match one declared TaskSpec. Main cannot add a task ID or change
+its path scope, dependencies, evidence requirements, or verification argv at
+dispatch time. If a native config has no `[[tasks]]`, read-only `role_prompt`
+remains available, but structured task dispatch is rejected. The `tasks` field
+is rejected by the Orca config loader.
+
+The native task lifecycle uses the ten public tools:
+
+1. `task_dispatch` assigns the declared TaskSpec to Planner, Worker, or Reviewer.
+2. `role_wait`, `role_read`, `role_release`, and `delivery_ack` consume the result in that order.
+3. `task_get` returns the durable stage, review evidence, and verification evidence.
+4. A Planner or Worker result moves to `awaiting_plan_review` or `awaiting_implementation_review`.
+5. Reviewer output is exact JSON with `task_id`, `stage`, `revision`, `decision`, and `findings`.
+6. `approve` advances the stage; `request_changes` returns to the original writer; `consult` waits for the user.
+7. After implementation approval, `task_verify` runs every declared fixed argv command.
+
+Plan and implementation review rounds are counted separately and both obey
+`max_review_rounds`. Implementation review captures the workspace revision when
+the Reviewer assignment is prepared. `task_verify` requires that same revision,
+no active role or Delivery, and confirmed cleanup. It runs with `shell=False`,
+checks the revision before and after commands, and stores bounded errors plus
+stdout/stderr SHA-256 hashes. Only when all commands pass and cleanup is confirmed
+can the task become `completed`; a Reviewer approval alone is not completion.
+
+If verification is interrupted or cleanup is unconfirmed, the saved task
+remains `verifying` or `verification_failed` with the available evidence and
+blocks the next role, verification, or stop as required. There is no automatic
+recovery claim. A `verification_failed` record with valid executed-command evidence and
+confirmed cleanup may return to Worker within the implementation review-round
+limit; unconfirmed cleanup requires user consultation.
+Revision drift or a clean interruption may leave only an executed prefix,
+including no commands if interrupted before execution. The prefix must match
+the declaration; it permits repair but cannot establish successful completion.
 
 ## Prompts define role behavior, not process authority
 

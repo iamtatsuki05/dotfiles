@@ -13,6 +13,12 @@
 
 # 出力
 
+依頼にTaskSpecの`task_id`、`stage`、`revision`とJSON書式が指定されている場合は、
+そのJSONだけを返してください。`decision`は承認なら`approve`、修正が必要なら
+`request_changes`、ユーザー判断が必要なら`consult`です。指摘は`findings`に日本語で
+記載し、JSONの前後に説明文やMarkdownを付けません。
+
+それ以外の読み取り専用レビューでは、次の形式を使います。
 判定は`APPROVED`、`CHANGES_REQUESTED`、`ASK_USER`のいずれか1つを返してください。
 承認できる場合は`APPROVED`、承認済みの範囲と手元の情報だけで修正できる場合は
 `CHANGES_REQUESTED`、ユーザーの判断または追加情報が必要な場合は`ASK_USER`です。

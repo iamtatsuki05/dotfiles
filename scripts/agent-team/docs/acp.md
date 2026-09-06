@@ -9,7 +9,7 @@ provider subscription into an API-key contract.
 
 ## What agent-team runs
 
-The only verified ACP profile is a read-only Planner or Reviewer using Claude:
+On Orca, the verified ACP profile is a read-only Planner or Reviewer using Claude:
 
 - Node.js `22.13.0` or newer
 - `acpx@0.13.2`
@@ -33,7 +33,7 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-When a launch plan contains an ACP role, startup resolves `node`, `acpx`, and
+When an Orca launch plan contains an ACP role, startup resolves `node`, `acpx`, and
 `claude-agent-acp`, verifies the exact package manifests, and records the
 absolute paths and SHA-256 fingerprints in that role's launch snapshot. The
 role-start path rechecks the saved binding before creating the Orca Task. The
@@ -51,6 +51,29 @@ Codex ACP is intentionally rejected. A negative test showed that ACP
 `deny-all`/read-only mediation did not prevent an internal write. Direct Codex
 uses its isolated `CODEX_HOME` and provider-native permission profiles for the
 verified workspace-write Worker and read-only Reviewer.
+
+## Native tmux ACP
+
+Native tmux uses a separate client with one public ACP connection per assignment.
+It selects Node.js, `@agentclientprotocol/claude-agent-acp@0.70.0`, and that
+adapter's installed `@agentclientprotocol/sdk@1.3.0`; it does not select `acpx`.
+Startup records four absolute paths and SHA-256 fingerprints: Node, the adapter
+entry, its actual `dist/lib.js` import, and the SDK entry.
+The client creates the session, sets the configured model and effort, prompts,
+closes the session, and waits for child cleanup. Automated sessions disable
+transcript persistence and automatic memory; the interactive Main retains its
+normal CLI history.
+
+Planner and Reviewer permit `Read`, `Grep`, and `Glob`. Worker also permits
+`Write` and `Edit` within the user-declared TaskSpec scope. A fixed wrapper
+enforces these tool and path checks. The TaskSpec's allowed and forbidden paths
+restrict Write/Edit only. Read/Grep/Glob can read the workspace, subject to
+protected-path and link/file-type checks.
+TaskSpecs must match the catalog captured from `[[tasks]]` at startup, so Main
+cannot introduce another scope or verification command through a dispatch.
+See [configuration](configuration.md) for the schema and review/verification flow.
+Installed dependency trees remain trusted; entry-file fingerprints do not make
+the entire import closure hermetic or prevent hostile same-user filesystem races.
 
 ## Authentication and subscription
 

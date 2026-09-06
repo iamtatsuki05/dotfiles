@@ -37,6 +37,10 @@ from .contracts import (
     Status,
     StatusReceipt,
     StopResult,
+    TaskDispatch,
+    TaskGet,
+    TaskStatusReceipt,
+    TaskVerify,
     TeamRuntime,
     WaitReceipt,
     WorkflowState,
@@ -127,8 +131,16 @@ class WorkflowEngine(TeamRuntime):
             return result
         if isinstance(request, Attach):
             return self._attach(request)
-        if isinstance(request, RolePrompt):
+        if isinstance(request, (RolePrompt, TaskDispatch)):
             return self._prompt(request)
+        if isinstance(request, (TaskGet, TaskVerify)):
+            task_result = self._backend.request(request)
+            if (
+                not isinstance(task_result, TaskStatusReceipt)
+                or task_result.task_id != request.task_id
+            ):
+                self._protocol_failure("backend returned an invalid task receipt")
+            return task_result
         if isinstance(request, RoleWait):
             return self._wait(request)
         if isinstance(request, RoleRead):
@@ -186,8 +198,9 @@ class WorkflowEngine(TeamRuntime):
             )
         return result
 
-    def _prompt(self, request: RolePrompt) -> Assignment:
-        if not request.text.strip():
+    def _prompt(self, request: RolePrompt | TaskDispatch) -> Assignment:
+        text = request.message if isinstance(request, TaskDispatch) else request.text
+        if not isinstance(text, str) or not text.strip():
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
                 "role prompt must be a non-empty string",

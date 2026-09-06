@@ -8,7 +8,7 @@ OS sandboxではなく、providerのsubscriptionをAPI keyの契約へ変える�
 
 ## agent-teamが実行するもの
 
-検証済みのACP profileは、Claudeを使うread-onlyのPlannerまたはReviewerだけです。
+Orcaで検証済みのACP profileは、Claudeを使うread-onlyのPlannerまたはReviewerです。
 
 - Node.js `22.13.0`以降
 - `acpx@0.13.2`
@@ -30,7 +30,7 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-起動planにACP roleが含まれる場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、
+Orcaの起動planにACP roleが含まれる場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、
 package manifestのexact versionを確認します。解決した3つのabsolute pathとSHA-256 fingerprintを
 roleのlaunch snapshotへ保存します。role起動経路はOrca Taskを作る前に保存bindingを再検証し、
 runnerもACP実行の前に再検証して、各session operationで同じfileを使います。実行ファイルが不足、
@@ -44,6 +44,26 @@ Codex ACPは意図的に拒否しています。negative testで、ACPの`deny-a
 Codex internal toolのwriteを防げないことを確認したためです。検証済みのworkspace-write Workerと
 read-only Reviewerには、隔離した`CODEX_HOME`とprovider native permission profileを持つdirect
 Codexを使います。
+
+## native tmuxのACP
+
+native tmuxでは専用clientが、assignmentごとに公開ACPの接続を1本使います。
+必要な依存はNode.js、`@agentclientprotocol/claude-agent-acp@0.70.0`、そのadapterに
+導入された`@agentclientprotocol/sdk@1.3.0`です。`acpx`は選択しません。
+起動時にNode、adapter entry、実際にimportする`dist/lib.js`、SDK entryの計4 fileについて、
+absolute pathとSHA-256 fingerprintを保存します。
+clientはsession作成、設定済みmodelとeffortの適用、prompt、session終了、子プロセスの
+回収確認までを行います。自動実行するsessionは履歴保存と自動memoryを無効にしますが、
+対話用Mainの通常CLI履歴は保持します。
+
+PlannerとReviewerは`Read`、`Grep`、`Glob`を使えます。Workerはさらに、ユーザーが
+宣言したTaskSpecの範囲で`Write`と`Edit`を使えます。TaskSpecの許可・禁止pathが制限するのは
+Write/Editだけです。Read/Grep/Globは、保護pathやlink・file typeの検査を除き、workspace内を
+読めます。固定wrapperがこれらを検査します。TaskSpecは起動時の`[[tasks]]`と完全一致する
+必要があるため、Mainはdispatchで別の変更範囲や検証commandを追加できません。
+schemaとレビュー・検証の流れは[設定リファレンス](configuration_JA.md)を参照してください。
+導入済みの依存package自体は信頼する前提です。entry fileのfingerprintは、読み込まれる
+全依存fileの固定や、同じユーザー権限の別プロセスによる悪意ある同時差し替えを保証しません。
 
 ## 認証とsubscription
 

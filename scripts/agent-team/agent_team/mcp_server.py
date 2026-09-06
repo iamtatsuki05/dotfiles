@@ -1624,6 +1624,8 @@ def _observe_delivery(
 
 
 def execute_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
+    if name in {"task_dispatch", "task_get", "task_verify"}:
+        raise ToolInputError(f"Orca {name} is not implemented")
     path = state_path()
     reservation = _LifecycleReservation(path, create_parent=False)
     try:
