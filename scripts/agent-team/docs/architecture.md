@@ -8,9 +8,11 @@
 `agent-team` separates orchestration from agent execution and selects the
 backend from the version-3 `runtime` field. `runtime = "orca"` keeps the
 existing four-role Orca contract. `runtime = "tmux"` is an experimental native
-path that requires Main and accepts only optional verified Claude ACP
-read-only Planner/Reviewer roles. Worker and every other native profile are
-rejected before state, Task, Dispatch, or process effects are created.
+path that requires direct Claude Main and accepts optional verified Claude ACP
+Planner, Worker, and Reviewer roles. Native Worker assignments require an
+exact TaskSpec from the config's `[[tasks]]` catalog. Other unsupported native
+profiles are rejected before state, Task, Dispatch, or process effects are
+created.
 
 ### Orca runtime
 
@@ -20,12 +22,12 @@ completion and an Orca `worker_done` message.
 
 ```mermaid
 flowchart TD
-    User --> Main[Canonical Main: direct Claude]
+    User --> Main[Canonical Main: direct Claude Fable]
     Main --> MCP[agent_team MCP server]
     MCP --> Run[Orca Run]
     Run --> Planner[Planner: Claude through ACP]
-    Run --> Worker[Worker: direct Codex]
-    Run --> Reviewer[Reviewer: direct Codex]
+    Run --> Worker[Worker: direct Codex Astra]
+    Run --> Reviewer[Reviewer: direct Codex Astra]
     Planner --> Done[worker_done / question / escalation]
     Worker --> Done
     Reviewer --> Done
@@ -36,18 +38,16 @@ flowchart TD
 
 `TmuxBackend` owns one private tmux server for Main. `native_main` supervises
 the owned Main process group, while the shared MCP framing layer lazily selects
-the Orca or native backend from saved state. Native ACP Planner/Reviewer turns
-run as launcher-owned background processes. They publish completion through
-`publish_completion`; tmux pane text is never interpreted as a lifecycle event.
-Only Main has a TTY to attach. The native path has passed a model-free
-start/status/stop smoke with Orca and Codex absent, a workspace path containing
-spaces, and a deleted config. That does not establish a native/provider
-end-to-end turn.
+the Orca or native backend from saved state. Native ACP Planner, Worker, and
+Reviewer turns run as launcher-owned background processes. They publish
+completion through `publish_completion`; tmux pane text is never interpreted as
+a lifecycle event. Only Main has a TTY to attach. The model-free native
+start/status/stop smoke passed with Orca and Codex absent, a workspace path
+containing spaces, and a deleted config.
 
-Herdr and Zellij are not current agent-team runtimes. The broader direction
-still includes them, together with native Worker support, all ten harnesses,
-arbitrary role graphs, no-Main configurations, and TaskSpec/review/verification/
-parallel workflows; those capabilities are not implemented here. Giving two
+Herdr and Zellij are not current agent-team runtimes. Arbitrary role graphs,
+no-Main configurations, explicit parallel workflows, most of the ten harnesses,
+and native ACP question handling remain outside this milestone. Giving two
 systems ownership of the same worker would make completion and cleanup
 ambiguous.
 
@@ -55,7 +55,7 @@ ambiguous.
 
 | Component | Responsibility |
 |---|---|
-| `config.toml` | Declares fixed roles, providers, transports, models, efforts, prompts, and permissions. |
+| `config.toml` | Declares fixed roles, providers, transports, models, efforts, prompts, permissions, and native `[[tasks]]` entries. |
 | `agent_team/config_v4.py`, `topology.py` | Validate named team catalogs and render their graphs. Runnable catalog entries explicitly reference a matching version-3 launch configuration. |
 | `agent_team/cli.py` | Parses and validates config/arguments, selects `WorkflowEngine(OrcaBackend)` or `WorkflowEngine(TmuxBackend)`, renders compatibility JSON, and runs ACP turns. |
 | `agent_team/backend.py` | Owns the Orca `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
@@ -66,7 +66,14 @@ ambiguous.
 | `agent_team/locking.py` | Owns the stable per-team lifecycle reservation, shared by state writes and runtime operations without importing a backend. |
 | `agent_team/cleanup.py` | Owns the private stop journal, startup-recovery sidecar, and exact local cleanup/rollback phases. |
 | `agent_team/mcp_protocol.py` | Owns shared MCP schemas, JSON-RPC framing, and lazy backend-independent serving. |
-| `agent_team/mcp_server.py`, `native_mcp.py` | Map the seven fixed Main-facing tools to the selected Orca or native backend while preserving the shared lifecycle reservation. |
+| `agent_team/mcp_server.py`, `native_mcp.py` | Map the ten Main-facing tools to the selected Orca or native backend while preserving the shared lifecycle reservation. Native task tools are implemented by the native backend; Orca does not silently emulate them. |
+| `agent_team/task_spec.py` | Validates the exact immutable TaskSpec schema and its path/verification fields. |
+| `agent_team/task_execution.py` | Persists TaskSpec digests, dependency admission, review decisions, and per-stage round limits. |
+| `agent_team/task_verification.py` | Runs declared fixed argv against the approved workspace revision and records bounded evidence. |
+| `agent_team/workspace_revision.py` | Creates a bounded Git workspace revision and rejects symlinks and special files. |
+| `agent_team/scoped_acp.py`, `claude_scoped_agent.mjs` | Create the native Worker policy and enforce TaskSpec scope for model tool calls. |
+| `agent_team/scoped_acp_client.mjs` | Opens one direct public ACP SDK connection per native assignment and confirms cleanup. |
+| `agent_team/native_acp_dependencies.py` | Resolves Node, Claude ACP 0.70.0, and its SDK 1.3.0 dependency with exact fingerprints. |
 | `agent_team/runtime.py` | Shares identity, private-file, state-v3, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
 | `agent_team/process_identity.py` | Reads exact argv tuples on Linux and macOS so native ownership checks do not rely on display text. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |
@@ -75,17 +82,19 @@ ambiguous.
 | `agent_team/defaults/` | Bundled config and Japanese prompts used when no user config is selected. |
 | `prompts/*.md` | Defines the Japanese role contracts. |
 | Orca | Stores the Run/Task/Dispatch lifecycle and owns managed terminals. |
-| Node.js, `acpx`, `claude-agent-acp` | Run the pinned Claude ACP adapter through the saved executable binding and return final text plus an exit status. |
+| Node.js, `acpx`, `claude-agent-acp` | Run the pinned Orca Claude ACP adapter through the saved executable binding and return final text plus an exit status. |
 
 Orca's Copilot read-only Planner and Reviewer profiles run through the common
 Orca lifecycle and state-v3 snapshot integration. The OpenCode provider adapter
 is also implemented, but remains rejected until its profile-specific boundary
 and lifecycle are verified live. Native tmux does not enable these profiles: it
-accepts only direct Claude Main and the optional verified Claude ACP
-read-only Planner/Reviewer roles. A background profile runs one fixed provider
-invocation against a fresh read snapshot rather than a TUI terminal or ACP
-session. The snapshot excludes `.git`, symlinks, special files, ignored files,
-secret-like paths, provider configuration, and agent instructions.
+accepts only direct Claude Main and optional verified Claude ACP
+read-only Planner/Reviewer roles plus the scoped workspace-write Worker. The
+direct background profiles run one fixed provider invocation against a fresh
+read snapshot rather than a TUI terminal or ACP session. That snapshot excludes
+`.git`, symlinks, special files, ignored files, secret-like paths, provider
+configuration, and agent instructions; native Worker scope is derived from its
+declared TaskSpec instead.
 
 ## Canonical Main is direct Claude and the only user-facing agent
 
@@ -93,13 +102,19 @@ In the canonical config, Main starts as a direct Claude process with the
 `agent_team` MCP server and no Bash tool. A custom config may select direct
 Codex Main; it keeps the same fixed MCP surface but uses Codex-specific launch
 and permission settings. In either case, Main is the only user-facing role.
+Native Main receives the user-declared `[[tasks]]` catalog in its startup
+instructions and cannot invent a task ID, scope, dependency, or verification
+command at dispatch time.
 
 The bundled defaults use `fable` for Main and Planner and `gpt-6-astra` for
 Worker and Reviewer. The role graph does not change those launch-config model
 choices.
 
-The MCP server exposes only:
+The MCP server exposes ten tools:
 
+- `task_get`
+- `task_verify`
+- `task_dispatch`
 - `role_get`
 - `role_prompt`
 - `role_wait`
@@ -109,7 +124,9 @@ The MCP server exposes only:
 - `message_reply`
 
 Main cannot choose an arbitrary command or role name through this MCP surface.
-The fixed surface keeps agent output separate from process-control authority.
+For native tmux, `task_dispatch` accepts only an exact TaskSpec from the
+config-declared catalog. The fixed surface keeps agent output separate from
+process-control authority.
 
 ## Orca direct roles use Orca-supervised terminals
 
@@ -127,26 +144,31 @@ Only the current Orca Unix socket is added to the profile; no external domain
 is allowed by agent-team.
 
 In `runtime = "tmux"`, direct Claude Main runs under the private tmux server and
-the `native_main` supervisor. Native tmux does not provide a direct Worker or
-Reviewer role.
+the `native_main` supervisor. Native Worker and Reviewer roles are Claude ACP
+background assignments; native tmux does not provide direct Worker or Reviewer
+roles.
 
 ## ACP roles use a bare Dispatch and a trusted runner
 
 In `runtime = "orca"`, the canonical Planner uses Claude through ACP. acpx is
 not an Orca-recognized TUI, so agent-team uses a bare terminal without
-pretending that it is a supervised native agent. In `runtime = "tmux"`, the
-same trusted runner is used for each selected Planner or Reviewer, without a
-TTY or pane-based completion path.
+pretending that it is a supervised native agent. In `runtime = "tmux"`, each
+selected Claude ACP Planner, Worker, or Reviewer uses the native public SDK
+client, without a TTY or pane-based completion path.
 
-Before starting an ACP role, startup requires Node.js `22.13.0` or newer and
-the exact `acpx@0.13.2` and
+Before starting an Orca ACP role, startup requires Node.js `22.13.0` or newer
+and the exact `acpx@0.13.2` and
 `@agentclientprotocol/claude-agent-acp@0.70.0` packages. It resolves only the
-selected ACP roles' `node`, `acpx`, and `claude-agent-acp` files, verifies their
-package manifests, and stores absolute paths with SHA-256 fingerprints. The
-Orca role-start path rechecks that binding before creating the Orca Task; the
-native role-start path rechecks it before starting its ACP runner. The runner
-uses the same files for each session operation. It never invokes `npm` or
-`npx`; a direct-only launch does not resolve ACP dependencies.
+selected Orca roles' `node`, `acpx`, and `claude-agent-acp` files, verifies
+their package manifests, and stores absolute paths with SHA-256 fingerprints.
+The Orca role-start path rechecks that binding before creating the Orca Task.
+
+Native tmux has a separate dependency binding: Node.js `22.13.0` or newer,
+`@agentclientprotocol/claude-agent-acp@0.70.0`, and its dependency
+`@agentclientprotocol/sdk@1.3.0`. It resolves and fingerprints `node`, the
+Claude ACP entrypoint and `dist/lib.js`, and the SDK entrypoint. Native does not select or invoke
+`acpx`, `npm`, or `npx`. Both paths use saved files and fail closed on missing
+or changed dependencies; direct-only launches do not resolve ACP dependencies.
 
 For the Orca path:
 
@@ -159,15 +181,71 @@ For the Orca path:
 6. The runner closes and prunes its exact acpx session.
 7. The runner, not the agent text, sends one matching Orca `worker_done`.
 
-For the native path, the backend saves the assignment before starting the
-launcher-owned ACP runner. The runner performs the same pinned ACP operations
-and calls `publish_completion` with the matching Run, Task, Dispatch, terminal,
-and nonce identity. `native_backend` turns that durable result into the shared
-`worker_done` event; tmux pane text is never used as completion evidence.
+For the native path, a private pipe gate holds the child until the backend
+has validated and durably saved its PID, private process group, and exact argv.
+Only then does the gate execute the ACP runner. Startup rollback signals a
+process group only when ownership is proven; uncertain state remains retained.
+The runner imports the saved public SDK entry and
+uses one direct connection for the assignment:
 
-The agent command includes a team/role/nonce marker. Pruning is restricted to
-that exact command, so unrelated acpx sessions are not removed. Native cleanup
-also requires the runner's exact argv and private process group to be proven.
+```text
+initialize -> session/new -> set model/effort -> prompt -> session/close
+-> connection close and bounded child cleanup
+```
+
+It then calls `publish_completion` with the matching Run, Task, Dispatch,
+terminal, and nonce identity. `native_backend` turns that durable result into
+the shared `worker_done` event; tmux pane text is never used as completion
+evidence. Native SDK persistence is disabled with `persistSession=false` and
+`autoMemoryEnabled=false`; the interactive Main's normal Claude history remains
+in the normal store. This is a direct SDK connection, not the provider's
+direct/model transport.
+
+The agent command includes a team/role/nonce marker. Orca pruning is restricted
+to that exact command, so unrelated acpx sessions are not removed. Native
+cleanup instead verifies the runner's exact argv and private process group;
+there is no native acpx session store to prune.
+
+## Native TaskSpec and review gates are durable
+
+Native tmux users declare complete TaskSpecs in the version-3 config as
+`[[tasks]]` tables, with one or more `[[tasks.verification]]` tables for each
+fixed-argv check. The exact fields are `task_id`, `objective`,
+`acceptance_criteria`, `allowed_paths`, `forbidden_paths`, `dependencies`,
+`verification`, `evidence_requirements`, and `consultation_conditions`.
+
+Startup validates unique task IDs, exact fields, declared dependencies, and
+dependency cycles before state or provider effects. The catalog is included in
+Main's native instructions. `task_dispatch` must exactly match one declared
+TaskSpec; it cannot add a task ID or change paths, dependencies, evidence, or
+verification argv. When no `[[tasks]]` catalog is present, read-only
+`role_prompt` remains available but structured task dispatch is rejected. Orca
+rejects the `tasks` field.
+
+The native flow is:
+
+```text
+task_dispatch(Planner or Worker)
+  -> role_wait -> role_read -> role_release -> delivery_ack
+  -> task_get
+  -> task_dispatch(Reviewer) for plan or implementation review
+  -> task_dispatch(Planner or Worker) after request_changes
+  -> task_verify after implementation approval
+```
+
+Planner and Worker results become `awaiting_plan_review` and
+`awaiting_implementation_review`. Reviewer output is one exact JSON object with
+`task_id`, `stage`, `revision`, `decision`, and `findings`. `approve` advances
+the stage, `request_changes` returns to the original writer, and `consult`
+requires user input. Plan and implementation review rounds are separate and
+both obey `max_review_rounds`.
+
+Implementation review binds to the workspace revision captured when its
+Reviewer assignment is prepared. `task_verify` requires implementation
+approval, no active role or Delivery, and the same revision. It runs every
+declared argv with `shell=False`, checks the revision before and after commands,
+and stores bounded errors plus stdout/stderr SHA-256 hashes. The task becomes
+`completed` only when all commands pass and cleanup is confirmed.
 
 ## Lifecycle advances only on matching identities
 
@@ -205,10 +283,11 @@ workspace, config path, Run, Main terminal, role specifications, and active
 assignment. Model, effort, permission, and instructions are copied at launch;
 an ACP runner does not reinterpret a changed config during the same team run.
 
-An ACP role specification also stores the resolved absolute `node`, `acpx`, and
-`claude-agent-acp` paths and their SHA-256 fingerprints. The runner uses and
-verifies this saved binding for every ACP lifecycle operation; missing or
-changed files fail closed.
+An Orca ACP role specification stores the resolved absolute `node`, `acpx`, and
+`claude-agent-acp` paths and their SHA-256 fingerprints. A native ACP role
+stores absolute `node`, Claude ACP entry and library, and SDK dependency paths with the same binding
+check. Each runner uses and verifies its saved binding; missing or changed
+files fail closed.
 
 ACP prompt sidecars and state files are current-user-owned private files.
 State writes are atomic and fsync their parent directory after replace. Prompt
@@ -221,7 +300,8 @@ Native state stores a nonce-tagged tmux receipt and the supervised Main process
 receipt. Native ownership checks compare the saved executable, private process
 group, and exact argv; `process_identity.py` supports these argv checks on Linux
 and macOS. ACP assignments store their runner PID, process group, argv, prompt
-sidecar, and private cleanup roots until `role_release` confirms cleanup.
+sidecar, TaskSpec scope, and private cleanup roots until `role_release` confirms
+cleanup.
 
 ## Failure handling is fail-closed
 
@@ -254,6 +334,15 @@ sidecar, and private cleanup roots until `role_release` confirms cleanup.
 - ACP subprocesses and native Main run in private process groups; normal exit,
   cancellation, and timeout/output-limit paths verify and reap descendants
   before returning.
+- Native Worker Read/Glob/Grep can read the workspace with protected-path and
+  link/file-type checks. TaskSpec `allowed_paths` and `forbidden_paths` restrict
+  Write/Edit only, with forbidden paths taking precedence for writes. Bash, terminal, and
+  other RPC operations are denied. This is an in-band tool boundary rather than
+  an operating-system sandbox, and does not protect against a hostile same-user
+  process swapping files concurrently.
+- Workspace revisions reject symlinks and special files and are limited to
+  5,000 files, 10 MB per file, and 100 MB total. The guard does not cover an
+  arbitrary repository.
 - The Orca and native tmux runtimes fail fast on Windows. Their contracts
   require POSIX Unix-socket or process-group semantics.
 - Orca CLI selection is deterministic: `orca` on macOS and `orca-ide` on Linux;
@@ -264,6 +353,11 @@ sidecar, and private cleanup roots until `role_release` confirms cleanup.
   following symlinks. Special files and ownership mismatches are rejected.
 - The Orca Run remains after stop as an audit record. Native tmux removes its
   local state only after the owned Main and ACP resources have verified exit.
+- If verification is interrupted or cleanup is unconfirmed, the task remains
+  `verifying` or `verification_failed` with the available evidence. New roles,
+  verification, and stop are blocked as required; automatic recovery is not
+  claimed. A `verification_failed` task with valid executed-command evidence and confirmed
+  cleanup may return to Worker within the implementation review-round limit.
 
 CLI lifecycle operations use `WorkflowEngine` with the backend selected by
 `runtime`. Orca role operations use `mcp_server`; native role operations use
@@ -293,20 +387,30 @@ and the launcher retains its existing private version-3 state.
 
 ## Security limits remain explicit
 
-ACP is a communication protocol, not a sandbox. A compatibility probe showed
-that Codex internal tools could still write when the ACP client advertised
-read-only/deny-all settings. For that reason, Codex ACP and workspace-write ACP
-are rejected. The write-capable role remains direct Codex with provider-native
-permissions.
+ACP is a communication protocol, not a sandbox. The native Worker therefore
+uses an in-band policy around public SDK tool calls. Read/Glob/Grep can read
+the workspace with protected-path and link/file-type checks; they are not
+limited by TaskSpec path lists. Write/Edit are limited to `allowed_paths`,
+with `forbidden_paths` taking precedence for writes. Bash, terminal, and other RPC calls are
+denied. The policy does not provide kernel-level protection from a hostile
+same-user concurrent file swap. Orca workspace-write remains direct Codex with
+provider-native permissions; native write is limited to the scoped Worker.
 
 The native model-free tmux lifecycle was verified with Orca and Codex absent,
 including a workspace path containing spaces and a deleted config. On
-2026-09-06, real Claude Code 2.1.261 with `fable`/`high` completed the native
-Main-to-Claude-ACP-Planner MCP cycle and public stop. Independent checks found
-no owned processes, state, socket, prompts, or private directories remaining.
+2026-09-07, a Python 3.13.15 wheel-only environment with real Claude Code
+2.1.261 `fable`/`high` completed six native Planner/Worker/Reviewer assignments:
+the intentional `a-b` implementation was rejected, `a+b` was approved at the
+same revision, and trusted fixed-argv verification succeeded. Public stop
+after removing the original config and prompts found no owned processes or
+artifacts. The 282-second repeat included the startup catalog, the durable
+PID/PGID/argv gate, and the four-file dependency binding. Its separate npm
+installation had only selected Claude ACP packages and dependencies. A separate
+active-cancel probe using the same final runtime stopped a live Worker in 1.306 seconds with zero owned processes and
+artifacts. A direct SDK probe confirmed allowed-path edit and forbidden-path
+denial with SDK persistence and auto-memory disabled.
 The earlier 2.1.112 rejection was `claude_code_version_too_old`; the same
 `fable` alias succeeded with the already-installed 2.1.261 executable.
-This verifies the read-only cycle, not the unfinished write/review workflow.
 The ambient `claude.ai` login path worked without an API key, but the
 provider's subscription billing ledger is not verified.
 
@@ -316,11 +420,10 @@ The following are remaining implementation goals, not exclusions from the
 agreed scope. They are tracked in Issues #8, #9, and #11.
 
 - Herdr and Zellij runtimes
-- Native Worker and the required Reviewer paths
 - The required profiles and real execution evidence for all ten harnesses
 - Arbitrary role graphs, no-Main execution, and explicit parallel tasks
-- TaskSpec, review decisions and limits, dependency order, and fixed-argv
-  verification of the reviewed revision before completion
+- A native ACP question/answer path
+- Automatic recovery after crash or unproven cleanup
 
 ## Intentional exclusions
 

@@ -69,6 +69,17 @@ def build_claude_argv(
         if mcp_server_path is None:
             raise LaunchValidationError("main MCP server path is required")
         argv.extend(["--append-system-prompt", instructions])
+        argv.extend(
+            [
+                "--setting-sources=",
+                "--disable-slash-commands",
+                "--settings",
+                json.dumps(
+                    {"disableAllHooks": True, "autoMemoryEnabled": False},
+                    separators=(",", ":"),
+                ),
+            ]
+        )
         mcp_config = json.dumps(
             {
                 "mcpServers": {
@@ -82,6 +93,9 @@ def build_claude_argv(
             separators=(",", ":"),
         )
         mcp_tools = [
+            "mcp__agent_team__task_get",
+            "mcp__agent_team__task_verify",
+            "mcp__agent_team__task_dispatch",
             "mcp__agent_team__role_get",
             "mcp__agent_team__role_prompt",
             "mcp__agent_team__role_wait",

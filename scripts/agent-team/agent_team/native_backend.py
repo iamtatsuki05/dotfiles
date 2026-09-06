@@ -7,6 +7,7 @@ never interpreted as a lifecycle message.
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import shutil
@@ -15,13 +16,16 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Final, cast
+from types import FrameType
+from typing import Final, NoReturn, cast
 
-from . import acp_dependencies
+from . import native_acp_dependencies
 from .adapters import (
     _process_group_exited,
     _wait_for_process_group_exit,
@@ -60,7 +64,11 @@ from .contracts import (
     Status,
     StatusReceipt,
     StopResult,
+    TaskDispatch,
+    TaskGet,
     TaskRef,
+    TaskStatusReceipt,
+    TaskVerify,
     TerminalRef,
     WaitReceipt,
 )
@@ -86,17 +94,32 @@ from .runtime import (
 from .runtime import (
     write_state as runtime_write_state,
 )
+from .scoped_acp import (
+    SCOPED_ADAPTER_ID,
+    SCOPED_AGENT,
+    SCOPED_CLIENT,
+    checked_digest,
+    create_write_policy,
+)
+from .task_execution import (
+    acknowledge_task,
+    parse_review,
+    prepare_dispatch,
+    validate_task_assignment,
+)
+from .task_spec import TaskSpec, parse_task_specs
 from .tmux import (
     CloseEvidence,
     TmuxDriver,
     TmuxInspection,
     TmuxReceipt,
 )
+from .workspace_revision import snapshot_revision
 
 NATIVE_RUNTIME: Final = "tmux"
 NATIVE_PHASES: Final = frozenset({"starting", "running", "stopping"})
 ACP_ADAPTER_ID: Final = "claude-acp-0.70.0"
-ACP_ROLES: Final = frozenset({Role.PLANNER, Role.REVIEWER})
+ACP_ROLES: Final = frozenset({Role.PLANNER, Role.WORKER, Role.REVIEWER})
 MAX_RESULT_BODY_CHARS: Final = 100_000
 PROCESS_WAIT_SECONDS: Final = 5.0
 ACP_CANCEL_GRACE_SECONDS: Final = 45.0
@@ -107,6 +130,49 @@ PENDING_DELIVERY_KIND: Final = "pending_delivery_kind"
 PENDING_DELIVERY_STAGE: Final = "pending_delivery_stage"
 PENDING_QUESTION_IDS: Final = "pending_question_ids"
 REPLIED_QUESTION_IDS: Final = "replied_question_ids"
+_RUNNER_GATE_SCRIPT: Final = (
+    "import os,sys\n"
+    "fd=int(sys.argv[1])\n"
+    "if os.read(fd, 1) != b'1':\n"
+    "    raise SystemExit(1)\n"
+    "os.close(fd)\n"
+    "os.execvpe(sys.argv[2], sys.argv[2:], os.environ)\n"
+)
+
+
+class VerificationCancelled(BaseException):
+    pass
+
+
+def _verification_pending(state: Mapping[str, object]) -> bool:
+    tasks = state.get("tasks")
+    return isinstance(tasks, Mapping) and any(
+        isinstance(task, Mapping) and task.get("status") == "verifying"
+        for task in tasks.values()
+    )
+
+
+@contextmanager
+def _verification_signals() -> Iterator[None]:
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST,
+            "verification requires the runtime process main thread",
+        )
+
+    def cancel(_signal: int, _frame: FrameType | None) -> NoReturn:
+        raise VerificationCancelled("verification interrupted")
+
+    previous = {
+        number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        for number in previous:
+            signal.signal(number, cancel)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 def _new_id() -> str:
@@ -222,6 +288,12 @@ def _spec_dict(spec: object, role: Role) -> dict[str, object]:
                 f"role spec ACP bindings are invalid: {role.value}",
             )
         result["acp_executables"] = dict(raw_executables)
+    wrapper_digest = getattr(spec, "scoped_wrapper_sha256", None)
+    if wrapper_digest is not None:
+        result["scoped_wrapper_sha256"] = wrapper_digest
+    client_digest = getattr(spec, "scoped_client_sha256", None)
+    if client_digest is not None:
+        result["scoped_client_sha256"] = client_digest
     return result
 
 
@@ -237,6 +309,10 @@ def _validate_profile(
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST,
             "native runtime requires a Main role",
+        )
+    if Role.WORKER in raw_specs and Role.REVIEWER not in raw_specs:
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST, "native Worker requires a selected Reviewer"
         )
     allowed = {Role.MAIN, *ACP_ROLES}
     unknown = [
@@ -277,9 +353,11 @@ def _validate_profile(
             expected = {
                 "provider": "claude",
                 "transport": "acp",
-                "permission": "read-only",
+                "permission": "workspace-write" if role is Role.WORKER else "read-only",
                 "execution": "background",
-                "adapter_id": ACP_ADAPTER_ID,
+                "adapter_id": SCOPED_ADAPTER_ID
+                if role is Role.WORKER
+                else ACP_ADAPTER_ID,
             }
             if any(normalized.get(key) != value for key, value in expected.items()):
                 raise RuntimeFailure(
@@ -294,13 +372,13 @@ def _validate_profile(
                 )
             if preflight:
                 try:
-                    from_dict = acp_dependencies.AcpExecutables.from_dict
+                    from_dict = native_acp_dependencies.NativeAcpExecutables.from_dict
                     executables = from_dict(raw)
                     executables.verify()
                     # The snapshot helper is part of the explicit ACP boundary.
                     # It is called before state/task/process creation so a bad
                     # binding cannot leave a native assignment behind.
-                    snapshot = acp_dependencies.adapter_snapshot(executables)
+                    snapshot = native_acp_dependencies.adapter_snapshot(executables)
                 except Exception as exc:
                     raise _runtime_error(
                         exc,
@@ -314,6 +392,8 @@ def _validate_profile(
                     )
                 acp_bindings[role.value] = executables
                 normalized["acp_executables"] = executables.as_dict()
+                normalized["scoped_wrapper_sha256"] = checked_digest(SCOPED_AGENT)
+                normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
         role_specs[role.value] = normalized
 
     if not preflight:
@@ -518,6 +598,26 @@ def _process_group_alive(pgid: int) -> bool:
     return not _process_group_exited(pgid)
 
 
+def _runner_gate_argv(
+    launch_argv: list[str], release_fd: int
+) -> tuple[list[str], tuple[str, ...]]:
+    gate_argv = [
+        sys.executable,
+        "-c",
+        _RUNNER_GATE_SCRIPT,
+        str(release_fd),
+        *launch_argv,
+    ]
+    try:
+        identity = python_process_argv(gate_argv)
+    except (ValueError, RuntimeError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH,
+            "native Python runner gate identity is unproven",
+        ) from exc
+    return gate_argv, identity
+
+
 def _runner_identity_is_owned(
     assignment: Mapping[str, object], *, verify_process: bool = True
 ) -> tuple[int, int]:
@@ -550,6 +650,39 @@ def _runner_identity_is_owned(
             ErrorCode.BACKEND_PROTOCOL_FAILURE,
             "native ACP runner argv identity is unavailable",
         )
+    accepted_argvs: tuple[tuple[str, ...], ...] = (tuple(argv),)
+    startup_argv = assignment.get("runner_startup_argv")
+    if startup_argv is not None:
+        if (
+            not isinstance(startup_argv, list)
+            or not startup_argv
+            or any(not isinstance(item, str) or not item for item in startup_argv)
+        ):
+            raise RuntimeFailure(
+                ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                "native ACP runner startup argv identity is unavailable",
+            )
+        startup_tuple = tuple(startup_argv)
+        if (
+            len(startup_tuple) < 5
+            or startup_tuple[0] != argv[0]
+            or startup_tuple[1:3] != ("-c", _RUNNER_GATE_SCRIPT)
+            or startup_tuple[4:]
+            not in {tuple(argv), (sys.executable, *tuple(argv[1:]))}
+        ):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "native ACP runner startup argv does not match state",
+            )
+        try:
+            if int(startup_tuple[3]) < 0:
+                raise ValueError
+        except ValueError as exc:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "native ACP runner startup fd is invalid",
+            ) from exc
+        accepted_argvs += (startup_tuple,)
     if verify_process and _process_group_alive(pgid):
         try:
             observed_group = os.getpgid(pid)
@@ -570,7 +703,7 @@ def _runner_identity_is_owned(
                 ErrorCode.IDENTITY_MISMATCH,
                 "native ACP runner argv ownership is unproven",
             )
-        if tuple(argv) != observed_argv:
+        if observed_argv not in accepted_argvs:
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
                 "native ACP runner argv does not match state",
@@ -721,6 +854,7 @@ def publish_completion(
     outcome: str,
     body: str,
     cleanup_confirmed: bool,
+    task_evidence: Mapping[str, object] | None = None,
 ) -> None:
     """Publish one trusted ACP completion after the runner cleaned its session."""
 
@@ -765,9 +899,9 @@ def publish_completion(
             for key, expected_value in {
                 "provider": "claude",
                 "transport": "acp",
-                "permission": "read-only",
+                "permission": "workspace-write" if role == "worker" else "read-only",
                 "execution": "background",
-                "adapter_id": ACP_ADAPTER_ID,
+                "adapter_id": SCOPED_ADAPTER_ID if role == "worker" else ACP_ADAPTER_ID,
             }.items()
         ):
             raise RuntimeFailure(
@@ -789,6 +923,37 @@ def publish_completion(
                 "native completion identity does not match assignment",
             )
         _assert_publisher(_absolute(state_path), Role(role), assignment)
+        task = validate_task_assignment(state, assignment)
+        evidence = None
+        if task is not None and role == "reviewer" and outcome == "succeeded":
+            stage = assignment.get("task_stage")
+            revision = assignment.get("task_revision")
+            if (
+                not isinstance(stage, str)
+                or not isinstance(revision, str)
+                or task_evidence is None
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH, "trusted review evidence is missing"
+                )
+            evidence = parse_review(
+                json.dumps(dict(task_evidence)),
+                task=task,
+                stage=stage,
+                revision=revision,
+            )
+            if (
+                stage == "implementation"
+                and snapshot_revision(Path(str(state["workspace"]))) != revision
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH, "reviewed workspace revision changed"
+                )
+        elif task_evidence is not None:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "task evidence requires a successful structured review",
+            )
         existing = state.get("native_result")
         if existing is not None:
             existing_fields = _native_result_fields(
@@ -800,7 +965,10 @@ def publish_completion(
                 terminal_handle=terminal_handle,
                 launch_nonce=launch_nonce,
             )
-            if existing_fields[1:] != (outcome, cleanup_confirmed, body):
+            if (
+                existing_fields[1:] != (outcome, cleanup_confirmed, body)
+                or cast(Mapping[str, object], existing).get("task_evidence") != evidence
+            ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
                     "native completion was already published",
@@ -817,6 +985,8 @@ def publish_completion(
             "body": body,
             "cleanup_confirmed": cleanup_confirmed,
             "delivery_id": _new_id(),
+            **({"logical_task_id": task.task_id} if task is not None else {}),
+            **({"task_evidence": evidence} if evidence is not None else {}),
         }
         _save_state(
             _absolute(state_path),
@@ -866,6 +1036,13 @@ class TmuxBackend(BackendPort):
 
     def start(self, spec: StartSpec) -> StartResult:
         self._ensure_supported_platform()
+        if spec.max_review_rounds is not None and (
+            type(spec.max_review_rounds) is not int or spec.max_review_rounds < 1
+        ):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "max_review_rounds must be a positive integer",
+            )
         if (
             not isinstance(spec.team_id, str)
             or not spec.team_id
@@ -879,6 +1056,20 @@ class TmuxBackend(BackendPort):
         if not _canonical(spec.workspace).is_dir():
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native workspace is not a directory"
+            )
+        if not isinstance(spec.task_specs, tuple) or any(
+            not isinstance(task, TaskSpec) for task in spec.task_specs
+        ):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "declared task specifications are invalid"
+            )
+        try:
+            parse_task_specs([task.as_dict() for task in spec.task_specs])
+        except ValueError as exc:
+            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+        if spec.task_specs and spec.max_review_rounds is None:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "declared tasks require max_review_rounds"
             )
         role_specs, _acp_bindings, main_argv = _validate_profile(
             spec, self._launcher_path, preflight=not self._resume_existing
@@ -906,8 +1097,12 @@ class TmuxBackend(BackendPort):
             return self._status()
         if isinstance(request, Attach):
             return self._attach(request)
-        if isinstance(request, RolePrompt):
+        if isinstance(request, (RolePrompt, TaskDispatch)):
             return self._prompt(request)
+        if isinstance(request, TaskGet):
+            return self._task_get(request)
+        if isinstance(request, TaskVerify):
+            return self._task_verify(request)
         if isinstance(request, RoleWait):
             return self._wait(request)
         if isinstance(request, RoleRead):
@@ -926,6 +1121,114 @@ class TmuxBackend(BackendPort):
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST, "unsupported native runtime request"
         )
+
+    @staticmethod
+    def _task_record(state: dict[str, object], task_id: str) -> dict[str, object]:
+        tasks = state.get("tasks")
+        record = tasks.get(task_id) if isinstance(tasks, dict) else None
+        if not isinstance(record, dict):
+            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "task is unknown")
+        return record
+
+    def _task_get(self, request: TaskGet) -> TaskStatusReceipt:
+        path = _state_path(self._require_state())
+        reservation = _LifecycleReservation(path, create_parent=False)
+        reservation.acquire()
+        try:
+            state = self._reload_locked(path)
+            record = self._task_record(state, request.task_id)
+            return TaskStatusReceipt(
+                request.task_id, str(record["status"]), dict(record)
+            )
+        finally:
+            reservation.release()
+
+    def _task_verify(self, request: TaskVerify) -> TaskStatusReceipt:
+        from .task_verification import run_verification
+
+        path = _state_path(self._require_state())
+        reservation = _LifecycleReservation(path, create_parent=False)
+        reservation.acquire()
+        try:
+            state = self._reload_locked(path)
+            _require_running(state)
+            if _verification_pending(state):
+                raise RuntimeFailure(
+                    ErrorCode.BUSY,
+                    "verification cleanup must be confirmed before executing another task",
+                )
+            record = self._task_record(state, request.task_id)
+            if record.get("status") != "implementation_approved":
+                raise RuntimeFailure(
+                    ErrorCode.ORDER_VIOLATION,
+                    "verification requires implementation review approval",
+                )
+            if state.get("roles") or state.get(PENDING_DELIVERY_ID) is not None:
+                raise RuntimeFailure(
+                    ErrorCode.BUSY,
+                    "consume the active role and Delivery before verification",
+                )
+            task = TaskSpec.from_dict(record["spec"])
+            revision = record.get("revision")
+            if not isinstance(revision, str):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH, "approved revision is missing"
+                )
+            verdict = parse_review(
+                json.dumps(record.get("task_evidence")),
+                task=task,
+                stage="implementation",
+                revision=revision,
+            )
+            if verdict["decision"] != "approve":
+                raise RuntimeFailure(
+                    ErrorCode.ORDER_VIOLATION, "implementation approval is missing"
+                )
+            workspace = Path(str(state["workspace"]))
+            if snapshot_revision(workspace) != revision:
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH, "approved workspace revision changed"
+                )
+            with _verification_signals():
+                record["status"] = "verifying"
+                _save_state(path, state, require_existing=True, reservation_held=True)
+                try:
+                    evidence = run_verification(task, workspace, revision)
+                except BaseException as exc:
+                    cleanup_confirmed = isinstance(
+                        exc, (VerificationCancelled, RuntimeFailure)
+                    )
+                    record["status"] = (
+                        "verification_failed" if cleanup_confirmed else "verifying"
+                    )
+                    record["verification"] = {
+                        "revision": revision,
+                        "passed": False,
+                        "commands": [],
+                        "error": "verification interrupted or failed",
+                        "cleanup_confirmed": cleanup_confirmed,
+                    }
+                    _save_state(
+                        path, state, require_existing=True, reservation_held=True
+                    )
+                    if not isinstance(exc, Exception):
+                        raise
+                    raise RuntimeFailure(
+                        ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                        "verification execution failed",
+                    ) from exc
+                record["verification"] = evidence
+                record["status"] = (
+                    "verifying"
+                    if evidence["cleanup_confirmed"] is not True
+                    else "completed"
+                    if evidence["passed"] is True
+                    else "verification_failed"
+                )
+                _save_state(path, state, require_existing=True, reservation_held=True)
+            return TaskStatusReceipt(task.task_id, str(record["status"]), dict(record))
+        finally:
+            reservation.release()
 
     def stop(self) -> StopResult:
         self._ensure_supported_platform()
@@ -1052,7 +1355,13 @@ class TmuxBackend(BackendPort):
             "run_id": run_id,
             "main_terminal": main_terminal,
             "role_specs": role_specs,
+            "task_specs": [task.as_dict() for task in spec.task_specs],
             "roles": {},
+            **(
+                {"max_review_rounds": spec.max_review_rounds, "tasks": {}}
+                if spec.max_review_rounds is not None
+                else {}
+            ),
             "native": {
                 "phase": "starting",
                 "run_nonce": run_nonce,
@@ -1181,6 +1490,7 @@ class TmuxBackend(BackendPort):
             "team_id",
             "run_id",
             "main_terminal",
+            "task_specs",
         ):
             if current.get(key) != previous.get(key):
                 raise RuntimeFailure(
@@ -1239,6 +1549,12 @@ class TmuxBackend(BackendPort):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
                 "native role launch snapshot does not match requested config",
+            )
+        declared = [task.as_dict() for task in spec.task_specs]
+        if (state.get("task_specs", [])) != declared:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "native declared TaskSpec snapshot does not match requested config",
             )
 
     def _status(self) -> StatusReceipt:
@@ -1339,16 +1655,22 @@ class TmuxBackend(BackendPort):
         }
         return AttachReceipt(Role.MAIN, TerminalRef(terminal), RunRef(run_id))
 
-    def _prompt(self, request: RolePrompt) -> Assignment:
+    def _prompt(self, request: RolePrompt | TaskDispatch) -> Assignment:
+        if request.role is Role.WORKER and not isinstance(request, TaskDispatch):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "Worker requires task_dispatch with a TaskSpec",
+            )
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not a Claude ACP role"
             )
-        if not isinstance(request.text, str) or not request.text.strip():
+        text = request.message if isinstance(request, TaskDispatch) else request.text
+        if not isinstance(text, str) or not text.strip():
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "role prompt must be a non-empty string"
             )
-        if len(request.text) > MAX_PROMPT_CHARS:
+        if len(text) > MAX_PROMPT_CHARS:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "role prompt exceeds character limit"
             )
@@ -1363,11 +1685,18 @@ class TmuxBackend(BackendPort):
         process: subprocess.Popen[bytes] | None = None
         spawn_attempted = False
         assignment_persisted = False
+        release_read: int | None = None
+        release_write: int | None = None
         try:
             state = self._reload_locked(path)
             native = _native(state)
             if native.get("phase") != "running":
                 raise RuntimeFailure(ErrorCode.BUSY, "native team is not running")
+            if _verification_pending(state):
+                raise RuntimeFailure(
+                    ErrorCode.BUSY,
+                    "verification cleanup must be confirmed before starting a role",
+                )
             roles = _required_mapping(state.get("roles"), "roles")
             if roles:
                 raise RuntimeFailure(
@@ -1378,6 +1707,27 @@ class TmuxBackend(BackendPort):
                     ErrorCode.BUSY,
                     "acknowledge the pending Delivery before starting a role",
                 )
+            task_record = None
+            if isinstance(request, TaskDispatch):
+                revision = None
+                tasks = state.get("tasks")
+                prior_task = (
+                    tasks.get(request.task.task_id)
+                    if isinstance(tasks, Mapping)
+                    else None
+                )
+                if (
+                    request.role is Role.REVIEWER
+                    and isinstance(prior_task, Mapping)
+                    and prior_task.get("status") == "awaiting_implementation_review"
+                ):
+                    revision = snapshot_revision(Path(str(state["workspace"])))
+                task_record, text = prepare_dispatch(state, request, revision=revision)
+                if len(text) > MAX_PROMPT_CHARS:
+                    raise RuntimeFailure(
+                        ErrorCode.INVALID_REQUEST,
+                        "TaskSpec prompt exceeds character limit",
+                    )
             specs = _role_specs(state)
             raw_spec = specs.get(request.role.value)
             if not isinstance(raw_spec, Mapping):
@@ -1385,9 +1735,13 @@ class TmuxBackend(BackendPort):
             expected_spec = {
                 "provider": "claude",
                 "transport": "acp",
-                "permission": "read-only",
+                "permission": "workspace-write"
+                if request.role is Role.WORKER
+                else "read-only",
                 "execution": "background",
-                "adapter_id": ACP_ADAPTER_ID,
+                "adapter_id": SCOPED_ADAPTER_ID
+                if request.role is Role.WORKER
+                else ACP_ADAPTER_ID,
             }
             if any(
                 raw_spec.get(key) != expected_value
@@ -1398,11 +1752,11 @@ class TmuxBackend(BackendPort):
                     "native role does not satisfy Claude ACP read-only capability",
                 )
             try:
-                executables = acp_dependencies.AcpExecutables.from_dict(
+                executables = native_acp_dependencies.NativeAcpExecutables.from_dict(
                     raw_spec.get("acp_executables")
                 )
                 executables.verify()
-                snapshot = acp_dependencies.adapter_snapshot(executables)
+                snapshot = native_acp_dependencies.adapter_snapshot(executables)
                 if not isinstance(snapshot, Mapping):
                     raise TypeError("ACP adapter snapshot is invalid")
             except Exception as exc:
@@ -1414,20 +1768,36 @@ class TmuxBackend(BackendPort):
                     code=ErrorCode.INVALID_REQUEST,
                 ) from exc
             launch_nonce = secrets.token_hex(16)
+            private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
+            if checked_digest(SCOPED_AGENT) != raw_spec.get(
+                "scoped_wrapper_sha256"
+            ) or checked_digest(SCOPED_CLIENT) != raw_spec.get("scoped_client_sha256"):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "scoped ACP runtime changed since team start",
+                )
+            write_policy, policy_digest = create_write_policy(
+                private_root,
+                Path(str(state["workspace"])),
+                path,
+                request.task if isinstance(request, TaskDispatch) else None,
+                executables.agent,
+                permission=str(raw_spec["permission"]),
+            )
             agent_command = build_acp_agent_command(
                 _required_string(state.get("team_id"), "team_id"),
                 request.role.value,
                 launch_nonce,
                 executables=executables,
+                **({"write_policy": write_policy} if write_policy is not None else {}),
             )
             session_name = build_acp_session_name(request.role.value, launch_nonce)
             task_id = _new_id()
             dispatch_id = _new_id()
             terminal_handle = _new_id()
             prompt_path = create_prompt_file(
-                path.parent, request.role.value, launch_nonce, request.text
+                path.parent, request.role.value, launch_nonce, text
             )
-            private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
             snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
             launch_argv = [
                 sys.executable,
@@ -1455,6 +1825,15 @@ class TmuxBackend(BackendPort):
                     ErrorCode.IDENTITY_MISMATCH,
                     "native Python runner process argv identity is unproven",
                 ) from exc
+            try:
+                release_read, release_write = os.pipe()
+                gate_launch_argv, gate_argv = _runner_gate_argv(
+                    launch_argv, release_read
+                )
+            except OSError as exc:
+                raise _runtime_error(
+                    exc, "native ACP runner gate setup failed"
+                ) from exc
             assignment = {
                 "task_id": task_id,
                 "dispatch_id": dispatch_id,
@@ -1464,14 +1843,24 @@ class TmuxBackend(BackendPort):
                 "launch_nonce": launch_nonce,
                 "prompt_path": str(prompt_path),
                 "execution": "background",
-                "adapter_id": ACP_ADAPTER_ID,
+                "adapter_id": raw_spec["adapter_id"],
                 "agent_command": agent_command,
                 "session_name": session_name,
                 "provider_private_root": str(private_root),
                 "snapshot_root": str(snapshot_root),
                 "adapter_snapshot": dict(snapshot),
                 "runner_argv": runner_argv,
+                "runner_startup_argv": list(gate_argv),
             }
+            if isinstance(request, TaskDispatch):
+                assert task_record is not None
+                assignment["task_spec"] = request.task.as_dict()
+                task_record["dispatch_id"] = dispatch_id
+                assignment["task_stage"] = task_record["stage"]
+                assignment["task_revision"] = task_record["revision"]
+            if write_policy is not None:
+                assignment["write_policy_path"] = str(write_policy)
+                assignment["write_policy_sha256"] = policy_digest
             roles[request.role.value] = assignment
             try:
                 _save_state(path, state, require_existing=True, reservation_held=True)
@@ -1482,8 +1871,10 @@ class TmuxBackend(BackendPort):
                 raise
             try:
                 spawn_attempted = True
+                # The gate keeps the ACP runner from spawning its own provider
+                # group until this backend has published runner ownership.
                 process = subprocess.Popen(
-                    launch_argv,
+                    gate_launch_argv,
                     cwd=PACKAGE_ROOT,
                     env=acp_environment(),
                     stdin=subprocess.DEVNULL,
@@ -1491,11 +1882,19 @@ class TmuxBackend(BackendPort):
                     stderr=subprocess.DEVNULL,
                     shell=False,
                     start_new_session=True,
+                    pass_fds=(release_read,),
                 )
             except Exception as exc:
                 # The assignment remains durable, because the process effect is
                 # unknown once a spawn call has been attempted.
                 raise _runtime_error(exc, "native ACP runner startup failed") from exc
+            finally:
+                if release_read is not None:
+                    try:
+                        os.close(release_read)
+                    except OSError:
+                        pass
+                    release_read = None
             pid = process.pid
             assignment["runner_pid"] = pid
             self._runners[request.role.value] = process
@@ -1509,12 +1908,31 @@ class TmuxBackend(BackendPort):
                     "native ACP runner process group is unproven",
                 ) from exc
             assignment["runner_process_group_id"] = pgid
+            identity_error: RuntimeFailure | None = None
+            try:
+                _runner_identity_is_owned(assignment)
+            except RuntimeFailure as exc:
+                identity_error = exc
             _save_state(path, state, require_existing=True, reservation_held=True)
-            if pgid != pid:
+            if identity_error is not None:
+                raise identity_error
+            if release_write is None:
                 raise RuntimeFailure(
-                    ErrorCode.IDENTITY_MISMATCH,
-                    "native ACP runner process group is not private",
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "native ACP runner gate release is unavailable",
                 )
+            try:
+                if os.write(release_write, b"1") != 1:
+                    raise RuntimeFailure(
+                        ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                        "native ACP runner gate release was incomplete",
+                    )
+            finally:
+                try:
+                    os.close(release_write)
+                except OSError:
+                    pass
+                release_write = None
             return self._assignment_receipt(state, request.role)
         except RuntimeFailure:
             if not spawn_attempted and not assignment_persisted:
@@ -1522,7 +1940,7 @@ class TmuxBackend(BackendPort):
                     prompt_path, private_root, snapshot_root, path, request.role
                 )
             elif process is not None:
-                self._stop_failed_runner(process)
+                self._stop_failed_runner(process, assignment)
             raise
         except Exception as exc:
             if not spawn_attempted and not assignment_persisted:
@@ -1530,13 +1948,40 @@ class TmuxBackend(BackendPort):
                     prompt_path, private_root, snapshot_root, path, request.role
                 )
             elif process is not None:
-                self._stop_failed_runner(process)
+                self._stop_failed_runner(process, assignment)
             raise _runtime_error(exc, "native role startup failed") from exc
         finally:
+            for fd in (release_read, release_write):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
             reservation.release()
 
     @staticmethod
-    def _stop_failed_runner(process: subprocess.Popen[bytes]) -> None:
+    def _stop_failed_runner(
+        process: subprocess.Popen[bytes],
+        assignment: Mapping[str, object] | None = None,
+    ) -> None:
+        if assignment is not None and process.poll() is None:
+            try:
+                pid, pgid = _runner_identity_is_owned(assignment)
+            except RuntimeFailure:
+                pass
+            else:
+                if pid == process.pid:
+                    _terminate_process_group(
+                        pid, pgid, grace_seconds=ACP_CANCEL_GRACE_SECONDS
+                    )
+                    try:
+                        process.wait(timeout=PROCESS_WAIT_SECONDS)
+                    except subprocess.TimeoutExpired as exc:
+                        raise RuntimeFailure(
+                            ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                            "native failed runner exit is unconfirmed; assignment retained",
+                        ) from exc
+                    return
         if process.poll() is None:
             process.terminate()
         try:
@@ -1929,6 +2374,9 @@ class TmuxBackend(BackendPort):
                     ErrorCode.BUSY, "native role cleanup is still pending"
                 )
             _native(state)["last_ack"] = request.delivery_id._value
+            result = state.get("native_result")
+            if isinstance(result, Mapping) and "logical_task_id" in result:
+                acknowledge_task(state, result)
             _clear_pending(state)
             state.pop("native_result", None)
             _save_state(path, state, require_existing=True, reservation_held=True)
@@ -1977,6 +2425,11 @@ class TmuxBackend(BackendPort):
         self, path: Path
     ) -> tuple[dict[str, object], TmuxReceipt, dict[str, object], Role | None]:
         state = self._reload_locked(path)
+        if _verification_pending(state):
+            raise RuntimeFailure(
+                ErrorCode.BUSY,
+                "verification process cleanup is unconfirmed; task state is retained",
+            )
         pending = state.get(PENDING_DELIVERY_ID)
         if pending is not None:
             raise RuntimeFailure(

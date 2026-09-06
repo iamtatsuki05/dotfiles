@@ -371,6 +371,49 @@ class AdapterSafetyTest(unittest.TestCase):
                     env={"PATH": os.environ["PATH"]},
                 )
 
+    def test_process_runner_reaps_child_when_caller_is_interrupted(self) -> None:
+        children = []
+
+        def interrupt(process, *_args, **_kwargs):
+            children.append(process)
+            raise KeyboardInterrupt
+
+        try:
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch(
+                    "agent_team.adapters._bounded_communicate", side_effect=interrupt
+                ),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                ProcessRunner().run(
+                    (sys.executable, "-c", "import time; time.sleep(60)"),
+                    cwd=Path(directory),
+                    env={"PATH": os.environ["PATH"]},
+                )
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(
+                children[0].poll(), "interrupted runner left its child alive"
+            )
+            self.assertTrue(
+                all(
+                    stream is None or stream.closed
+                    for stream in (
+                        children[0].stdin,
+                        children[0].stdout,
+                        children[0].stderr,
+                    )
+                )
+            )
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    if stream is not None:
+                        stream.close()
+
     def test_process_runner_terminates_process_group_on_timeout(self) -> None:
         runner = ProcessRunner(max_output_bytes=1024)
         with tempfile.TemporaryDirectory() as temp_dir:

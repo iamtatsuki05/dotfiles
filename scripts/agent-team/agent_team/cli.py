@@ -22,6 +22,7 @@ from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .adapters import (
     AdapterContext,
     AdapterSnapshot,
+    ExecutionError,
     FileIdentity,
     ProcessRunner,
     _terminate_process_group,
@@ -53,6 +54,7 @@ from .harness_launch import (
     build_codex_argv,
     build_plan_role_command,
 )
+from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
 from .registry import (
     CANONICAL_HARNESSES,
     adapter_id_for_profile,
@@ -84,7 +86,11 @@ from .runtime import (
 from .runtime import (
     write_state as runtime_write_state,
 )
+from .scoped_acp import SCOPED_ADAPTER_ID, client_argv, validate_write_policy
+from .task_execution import parse_review
+from .task_spec import TaskSpec, parse_task_specs
 from .workflow import WorkflowEngine
+from .workspace_revision import snapshot_revision
 
 if TYPE_CHECKING:
     from .backend import OrcaBackend
@@ -161,6 +167,7 @@ class TeamConfig:
     max_review_rounds: int
     main: RoleConfig
     roles: dict[str, RoleConfig]
+    task_specs: tuple[TaskSpec, ...] = ()
 
 
 def require_string(table: dict[str, object], key: str, context: str) -> str:
@@ -227,11 +234,8 @@ def parse_role(
         require_profile(provider, role, transport, permission)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
-    if transport == "acp":
-        if context == "main":
-            raise ConfigError("main.transport='acp' is not supported")
-        if permission == "workspace-write":
-            raise ConfigError("workspace-write roles cannot use ACP transport")
+    if transport == "acp" and context == "main":
+        raise ConfigError("main.transport='acp' is not supported")
     prompt = require_string(table, "prompt", context)
     return RoleConfig(
         provider=provider,
@@ -259,6 +263,8 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
     runtime = require_string(data, "runtime", "config")
     if runtime not in {"orca", "tmux"}:
         raise ConfigError("runtime must be 'orca' or 'tmux'")
+    if "tasks" in data and runtime != "tmux":
+        raise ConfigError("declared tasks require runtime='tmux'")
     team_prefix = require_string(data, "team_prefix", "config")
     if re.fullmatch(r"[a-z][a-z0-9-]{0,23}", team_prefix) is None:
         raise ConfigError("team_prefix must match [a-z][a-z0-9-]{0,23}")
@@ -293,6 +299,15 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
         for role, permission in ROLE_PERMISSIONS.items()
         if runtime == "orca" or role in raw_roles
     }
+    if "worker" in roles and roles["worker"].transport == "acp":
+        if runtime != "tmux":
+            raise ConfigError("scoped Claude ACP Worker requires runtime='tmux'")
+        if "reviewer" not in roles:
+            raise ConfigError("scoped Claude ACP Worker requires a Reviewer")
+    try:
+        task_specs = parse_task_specs(data.get("tasks", []))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     return TeamConfig(
         config_path=resolved_path,
         runtime=runtime,
@@ -300,6 +315,7 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
         max_review_rounds=max_review_rounds,
         main=main,
         roles=roles,
+        task_specs=task_specs,
     )
 
 
@@ -501,6 +517,12 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
         "state_path": values["state_path"],
         **({"orca_socket": values["orca_socket"]} if runtime == "orca" else {}),
         "roles": roles,
+        "task_specs": state.get("task_specs", []),
+        **(
+            {"max_review_rounds": state["max_review_rounds"]}
+            if "max_review_rounds" in state
+            else {}
+        ),
     }
 
 
@@ -509,6 +531,44 @@ def role_instructions(role: str, config: TeamConfig, state_path: Path) -> str:
     base = role_config.prompt_path.read_text(encoding="utf-8").rstrip()
     if role != "main":
         return base
+    if config.runtime == "tmux":
+        return (
+            f"{base}\n\n## native実行時の契約\n"
+            f"利用可能なroleは{', '.join(config.roles) or 'なし'}です。"
+            "起動方法、判定形式、完了条件は以下の契約に従ってください。\n"
+            "実装は起動設定でユーザーが宣言したTaskSpecを`task_dispatch`に渡します。"
+            "新しいタスクの追加、task_id・目的・変更範囲・固定argvなどの変更は禁止です。"
+            "未宣言の作業はユーザーに設定の更新とチームの再起動を依頼してください。"
+            "設計が必要ならPlannerから始め、計画レビュー承認後にWorkerへ進みます。"
+            "簡単な作業はWorkerから始められます。構成にないroleは起動しません。\n"
+            "各roleの`role_wait`で完了を待ち、`role_read`、`role_release`、`delivery_ack`の順に処理します。"
+            "これらが終わるまで次のroleを起動してはいけません。"
+            "質問・相談が必要ならユーザーへ提示し、推測で回答・再実行しません。\n"
+            "`task_get`でタスクの状態を確認します。awaiting_plan_reviewまたは"
+            "awaiting_implementation_reviewなら同じTaskSpecをReviewerへ渡します。"
+            "構造化レビューはJSONのdecision（approve、request_changes、consult）で判定されます。"
+            "plan_approvedならWorkerへ進み、plan_changes_requestedならPlannerへ、"
+            "implementation_changes_requestedならWorkerへ差し戻します。"
+            "計画とレビューの資料はタスクに保存され、次の担当へ渡されます。\n"
+            "implementation_approvedになったら`task_verify`を呼びます。プログラムが"
+            "承認済みの同じコードの版で宣言済みコマンドを実行します。"
+            "verification_failedなら保存された失敗証拠を確認し、許可範囲内の修正をWorkerへ依頼します。"
+            "consultation_required、failed、停止やcleanupの未確認は完了として扱いません。"
+            "task_getのstatusがcompletedになった場合だけ完了を報告してください。"
+            "Reviewerの承認やroleの成功通知だけではタスク全体は完了しません。\n"
+            f"レビュー上限は計画・実装それぞれ初回を含め{config.max_review_rounds}回です。"
+            "上限を避けるため別task_idで同じ作業を再登録してはいけません。\n"
+            "`role_prompt`はTaskSpecを使わない読み取り専用の調査に限ります。"
+            "Workerがない構成では変更実装を始めず、調査結果を報告してください。"
+            "実装、検証結果の捏造、未選択のbackend/providerへの切替は行わず、MCPの固定ツールで進行してください。\n"
+            "\n起動時に宣言されたTaskSpec（空配列なら構造化タスクは実行できません）:\n"
+            + json.dumps(
+                [task.as_dict() for task in config.task_specs],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
+        )
     return (
         f"{base}\n\n"
         "## 実行時の契約\n"
@@ -662,11 +722,16 @@ def acp_agent_command(
     role: str,
     launch_nonce: str,
     *,
-    executables: AcpExecutables,
+    executables: AcpExecutables | NativeAcpExecutables,
+    write_policy: Path | None = None,
 ) -> str:
     try:
         return build_acp_agent_command(
-            team_id, role, launch_nonce, executables=executables
+            team_id,
+            role,
+            launch_nonce,
+            executables=executables,
+            **({"write_policy": write_policy} if write_policy is not None else {}),
         )
     except RuntimeValidationError as exc:
         raise ConfigError(str(exc)) from exc
@@ -680,6 +745,7 @@ def acp_argv(
     model: str,
     instructions: str,
     operation: tuple[str, ...],
+    write_policy: Path | None = None,
 ) -> list[str]:
     """Build one exact, non-shell ACPX invocation."""
 
@@ -692,6 +758,7 @@ def acp_argv(
             instructions=instructions,
             operation=operation,
             timeout_seconds=ACP_TIMEOUT_SECONDS,
+            **({"write_policy": write_policy} if write_policy is not None else {}),
         )
     except RuntimeValidationError as exc:
         raise ConfigError(str(exc)) from exc
@@ -707,14 +774,19 @@ def _saved_acp_executables(spec: dict[str, object]) -> AcpExecutables:
 
 
 def _validate_acp_assignment_snapshot(
-    assignment: dict[str, object], executables: AcpExecutables
+    assignment: dict[str, object], executables: AcpExecutables | NativeAcpExecutables
 ) -> None:
     snapshot = assignment.get("adapter_snapshot")
     identity = snapshot.get("identity") if isinstance(snapshot, dict) else None
     if not isinstance(snapshot, dict) or not isinstance(identity, dict):
         raise ConfigError("ACP assignment has an invalid executable snapshot")
     try:
-        current = executables.client.stat()
+        entry = (
+            executables.sdk
+            if isinstance(executables, NativeAcpExecutables)
+            else executables.client
+        )
+        current = entry.stat()
     except OSError as exc:
         raise ConfigError("ACP assignment executable snapshot is unavailable") from exc
     expected = {
@@ -722,11 +794,18 @@ def _validate_acp_assignment_snapshot(
         "inode": current.st_ino,
         "size": current.st_size,
         "mtime_ns": current.st_mtime_ns,
-        "sha256": executables.client_sha256,
+        "sha256": executables.sdk_sha256
+        if isinstance(executables, NativeAcpExecutables)
+        else executables.client_sha256,
     }
     if (
-        snapshot.get("revision") != "acpx@0.13.2"
-        or snapshot.get("executable") != str(executables.client)
+        snapshot.get("revision")
+        != (
+            "@agentclientprotocol/sdk@1.3.0"
+            if isinstance(executables, NativeAcpExecutables)
+            else "acpx@0.13.2"
+        )
+        or snapshot.get("executable") != str(entry)
         or snapshot.get("version") != "@agentclientprotocol/claude-agent-acp@0.70.0"
         or any(identity.get(key) != value for key, value in expected.items())
     ):
@@ -825,6 +904,8 @@ def build_plan(
         }
     return {
         "runtime": config.runtime,
+        "max_review_rounds": config.max_review_rounds,
+        "task_specs": [task.as_dict() for task in config.task_specs],
         "team_id": team_id,
         "workspace": str(resolved_workspace),
         "config_path": str(config.config_path),
@@ -1217,7 +1298,7 @@ def _acp_assignment(
     terminal_handle: str,
     prompt_path: Path,
     launch_nonce: str,
-) -> tuple[dict[str, object], dict[str, object], AcpExecutables]:
+) -> tuple[dict[str, object], dict[str, object], AcpExecutables | NativeAcpExecutables]:
     state_state_path = state.get("state_path")
     if not isinstance(state_state_path, str) or state_path.resolve(
         strict=False
@@ -1245,17 +1326,37 @@ def _acp_assignment(
         spec.get("transport") != "acp"
         or spec.get("provider") != "claude"
         or spec.get("execution") != "background"
-        or spec.get("adapter_id") != "claude-acp-0.70.0"
-        or spec.get("permission") != "read-only"
+        or spec.get("adapter_id")
+        != (SCOPED_ADAPTER_ID if role == "worker" else "claude-acp-0.70.0")
+        or spec.get("permission")
+        != ("workspace-write" if role == "worker" else "read-only")
         or not isinstance(spec.get("model"), str)
         or not isinstance(spec.get("effort"), str)
         or not isinstance(spec.get("instructions"), str)
     ):
         raise ConfigError("ACP role does not satisfy the Claude read-only capability")
-    executables = _saved_acp_executables(spec)
+    if state["runtime"] == "tmux":
+        try:
+            executables: AcpExecutables | NativeAcpExecutables = (
+                NativeAcpExecutables.from_dict(spec.get("acp_executables"))
+            )
+            executables.verify()
+        except NativeAcpDependencyError as exc:
+            raise ConfigError(str(exc)) from exc
+    else:
+        executables = _saved_acp_executables(spec)
     team_id = nested_string(state, ("team_id",), "agent-team state")
+    write_policy = (
+        validate_write_policy(state, assignment, spec)
+        if state["runtime"] == "tmux"
+        else None
+    )
     if assignment.get("agent_command") != acp_agent_command(
-        team_id, role, launch_nonce, executables=executables
+        team_id,
+        role,
+        launch_nonce,
+        executables=executables,
+        **({"write_policy": write_policy} if write_policy is not None else {}),
     ):
         raise ConfigError("ACP assignment has an invalid agent command")
     session_name = assignment.get("session_name")
@@ -1284,7 +1385,7 @@ def _native_completion_run_id(
 ) -> str | None:
     """Return the run identity only when native completion can be trusted."""
 
-    if role not in {"planner", "reviewer"} or not all(
+    if role not in {"planner", "worker", "reviewer"} or not all(
         isinstance(value, str) and value
         for value in (task_id, dispatch_id, terminal_handle, launch_nonce)
     ):
@@ -1330,9 +1431,9 @@ def _native_completion_run_id(
     expected_spec = {
         "provider": "claude",
         "transport": "acp",
-        "permission": "read-only",
+        "permission": "workspace-write" if role == "worker" else "read-only",
         "execution": "background",
-        "adapter_id": "claude-acp-0.70.0",
+        "adapter_id": SCOPED_ADAPTER_ID if role == "worker" else "claude-acp-0.70.0",
     }
     if any(spec.get(key) != value for key, value in expected_spec.items()):
         return None
@@ -1534,14 +1635,38 @@ def _acp_run_turn(
             role=role,
             launch_nonce=launch_nonce,
         )
+        write_policy = (
+            validate_write_policy(state, assignment, spec)
+            if state["runtime"] == "tmux"
+            else None
+        )
         agent_command = acp_agent_command(
             nested_string(state, ("team_id",), "agent-team state"),
             role,
             launch_nonce,
             executables=executables,
+            **({"write_policy": write_policy} if write_policy is not None else {}),
         )
         session_name = acp_session_name(role, launch_nonce)
-    except (ConfigError, OSError, TypeError, RuntimeValidationError) as exc:
+        native_argv = None
+        if isinstance(executables, NativeAcpExecutables):
+            native_argv = client_argv(
+                executables,
+                agent_command,
+                workspace=workspace,
+                permission=cast(str, spec["permission"]),
+                model=model,
+                effort=effort,
+                instructions=instructions,
+                timeout_seconds=ACP_TIMEOUT_SECONDS,
+            )
+    except (
+        ConfigError,
+        OSError,
+        TypeError,
+        RuntimeValidationError,
+        NativeAcpDependencyError,
+    ) as exc:
         _publish_native_validation_failure(
             state,
             role=role,
@@ -1562,6 +1687,8 @@ def _acp_run_turn(
     failure: str | None = None
 
     def acp_command(*operation: str) -> list[str]:
+        if not isinstance(executables, AcpExecutables):
+            raise ConfigError("native ACP does not use CLI session operations")
         return acp_argv(
             workspace=workspace,
             agent_command=agent_command,
@@ -1572,32 +1699,56 @@ def _acp_run_turn(
         )
 
     try:
-        session_attempted = True
-        new_session = run_acpx(
-            acp_command("sessions", "new", "--name", session_name),
-            cwd=workspace,
-        )
-        failure = _acp_result_error(new_session, "ACP session creation")
-        if failure is None:
-            set_effort = run_acpx(
-                acp_command("set", "effort", effort, "--session", session_name),
+        if native_argv is not None:
+            result = ProcessRunner(
+                max_output_bytes=MAX_ACP_OUTPUT_CHARS * 4 + 4096
+            ).run(
+                native_argv,
                 cwd=workspace,
-            )
-            failure = _acp_result_error(set_effort, "ACP effort configuration")
-        if failure is None:
-            prompt_result = run_acpx(
-                acp_command("prompt", "--session", session_name, "--file", "-"),
-                cwd=workspace,
+                env=acp_env(),
                 input_text=prompt_text,
+                timeout_seconds=ACP_TIMEOUT_SECONDS,
             )
-            failure = _acp_result_error(prompt_result, "ACP prompt")
+            if result.returncode != 0:
+                failure = "native ACP client failed: " + _tail(
+                    result.stderr, maximum=4_000
+                )
+            else:
+                try:
+                    output = _native_client_output(result.stdout, model, effort)
+                except (ValueError, TypeError) as exc:
+                    failure = f"native ACP receipt is invalid: {exc}"
+        else:
+            session_attempted = True
+            new_session = run_acpx(
+                acp_command("sessions", "new", "--name", session_name),
+                cwd=workspace,
+            )
+            failure = _acp_result_error(new_session, "ACP session creation")
             if failure is None:
-                if not prompt_result.stdout:
-                    failure = "ACP prompt returned empty output"
-                elif len(prompt_result.stdout) > MAX_ACP_OUTPUT_CHARS:
-                    failure = "ACP prompt output exceeds character limit"
-                else:
-                    output = prompt_result.stdout
+                set_effort = run_acpx(
+                    acp_command("set", "effort", effort, "--session", session_name),
+                    cwd=workspace,
+                )
+                failure = _acp_result_error(set_effort, "ACP effort configuration")
+            if failure is None:
+                prompt_result = run_acpx(
+                    acp_command("prompt", "--session", session_name, "--file", "-"),
+                    cwd=workspace,
+                    input_text=prompt_text,
+                )
+                failure = _acp_result_error(prompt_result, "ACP prompt")
+                if failure is None:
+                    if not prompt_result.stdout:
+                        failure = "ACP prompt returned empty output"
+                    elif len(prompt_result.stdout) > MAX_ACP_OUTPUT_CHARS:
+                        failure = "ACP prompt output exceeds character limit"
+                    else:
+                        output = prompt_result.stdout
+    except ExecutionError as exc:
+        failure = str(exc)
+        if not exc.cleanup_confirmed:
+            cleanup_errors.append("native ACP process cleanup is unconfirmed")
     except AcpProcessCleanupError as exc:
         failure = str(exc)
         cleanup_errors.append(str(exc))
@@ -1627,6 +1778,22 @@ def _acp_run_turn(
                     cleanup_errors.append(prune_error)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 cleanup_errors.append(f"ACP session prune failed: {exc}")
+    task_evidence = None
+    if failure is None and role == "reviewer" and "task_spec" in assignment:
+        try:
+            task = TaskSpec.from_dict(assignment["task_spec"])
+            stage = assignment.get("task_stage")
+            revision = assignment.get("task_revision")
+            if not isinstance(stage, str) or not isinstance(revision, str):
+                raise ConfigError("review binding is missing")
+            task_evidence = parse_review(
+                output, task=task, stage=stage, revision=revision
+            )
+            if stage == "implementation" and snapshot_revision(workspace) != revision:
+                raise ConfigError("reviewed workspace revision changed")
+        except (ValueError, RuntimeError, RuntimeFailure) as exc:
+            task_evidence = None
+            failure = f"review evidence rejected: {exc}"
     if cleanup_errors:
         failure = (
             "; ".join([failure, *cleanup_errors])
@@ -1663,6 +1830,11 @@ def _acp_run_turn(
                 outcome=outcome,
                 body=body,
                 cleanup_confirmed=not cleanup_errors,
+                **(
+                    {"task_evidence": task_evidence}
+                    if task_evidence is not None and outcome == "succeeded"
+                    else {}
+                ),
             )
         else:
             _send_worker_done(state, assignment, outcome=outcome, body=body)
@@ -1676,6 +1848,34 @@ def _acp_run_turn(
         print(f"could not send worker_done: {exc}", file=sys.stderr)
         return 1
     return 0 if outcome == "succeeded" else 1
+
+
+def _native_client_output(raw: str, model: str, effort: str) -> str:
+    receipt = json.loads(raw)
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "output",
+        "session_id",
+        "model",
+        "effort",
+        "cleanup_confirmed",
+    }:
+        raise ValueError("client receipt fields are invalid")
+    if receipt["model"] != model or receipt["effort"] != effort:
+        raise ValueError("client did not confirm the selected model and effort")
+    if (
+        receipt["cleanup_confirmed"] is not True
+        or not isinstance(receipt["session_id"], str)
+        or not receipt["session_id"]
+    ):
+        raise ValueError("client session cleanup is unconfirmed")
+    output = receipt["output"]
+    if (
+        not isinstance(output, str)
+        or not output.strip()
+        or len(output) > MAX_ACP_OUTPUT_CHARS
+    ):
+        raise ValueError("client output is empty or exceeds the character limit")
+    return output
 
 
 def _background_assignment(
@@ -1958,6 +2158,8 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
                 if isinstance(raw_acp_executables, Mapping)
                 else None
             ),
+            scoped_wrapper_sha256=cast(str | None, launch.get("scoped_wrapper_sha256")),
+            scoped_client_sha256=cast(str | None, launch.get("scoped_client_sha256")),
         )
         role_specs[Role(role_name)] = role_config
     return StartSpec(
@@ -1967,6 +2169,8 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         state_path=Path(cast(str, state_path)),
         role_specs=role_specs,
         attach=attach,
+        max_review_rounds=cast(int | None, plan.get("max_review_rounds")),
+        task_specs=parse_task_specs(plan.get("task_specs", [])),
     )
 
 
@@ -2000,7 +2204,11 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
     ]
     if acp_launches:
         try:
-            executables = AcpExecutables.resolve()
+            executables = (
+                NativeAcpExecutables.resolve()
+                if plan["runtime"] == "tmux"
+                else AcpExecutables.resolve()
+            )
             node_version = subprocess.run(
                 [str(executables.node), "--version"],
                 check=False,
@@ -2009,7 +2217,12 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
                 text=True,
                 timeout=5,
             )
-        except (AcpDependencyError, OSError, subprocess.TimeoutExpired) as exc:
+        except (
+            AcpDependencyError,
+            NativeAcpDependencyError,
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as exc:
             raise ConfigError(
                 f"selected Claude ACP dependencies are unavailable: {exc}"
             ) from exc
@@ -2023,8 +2236,13 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
             r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?",
             node_version.stdout.strip(),
         )
-        if match is None or tuple(int(item) for item in match.groups()) < (22, 13, 0):
-            raise ConfigError("selected Node must be version 22.13.0 or newer")
+        minimum = (22, 0, 0) if plan["runtime"] == "tmux" else (22, 13, 0)
+        if match is None or tuple(int(item) for item in match.groups()) < minimum:
+            raise ConfigError(
+                "selected Node must be version "
+                + ".".join(map(str, minimum))
+                + " or newer"
+            )
         binding = executables.as_dict()
         for launch in acp_launches:
             launch["acp_executables"] = dict(binding)

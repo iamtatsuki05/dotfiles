@@ -320,6 +320,9 @@ class AgentTeamMcpTest(unittest.TestCase):
         self.assertEqual(
             names,
             [
+                "task_get",
+                "task_verify",
+                "task_dispatch",
                 "role_get",
                 "role_prompt",
                 "role_wait",

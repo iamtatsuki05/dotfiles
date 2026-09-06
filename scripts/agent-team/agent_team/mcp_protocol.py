@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Final
 
 from .contracts import RuntimeFailure
+from .task_spec import task_schema
 
 ExecuteTool = Callable[[str, dict[str, object]], dict[str, object]]
 ROLES: Final = ("planner", "worker", "reviewer")
@@ -32,7 +33,37 @@ def tools() -> list[dict[str, object]]:
         "required": ["role"],
         "additionalProperties": False,
     }
+    task_only = {
+        "type": "object",
+        "properties": {"task_id": {"type": "string", "minLength": 1}},
+        "required": ["task_id"],
+        "additionalProperties": False,
+    }
     return [
+        {
+            "name": "task_get",
+            "description": "タスクの工程、レビュー判定、検証証拠を取得します。",
+            "inputSchema": task_only,
+        },
+        {
+            "name": "task_verify",
+            "description": "実装レビュー承認後、同じコードの版に宣言済みの固定argvで検証を実行します。全件成功した場合だけタスクを完了にします。",
+            "inputSchema": task_only,
+        },
+        {
+            "name": "task_dispatch",
+            "description": "構造化TaskSpecを保存し、指定roleへ割り当てます。依存未完了や工程順序違反は起動前に拒否します。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "role": role_schema(),
+                    "task": task_schema(),
+                    "message": {"type": "string", "minLength": 1},
+                },
+                "required": ["role", "task", "message"],
+                "additionalProperties": False,
+            },
+        },
         {
             "name": "role_get",
             "description": "1 roleのTaskとDispatch状態を取得します。",
@@ -230,10 +261,20 @@ def emit(response: dict[str, object]) -> None:
 def serve(execute_tool: ExecuteTool) -> int:
     for line in sys.stdin:
         try:
-            request = json.loads(line)
-            response = handle(request, execute_tool)
-        except json.JSONDecodeError:
-            response = error(None, -32700, "invalid JSON")
+            request = json.loads(line, object_pairs_hook=_unique_object)
+        except (json.JSONDecodeError, ToolInputError):
+            emit(error(None, -32700, "invalid JSON"))
+            continue
+        response = handle(request, execute_tool)
         if response is not None:
             emit(response)
     return 0
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ToolInputError("duplicate JSON object key")
+        result[key] = value
+    return result

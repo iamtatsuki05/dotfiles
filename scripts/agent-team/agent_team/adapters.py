@@ -81,6 +81,10 @@ class AdapterError(RuntimeError):
 class ExecutionError(AdapterError):
     """A provider process failed, timed out, or exceeded an output limit."""
 
+    def __init__(self, message: str, *, cleanup_confirmed: bool = False) -> None:
+        super().__init__(message)
+        self.cleanup_confirmed = cleanup_confirmed
+
 
 class SnapshotError(AdapterError):
     """A read snapshot could not be made safe and complete."""
@@ -171,15 +175,24 @@ class ProcessRunner:
         timeout_seconds: float = 900.0,
     ) -> ProcessResult:
         if not argv or any(not isinstance(item, str) or not item for item in argv):
-            raise ExecutionError("provider argv must be non-empty strings")
+            raise ExecutionError(
+                "provider argv must be non-empty strings", cleanup_confirmed=True
+            )
         if os.name == "nt":
-            raise ExecutionError("provider process runner requires a POSIX runtime")
+            raise ExecutionError(
+                "provider process runner requires a POSIX runtime",
+                cleanup_confirmed=True,
+            )
         if timeout_seconds <= 0 or not math.isfinite(timeout_seconds):
-            raise ExecutionError("provider timeout must be finite and positive")
+            raise ExecutionError(
+                "provider timeout must be finite and positive", cleanup_confirmed=True
+            )
         try:
             input_bytes = None if input_text is None else input_text.encode("utf-8")
         except UnicodeEncodeError as exc:
-            raise ExecutionError("provider input is not valid UTF-8") from exc
+            raise ExecutionError(
+                "provider input is not valid UTF-8", cleanup_confirmed=True
+            ) from exc
         process: subprocess.Popen[bytes] | None = None
         process_group_id: int | None = None
         try:
@@ -208,18 +221,30 @@ class ProcessRunner:
             assert process is not None
             _terminate_process_group(process, process_group_id)
             raise ExecutionError(
-                f"provider process timed out after {timeout_seconds:g}s"
+                f"provider process timed out after {timeout_seconds:g}s",
+                cleanup_confirmed=True,
             ) from exc
         except _ProcessOutputLimit as exc:
             assert process is not None
             _terminate_process_group(process, process_group_id)
             raise ExecutionError(
-                "provider output exceeds the configured limit"
+                "provider output exceeds the configured limit", cleanup_confirmed=True
             ) from exc
         except (OSError, UnicodeEncodeError, ValueError, RuntimeError) as exc:
             if process is not None:
                 _terminate_process_group(process, process_group_id)
-            raise ExecutionError(f"provider process could not start: {exc}") from exc
+            raise ExecutionError(
+                f"provider process could not start: {exc}", cleanup_confirmed=True
+            ) from exc
+        except BaseException:
+            if process is not None:
+                _terminate_process_group(process, process_group_id)
+            raise
+        finally:
+            if process is not None:
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
         assert process is not None
         if process_group_id is not None and not _process_group_exited(process_group_id):
             _terminate_process_group(process, process_group_id)
@@ -227,7 +252,9 @@ class ProcessRunner:
             decoded_stdout = bytes(stdout_data).decode("utf-8")
             decoded_stderr = bytes(stderr_data).decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise ExecutionError("provider output is not valid UTF-8") from exc
+            raise ExecutionError(
+                "provider output is not valid UTF-8", cleanup_confirmed=True
+            ) from exc
         return ProcessResult(process.returncode, decoded_stdout, decoded_stderr)
 
 

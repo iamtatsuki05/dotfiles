@@ -13,6 +13,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol, TypeAlias
 
+from .task_spec import TaskSpec
+
 
 class Role(str, Enum):
     MAIN = "main"
@@ -127,6 +129,8 @@ class RoleSpec:
     execution: str
     adapter_id: str | None = None
     acp_executables: Mapping[str, object] | None = None
+    scoped_wrapper_sha256: str | None = None
+    scoped_client_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +141,8 @@ class StartSpec:
     state_path: Path
     role_specs: Mapping[Role, RoleSpec]
     attach: bool = False
+    max_review_rounds: int | None = None
+    task_specs: tuple[TaskSpec, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +310,13 @@ class RoleStatusReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskStatusReceipt:
+    task_id: str
+    status: str
+    record: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class AttachReceipt:
     role: Role
     terminal_id: TerminalRef
@@ -329,6 +342,23 @@ class RoleGet:
 class RolePrompt:
     role: Role
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskDispatch:
+    role: Role
+    task: TaskSpec
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskGet:
+    task_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskVerify:
+    task_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +394,9 @@ RuntimeRequest: TypeAlias = (
     | Attach
     | RoleGet
     | RolePrompt
+    | TaskDispatch
+    | TaskGet
+    | TaskVerify
     | RoleWait
     | RoleRead
     | RoleRelease
@@ -380,6 +413,7 @@ BackendResult: TypeAlias = (
     | ReplyReceipt
     | StatusReceipt
     | RoleStatusReceipt
+    | TaskStatusReceipt
     | AttachReceipt
 )
 RuntimeResult: TypeAlias = BackendResult

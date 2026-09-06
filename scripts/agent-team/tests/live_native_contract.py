@@ -6,9 +6,11 @@ example::
     AGENT_TEAM_RUN_LIVE_NATIVE=1 uv run --project scripts/agent-team \
       python -m unittest scripts/agent-team/tests/live_native_contract.py -v
 
-The test never uses a real provider.  It creates disposable Claude, Node,
-ACPX, and ACP adapter fixtures, while tmux itself is the selected live
-terminal implementation.
+The test never uses a real provider.  It creates disposable Claude and native
+ACP dependency fixtures, while tmux itself is the selected live terminal
+implementation.  The fake Node executable models the native client's
+one-shot JSON receipt and process cleanup; the public SDK wire contract is
+covered separately by ``test_scoped_acp_client.py``.
 """
 
 from __future__ import annotations
@@ -156,13 +158,11 @@ class LiveNativeContractTest(unittest.TestCase):
         self.root.chmod(0o700)
         self.fake_bin = self.root / "fake-bin"
         self.node_bin = self.root / "node-bin"
-        self.acpx_bin = self.root / "acpx-bin"
         self.agent_bin = self.root / "agent-bin"
         self.python_bin = self.root / "python-bin"
         for directory in (
             self.fake_bin,
             self.node_bin,
-            self.acpx_bin,
             self.agent_bin,
             self.python_bin,
         ):
@@ -172,16 +172,14 @@ class LiveNativeContractTest(unittest.TestCase):
         self.xdg_state = self.root / "xdg-state"
         self.xdg_state.mkdir(mode=0o700)
         self.acp_log = self.root / "acp.log"
-        self.acp_sessions = self.root / "acp-sessions"
-        self.acp_sessions.mkdir(mode=0o700)
         self.acp_prompt_started = self.root / "acp-prompt-started"
         self.acp_child_marker = self.root / "acp-child.pid"
+        self.acp_descendant_marker = self.root / "acp-descendant.pid"
         self.main_marker = self.root / "main"
         self._install_fixtures()
         path_entries = (
             self.fake_bin,
             self.node_bin,
-            self.acpx_bin,
             self.agent_bin,
             self.python_bin,
             Path("/usr/bin"),
@@ -194,8 +192,24 @@ class LiveNativeContractTest(unittest.TestCase):
             "LANG": "C",
             "TMPDIR": str(self.root),
         }
-        for command in ("orca", "orca-ide", "codex", "opencode", "zellij", "herdr"):
+        for command in (
+            "orca",
+            "orca-ide",
+            "codex",
+            "opencode",
+            "zellij",
+            "herdr",
+            "acpx",
+            "npm",
+            "npx",
+        ):
             self.assertIsNone(shutil.which(command, path=self.environment["PATH"]))
+        self.assertIsNotNone(
+            shutil.which("node", path=self.environment["PATH"]),
+        )
+        self.assertIsNotNone(
+            shutil.which("claude-agent-acp", path=self.environment["PATH"]),
+        )
         self._owned_state_paths: list[Path] = []
         self._last_failure_details = ""
 
@@ -254,89 +268,147 @@ while True:
             self.node_bin / "node",
             f"""#!{PYTHON}
 import json
+import os
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 log = Path({str(self.acp_log)!r})
-sessions = Path({str(self.acp_sessions)!r})
 prompt_started = Path({str(self.acp_prompt_started)!r})
 child_marker = Path({str(self.acp_child_marker)!r})
-sessions.mkdir(mode=0o700, exist_ok=True)
-child_marker.write_text(str(__import__('os').getpid()), encoding='utf-8')
+descendant_marker = Path({str(self.acp_descendant_marker)!r})
+
+args = sys.argv[1:]
+if args[:1] == ['--fixture-descendant']:
+    marker = Path(args[1])
+    marker.write_text(str(os.getpid()), encoding='ascii')
+
+    def stop_descendant(_signum, _frame):
+        marker.unlink(missing_ok=True)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop_descendant)
+    signal.signal(signal.SIGINT, stop_descendant)
+    while True:
+        time.sleep(0.1)
+
+if args == ['--version']:
+    print('v22.13.0')
+    raise SystemExit(0)
+
+child_marker.write_text(str(os.getpid()), encoding='ascii')
+child = None
 
 def record(value):
     with log.open('a', encoding='utf-8') as stream:
         stream.write(json.dumps(value) + '\\n')
 
-args = sys.argv[1:]
-if args == ['--version']:
-    print('v22.13.0')
+def stop(_signum, _frame):
+    record(dict(event='client-stop'))
+    if child is not None:
+        try:
+            child.terminate()
+        except OSError:
+            pass
+        try:
+            child.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                child.kill()
+            except OSError:
+                pass
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+    child_marker.unlink(missing_ok=True)
+    descendant_marker.unlink(missing_ok=True)
     raise SystemExit(0)
-record(args)
-if 'sessions' in args:
-    index = args.index('sessions')
-    operation = args[index + 1] if index + 1 < len(args) else ''
-    if operation == 'new':
-        name = args[args.index('--name') + 1]
-        (sessions / name).write_text('open', encoding='utf-8')
-    elif operation == 'close':
-        name = args[index + 2]
-        (sessions / name).unlink(missing_ok=True)
-    elif operation == 'prune':
-        for entry in sessions.iterdir():
-            entry.unlink()
-elif 'prompt' in args:
-    prompt = sys.stdin.read()
-    record(['prompt-input', prompt])
-    if 'cancel-live-role' in prompt:
-        prompt_started.write_text('started', encoding='utf-8')
-        time.sleep(60)
-    print('fake ACP planner output')
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+record(dict(event='client-start', argv=args))
+prompt = sys.stdin.read()
+record(dict(event='prompt', text=prompt))
+if 'cancel-live-role' in prompt:
+    child = subprocess.Popen(
+        [sys.executable, __file__, '--fixture-descendant', str(descendant_marker)],
+        start_new_session=False,
+    )
+    deadline = time.monotonic() + 5
+    while not descendant_marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    prompt_started.write_text('started', encoding='utf-8')
+    while True:
+        time.sleep(0.1)
+
+model = args[args.index('--model') + 1]
+effort = args[args.index('--effort') + 1]
+record(dict(event='client-complete'))
+child_marker.unlink(missing_ok=True)
+print(json.dumps(dict(
+    output='fake native ACP planner output',
+    session_id='fixture-session',
+    model=model,
+    effort=effort,
+    cleanup_confirmed=True,
+)))
 """,
         )
-        acpx_root = self.root / "acpx-package"
-        acpx_root.mkdir(mode=0o700)
-        (acpx_root / "bin").mkdir(mode=0o700)
-        (acpx_root / "package.json").write_text(
-            json.dumps(
-                {
-                    "name": "acpx",
-                    "version": "0.13.2",
-                    "bin": {"acpx": "bin/acpx"},
-                }
-            ),
-            encoding="utf-8",
-        )
-        _write_executable(self.acpx_bin / "acpx", "#!/bin/sh\nexit 0\n")
-        # The dependency resolver requires a regular file under the package
-        # root; the executable selected in PATH is that exact file.
-        (acpx_root / "bin" / "acpx").write_text(
-            (self.acpx_bin / "acpx").read_text(encoding="utf-8"), encoding="utf-8"
-        )
-        (acpx_root / "bin" / "acpx").chmod(0o700)
-        (self.acpx_bin / "acpx").unlink()
-        (self.acpx_bin / "acpx").symlink_to(acpx_root / "bin" / "acpx")
 
-        agent_root = self.root / "agent-package"
-        agent_root.mkdir(mode=0o700)
-        (agent_root / "bin").mkdir(mode=0o700)
+        packages = self.root / "node_modules" / "@agentclientprotocol"
+        agent_root = packages / "claude-agent-acp"
+        agent_dist = agent_root / "dist"
+        agent_dist.mkdir(mode=0o700, parents=True)
         (agent_root / "package.json").write_text(
             json.dumps(
                 {
                     "name": "@agentclientprotocol/claude-agent-acp",
                     "version": "0.70.0",
-                    "bin": {"claude-agent-acp": "bin/claude-agent-acp"},
+                    "bin": {"claude-agent-acp": "dist/index.js"},
+                    "dependencies": {"@agentclientprotocol/sdk": "1.3.0"},
+                    "exports": {".": {"import": "./dist/lib.js"}},
                 }
             ),
             encoding="utf-8",
         )
         _write_executable(
-            agent_root / "bin" / "claude-agent-acp", "#!/bin/sh\nexit 0\n"
+            agent_dist / "index.js",
+            "#!/usr/bin/env node\nprocess.exit(0);\n",
         )
-        (self.agent_bin / "claude-agent-acp").symlink_to(
-            agent_root / "bin" / "claude-agent-acp"
+        (agent_dist / "lib.js").write_text(
+            "export const fixtureAgentLibrary = true;\n", encoding="utf-8"
         )
+
+        sdk_root = packages / "sdk"
+        sdk_dist = sdk_root / "dist"
+        sdk_dist.mkdir(mode=0o700, parents=True)
+        (sdk_root / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "@agentclientprotocol/sdk",
+                    "version": "1.3.0",
+                    "main": "dist/acp.js",
+                    "exports": {
+                        ".": {
+                            "import": "./dist/acp.js",
+                            "default": "./dist/acp.js",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sdk_dist / "acp.js").write_text(
+            "export const fixtureSdk = true;\n", encoding="utf-8"
+        )
+        self.agent_root = agent_root
+        self.agent_dist = agent_dist
+        self.sdk_root = sdk_root
+        self.sdk_entry = sdk_dist / "acp.js"
+        (self.agent_bin / "claude-agent-acp").symlink_to(agent_dist / "index.js")
 
     def _config(self, workspace: Path) -> Path:
         (workspace / "main.md").write_text("fake Main", encoding="utf-8")
@@ -408,6 +480,62 @@ prompt = "planner.md"
             time.sleep(0.05)
         self.fail(f"owned fixture process remains after cleanup: pid={pid}")
 
+    def _acp_events(self) -> list[dict[str, object]]:
+        if not self.acp_log.is_file():
+            return []
+        events: list[dict[str, object]] = []
+        for line in self.acp_log.read_text(encoding="utf-8").splitlines():
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                self.fail(f"native client fixture event is not an object: {line!r}")
+            events.append(cast(dict[str, object], value))
+        return events
+
+    def _assert_native_fixture_binding(self, state: dict[str, object]) -> None:
+        role_specs = state.get("role_specs")
+        if not isinstance(role_specs, dict):
+            self.fail("native state has no role_specs")
+        planner = role_specs.get("planner")
+        if not isinstance(planner, dict):
+            self.fail("native state has no planner role spec")
+        executables = planner.get("acp_executables")
+        if not isinstance(executables, dict):
+            self.fail("native planner has no ACP executable snapshot")
+        self.assertEqual(
+            set(executables),
+            {
+                "node",
+                "agent",
+                "sdk",
+                "library",
+                "node_sha256",
+                "agent_sha256",
+                "sdk_sha256",
+                "library_sha256",
+            },
+        )
+        self.assertEqual(
+            Path(cast(str, executables["node"])), (self.node_bin / "node").resolve()
+        )
+        self.assertEqual(
+            Path(cast(str, executables["agent"])),
+            (self.agent_dist / "index.js").resolve(),
+        )
+        self.assertEqual(Path(cast(str, executables["sdk"])), self.sdk_entry.resolve())
+        self.assertEqual(
+            Path(cast(str, executables["library"])),
+            (self.agent_dist / "lib.js").resolve(),
+        )
+        for name in (
+            "node_sha256",
+            "agent_sha256",
+            "sdk_sha256",
+            "library_sha256",
+        ):
+            digest = executables.get(name)
+            self.assertIsInstance(digest, str)
+            self.assertRegex(cast(str, digest), r"^[0-9a-f]{64}$")
+
     def _start(self, name: str) -> tuple[Path, Path, dict[str, object]]:
         workspace = self.root / name
         workspace.mkdir(mode=0o700)
@@ -440,10 +568,12 @@ prompt = "planner.md"
                 and state["native"]["main_process"].get("phase") == "running"
             ),
         )
+        self._assert_native_fixture_binding(read_state(state_path))
         return workspace, state_path, cast(dict[str, object], payload)
 
     def _safe_cleanup(self, state_path: Path) -> None:
         self._safe_cleanup_acp_child()
+        self._safe_cleanup_acp_descendant()
         if not state_path.is_file():
             return
         try:
@@ -628,6 +758,39 @@ prompt = "planner.md"
         except (OSError, ValueError) as exc:
             self._last_failure_details += f" acp-child-cleanup={exc!r}"
 
+    def _safe_cleanup_acp_descendant(self) -> None:
+        if not self.acp_descendant_marker.is_file():
+            return
+        try:
+            pid = int(self.acp_descendant_marker.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            self._last_failure_details += " acp-descendant-marker-invalid"
+            return
+        argv = read_process_argv(pid)
+        if argv is None or not any(str(self.root) in item for item in argv):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                self.acp_descendant_marker.unlink(missing_ok=True)
+                return
+            except OSError:
+                return
+            self._last_failure_details += f" acp-descendant-identity-unproven pid={pid}"
+            return
+        try:
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    self.acp_descendant_marker.unlink(missing_ok=True)
+                    return
+                time.sleep(0.05)
+            os.kill(pid, signal.SIGKILL)
+        except (OSError, ValueError) as exc:
+            self._last_failure_details += f" acp-descendant-cleanup={exc!r}"
+
     def _assert_owned_resources_gone(self, state: dict[str, object]) -> None:
         native = cast(dict[str, object], state["native"])
         receipt = TmuxReceipt.from_dict(native["tmux_receipt"])
@@ -643,7 +806,8 @@ prompt = "planner.md"
         for assignment in cast(dict[str, dict[str, object]], state["roles"]).values():
             for key in ("prompt_path", "provider_private_root", "snapshot_root"):
                 self.assertFalse(Path(cast(str, assignment[key])).exists(), key)
-        self.assertEqual(list(self.acp_sessions.iterdir()), [])
+        self.assertFalse(self.acp_child_marker.exists())
+        self.assertFalse(self.acp_descendant_marker.exists())
 
     def test_public_start_mcp_lifecycle_and_cross_process_stop(self) -> None:
         workspace, state_path, start_payload = self._start("normal")
@@ -666,6 +830,9 @@ prompt = "planner.md"
             self.assertEqual(
                 {item["name"] for item in tools},
                 {
+                    "task_get",
+                    "task_dispatch",
+                    "task_verify",
                     "role_get",
                     "role_prompt",
                     "role_wait",
@@ -679,15 +846,25 @@ prompt = "planner.md"
                 "role_prompt", {"role": "planner", "text": "normal live turn"}
             )
             self.assertEqual(assignment["role"], "planner")
+            assigned_state = read_state(state_path)
+            saved_assignment = cast(
+                dict[str, object], assigned_state["roles"]["planner"]
+            )
+            assigned_paths = tuple(
+                Path(cast(str, saved_assignment[key]))
+                for key in ("prompt_path", "provider_private_root", "snapshot_root")
+            )
             waited = mcp.tool("role_wait", {"role": "planner", "timeout_ms": 15_000})
             self.assertEqual(len(waited["events"]), 1)
             event = waited["events"][0]
             self.assertEqual(event["kind"], "worker_done")
             self.assertEqual(event["outcome"], "succeeded")
             read = mcp.tool("role_read", {"role": "planner", "lines": 20})
-            self.assertIn("fake ACP planner output", read["output"])
+            self.assertIn("fake native ACP planner output", read["output"])
             released = mcp.tool("role_release", {"role": "planner"})
             self.assertEqual(released["state"], "released")
+            for path in assigned_paths:
+                self.assertFalse(path.exists(), str(path))
             delivery_id = cast(str, waited["delivery_id"])
             acknowledged = mcp.tool("delivery_ack", {"delivery_id": delivery_id})
             self.assertTrue(acknowledged["acknowledged"])
@@ -697,11 +874,20 @@ prompt = "planner.md"
         final_state = read_state(state_path)
         self.assertEqual(final_state["roles"], {})
         self.assertNotIn("native_result", final_state)
-        self.assertEqual(list(self.acp_sessions.iterdir()), [])
-        acp_log = self.acp_log.read_text(encoding="utf-8")
-        self.assertIn("sessions", acp_log)
-        self.assertIn("prompt-input", acp_log)
-        self.assertIn("fake ACP", read["output"])
+        events = self._acp_events()
+        self.assertEqual(
+            [entry.get("event") for entry in events],
+            ["client-start", "prompt", "client-complete"],
+        )
+        client_argv = events[0].get("argv")
+        self.assertIsInstance(client_argv, list)
+        client_argv = cast(list[str], client_argv)
+        self.assertEqual(client_argv.count("--sdk-entry"), 1)
+        sdk_index = client_argv.index("--sdk-entry")
+        self.assertEqual(client_argv[sdk_index + 1], str(self.sdk_entry.resolve()))
+        self.assertNotIn("sessions", client_argv)
+        self.assertNotIn("acpx", " ".join(client_argv))
+        self.assertIn("normal live turn", cast(str, events[1]["text"]))
         stop = self._run_cli(
             ["stop", "--state", str(state_path), "--cwd", str(workspace)]
         )
@@ -731,6 +917,8 @@ prompt = "planner.md"
                 state_path,
                 lambda _item: self.acp_prompt_started.exists(),
             )
+            self.assertTrue(self.acp_child_marker.exists())
+            self.assertTrue(self.acp_descendant_marker.exists())
             stop = self._run_cli(
                 ["stop", "--state", str(state_path), "--cwd", str(workspace)],
                 timeout=20.0,
@@ -764,11 +952,15 @@ prompt = "planner.md"
             stop_succeeded = True
             self.assertFalse(state_path.exists())
             self.assertFalse(self.main_marker.with_suffix(".pid").exists())
+            self.assertFalse(self.acp_child_marker.exists())
+            self.assertFalse(self.acp_descendant_marker.exists())
         finally:
             mcp.close()
         if stop_succeeded and runner_pid is not None:
             self._wait_pid_gone(runner_pid)
             self._assert_owned_resources_gone(state)
+            events = self._acp_events()
+            self.assertIn("client-stop", [entry.get("event") for entry in events])
         if stop_succeeded and self.acp_child_marker.is_file():
             self._wait_pid_gone(
                 int(self.acp_child_marker.read_text(encoding="ascii").strip())

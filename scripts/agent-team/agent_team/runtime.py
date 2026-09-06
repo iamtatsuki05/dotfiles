@@ -13,8 +13,10 @@ from typing import Final
 from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .contracts import ErrorCode, RuntimeFailure
 from .locking import _LifecycleReservation
+from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
+from .task_execution import validate_saved_tasks, validate_task_assignment
 
-ACP_ROLES: Final = frozenset({"planner", "reviewer"})
+ACP_ROLES: Final = frozenset({"planner", "worker", "reviewer"})
 ACP_PACKAGE: Final = "acpx@0.13.2"
 CLAUDE_ACP_PACKAGE: Final = "@agentclientprotocol/claude-agent-acp@0.70.0"
 STATE_VERSION: Final = 3
@@ -89,19 +91,41 @@ def build_acp_agent_command(
     role: str,
     launch_nonce: str,
     *,
-    executables: AcpExecutables,
+    executables: AcpExecutables | NativeAcpExecutables,
+    write_policy: Path | None = None,
 ) -> str:
     _require_identity(team_id, role, launch_nonce)
-    executables = _validated_acp_executables(executables)
+    if isinstance(executables, NativeAcpExecutables):
+        if write_policy is None:
+            raise RuntimeValidationError("native ACP requires a scoped policy")
+        try:
+            executables.verify()
+        except NativeAcpDependencyError as exc:
+            raise RuntimeValidationError(str(exc)) from exc
+    else:
+        executables = _validated_acp_executables(executables)
     marker = f"agent-team/{team_id}/{role}/{launch_nonce}"
-    return shlex.join(
-        [
-            "env",
-            f"AGENT_TEAM_ACP_MARKER={marker}",
-            str(executables.node),
+    argv = [
+        "env",
+        f"AGENT_TEAM_ACP_MARKER={marker}",
+        str(executables.node),
+        str(executables.agent),
+    ]
+    if write_policy is not None:
+        from .scoped_acp import SCOPED_AGENT
+
+        if not write_policy.is_absolute():
+            raise RuntimeValidationError(
+                "scoped ACP policy requires an absolute policy path"
+            )
+        argv[3:] = [
+            str(SCOPED_AGENT),
+            "--agent-entry",
             str(executables.agent),
+            "--policy",
+            str(write_policy),
         ]
-    )
+    return shlex.join(argv)
 
 
 def build_acp_session_name(role: str, launch_nonce: str) -> str:
@@ -389,6 +413,7 @@ def build_acp_argv(
     instructions: str,
     operation: tuple[str, ...],
     timeout_seconds: int,
+    write_policy: Path | None = None,
 ) -> list[str]:
     if not operation or operation[0] not in {"sessions", "set", "prompt"}:
         raise RuntimeValidationError("ACP operation is not supported")
@@ -399,13 +424,24 @@ def build_acp_argv(
         agent_tokens = shlex.split(agent_command)
     except ValueError as exc:
         raise RuntimeValidationError("ACP agent command is invalid") from exc
+    expected_agent_tokens = [str(executables.agent)]
+    if write_policy is not None:
+        from .scoped_acp import SCOPED_AGENT
+
+        expected_agent_tokens = [
+            str(SCOPED_AGENT),
+            "--agent-entry",
+            str(executables.agent),
+            "--policy",
+            str(write_policy),
+        ]
     if (
-        len(agent_tokens) != 4
+        len(agent_tokens) != 3 + len(expected_agent_tokens)
         or agent_tokens[0] != "env"
         or not agent_tokens[1].startswith("AGENT_TEAM_ACP_MARKER=")
         or agent_tokens[1] == "AGENT_TEAM_ACP_MARKER="
         or agent_tokens[2] != str(executables.node)
-        or agent_tokens[3] != str(executables.agent)
+        or agent_tokens[3:] != expected_agent_tokens
     ):
         raise RuntimeValidationError(
             "ACP agent command does not match resolved executable bindings"
@@ -431,7 +467,7 @@ def build_acp_argv(
         "--append-system-prompt",
         instructions,
         "--allowed-tools",
-        "Read,Grep,Glob",
+        "Read,Grep,Glob,Write,Edit" if write_policy is not None else "Read,Grep,Glob",
         "--timeout",
         str(timeout_seconds),
         "--ttl",
@@ -551,9 +587,25 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
             )
     roles = state["roles"]
     assert isinstance(roles, dict)
+    try:
+        validate_saved_tasks(state)
+    except (ValueError, RuntimeFailure) as exc:
+        raise RuntimeValidationError(str(exc)) from exc
     for role, assignment in roles.items():
         if role not in role_specs or not isinstance(assignment, dict):
             raise RuntimeValidationError("agent-team state has invalid role assignment")
+        try:
+            task = validate_task_assignment(state, assignment)
+            if task is not None:
+                task_record = state["tasks"][task.task_id]
+                if assignment.get("task_stage") != task_record.get(
+                    "stage"
+                ) or assignment.get("task_revision") != task_record.get("revision"):
+                    raise RuntimeValidationError(
+                        "TaskSpec stage or revision differs from assignment"
+                    )
+        except (ValueError, RuntimeFailure) as exc:
+            raise RuntimeValidationError(str(exc)) from exc
         for key in (
             "task_id",
             "dispatch_id",
@@ -686,6 +738,8 @@ def write_state(
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     payload = (json.dumps(state, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if len(payload) > MAX_STATE_BYTES:
+        raise RuntimeValidationError("agent-team state exceeds size limit")
     fd: int | None = None
     state_published = False
     try:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -73,6 +74,12 @@ class DependencyIsolationTest(unittest.TestCase):
         self.assertTrue(frozen_instructions.startswith(prompt))
         self.assertEqual(argv[argv.index("--model") + 1], "fable")
         self.assertEqual(argv[argv.index("--effort") + 1], "high")
+        self.assertIn("--setting-sources=", argv)
+        self.assertIn("--disable-slash-commands", argv)
+        self.assertEqual(
+            json.loads(argv[argv.index("--settings") + 1]),
+            {"disableAllHooks": True, "autoMemoryEnabled": False},
+        )
 
     def test_saved_direct_role_specs_build_worker_and_reviewer_without_config(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -14,6 +15,99 @@ from agent_team.runtime import RuntimeValidationError, read_state, write_state
 
 
 class NativeConfigTest(unittest.TestCase):
+    def test_declared_task_catalog_is_validated_and_snapshotted_without_effects(
+        self,
+    ) -> None:
+        task_toml = """
+[[tasks]]
+task_id = "inspect-project"
+objective = "Inspect the requested source"
+acceptance_criteria = ["Report the relevant source"]
+allowed_paths = []
+forbidden_paths = ["private/"]
+dependencies = []
+evidence_requirements = ["Source references"]
+consultation_conditions = []
+[[tasks.verification]]
+name = "check"
+argv = ["python3", "-V"]
+timeout_seconds = 10
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self.config(root)
+            path.write_text(path.read_text() + task_toml)
+            with mock.patch.object(cli.subprocess, "Popen") as popen:
+                config = cli.load_config(path)
+                plan = cli.build_plan(config, root)
+                spec = cli._start_spec(plan, attach=False)
+            popen.assert_not_called()
+            self.assertEqual(len(spec.task_specs), 1)
+            self.assertEqual(plan["task_specs"], [spec.task_specs[0].as_dict()])
+            self.assertIn(
+                '"task_id": "inspect-project"', plan["roles"]["main"]["instructions"]
+            )
+            path.write_text(
+                path.read_text().replace(
+                    "dependencies = []", 'dependencies = ["missing"]'
+                )
+            )
+            with self.assertRaisesRegex(cli.ConfigError, "undeclared task"):
+                cli.load_config(path)
+            self.assertEqual(spec.task_specs[0].dependencies, ())
+            path.write_text(
+                path.read_text().replace('runtime = "tmux"', 'runtime = "orca"')
+            )
+            with self.assertRaisesRegex(
+                cli.ConfigError, "declared tasks require.*tmux"
+            ):
+                cli.load_config(path)
+
+    def test_scoped_worker_profile_is_explicit_and_dry_run_has_no_process_effect(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = self.config(root)
+            for role, permission in (
+                ("worker", "workspace-write"),
+                ("reviewer", "read-only"),
+            ):
+                (root / f"{role}.md").write_text(f"{role} instructions")
+                with config.open("a") as target:
+                    target.write(
+                        f'\n[roles.{role}]\nprovider = "claude"\ntransport = "acp"\nmodel = "fable"\neffort = "high"\npermission = "{permission}"\nprompt = "{role}.md"\n'
+                    )
+            output = io.StringIO()
+            with (
+                mock.patch.object(cli.sys, "stdout", output),
+                mock.patch.object(cli.subprocess, "Popen") as popen,
+            ):
+                self.assertEqual(
+                    cli.main(
+                        [
+                            "start",
+                            "--config",
+                            str(config),
+                            "--cwd",
+                            str(root),
+                            "--dry-run",
+                        ]
+                    ),
+                    0,
+                )
+            popen.assert_not_called()
+            plan = json.loads(output.getvalue())
+            self.assertEqual(
+                plan["roles"]["worker"]["adapter_id"], "claude-acp-scoped-0.70.0"
+            )
+            self.assertEqual(plan["max_review_rounds"], 2)
+            config.write_text(
+                config.read_text().replace('runtime = "tmux"', 'runtime = "orca"')
+            )
+            with self.assertRaisesRegex(cli.ConfigError, "scoped.*tmux"):
+                cli.load_config(config)
+
     def test_mcp_declarations_do_not_load_a_backend_or_require_runtime_state(
         self,
     ) -> None:
@@ -40,7 +134,11 @@ assert "agent_team.native_backend" not in sys.modules
                 timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(json.loads(result.stdout)["result"]["tools"]), 7)
+            names = {
+                tool["name"] for tool in json.loads(result.stdout)["result"]["tools"]
+            }
+            self.assertIn("task_dispatch", names)
+            self.assertEqual(len(names), 10)
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def config(self, root: Path, *, runtime: str = "tmux") -> Path:
