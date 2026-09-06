@@ -20,15 +20,30 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 9"
+  assert_contains_text "$output" "registered upstream skills: 10"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
   assert_contains_text "$output" "modern-web-guidance"
   assert_contains_text "$output" "herdr"
   assert_contains_text "$output" "stop-slop"
+  assert_contains_text "$output" "pstack-principles"
   assert_contains_text "$output" "delegate-skills"
   assert_contains_text "$output" "chatgpt-pro-line"
+}
+
+test_pstack_principles_preserve_explicit_invocation() {
+  local skill_name
+  for skill_name in principle-make-operations-idempotent principle-separate-before-serializing-shared-state; do
+    local skill_dir="$REPO_ROOT/dotfiles/.agent/skills/$skill_name"
+    assert_file "$skill_dir/SKILL.md"
+    assert_file "$skill_dir/LICENSE"
+    assert_file "$skill_dir/agents/openai.yaml"
+    assert_contains_text "$(cat "$skill_dir/agents/openai.yaml")" "allow_implicit_invocation: false"
+    assert_contains_text "$(cat "$skill_dir/SKILL.md")" "Explicit invocation only"
+    assert_not_contains_text "$(cat "$skill_dir/SKILL.md")" "disable-model-invocation:"
+    assert_contains_text "$(cat "$skill_dir/LICENSE")" "Copyright (c) 2026 Lauren Tan"
+  done
 }
 
 test_tree_hash_ignores_generated_python_bytecode() {
@@ -328,6 +343,7 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit modern-web-guidance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
       --latest-commit natural-japanese=cccccccccccccccccccccccccccccccccccccccc \
       --latest-commit herdr=7777777777777777777777777777777777777777 \
+      --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
@@ -345,6 +361,7 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: cccccccccccccccccccccccccccccccccccccccc"
   assert_contains_text "$output" "Skill ID: herdr"
   assert_contains_text "$output" "candidate_commit: 7777777777777777777777777777777777777777"
+  assert_contains_text "$output" "Skill ID: pstack-principles"
   assert_contains_text "$output" "Skill ID: stop-slop"
   assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
   assert_contains_text "$output" "Skill ID: delegate-skills"
@@ -362,6 +379,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed modern-web-guidance" > "$report_dir/modern-web-guidance.md"
   print -r -- "reviewed natural-japanese" > "$report_dir/natural-japanese.md"
   print -r -- "reviewed herdr" > "$report_dir/herdr.md"
+  print -r -- "reviewed pstack-principles" > "$report_dir/pstack-principles.md"
   print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
   print -r -- "reviewed delegate-skills" > "$report_dir/delegate-skills.md"
   print -r -- "reviewed chatgpt-pro-line" > "$report_dir/chatgpt-pro-line.md"
@@ -379,6 +397,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit modern-web-guidance=3333333333333333333333333333333333333333 \
       --latest-commit natural-japanese=4444444444444444444444444444444444444444 \
       --latest-commit herdr=6666666666666666666666666666666666666666 \
+      --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
@@ -396,6 +415,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "candidate=4444444444444444444444444444444444444444"
   assert_contains_text "$output" "herdr: plan update"
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
+  assert_contains_text "$output" "pstack-principles: plan update"
   assert_contains_text "$output" "stop-slop: plan update"
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
   assert_not_contains_text "$output" "manifest updated"
@@ -590,6 +610,7 @@ EOF'
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
+      --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
@@ -601,6 +622,7 @@ EOF'
   assert_contains_text "$output" "modern-web-guidance: review approved"
   assert_contains_text "$output" "natural-japanese: review approved"
   assert_contains_text "$output" "herdr: review approved"
+  assert_contains_text "$output" "pstack-principles: review approved"
   assert_contains_text "$output" "stop-slop: review approved"
   assert_contains_text "$output" "superpowers: plan update"
   assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
@@ -612,6 +634,7 @@ EOF'
   assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_contains_text "$output" "herdr: plan update"
   assert_contains_text "$output" "candidate=9999999999999999999999999999999999999999"
+  assert_contains_text "$output" "pstack-principles: plan update"
   assert_contains_text "$output" "stop-slop: plan update"
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
   assert_not_contains_text "$output" "manifest updated"
@@ -652,6 +675,7 @@ PY
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
+      --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
@@ -678,6 +702,7 @@ PY
   assert_contains_text "$output" "modern-web-guidance: review approved"
   assert_contains_text "$output" "natural-japanese: review approved"
   assert_contains_text "$output" "herdr: review approved"
+  assert_contains_text "$output" "pstack-principles: review approved"
   assert_contains_text "$output" "stop-slop: review approved"
   rm -rf "$review_dir"
 }
@@ -709,6 +734,7 @@ EOF'
       --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
+      --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 2>&1
@@ -794,6 +820,7 @@ test_mise_has_agent_skill_update_task() {
 main() {
   test_manifest_and_cli_exist
   test_check_validates_registered_upstreams
+  test_pstack_principles_preserve_explicit_invocation
   test_tree_hash_ignores_generated_python_bytecode
   test_manifest_tracks_current_upstream_skill_paths
   test_reviewed_updates_preserve_local_security_and_compatibility_overlays

@@ -727,6 +727,55 @@
       },
       "source_url": "https://github.com/pauljunsukhan/codex-chatgpt-pro-plugin/tree/0cc5c5509ebaccfc7dad45b9e02a0f86407c817c/plugins/codex-chatgpt-pro-plugin",
       "provenance_note": "Vendored from the packaged plugin directory as a flat skill: SKILL.md, bin/, src/, the ten runtime scripts that bin/chatgpt-pro imports, package.json, the two contract docs (as references/), and the MIT LICENSE. Self-tests, live-proof scripts, the plugin manifest, the Codex MCP config (.codex/config.toml, chrome-devtools-mcp devDependency), and the browser-operator subagent are not vendored. The runtime has no npm dependencies; it launches a dedicated Chrome profile with remote debugging on 127.0.0.1 and drives chatgpt.com through CDP. The local overlay narrows the trigger to explicit user requests, keeps login and credentials with the user, gates repo-context uploads on per-call approval, and keeps .devspace/ out of commits."
+    },
+    {
+      "id": "pstack-principles",
+      "description": "Two selected pstack principles for shared-state isolation and retry-safe operations.",
+      "repository": "https://github.com/cursor/plugins.git",
+      "branch": "main",
+      "pinned_commit": "93b00b89ef425a9c1bac0d0b317dfc49c930ac99",
+      "mappings": [
+        {
+          "source_path": "pstack/skills/principle-make-operations-idempotent/SKILL.md",
+          "local_path": "dotfiles/.agent/skills/principle-make-operations-idempotent/SKILL.md"
+        },
+        {
+          "source_path": "pstack/LICENSE",
+          "local_path": "dotfiles/.agent/skills/principle-make-operations-idempotent/LICENSE"
+        },
+        {
+          "source_path": "pstack/skills/principle-separate-before-serializing-shared-state/SKILL.md",
+          "local_path": "dotfiles/.agent/skills/principle-separate-before-serializing-shared-state/SKILL.md"
+        },
+        {
+          "source_path": "pstack/LICENSE",
+          "local_path": "dotfiles/.agent/skills/principle-separate-before-serializing-shared-state/LICENSE"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/principle-make-operations-idempotent/SKILL.md",
+          "old": "disable-model-invocation: true",
+          "new": "metadata:\n  invocation: \"Explicit invocation only; upstream disables model invocation.\"",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/principle-separate-before-serializing-shared-state/SKILL.md",
+          "old": "disable-model-invocation: true",
+          "new": "metadata:\n  invocation: \"Explicit invocation only; upstream disables model invocation.\"",
+          "expected_count": 1
+        }
+      ],
+      "source_url": "https://github.com/cursor/plugins/tree/93b00b89ef425a9c1bac0d0b317dfc49c930ac99/pstack",
+      "provenance_note": "Only two principle SKILL.md files and the pstack MIT LICENSE are imported. Instruction bodies and license remain byte-for-byte upstream. The unsupported disable-model-invocation field is moved into metadata; repo-local agents/openai.yaml preserves explicit-only invocation in Codex. Other runtimes may not enforce this Codex policy. The poteto-mode orchestrator, other principles, hooks, scripts, and plugin manifests are excluded. Cleanup and retry examples remain subject to repository scope and authorization rules.",
+      "local_tree_sha256": "cbd566bc70b976bbcd6bcd7b9f17c3315da59b378cbab46c43b2347d987675c2",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "93b00b89ef425a9c1bac0d0b317dfc49c930ac99",
+        "last_reviewed_at": "2026-09-06T07:32:40+00:00",
+        "review_report": ".agent/work/sessions/2026-09-06-pstack-pr-codex/upstream-review.md"
+      }
     }
   ]
 }
