@@ -93,6 +93,8 @@ def _ready_process_runner_subprocess_proxy(ready: Path) -> SimpleNamespace:
         deadline = time.monotonic() + 2.0
         while not ready.exists():
             if process.poll() is not None:
+                if ready.exists():
+                    break
                 raise AssertionError("process exited before readiness")
             if time.monotonic() >= deadline:
                 try:
@@ -3382,6 +3384,30 @@ class OrcaBackendSafetyTest(unittest.TestCase):
 
 
 class ProcessRunnerPortabilityTest(unittest.TestCase):
+    def test_ready_proxy_accepts_readiness_published_with_parent_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ready = Path(temp_dir) / "ready"
+            process = mock.Mock()
+
+            def publish_and_exit() -> int:
+                ready.write_text("ready")
+                return 0
+
+            process.poll.side_effect = publish_and_exit
+            with mock.patch.object(subprocess, "Popen", return_value=process):
+                proxy = _ready_process_runner_subprocess_proxy(ready)
+                observed = proxy.Popen(
+                    [sys.executable],
+                    cwd=Path(temp_dir),
+                    env={},
+                    stdin=None,
+                    stdout=None,
+                    stderr=None,
+                    shell=False,
+                    start_new_session=True,
+                )
+            self.assertIs(observed, process)
+
     def test_invalid_input_encoding_is_rejected_before_child_creation(self) -> None:
         runner = ProcessRunner()
         with (
