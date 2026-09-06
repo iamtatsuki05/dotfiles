@@ -321,16 +321,18 @@ class NativeBackendTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         make_directory = tempfile.mkdtemp
+        self.fixture_trees: list[Path] = []
+
+        def make_fixture_directory(**kwargs: object) -> str:
+            if kwargs.get("dir") == "/tmp":
+                kwargs["dir"] = str(self.root)
+            path = make_directory(**kwargs)
+            if kwargs.get("prefix") in {"agent-team-provider-", "agent-team-snapshot-"}:
+                self.fixture_trees.append(Path(path))
+            return path
+
         socket_patch = mock.patch.object(
-            native.tempfile,
-            "mkdtemp",
-            side_effect=lambda **kwargs: make_directory(
-                **(
-                    {**kwargs, "dir": str(self.root)}
-                    if kwargs.get("dir") == "/tmp"
-                    else kwargs
-                )
-            ),
+            native.tempfile, "mkdtemp", side_effect=make_fixture_directory
         )
         socket_patch.start()
         self.addCleanup(socket_patch.stop)
@@ -343,7 +345,11 @@ class NativeBackendTest(unittest.TestCase):
         self.launcher.chmod(0o700)
 
     def tearDown(self) -> None:
-        self.directory.cleanup()
+        try:
+            for root in self.fixture_trees:
+                native.remove_owned_tree(root)
+        finally:
+            self.directory.cleanup()
 
     def spec(self, *roles: Role) -> StartSpec:
         return StartSpec(
@@ -803,6 +809,14 @@ class NativeBackendTest(unittest.TestCase):
                     backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
 
     def test_runner_provider_gate_is_released_only_after_owned_receipt(self) -> None:
+        for index, kernel_executable in enumerate(
+            (sys.executable, "/fixture/Python.app/Contents/MacOS/Python")
+        ):
+            with self.subTest(kernel_executable=kernel_executable):
+                self._check_runner_provider_gate(kernel_executable, index)
+
+    def _check_runner_provider_gate(self, kernel_executable: str, index: int) -> None:
+        self.state_path = self.root / f"gate-{index}" / "state.json"
         events: list[str] = []
         process = mock.Mock(pid=77_001)
         process.poll.return_value = None
@@ -813,10 +827,13 @@ class NativeBackendTest(unittest.TestCase):
             events.append("state-save")
             original_save(*args, **kwargs)
 
+        def kernel_argv(argv: list[str]) -> tuple[str, ...]:
+            self.assertEqual(argv[0], sys.executable)
+            return (kernel_executable, *argv[1:])
+
         def read_identity(_pid: int) -> tuple[str, ...]:
             events.append("identity")
-            argv = popen.call_args.args[0]
-            return tuple(argv)
+            return (kernel_executable, *popen.call_args.args[0][1:])
 
         def release(fd: int, data: bytes) -> int:
             events.append("release")
@@ -829,10 +846,12 @@ class NativeBackendTest(unittest.TestCase):
             mock.patch.object(
                 native.subprocess, "Popen", return_value=process
             ) as popen,
+            mock.patch.object(native, "python_process_argv", side_effect=kernel_argv),
             mock.patch.object(native.os, "getpgid", return_value=77_001),
             mock.patch.object(native.os, "getpgrp", return_value=1),
             mock.patch.object(native, "_process_group_alive", return_value=True),
             mock.patch.object(native, "read_process_argv", side_effect=read_identity),
+            mock.patch.object(native, "_terminate_process_group") as terminate,
             mock.patch.object(native.os, "write", side_effect=release),
         ):
             backend.request(RolePrompt(Role.PLANNER, "inspect"))
@@ -843,13 +862,25 @@ class NativeBackendTest(unittest.TestCase):
         self.assertIn("_acp-run", launch)
         self.assertEqual(popen.call_args.kwargs["pass_fds"], (int(launch[3]),))
         saved = native.runtime_read_state(self.state_path)["roles"]["planner"]
-        self.assertEqual(tuple(saved["runner_argv"]), tuple(launch[4:]))
-        self.assertEqual(tuple(saved["runner_startup_argv"]), tuple(launch))
+        self.assertEqual(tuple(saved["runner_argv"]), (kernel_executable, *launch[5:]))
+        self.assertEqual(
+            tuple(saved["runner_startup_argv"]),
+            (kernel_executable, *launch[1:]),
+        )
+        terminate.assert_not_called()
         backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
 
     def test_startup_state_failure_stops_owned_runner_group_before_provider_exec(
         self,
     ) -> None:
+        for index, kernel_executable in enumerate(
+            (sys.executable, "/fixture/Python.app/Contents/MacOS/Python")
+        ):
+            with self.subTest(kernel_executable=kernel_executable):
+                self._check_startup_state_failure(kernel_executable, index)
+
+    def _check_startup_state_failure(self, kernel_executable: str, index: int) -> None:
+        self.state_path = self.root / f"gate-failure-{index}" / "state.json"
         events: list[str] = []
         process = mock.Mock(pid=77_001)
         process.poll.return_value = None
@@ -865,8 +896,12 @@ class NativeBackendTest(unittest.TestCase):
                 )
             original_save(*args, **kwargs)
 
+        def kernel_argv(argv: list[str]) -> tuple[str, ...]:
+            self.assertEqual(argv[0], sys.executable)
+            return (kernel_executable, *argv[1:])
+
         def read_identity(_pid: int) -> tuple[str, ...]:
-            return tuple(popen.call_args.args[0])
+            return (kernel_executable, *popen.call_args.args[0][1:])
 
         with (
             self.planner_backend() as backend,
@@ -874,6 +909,7 @@ class NativeBackendTest(unittest.TestCase):
             mock.patch.object(
                 native.subprocess, "Popen", return_value=process
             ) as popen,
+            mock.patch.object(native, "python_process_argv", side_effect=kernel_argv),
             mock.patch.object(native.os, "getpgid", return_value=77_001),
             mock.patch.object(native.os, "getpgrp", return_value=1),
             mock.patch.object(native, "_process_group_alive", return_value=True),
