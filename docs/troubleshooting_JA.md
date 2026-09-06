@@ -128,7 +128,9 @@ claude-account auth-login <profile>
 ```
 
 profileのloginと登録済みの本人情報が一致しない場合は、初回と同じアカウント・組織を
-ブラウザで選んでください。別identityで登録情報を上書きしません。
+ブラウザで選んでください。初回登録を間違えた場合は
+`claude-account auth-login <profile> --replace` を実行し、確認欄にprofile名を入力してから、
+意図したアカウントと組織を選び直します。
 旧版から更新した場合はprofileごとに一度再loginが必要です。Fableのcredits要求は
 login失敗とは限らないので、契約とFable専用枠も確認してください。
 

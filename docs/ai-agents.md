@@ -87,6 +87,21 @@ Add `--fork-session` if you want to keep the original session open. Do not updat
 
 Only repeat `claude-account auth-login work` when authentication needs renewal. Login is blocked while that profile has running sessions; other profiles are unaffected. Switching profiles does not require logging in each time.
 
+If the first registration used the wrong account, run `claude-account auth-login personal --replace`. Type `personal` at the confirmation prompt, then choose the correct account and organization in the browser. Ordinary login rejects a different identity. Replacement is also blocked while that profile has running sessions. Cancellation or login failure preserves the registry, but Claude itself may already have changed its saved credentials; log in again if needed.
+
+Select the account used by ordinary `claude` launches:
+
+```sh
+claude-account default personal
+claude --model fable
+claude --resume SESSION_ID --model fable --dangerously-skip-permissions
+claude-account default
+```
+
+The selection is stored in `~/.config/claude-account/default-profile`, or under `XDG_CONFIG_HOME` when set. It applies to Bash and Zsh after loading the updated dotfiles shell configuration, including new terminals. Running sessions keep their account. `claude-account work ...` explicitly uses `work` regardless of the default. Invalid default credentials stop the launch without falling back to another login. Replacing the selected profile changes the identity used by its future launches too.
+
+Use `claude-account default --clear` to remove the selection. When no default is set, native Claude authentication and arguments are preserved. `command claude ...`, direct executable invocations, and scripts that do not load the shell function bypass this selection. After setting a default, use `claude-account auth-login PROFILE` for authentication, not `claude auth login`.
+
 Profiles live in `~/.config/claude-account/accounts/PROFILE/`, or under `XDG_CONFIG_HOME` when set. Credentials, account metadata, plugins, and daemon state are independent. Existing settings.json, .mcp.json, CLAUDE.md, skills, hooks, commands, agents, rules, and projects under `~/.claude` are shared through links. Sharing projects makes existing transcripts resumable. Profile directories use mode 700, and the email-plus-organization identity hash uses mode 600. Legacy shared credentials, registries, and setup-tokens are preserved.
 
 Arguments are forwarded except authentication-changing `--settings`, `--setting-sources`, `--managed-settings`, and `--bare`. Agent View is disabled; background, cloud, and Remote Control launches are outside this workflow. In-session `/login` and `/logout` are hidden; use `auth-login` for credential changes.

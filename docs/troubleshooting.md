@@ -130,8 +130,10 @@ claude-account auth-login <profile>
 ```
 
 If the login does not match the registered identity, select the same account and
-organization used on first registration. A different identity cannot overwrite
-the mapping. Upgrading from the shared-login wrapper requires one login per profile.
+organization used on first registration. To correct a mistaken first registration,
+use `claude-account auth-login <profile> --replace`, confirm the profile name, then
+choose the intended account and organization. Upgrading from the shared-login
+wrapper requires one login per profile.
 A Fable credit prompt does not necessarily mean login failed: also check the plan
 and Fable-specific allowance.
 

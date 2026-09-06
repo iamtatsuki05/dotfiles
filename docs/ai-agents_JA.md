@@ -85,6 +85,21 @@ claude-account work --resume SESSION_ID --model fable
 
 認証の更新が必要なときだけ `claude-account auth-login work` を再実行します。そのprofileのsessionが動いている間は再loginを拒否しますが、他profileには影響しません。切替のたびのブラウザloginは不要です。
 
+初回登録でアカウントを間違えた場合は、`claude-account auth-login personal --replace` で紐付けを置き換えます。確認欄に `personal` と入力し、ブラウザで正しいアカウントと組織を選んでください。通常の再loginは別の本人情報への変更を拒否します。`--replace` も、そのprofileのsessionが動いている間は実行できません。キャンセルやlogin失敗では登録情報を維持しますが、Claude本体が保存した認証情報は変わっている場合があります。その場合は再loginしてください。
+
+通常の `claude` で使うアカウントは、次のように選びます。
+
+```sh
+claude-account default personal
+claude --model fable
+claude --resume SESSION_ID --model fable --dangerously-skip-permissions
+claude-account default
+```
+
+設定は `~/.config/claude-account/default-profile`（`XDG_CONFIG_HOME` 設定時はその配下）に保存します。更新済みのdotfilesシェル設定を読み込んだBash・Zshで有効です。新しいターミナルにも引き継ぎますが、実行中sessionのアカウントは変えません。`claude-account work ...` はデフォルトに関係なく `work` を使います。デフォルト先の認証が無効な場合は停止し、別の認証へ自動切替しません。デフォルトに選んだprofileを `--replace` すると、次回起動から置換後のアカウントを使います。
+
+`claude-account default --clear` でデフォルト指定を解除します。未設定時は従来のClaude本体の認証と引数をそのまま使います。`command claude ...`、実行ファイルの直接起動、シェル関数を読み込まないスクリプトはデフォルト指定の対象外です。デフォルト設定後の認証操作は `claude auth login` ではなく `claude-account auth-login PROFILE` を使ってください。
+
 保存先は `~/.config/claude-account/accounts/PROFILE/`（`XDG_CONFIG_HOME` 設定時はその配下）です。資格情報、アカウント情報、plugins、常駐processの状態を分離します。既存の `~/.claude` にある `settings.json`、`.mcp.json`、`CLAUDE.md`、skills、hooks、commands、agents、rules、projectsはリンクで共有します。projectsの共有により従来の会話もresumeできます。profileディレクトリは権限700、本人照合用のemailとorganization IDのハッシュは権限600で保存します。旧共有login・登録ファイル・setup-tokenは削除しません。
 
 引数は原則そのまま渡しますが、認証を上書きする `--settings`、`--setting-sources`、`--managed-settings` と `--bare` は拒否します。Agent Viewは無効にし、background・cloud・Remote Control起動は対象外です。session内の `/login`・`/logout` を隠し、認証変更は `auth-login` に集約します。

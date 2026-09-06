@@ -286,6 +286,13 @@ PY
 
   assert_contains "$FIXTURE_ROOT/output" "profile login lock is busy"
   assert_not_exists "$CLAUDE_CALL_LOG"
+  if printf 'personal\n' | run_account auth-login personal --replace > "$FIXTURE_ROOT/output" 2>&1; then
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    fail 'replacement ignored the shared login lock'
+  fi
+  assert_contains "$FIXTURE_ROOT/output" 'profile login lock is busy'
+  assert_not_exists "$CLAUDE_CALL_LOG"
   if ! run_account auth-login work > "$FIXTURE_ROOT/other-output" 2>&1; then
     kill "$holder_pid" 2>/dev/null || true
     wait "$holder_pid" 2>/dev/null || true
@@ -418,6 +425,10 @@ test_remote_launch_flags_fail_before_session_start() {
 }
 
 main() {
+  test_replace_requires_confirmation_and_preserves_mapping_on_failure
+  test_replace_changes_only_the_selected_identity
+  test_default_selection_routes_future_launches_and_can_be_cleared
+  test_default_rejects_invalid_or_unregistered_selection_without_fallback
   test_default_run_requires_matching_full_login_and_forwards_arguments
   test_default_run_rejects_unregistered_login_profile_without_token_fallback
   test_default_run_preserves_terminal_stdin_through_the_lock_holder
@@ -440,6 +451,74 @@ main() {
   test_settings_cannot_redirect_profile_or_enable_shared_daemon
   test_remote_launch_flags_fail_before_session_start
   echo "claude account tests passed"
+}
+
+test_replace_requires_confirmation_and_preserves_mapping_on_failure() {
+  setup_fixture
+  write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+  if printf 'wrong\n' | run_account auth-login personal --replace > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'replacement accepted wrong confirmation'
+  fi
+  assert_contains "$FIXTURE_ROOT/output" 'cancelled'
+  assert_not_exists "$CLAUDE_CALL_LOG"
+  if printf 'personal\n' | CLAUDE_AUTH_LOGIN_EXIT=7 run_account auth-login personal --replace > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'failed replacement login succeeded'
+  fi
+  assert_contains "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" "$PERSONAL_IDENTITY_SHA256"
+}
+
+test_replace_changes_only_the_selected_identity() {
+  setup_fixture
+  run_account auth-login work > "$FIXTURE_ROOT/output"
+  write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+  printf 'personal\n' | CLAUDE_AUTH_STATUS_EMAIL=other@example.test CLAUDE_AUTH_STATUS_ORG=org-other run_account auth-login personal --replace > "$FIXTURE_ROOT/output"
+  assert_contains "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" "$OTHER_IDENTITY_SHA256"
+  assert_contains "$FIXTURE_HOME/.config/claude-account/accounts/work/login-profiles.json" "$PERSONAL_IDENTITY_SHA256"
+  CLAUDE_AUTH_STATUS_EMAIL=other@example.test CLAUDE_AUTH_STATUS_ORG=org-other run_account personal --resume example
+  assert_line "$CLAUDE_LOG" 'args=<--resume><example>'
+}
+
+test_default_selection_routes_future_launches_and_can_be_cleared() {
+  setup_fixture
+  run_account run-default 'native prompt'
+  assert_line "$CLAUDE_LOG" 'config_dir=<unset>'
+  run_account auth-login personal > "$FIXTURE_ROOT/output"
+  run_account auth-login work > "$FIXTURE_ROOT/output"
+  run_account default personal > "$FIXTURE_ROOT/output"
+  run_account default > "$FIXTURE_ROOT/output"
+  assert_line "$FIXTURE_ROOT/output" personal
+  printf 'input\n' | CLAUDE_EXPECT_STDIN=1 run_account run-default --resume 'session id' --dangerously-skip-permissions
+  assert_line "$CLAUDE_LOG" "config_dir=$FIXTURE_HOME/.config/claude-account/accounts/personal"
+  assert_line "$CLAUDE_LOG" 'stdin=input'
+  assert_line "$CLAUDE_LOG" 'args=<--resume><session id><--dangerously-skip-permissions>'
+  run_account work
+  assert_line "$CLAUDE_LOG" "config_dir=$FIXTURE_HOME/.config/claude-account/accounts/work"
+  run_account default work > "$FIXTURE_ROOT/output"
+  run_account run-default
+  assert_line "$CLAUDE_LOG" "config_dir=$FIXTURE_HOME/.config/claude-account/accounts/work"
+  run_account default --clear > "$FIXTURE_ROOT/output"
+  run_account run-default
+  assert_line "$CLAUDE_LOG" 'config_dir=<unset>'
+}
+
+test_default_rejects_invalid_or_unregistered_selection_without_fallback() {
+  setup_fixture
+  run_account auth-login personal > "$FIXTURE_ROOT/output"
+  run_account default personal > "$FIXTURE_ROOT/output"
+  if run_account default missing > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'unregistered default accepted'
+  fi
+  run_account default > "$FIXTURE_ROOT/output"
+  assert_line "$FIXTURE_ROOT/output" personal
+  if CLAUDE_AUTH_STATUS_EMAIL=other@example.test run_account run-default > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'default identity mismatch fell back to native'
+  fi
+  assert_not_exists "$CLAUDE_LOG"
+  printf '../bad\n' > "$FIXTURE_HOME/.config/claude-account/default-profile"
+  if run_account run-default > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'invalid stored default accepted'
+  fi
+  assert_not_exists "$CLAUDE_LOG"
 }
 
 main "$@"

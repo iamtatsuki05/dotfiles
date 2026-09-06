@@ -11,13 +11,16 @@ AUTH_ENV_COMMAND=(env)
 usage() {
   cat <<'EOF'
 Usage:
-  claude-account auth-login <profile>
+  claude-account auth-login <profile> [--replace]
+  claude-account default [<profile>|--clear]
   claude-account list
   claude-account <profile> [claude arguments...]
 
 Each profile has an independent CLAUDE_CONFIG_DIR and full OAuth login.
 Log in once per profile; other profiles may keep running.
 Local transcripts are shared for explicit --resume across profiles.
+--replace requires confirmation before replacing an existing identity.
+The shell's claude function uses the saved default for future launches.
 
 Profiles may contain lowercase letters, numbers, dots, underscores, and hyphens.
 EOF
@@ -31,7 +34,7 @@ validate_profile() {
       echo "ERROR: invalid profile name: $profile" >&2
       return 2
       ;;
-    auth-login|list|help|add|add-token|token|__auth-login|__run-login|__list-login)
+    auth-login|default|run-default|list|help|add|add-token|token|__auth-login|__run-login|__list-login)
       echo "ERROR: reserved profile name: $profile" >&2
       return 2
       ;;
@@ -415,6 +418,8 @@ PY
 
 auth_login_profile() {
   local profile="$1"
+  local replace="${2:-}"
+  local confirmation
   local existing_info=""
   local existing_identity=""
   local login_info
@@ -429,6 +434,18 @@ auth_login_profile() {
     existing_identity="${existing_info%%$'\t'*}"
   fi
 
+  if [[ "$replace" == --replace ]]; then
+    if [[ -z "$existing_identity" ]]; then
+      echo 'ERROR: --replace requires an existing registered profile' >&2
+      return 1
+    fi
+    printf 'Replace the account/organization for "%s"? Future sessions (including the default) will use the new identity.\nType the profile name to confirm: ' "$profile" >&2
+    if ! IFS= read -r confirmation || [[ "$confirmation" != "$profile" ]]; then
+      echo 'ERROR: replacement cancelled; login was not changed' >&2
+      return 1
+    fi
+  fi
+
   prepare_profile
   check_settings_for_auth_overrides
   build_auth_env_command
@@ -438,9 +455,10 @@ auth_login_profile() {
   fi
   identity_sha256="${login_info%%$'\t'*}"
   subscription_type="${login_info#*$'\t'}"
-  if [[ -n "$existing_identity" && "$existing_identity" != "$identity_sha256" ]]; then
+  if [[ "$replace" != --replace && -n "$existing_identity" && "$existing_identity" != "$identity_sha256" ]]; then
     echo "ERROR: login identity does not match the registered profile: $profile" >&2
     echo "This profile's login changed, but its identity mapping was preserved. Re-run auth-login and choose the originally registered account." >&2
+    echo "To intentionally replace it, run: claude-account auth-login $profile --replace" >&2
     return 1
   fi
 
@@ -516,10 +534,74 @@ list_profiles() {
   fi
 }
 
+read_default_profile() {
+  local profile
+  profile="$(cat "$CONFIG_DIR/default-profile")" || return 1
+  validate_profile "$profile" || return 1
+  printf '%s\n' "$profile"
+}
+
+default_profile() {
+  local selection="${1:-}"
+  case "$selection" in
+    '')
+      if [[ -e "$CONFIG_DIR/default-profile" || -L "$CONFIG_DIR/default-profile" ]]; then
+        read_default_profile
+      else
+        echo 'No default profile selected (native Claude login).'
+      fi
+      ;;
+    --clear)
+      rm -f -- "$CONFIG_DIR/default-profile"
+      echo 'Default cleared; future shell launches use native Claude login.'
+      ;;
+    *)
+      select_profile "$selection"
+      if ! read_registered_profile "$selection" >/dev/null; then
+        echo "ERROR: full-login profile is not registered: $selection" >&2
+        return 1
+      fi
+      python3 - "$CONFIG_DIR/default-profile" "$selection" <<'PY'
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+descriptor, temporary = tempfile.mkstemp(prefix=".default-profile.", dir=path.parent)
+try:
+    with os.fdopen(descriptor, "w") as stream:
+        stream.write(sys.argv[2] + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+      echo "Default profile: $selection (future shell launches only)"
+      ;;
+  esac
+}
+
 main() {
   local command_name="${1:-}"
+  local profile
 
   case "$command_name" in
+    default)
+      [[ $# -le 2 ]] || { usage >&2; return 2; }
+      default_profile "${2:-}"
+      ;;
+    run-default)
+      shift
+      if [[ ! -e "$CONFIG_DIR/default-profile" && ! -L "$CONFIG_DIR/default-profile" ]]; then
+        exec claude "$@"
+      fi
+      profile="$(read_default_profile)" || return 1
+      select_profile "$profile"
+      run_with_login_lock shared __run-login "$profile" "$@"
+      ;;
     __list-login)
       require_login_lock shared
       [[ $# -eq 2 ]] || return 2
@@ -528,11 +610,11 @@ main() {
       ;;
     __auth-login)
       require_login_lock exclusive
-      if [[ $# -ne 2 ]]; then
+      if [[ $# -ne 2 && ! ( $# -eq 3 && "$3" == --replace ) ]]; then
         return 2
       fi
       select_profile "$2"
-      auth_login_profile "$2"
+      auth_login_profile "$2" "${3:-}"
       ;;
     __run-login)
       require_login_lock shared
@@ -544,12 +626,13 @@ main() {
       run_login_profile "$@"
       ;;
     auth-login)
-      if [[ $# -ne 2 ]]; then
+      if [[ $# -ne 2 && ! ( $# -eq 3 && "$3" == --replace ) ]]; then
         usage >&2
         return 2
       fi
       select_profile "$2"
-      run_with_login_lock exclusive __auth-login "$2"
+      shift
+      run_with_login_lock exclusive __auth-login "$@"
       ;;
     list)
       if [[ $# -ne 1 ]]; then
