@@ -306,7 +306,7 @@ test_unverified_old_cli_is_rejected_before_login() {
 
 test_case_alias_and_old_cli_list_are_rejected() {
   setup_fixture
-  if run_account auth-login Personal > "$FIXTURE_ROOT/output" 2>&1; then
+  if LC_ALL=en_US.UTF-8 run_account auth-login Personal > "$FIXTURE_ROOT/output" 2>&1; then
     fail 'case-insensitive alias accepted'
   fi
   assert_not_exists "$CLAUDE_CALL_LOG"

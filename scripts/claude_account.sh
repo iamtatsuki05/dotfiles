@@ -27,7 +27,7 @@ validate_profile() {
   local profile="$1"
 
   case "$profile" in
-    ""|.*|-*|*[!a-z0-9._-]*)
+    ""|.*|-*|*[!abcdefghijklmnopqrstuvwxyz0123456789._-]*)
       echo "ERROR: invalid profile name: $profile" >&2
       return 2
       ;;
