@@ -492,6 +492,67 @@ class AdapterSafetyTest(unittest.TestCase):
         finally:
             process.wait(timeout=2.0)
 
+    def test_snapshot_publishes_before_readonly_root_chmod(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "repo"
+            root.mkdir()
+            (root / ".git").mkdir()
+            (root / "file.txt").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "file.txt"], check=True)
+            real_rename = Path.rename
+
+            def rename_requires_writable_source(source: Path, target: Path) -> Path:
+                if source.name.startswith("agent-team-snapshot-"):
+                    mode = stat.S_IMODE(source.stat().st_mode)
+                    if not mode & stat.S_IWUSR:
+                        raise PermissionError("read-only source directory")
+                return real_rename(source, target)
+
+            with mock.patch.object(Path, "rename", new=rename_requires_writable_source):
+                snapshot = create_read_snapshot(root)
+            try:
+                self.assertEqual(stat.S_IMODE(snapshot.root.stat().st_mode), 0o555)
+                self.assertEqual(
+                    stat.S_IMODE((snapshot.root / "file.txt").stat().st_mode),
+                    0o444,
+                )
+            finally:
+                snapshot.cleanup()
+
+    def test_snapshot_cleans_published_tree_when_readonly_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "repo"
+            root.mkdir()
+            (root / ".git").mkdir()
+            (root / "file.txt").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "file.txt"], check=True)
+
+            real_chmod = Path.chmod
+
+            def fail_for_published(path: Path, mode: int) -> None:
+                if path.name.endswith("-ready") and mode == 0o555:
+                    raise OSError("readonly failed")
+                real_chmod(path, mode)
+
+            real_rename = Path.rename
+            rename_calls: list[tuple[Path, Path]] = []
+
+            def record_rename(source: Path, target: Path) -> Path:
+                rename_calls.append((source, target))
+                return real_rename(source, target)
+
+            with (
+                mock.patch.object(Path, "chmod", new=fail_for_published),
+                mock.patch.object(Path, "rename", new=record_rename),
+                self.assertRaises(OSError),
+            ):
+                create_read_snapshot(root)
+            self.assertEqual(len(rename_calls), 1)
+            for path in rename_calls[0]:
+                self.assertFalse(path.exists(), str(path))
+
     def test_snapshot_excludes_secrets_ignored_metadata_and_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "repo"

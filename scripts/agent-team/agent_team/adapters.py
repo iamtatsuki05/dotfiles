@@ -958,6 +958,7 @@ def create_read_snapshot(
         else:
             raise SnapshotError("workspace and state root must be separate")
     temporary = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
+    published = temporary
     try:
         temporary.chmod(0o700)
         entries = _git_entries(source)
@@ -1005,11 +1006,14 @@ def create_read_snapshot(
                 }
             )
         _make_read_only(temporary)
+        temporary.chmod(0o700)
         final = temporary.with_name(temporary.name + "-ready")
         temporary.rename(final)
+        published = final
+        final.chmod(0o555)
         return ReadSnapshot(final, tuple(manifest))
     except BaseException:
-        _remove_owned_tree(temporary)
+        _remove_owned_tree(published)
         raise
 
 

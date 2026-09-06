@@ -874,16 +874,52 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
         self.assertIn("not runnable", result.stderr)
 
     def test_prompts_are_japanese_and_main_uses_orca_contract(self) -> None:
-        config = agent_team.load_config(agent_team.default_config_path())
-        instructions = agent_team.role_instructions(
-            "main", config, Path("/tmp/state.json")
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch.dict(
+                os.environ,
+                {"XDG_CONFIG_HOME": temp_dir, "HOME": temp_dir},
+            ),
+        ):
+            config = agent_team.load_config(agent_team.default_config_path())
+            instructions = agent_team.role_instructions(
+                "main", config, Path("/tmp/state.json")
+            )
+
+        defaults_root = SCRIPTS_DIR / "agent_team" / "defaults"
+        self.assertEqual(config.config_path, (defaults_root / "config.toml").resolve())
+        self.assertEqual(
+            config.main.prompt_path,
+            (defaults_root / "prompts" / "orchestrator.md").resolve(),
         )
+        self.assertEqual(config.runtime, "orca")
+        self.assertEqual(set(config.roles), {"planner", "worker", "reviewer"})
         self.assertIn("ユーザーと対話する唯一のエージェント", instructions)
-        self.assertIn("Orca", instructions)
-        self.assertIn("Task", instructions)
-        self.assertIn("Dispatch", instructions)
+        self.assertIn("runtimeはorca", instructions)
+        self.assertIn("Planner、Worker、Reviewer", instructions)
+        self.assertIn("TaskとDispatch", instructions)
         self.assertIn("role_release", instructions)
         self.assertIn("delivery_ack", instructions)
+        for command in (
+            "role_prompt",
+            "role_wait",
+            "role_read",
+            "role_release",
+            "delivery_ack",
+            "message_reply",
+        ):
+            self.assertIn(f"`{command}`", instructions)
+        command_order = [
+            instructions.index(f"`{command}`")
+            for command in (
+                "role_prompt",
+                "role_wait",
+                "role_read",
+                "role_release",
+                "delivery_ack",
+            )
+        ]
+        self.assertEqual(command_order, sorted(command_order))
         self.assertIn("同時にactiveにできるroleは1つだけ", instructions)
         self.assertIn("`worker_done`だけが終端通知", instructions)
         self.assertIn("終端通知より前に`role_read`や`role_release`", instructions)

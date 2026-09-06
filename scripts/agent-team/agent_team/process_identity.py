@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
+import sysconfig
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
@@ -121,3 +123,18 @@ def read_process_argv(pid: int) -> tuple[str, ...] | None:
     if sys.platform == "darwin":
         return _darwin_process_argv(pid)
     return None
+
+
+def python_process_argv(launch_argv: Sequence[str]) -> tuple[str, ...]:
+    """Describe the kernel argv for a child of this exact Python interpreter."""
+
+    if not launch_argv or launch_argv[0] != sys.executable:
+        raise ValueError("Python launch argv must use the current interpreter")
+    if sys.platform == "darwin" and sysconfig.get_config_var("PYTHONFRAMEWORK"):
+        # CPython's Mac/Tools/pythonw.c replaces argv[0] with its application
+        # executable while preserving the launcher/venv in __PYVENV_LAUNCHER__.
+        current = read_process_argv(os.getpid())
+        if not current or not Path(current[0]).is_absolute():
+            raise RuntimeError("Python framework process argv identity is unavailable")
+        return (current[0], *launch_argv[1:])
+    return tuple(launch_argv)

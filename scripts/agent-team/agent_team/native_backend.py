@@ -66,7 +66,7 @@ from .contracts import (
 )
 from .harness_launch import LaunchValidationError, build_claude_argv
 from .locking import _LifecycleReservation
-from .process_identity import read_process_argv
+from .process_identity import python_process_argv, read_process_argv
 from .runtime import (
     MAX_PROMPT_CHARS,
     RuntimeValidationError,
@@ -1429,7 +1429,7 @@ class TmuxBackend(BackendPort):
             )
             private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
             snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
-            runner_argv = [
+            launch_argv = [
                 sys.executable,
                 "-m",
                 "agent_team",
@@ -1448,6 +1448,13 @@ class TmuxBackend(BackendPort):
                 "--launch-nonce",
                 launch_nonce,
             ]
+            try:
+                runner_argv = list(python_process_argv(launch_argv))
+            except (ValueError, RuntimeError) as exc:
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "native Python runner process argv identity is unproven",
+                ) from exc
             assignment = {
                 "task_id": task_id,
                 "dispatch_id": dispatch_id,
@@ -1476,7 +1483,7 @@ class TmuxBackend(BackendPort):
             try:
                 spawn_attempted = True
                 process = subprocess.Popen(
-                    runner_argv,
+                    launch_argv,
                     cwd=PACKAGE_ROOT,
                     env=acp_environment(),
                     stdin=subprocess.DEVNULL,

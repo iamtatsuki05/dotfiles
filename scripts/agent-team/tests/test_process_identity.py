@@ -7,8 +7,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from agent_team.process_identity import read_process_argv
+from agent_team import process_identity
+from agent_team.process_identity import python_process_argv, read_process_argv
 
 
 class ProcessIdentityTest(unittest.TestCase):
@@ -41,7 +43,7 @@ class ProcessIdentityTest(unittest.TestCase):
 
                 observed = read_process_argv(process.pid)
 
-                self.assertEqual(observed, tuple(argv))
+                self.assertEqual(observed, python_process_argv(argv))
                 self.assertNotIn("must-not-be-returned", observed or ())
             finally:
                 if process.poll() is None:
@@ -52,6 +54,36 @@ class ProcessIdentityTest(unittest.TestCase):
         self.assertIsNone(read_process_argv(0))
         self.assertIsNone(read_process_argv(-1))
         self.assertIsNone(read_process_argv(2**31 - 1))
+
+    def test_framework_kernel_argv_preserves_arguments_and_launch_command(self) -> None:
+        launch = [sys.executable, "-m", "agent_team", "", "日本語 with spaces"]
+        application = (
+            "/Library/Frameworks/Python.framework/Python.app/Contents/MacOS/Python"
+        )
+        with (
+            mock.patch.object(process_identity.sys, "platform", "darwin"),
+            mock.patch.object(
+                process_identity.sysconfig, "get_config_var", return_value="Python"
+            ),
+            mock.patch.object(
+                process_identity,
+                "read_process_argv",
+                return_value=(application, "parent"),
+            ),
+        ):
+            self.assertEqual(python_process_argv(launch), (application, *launch[1:]))
+        self.assertEqual(launch[0], sys.executable)
+
+    def test_framework_argv_does_not_guess_an_unavailable_identity(self) -> None:
+        with (
+            mock.patch.object(process_identity.sys, "platform", "darwin"),
+            mock.patch.object(
+                process_identity.sysconfig, "get_config_var", return_value="Python"
+            ),
+            mock.patch.object(process_identity, "read_process_argv", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "identity is unavailable"),
+        ):
+            python_process_argv([sys.executable, "-m", "agent_team"])
 
 
 if __name__ == "__main__":

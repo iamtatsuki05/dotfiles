@@ -374,6 +374,28 @@ class NativeBackendTest(unittest.TestCase):
             backend._cancel_runner(state, Role.PLANNER)
         terminate.assert_not_called()
 
+    def test_framework_process_identity_keeps_the_original_python_launch(self) -> None:
+        def framework_argv(launch: list[str]) -> tuple[str, ...]:
+            return ("/Framework/Python.app/Contents/MacOS/Python", *launch[1:])
+
+        with self.planner_backend() as backend:
+            with (
+                mock.patch.object(
+                    native, "python_process_argv", side_effect=framework_argv
+                ),
+                mock.patch.object(
+                    native.subprocess, "Popen", return_value=FakePopen([])
+                ) as popen,
+                mock.patch.object(native.os, "getpgid", return_value=77_001),
+            ):
+                backend.request(RolePrompt(Role.PLANNER, "inspect"))
+            launch = popen.call_args.args[0]
+            self.assertEqual(launch[0], sys.executable)
+            self.assertEqual(popen.call_args.kwargs["env"], {"PATH": "/bin"})
+            saved = native.runtime_read_state(self.state_path)["roles"]["planner"]
+            self.assertEqual(tuple(saved["runner_argv"]), framework_argv(launch))
+            backend._cleanup_assignment(saved, self.state_path, Role.PLANNER)
+
     def test_unsupported_selected_role_is_rejected_before_state_creation(self) -> None:
         spec = self.spec(Role.WORKER)
         backend = self.backend(spec)
