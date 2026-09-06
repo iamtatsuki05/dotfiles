@@ -101,6 +101,7 @@ if action == "new-session":
         "pane_id": "%0",
         "pane_pid": 4242,
         "server_pid": 4343,
+        "server_running": True,
         "dead": False,
         "exit_status": None,
         "nonce": None,
@@ -154,6 +155,7 @@ if action == "kill-session":
     if os.environ.get("FAKE_TMUX_KILL_MODE") == "unknown":
         raise SystemExit(0)
     state["session"] = False
+    state["server_running"] = os.environ.get("FAKE_TMUX_KILL_MODE") == "linger"
     save(state)
     raise SystemExit(0)
 
@@ -182,6 +184,10 @@ class TmuxDriverContractTest(unittest.TestCase):
         }
         self.environment_patcher = mock.patch.dict(os.environ, self.environment)
         self.environment_patcher.start()
+        self.pid_patcher = mock.patch(
+            "agent_team.tmux._pid_alive", side_effect=self._fake_pid_alive
+        )
+        self.pid_patcher.start()
         self.driver = TmuxDriver(
             self.fake,
             self.root / "private-socket",
@@ -190,8 +196,14 @@ class TmuxDriverContractTest(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.pid_patcher.stop()
         self.environment_patcher.stop()
         self.directory.cleanup()
+
+    def _fake_pid_alive(self, pid: int) -> bool:
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertEqual(pid, state["server_pid"])
+        return bool(state["server_running"])
 
     def receipt(self) -> TmuxReceipt:
         return self.driver.create(
@@ -328,6 +340,24 @@ import agent_team.tmux
         self.assertEqual(result.evidence, CloseEvidence.TERMINATION_UNPROVEN)
         self.assertFalse(result.session_terminated)
         self.assertFalse(result.descendants_stopped)
+
+    def test_fake_lifecycle_does_not_probe_host_process_ids(self) -> None:
+        receipt = self.receipt()
+        with mock.patch("agent_team.tmux.os.kill") as host_probe:
+            result = self.driver.close(receipt)
+        host_probe.assert_not_called()
+        self.assertTrue(result.server_terminated)
+
+    def test_absent_session_does_not_prove_the_fake_server_stopped(self) -> None:
+        receipt = self.receipt()
+        with (
+            mock.patch.dict(os.environ, {"FAKE_TMUX_KILL_MODE": "linger"}),
+            mock.patch("agent_team.tmux._SERVER_EXIT_TIMEOUT_SECONDS", 0.01),
+        ):
+            result = self.driver.close(receipt)
+        self.assertEqual(result.evidence, CloseEvidence.TERMINATION_UNPROVEN)
+        self.assertFalse(result.server_terminated)
+        self.assertTrue(receipt.socket_path.exists())
 
     def test_failed_owner_tag_reclaims_the_partial_session(self) -> None:
         os.environ["FAKE_TMUX_SET_MODE"] = "fail"
