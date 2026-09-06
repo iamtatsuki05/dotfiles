@@ -464,6 +464,7 @@ main() {
 
 test_login_completes_onboarding_without_copying_account_or_trust() {
   setup_fixture
+  printf '%s\n' '{"oauthAccount":{"shared":"never-copy"},"projects":{"shared":{"hasTrustDialogAccepted":true}}}' > "$FIXTURE_HOME/.claude.json"
   run_account auth-login personal > "$FIXTURE_ROOT/output"
   python3 - "$FIXTURE_HOME/.config/claude-account/accounts/personal/.claude.json" <<'PY'
 import json, sys
@@ -472,6 +473,7 @@ path = Path(sys.argv[1])
 assert path.exists(), 'login did not create onboarding state'
 assert json.loads(path.read_text()) == {'hasCompletedOnboarding': True}
 PY
+  assert_line "$FIXTURE_HOME/.claude.json" '{"oauthAccount":{"shared":"never-copy"},"projects":{"shared":{"hasTrustDialogAccepted":true}}}'
 }
 
 test_repair_requires_matching_identity_and_preserves_other_config() {

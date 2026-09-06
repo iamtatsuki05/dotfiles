@@ -85,7 +85,7 @@ claude-account work --resume SESSION_ID --model fable
 
 認証の更新が必要なときだけ `claude-account auth-login work` を再実行します。そのprofileのsessionが動いている間は再loginを拒否しますが、他profileには影響しません。切替のたびのブラウザloginは不要です。
 
-ログイン成功時は対話画面の初期設定完了も保存します。以前登録したprofileで、認証済みなのに初回ログイン画面が出る場合は、そのprofileのsessionを終了して `claude-account repair work` を実行してください。現在の本人情報を照合してから初期設定完了フラグだけを補い、再ログインや認証情報・プロジェクトの信頼設定のコピーは行いません。
+ログイン成功時は対話画面の初期設定完了も保存します。以前登録したprofileで、認証済みなのに初回ログイン画面が出る場合は、そのprofileのsessionを終了して `claude-account repair work` を実行してください。通常起動と同じ共有設定リンクの確認・整備と、現在の本人情報の照合を行います。その後、profileの状態JSONに初期設定完了フラグだけを補います。再ログインや認証情報・プロジェクトの信頼設定のコピーは行いません。
 
 初回登録でアカウントを間違えた場合は、`claude-account auth-login personal --replace` で紐付けを置き換えます。確認欄に `personal` と入力し、ブラウザで正しいアカウントと組織を選んでください。通常の再loginは別の本人情報への変更を拒否します。`--replace` も、そのprofileのsessionが動いている間は実行できません。キャンセルやlogin失敗では登録情報を維持しますが、Claude本体が保存した認証情報は変わっている場合があります。その場合は再loginしてください。
 
