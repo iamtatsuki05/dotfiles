@@ -58,39 +58,62 @@ reviewed tree.
 python3 scripts/agent_skill_upstreams.py check
 ```
 
-## Use Claude Code login profiles safely
+## Run Claude Code with separate accounts
 
-`claude-account` uses the single full-scope `claude auth login` credential in
-the macOS Keychain. macOS cannot keep an independent full-login credential for
-each profile, so switching profiles requires browser authentication.
+Requires Claude Code 2.1.261 or later. Each account uses a fixed `CLAUDE_CONFIG_DIR` with its own regular `auth login`. The [official authentication documentation](https://code.claude.com/docs/en/authentication) states that macOS Keychain entries are also scoped to this directory. A credential-free probe confirmed distinct Keychain lookups on 2.1.261.
 
-Before registering or switching, exit every Claude Code session. Sessions
-started through `claude-account` hold a shared lock, and plain `claude`
-processes are detected separately.
+Register each account once, checking the account and organization in the browser. Profile names use lowercase letters, numbers, dots, hyphens, and underscores. Existing shared logins and setup-tokens are not imported, so old profiles need one new login without copying tokens.
 
 ```sh
-pgrep -fl claude
-# Continue only when no Claude process remains.
-
-claude-account auth-login <profile>
-# Select the intended account in the browser.
-```
-
-The command stores a SHA-256 fingerprint derived from the email and
-organization ID, plus the subscription type, in
-`~/.config/claude-account/login-profiles.json` with mode 600. It does not store
-the email or organization ID itself.
-
-List the registered mappings and launch only through a matching profile:
-
-```sh
+claude-account auth-login personal
+claude-account auth-login work
 claude-account list
-claude-account <profile> --model fable
-claude-account <profile> --resume <session-id> --model fable
 ```
 
-The wrapper removes API keys, custom endpoints, and Bedrock, Vertex, or
-Foundry selectors from the child process. It fails closed when inspectable
-settings contain `apiKeyHelper` or authentication environment overrides.
-Plain `claude` and `claude-auto` bypass the profile identity check and should
-not be used for this multi-account workflow.
+Select an account by name. Other accounts' sessions can keep running:
+
+```sh
+claude-account personal --model fable
+claude-account work --model fable --dangerously-skip-permissions
+```
+
+After exiting a rate-limited session, resume from its project directory using another account with available allowance. Other sessions are unaffected.
+
+```sh
+claude-account work --resume SESSION_ID --model fable
+```
+
+Add `--fork-session` if you want to keep the original session open. Do not update one session ID from two processes simultaneously. Resuming under another organization sends the previous conversation and code using that organization's credentials. Choose an account authorized to receive the data.
+
+Only repeat `claude-account auth-login work` when authentication needs renewal. Login is blocked while that profile has running sessions; other profiles are unaffected. Switching profiles does not require logging in each time.
+
+Successful login also records interactive onboarding completion. If an older registered profile shows the first-run login screen despite being authenticated, exit that profile's sessions and run `claude-account repair work`. This checks and prepares the same shared settings links as a normal launch, then verifies the current identity. It only adds the onboarding-completion flag to the profile state JSON; it does not log in again or copy credentials or project trust settings.
+
+If the first registration used the wrong account, run `claude-account auth-login personal --replace`. Type `personal` at the confirmation prompt, then choose the correct account and organization in the browser. Ordinary login rejects a different identity. Replacement is also blocked while that profile has running sessions. Cancellation or login failure preserves the registry, but Claude itself may already have changed its saved credentials; log in again if needed.
+
+Select the account used by ordinary `claude` launches:
+
+```sh
+claude-account default personal
+claude --model fable
+claude --resume SESSION_ID --model fable --dangerously-skip-permissions
+claude-account default
+```
+
+The selection is stored in `~/.config/claude-account/default-profile`, or under `XDG_CONFIG_HOME` when set. It applies to Bash and Zsh after loading the updated dotfiles shell configuration, including new terminals. Running sessions keep their account. `claude-account work ...` explicitly uses `work` regardless of the default. Invalid default credentials stop the launch without falling back to another login. Replacing the selected profile changes the identity used by its future launches too.
+
+Use `claude-account default --clear` to remove the selection. When no default is set, native Claude authentication and arguments are preserved. `command claude ...`, direct executable invocations, and scripts that do not load the shell function bypass this selection. After setting a default, use `claude-account auth-login PROFILE` for authentication, not `claude auth login`.
+
+Profiles live in `~/.config/claude-account/accounts/PROFILE/`, or under `XDG_CONFIG_HOME` when set. Credentials, account metadata, plugins, and daemon state are independent. Existing settings.json, .mcp.json, CLAUDE.md, skills, hooks, commands, agents, rules, and projects under `~/.claude` are shared through links. Sharing projects makes existing transcripts resumable. Profile directories use mode 700, and the email-plus-organization identity hash uses mode 600. Legacy shared credentials, registries, and setup-tokens are preserved.
+
+Arguments are forwarded except authentication-changing `--settings`, `--setting-sources`, `--managed-settings`, and `--bare`. Agent View is disabled; background, cloud, and Remote Control launches are outside this workflow. In-session `/login` and `/logout` are hidden; use `auth-login` for credential changes.
+
+Subscription authentication does not prove Fable entitlement or remaining included allowance. The wrapper does not change models, purchase credits, or enable additional billing, but it cannot disable credits already enabled for the account. To avoid additional charges, disable usage credits in Claude's usage settings and check Fable's own allowance. Decline any credit prompt and check the plan, quota, and authentication. Real-account Fable billing and resume remain deployment acceptance checks.
+
+CodexBar monitoring accounts are independent of this wrapper. For simultaneous display, register each account's Web session in CodexBar and check:
+
+```sh
+codexbar usage --provider claude --all-accounts --format json --pretty
+```
+
+This list does not discover `CLAUDE_CONFIG_DIR` profiles. No synchronization of setup-tokens or short-lived OAuth tokens is added. Renew expired Web sessions in CodexBar. Cookies are login credentials: never put them in Git or chat. See [CodexBar's authentication and multi-account documentation](https://github.com/steipete/CodexBar/blob/v0.56.3/docs/claude.md). You can also run `claude-account work /usage` to inspect the selected profile directly.

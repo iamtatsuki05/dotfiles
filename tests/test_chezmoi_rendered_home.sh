@@ -108,6 +108,41 @@ if not any("__MISE_OPEN__" in value and "__MISE_CLOSE__" in value for value in t
 PY
 
   mkdir -p "$temp_home/.local/bin"
+  cat > "$temp_home/.local/bin/claude" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then
+  printf '2.1.261 (Claude Code)\n'
+  exit 0
+fi
+printf 'native-args='
+printf '<%s>' "$@"
+printf '\n'
+exit 17
+EOF
+  chmod +x "$temp_home/.local/bin/claude"
+  local shell_bin
+  for shell_bin in /bin/bash /bin/zsh; do
+    env -i HOME="$temp_home" XDG_CONFIG_HOME="$temp_home/.config" \
+      DOTFILES_REPO_ROOT="$REPO_ROOT" PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
+      "$shell_bin" -c '
+        . "$HOME/.config/shell/dotfiles-shell-common.sh"
+        type claude
+        claude "prompt with spaces" --resume sample
+        result=$?
+        test "$result" = 17 || exit 1
+        mkdir -p "$XDG_CONFIG_HOME/claude-account"
+        printf "missing\n" > "$XDG_CONFIG_HOME/claude-account/default-profile"
+        claude --resume sample
+        result=$?
+        rm "$XDG_CONFIG_HOME/claude-account/default-profile"
+        test "$result" = 1
+      ' > "$temp_dir/claude-routing-output" 2>&1 || {
+        sed -n '1,80p' "$temp_dir/claude-routing-output" >&2
+        fail "rendered claude default routing failed in $shell_bin"
+      }
+    assert_contains "$temp_dir/claude-routing-output" 'native-args=<prompt with spaces><--resume><sample>'
+    assert_contains "$temp_dir/claude-routing-output" 'full-login profile is not registered: missing'
+  done
   local matrix_status=0
   run_rendered_bash_matrix "$temp_home" "$bash_output" "$matrix_os" || matrix_status=$?
 
