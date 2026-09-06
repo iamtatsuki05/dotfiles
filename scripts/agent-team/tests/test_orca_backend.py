@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import selectors
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ import time
 import unittest
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar, cast
 from unittest import mock
 
@@ -61,6 +63,54 @@ from agent_team.runtime import read_state, write_state
 from agent_team.workflow import WorkflowEngine
 
 ORCA_COMMAND = orca_module.orca_executable()
+
+
+def _ready_process_runner_subprocess_proxy(ready: Path) -> SimpleNamespace:
+    real_popen = subprocess.Popen
+    real_killpg = os.killpg
+
+    def capture_popen(
+        args: Sequence[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        stdin: int | None,
+        stdout: int | None,
+        stderr: int | None,
+        shell: bool,
+        start_new_session: bool,
+    ) -> subprocess.Popen[bytes]:
+        process = real_popen(
+            args,
+            cwd=cwd,
+            env=env,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            shell=shell,
+            start_new_session=start_new_session,
+        )
+        deadline = time.monotonic() + 2.0
+        while not ready.exists():
+            if process.poll() is not None:
+                raise AssertionError("process exited before readiness")
+            if time.monotonic() >= deadline:
+                try:
+                    real_killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=2.0)
+                raise AssertionError("process readiness timed out")
+            time.sleep(0.01)
+        return process
+
+    return SimpleNamespace(
+        Popen=capture_popen,
+        PIPE=subprocess.PIPE,
+        SubprocessError=subprocess.SubprocessError,
+        TimeoutExpired=subprocess.TimeoutExpired,
+        run=subprocess.run,
+    )
 
 
 def _reservation_probe(
@@ -3416,30 +3466,48 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
     def test_parent_exit_does_not_wait_for_pipe_holding_descendant(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             marker = Path(temp_dir) / "child-marker"
+            child_ready = Path(temp_dir) / "child-ready"
+            release = Path(temp_dir) / "release"
             child = (
-                "import pathlib,time; time.sleep(1.5); "
-                f"pathlib.Path({str(marker)!r}).write_text('residual')"
+                "import pathlib,time; "
+                f"ready=pathlib.Path({str(child_ready)!r}); "
+                f"release=pathlib.Path({str(release)!r}); "
+                f"marker=pathlib.Path({str(marker)!r}); "
+                "ready.write_text('ready')\n"
+                "while not release.exists():\n"
+                "    time.sleep(0.01)\n"
+                "marker.write_text('residual')\n"
             )
             parent = (
-                "import subprocess,sys; "
-                f"subprocess.Popen([sys.executable, '-c', {child!r}])"
+                "import pathlib,subprocess,sys,time; "
+                f"ready=pathlib.Path({str(child_ready)!r}); "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                "deadline=time.monotonic()+2.0\n"
+                "while not ready.exists() and time.monotonic() < deadline:\n"
+                "    time.sleep(0.01)\n"
+                "if not ready.exists(): raise SystemExit('child readiness timeout')\n"
             )
             runner = ProcessRunner()
-            started = time.monotonic()
-
-            result = runner.run(
-                (sys.executable, "-c", parent),
-                cwd=Path(temp_dir),
-                env=os.environ.copy(),
-                timeout_seconds=2,
-            )
-            elapsed = time.monotonic() - started
-            time.sleep(0.2)
-            marker_exists = marker.exists()
+            try:
+                with mock.patch.object(
+                    adapters_module,
+                    "subprocess",
+                    _ready_process_runner_subprocess_proxy(child_ready),
+                ):
+                    result = runner.run(
+                        (sys.executable, "-c", parent),
+                        cwd=Path(temp_dir),
+                        env=os.environ.copy(),
+                        timeout_seconds=2,
+                    )
+                self.assertFalse(release.exists())
+                self.assertFalse(marker.exists())
+            finally:
+                release.write_text("release", encoding="utf-8")
+                time.sleep(0.2)
+            self.assertFalse(marker.exists())
 
         self.assertEqual(result.returncode, 0)
-        self.assertLess(elapsed, 1.0)
-        self.assertFalse(marker_exists)
 
     @unittest.skipIf(os.name == "nt", "POSIX process-group contract")
     def test_parent_final_output_is_drained_before_group_check(self) -> None:
@@ -3641,6 +3709,7 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             marker = Path(temp_dir) / "child-marker"
             pid_path = Path(temp_dir) / "parent-pid"
+            parent_ready = Path(temp_dir) / "parent-ready"
             child = (
                 "import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
                 "time.sleep(5); "
@@ -3648,21 +3717,38 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
             )
             parent = (
                 "import os,pathlib,signal,subprocess,sys,time; "
-                f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid())); "
                 "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid())); "
                 f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                f"pathlib.Path({str(parent_ready)!r}).write_text('ready'); "
                 "time.sleep(10)"
             )
+            real_killpg = os.killpg
+            real_killpg_calls: list[int] = []
+
+            def record_killpg(group_id: int, signum: int) -> None:
+                if signum in (signal.SIGTERM, signal.SIGKILL):
+                    real_killpg_calls.append(signum)
+                real_killpg(group_id, signum)
+
             runner = ProcessRunner()
-            started = time.monotonic()
-            with self.assertRaisesRegex(Exception, "timed out"):
+            with (
+                mock.patch.object(
+                    adapters_module,
+                    "subprocess",
+                    _ready_process_runner_subprocess_proxy(parent_ready),
+                ),
+                mock.patch.object(
+                    adapters_module.os, "killpg", side_effect=record_killpg
+                ),
+                self.assertRaisesRegex(Exception, "timed out"),
+            ):
                 runner.run(
                     (sys.executable, "-c", parent),
                     cwd=Path(temp_dir),
                     env=os.environ.copy(),
                     timeout_seconds=0.2,
                 )
-            elapsed = time.monotonic() - started
             time.sleep(0.2)
             marker_exists = marker.exists()
             pid = int(pid_path.read_text())
@@ -3670,7 +3756,7 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
         self.assertTrue(adapters_module._process_group_exited(pid))
-        self.assertLess(elapsed, 3.0)
+        self.assertEqual(real_killpg_calls, [signal.SIGTERM, signal.SIGKILL])
         self.assertFalse(marker_exists)
 
     @unittest.skipIf(os.name == "nt", "POSIX process-group contract")

@@ -622,26 +622,63 @@ test_update_reviews_all_skills_in_parallel() {
   local output
   local review_command
   local review_dir
-  local started_at
-  local ended_at
-  local elapsed
+  local barrier_dir
+  local negative_dir
+  local skill_id
+  local started_count
+  local completed_count
 
-  review_command='sleep 1; mkdir -p "$(dirname "$AGENT_SKILL_REVIEW_REPORT")"; cat > "$AGENT_SKILL_REVIEW_REPORT" <<EOF
+  review_command='
+barrier_dir="${AGENT_SKILL_REVIEW_BARRIER_DIR:?}"
+expected="${AGENT_SKILL_REVIEW_BARRIER_EXPECTED:?}"
+timeout_seconds="${AGENT_SKILL_REVIEW_BARRIER_TIMEOUT_SECONDS:?}"
+mkdir -p "$barrier_dir"
+review_id="$(basename "$AGENT_SKILL_REVIEW_REPORT")"
+: > "$barrier_dir/$review_id.started"
+deadline=$(( $(date +%s) + timeout_seconds ))
+while :; do
+  started_count="$(find "$barrier_dir" -type f -name "*.started" | wc -l | tr -d " ")"
+  if [ "$started_count" -ge "$expected" ]; then
+    : > "$barrier_dir/released"
+    break
+  fi
+  if [ -f "$barrier_dir/failed" ] || [ "$(date +%s)" -ge "$deadline" ]; then
+    : > "$barrier_dir/failed"
+    exit 1
+  fi
+  sleep 0.05
+done
+mkdir -p "$(dirname "$AGENT_SKILL_REVIEW_REPORT")"
+cat > "$AGENT_SKILL_REVIEW_REPORT" <<EOF
 - review agent: codex
 - security findings: None.
 - compatibility findings: None.
 - required local changes: None.
 - update recommendation: approve
-EOF'
+EOF
+: > "$barrier_dir/$review_id.completed"'
 
   review_dir="$(mktemp -d)"
+  barrier_dir="$review_dir/barrier"
+  negative_dir="$review_dir/negative"
+  mkdir -p "$barrier_dir" "$negative_dir"
 
-  started_at="$(python3 - <<'PY'
-import time
-print(time.monotonic())
-PY
-)"
+  if (
+    AGENT_SKILL_REVIEW_BARRIER_DIR="$negative_dir" \
+    AGENT_SKILL_REVIEW_BARRIER_EXPECTED=2 \
+    AGENT_SKILL_REVIEW_BARRIER_TIMEOUT_SECONDS=1 \
+    AGENT_SKILL_REVIEW_REPORT="$negative_dir/serial.md" \
+    /bin/sh -c "$review_command"
+  ); then
+    fail "review barrier accepted a serial worker"
+  fi
+  assert_file "$negative_dir/failed"
+  assert_not_exists "$negative_dir/serial.md"
+
   output="$(
+    AGENT_SKILL_REVIEW_BARRIER_DIR="$barrier_dir" \
+    AGENT_SKILL_REVIEW_BARRIER_EXPECTED=9 \
+    AGENT_SKILL_REVIEW_BARRIER_TIMEOUT_SECONDS=10 \
     python3 "$SCRIPT" update \
       --dry-run \
       --review-report-dir "$review_dir" \
@@ -656,29 +693,27 @@ PY
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
   )"
-  ended_at="$(python3 - <<'PY'
-import time
-print(time.monotonic())
-PY
-)"
-  elapsed="$(python3 - "$started_at" "$ended_at" <<'PY'
-import sys
-print(float(sys.argv[2]) - float(sys.argv[1]))
-PY
-)"
 
-  python3 - "$elapsed" <<'PY' || fail "expected parallel review execution, elapsed=${elapsed}s"
-import sys
-elapsed = float(sys.argv[1])
-raise SystemExit(0 if elapsed < 1.8 else 1)
-PY
-  assert_contains_text "$output" "superpowers: review approved"
-  assert_contains_text "$output" "empirical-prompt-tuning: review approved"
-  assert_contains_text "$output" "mattpocock-skills: review approved"
-  assert_contains_text "$output" "modern-web-guidance: review approved"
-  assert_contains_text "$output" "natural-japanese: review approved"
-  assert_contains_text "$output" "herdr: review approved"
-  assert_contains_text "$output" "stop-slop: review approved"
+  for skill_id in \
+    superpowers \
+    empirical-prompt-tuning \
+    mattpocock-skills \
+    modern-web-guidance \
+    natural-japanese \
+    herdr \
+    stop-slop \
+    delegate-skills \
+    chatgpt-pro-line; do
+    assert_contains_text "$output" "$skill_id: review approved"
+    assert_file "$review_dir/$skill_id.md"
+    assert_file "$barrier_dir/$skill_id.md.started"
+    assert_file "$barrier_dir/$skill_id.md.completed"
+  done
+  assert_file "$barrier_dir/released"
+  started_count="$(find "$barrier_dir" -type f -name '*.started' | wc -l | tr -d ' ')"
+  completed_count="$(find "$barrier_dir" -type f -name '*.completed' | wc -l | tr -d ' ')"
+  [[ "$started_count" == 9 ]] || fail "expected 9 review starts, found $started_count"
+  [[ "$completed_count" == 9 ]] || fail "expected 9 review completions, found $completed_count"
   rm -rf "$review_dir"
 }
 
