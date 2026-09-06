@@ -300,21 +300,30 @@ are rejected. The write-capable role remains direct Codex with provider-native
 permissions.
 
 The native model-free tmux lifecycle was verified with Orca and Codex absent,
-including a workspace path containing spaces and a deleted config. A real
-Claude 2.1.112 native Main launch with `fable`/`high` and a logged-in
-`claude.ai` account reached the provider, but the API rejected `fable` as absent
-or inaccessible. No alternative model was used. This does not establish a
-native/provider end-to-end turn; use a model ID exposed by the account before
-making that claim. The ambient login path is supported without passing an API
-key, but the provider's subscription billing ledger is not verified.
+including a workspace path containing spaces and a deleted config. On
+2026-09-06, real Claude Code 2.1.261 with `fable`/`high` completed the native
+Main-to-Claude-ACP-Planner MCP cycle and public stop. Independent checks found
+no owned processes, state, socket, prompts, or private directories remaining.
+The earlier 2.1.112 rejection was `claude_code_version_too_old`; the same
+`fable` alias succeeded with the already-installed 2.1.261 executable.
+This verifies the read-only cycle, not the unfinished write/review workflow.
+The ambient `claude.ai` login path worked without an API key, but the
+provider's subscription billing ledger is not verified.
 
-## Non-goals keep the runtime small
+## Agreed requirements remain unfinished
 
-- No Herdr or Zellij runtime
-- No native Worker or Reviewer direct role
-- No support for all ten harnesses on the native backend
-- No arbitrary role graph, no-Main configuration, or concurrent background roles
-- No TaskSpec/review/verification/parallel workflow beyond the current fixed contract
+The following are remaining implementation goals, not exclusions from the
+agreed scope. They are tracked in Issues #8, #9, and #11.
+
+- Herdr and Zellij runtimes
+- Native Worker and the required Reviewer paths
+- The required profiles and real execution evidence for all ten harnesses
+- Arbitrary role graphs, no-Main execution, and explicit parallel tasks
+- TaskSpec, review decisions and limits, dependency order, and fixed-argv
+  verification of the reviewed revision before completion
+
+## Intentional exclusions
+
 - No arbitrary ACP server command in config
 - No automatic provider or transport fallback
 - No automatic commit, push, publishing, or deployment

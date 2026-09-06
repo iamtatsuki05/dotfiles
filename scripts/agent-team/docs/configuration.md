@@ -77,15 +77,17 @@ max_review_rounds = 2
 [main]
 provider = "claude"
 transport = "direct"
-model = "<available-claude-model>"
+model = "fable"
 effort = "high"
 prompt = "prompts/orchestrator.md"
 permission = "orchestrator"
+
+[roles]
 ```
 
-Replace `<available-claude-model>` with a model ID exposed by the Claude
-account used for this run. It is a user-supplied placeholder and does not
-change the bundled `fable`/`gpt-6-astra` defaults. Native `start`, `status`,
+The example retains the bundled `fable` alias. Check `command -v claude` and
+`claude --version` before starting: the real Main/Planner path was verified
+with Claude Code 2.1.261, while 2.1.112 was too old for Fable. Native `start`, `status`,
 `attach`, and `stop` route to `TmuxBackend`; only Main can be attached. Native
 ACP completion is published by the runner and is independent of tmux pane
 text. The lifecycle still requires `role_read` → `role_release` →
@@ -94,10 +96,13 @@ completion.
 
 The model-free native tmux CLI start/status/stop path has succeeded with Orca
 and Codex absent, a workspace path containing spaces, and a deleted config. A
-real Claude 2.1.112 Main launch with `fable`/`high` and a logged-in
-`claude.ai` account was rejected by the provider because `fable` was absent or
-inaccessible. No alternative model was used, so this does not establish a
-native/provider end-to-end run.
+real Claude Code 2.1.261 Main with `fable`/`high` and a logged-in `claude.ai`
+account also completed a Claude ACP Planner request through MCP, including
+read/release/ack and public stop with independent resource cleanup checks.
+The Python environment contained only `dotfiles-agent-team`; Orca, Codex,
+OpenCode, Zellij, and Herdr were absent from PATH. This proves the read-only
+Main/Planner cycle, not the unfinished write/review workflow. The older
+2.1.112 rejection was a CLI version error, not an unavailable `fable` alias.
 
 ## Top-level fields define one team contract
 

@@ -95,18 +95,37 @@ on macOS. The model-free native tmux CLI start/status/stop path also succeeded
 with Orca and Codex absent, a workspace path containing spaces, and a deleted
 config file. A separate real-tmux test with disposable provider fixtures passed the
 public MCP read/release/ack cycle and active cancellation from another CLI
-process, including independent cleanup checks. These tests do not verify a real
-provider turn. A real Claude 2.1.112 native
-Main launch with `fable`/`high` and a logged-in `claude.ai` account reached the
-provider, which rejected `fable` as absent or inaccessible. No alternative
-model was used; supply a model ID that your account exposes before claiming a
-native/provider end-to-end run. The Linux executable mapping is implemented as
+process, including independent cleanup checks.
+
+On 2026-09-06, a real Claude Code 2.1.261 Main with `fable`/`high` completed a
+Claude ACP Planner request through MCP: prompt, wait, read, release, then ack.
+The Planner read the requested file successfully. Public stop removed the owned
+processes, state, socket, prompts, and private directories. The isolated Python
+environment contained only this package; Orca, Codex, OpenCode, Zellij, and Herdr
+were absent from PATH. This verifies the read-only path, not the unfinished
+write/review workflow.
+
+The earlier rejection came from selecting an old Nix-provided Claude Code
+2.1.112. Requesting `claude-fable-5-1` directly exposed the
+`claude_code_version_too_old` error; the already-installed 2.1.261 executable
+accepted the same `fable` alias. Check the executable and version selected by
+PATH; changing the model is unnecessary for this failure. See the official
+[Claude model configuration](https://code.claude.com/docs/en/model-config) for
+current version requirements. The Linux executable mapping is implemented as
 `orca-ide`, but this checkout has not had a live Linux Orca smoke test. Windows
 is unsupported and fails fast. Orca executable selection is exact by platform,
 with no PATH fallback or environment override:
 
 - macOS: `orca`
 - Linux: `orca-ide`
+
+The same version check matters for Codex. In separate direct Worker and Reviewer
+probes,
+Codex 0.152.1 rejected `gpt-6-astra` with a newer-client requirement, while the
+already-installed 0.153.4 CLI ran both configured Astra roles.
+The Worker created the requested file, the Reviewer read it, and an independent
+`:read-only` sandbox probe denied a write. This does not verify the unfinished
+team review/verification workflow or Orca cleanup.
 
 Before starting a team:
 
@@ -122,7 +141,11 @@ Before starting a team:
 
 ```bash
 # Providers for the bundled Orca configuration
+command -v claude
+claude --version
 claude auth status
+command -v codex
+codex --version
 codex login status
 # Orca runtime on macOS
 orca status --json

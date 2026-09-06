@@ -73,25 +73,30 @@ max_review_rounds = 2
 [main]
 provider = "claude"
 transport = "direct"
-model = "<available-claude-model>"
+model = "fable"
 effort = "high"
 prompt = "prompts/orchestrator.md"
 permission = "orchestrator"
+
+[roles]
 ```
 
-`<available-claude-model>`は、このrunで使うClaude accountが公開しているmodel IDへ
-置き換えてください。これはuserが指定するplaceholderであり、bundled defaultの
-`fable`/`gpt-6-astra`は変更しません。nativeの`start`、`status`、`attach`、`stop`は
+この例は既定の`fable`を維持しています。起動前に`command -v claude`と`claude --version`を
+確認してください。実Main/Plannerの経路はClaude Code 2.1.261で成功し、2.1.112はFableに
+対応する版を満たしませんでした。nativeの`start`、`status`、`attach`、`stop`は
 `TmuxBackend`へ送られ、`attach`できるのはMainだけです。native ACPの完了はrunnerが
 publishし、tmux paneの文字列には依存しません。lifecycleには`role_read` → `role_release`
 → `delivery_ack`の順序が必要です。`native.last_ack`は1つのreceipt markerであり、Taskや
 goal全体の完了を示しません。
 
 modelなしのnative tmux CLI start/status/stopは、OrcaとCodexがない環境、空白を含むworkspace
-path、削除済みconfigで成功しました。Claude 2.1.112のMainを`fable`/`high`、ログイン済みの
-`claude.ai` accountで起動した実行は、providerが`fable`を存在しない、または利用できない
-modelとして拒否しました。代替modelは使っていないため、native/provider end-to-end runは
-まだ確認できていません。
+path、削除済みconfigで成功しました。実際のClaude Code 2.1.261を使った`fable`/`high`の
+Mainも、ログイン済みの`claude.ai` accountでClaude ACP Plannerを呼び出し、MCPの
+read/release/ackと公開stopを完了しました。所有資源の消滅を独立に確認しています。
+Python環境には`dotfiles-agent-team`だけを導入し、Orca、Codex、OpenCode、Zellij、Herdrを
+PATHから除外しました。これは読み取り専用のMain/Plannerの一巡であり、未実装の変更作成・
+レビューの全工程ではありません。以前の2.1.112での拒否はCLIの版が古いことによるもので、
+`fable`の利用不可を意味しません。
 
 ## top-level fieldで1つのteam contractを定義する
 
