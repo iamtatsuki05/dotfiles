@@ -86,6 +86,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語の AI pattern を strict checklist で除く。voice matching は `humanizer`。 |
+| `pstack-principles` | `cursor/plugins` | `principle-make-operations-idempotent/`, `principle-separate-before-serializing-shared-state/` | 再実行時の安全性と共有状態の分離に関する2原則。本文・MIT LICENSEは原文のまま。frontmatterを移植し、ローカルの `agents/openai.yaml` でCodexを明示呼び出し専用にする。他の実行環境ではこの制限が適用されない場合がある。 |
 | `delegate-skills` | `amElnagdy/delegate-skills` | `codex-delegate/`、`claude-delegate/` | 1 つの bounded なコーディング作業を別 process の Codex CLI / Claude Code に relay 経由で任せ、diff を自分で review して commit する。relay は commit しない。local safety overlay で read-only 既定と権限 bypass flag の禁止を固定。 |
 | `chatgpt-pro-line` | `pauljunsukhan/codex-chatgpt-pro-plugin` | `chatgpt-pro-line/` | ログイン済みの専用 Chrome profile(CDP、127.0.0.1)経由で ChatGPT Pro に設計・調査・デバッグ方針を尋ね、receipt と transcript を残す。runtime のみ vendoring(self-test と Codex MCP 設定は除外)。local overlay で明示依頼の限定、repo context upload の都度承認、`.devspace/` を commit しない規則を固定。 |
 
