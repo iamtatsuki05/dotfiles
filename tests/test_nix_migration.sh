@@ -23,7 +23,8 @@ readonly COMMAND_LIB="$REPO_ROOT/scripts/lib/command.sh"
 readonly FLAKE_FILE="$REPO_ROOT/flake.nix"
 readonly BASHRC_TEMPLATE_FILE="$REPO_ROOT/config/shell/bashrc.tmpl"
 readonly BASH_PROFILE_TEMPLATE_FILE="$REPO_ROOT/config/shell/bash_profile.tmpl"
-readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
+readonly SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh"
+readonly SHELL_DATA_VALIDATE_FILE="$REPO_ROOT/home/.chezmoitemplates/shell-data-validate"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly WAZA_AGENT_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/eval.yaml"
 readonly WAZA_MARKDOWN_DOCS_MODEL_EVAL_FILE="$REPO_ROOT/dotfiles/.agent/evals/markdown-docs/model.yaml"
@@ -78,9 +79,18 @@ emit_matrix_result() {
   fi
 }
 
+copy_feature_flags_fixture() {
+  local repo="$1"
+
+  mkdir -p "$repo/scripts/lib" "$repo/home"
+  cp "$REPO_ROOT/scripts/lib/features.sh" "$repo/scripts/lib/features.sh"
+  print -r -- $'[features]\nmacos = true' > "$repo/home/.chezmoidata.toml"
+}
+
 copy_script_libs() {
   local repo="$1"
 
+  copy_feature_flags_fixture "$repo"
   mkdir -p "$repo/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
   cp "$COMMAND_LIB" "$repo/scripts/lib/command.sh"
@@ -1086,8 +1096,8 @@ test_home_manager_and_darwin_modules_define_profiles_without_homebrew() {
   assert_contains "$HOME_MANAGER_ZSH_MODULE" '/opt/homebrew/share/zsh/site-functions/_brew'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'PROMPT_MACHINE_EMOJI'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'prompt-machine-emoji'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'hm-session-vars.sh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'hm-session-vars.sh'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" "brew shellenv"
 
   assert_contains "$HOME_MANAGER_NEOVIM_MODULE" 'programs.neovim.enable = true'
@@ -2066,7 +2076,7 @@ test_main_mise_shell_and_hooks_use_nix_as_the_setup_path() {
   assert_not_contains "$MISE_CONFIG" 'brew_dump.sh'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.enable = true'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'dotfiles-shell-common.sh'
-  assert_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
+  assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'command mise activate zsh'
   assert_contains "$HOME_MANAGER_ZSH_MODULE" 'programs.zsh.oh-my-zsh.enable = true'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'HOMEBREW_PREFIX'
   assert_not_contains "$HOME_MANAGER_ZSH_MODULE" 'brew shellenv'
@@ -2696,6 +2706,7 @@ test_install_mas_apps_script_continues_after_individual_failures() {
   mkdir -p "$repo/scripts/lib" "$repo/config/nix" "$home_dir" "$bin_dir"
   cp "$INSTALL_MAS_APPS_SCRIPT" "$repo/scripts/install_mas_apps.sh"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  copy_feature_flags_fixture "$repo"
 
   cat > "$repo/config/nix/mas-apps.nix" <<'EOF'
 {
@@ -2811,6 +2822,7 @@ print -r -- "install_mas_apps:\$*" >> "$log_file"
 EOF
   ln -s "$TEST_ZSH_BIN" "$bin_dir/zsh"
   ln -s "$(command -v dirname)" "$bin_dir/dirname"
+  ln -s "$(command -v awk)" "$bin_dir/awk"
 
   chmod +x \
     "$repo/scripts/install_homebrew.sh" \
@@ -3437,9 +3449,11 @@ EOF
 test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$BASHRC_TEMPLATE_FILE" 'dotfiles-shell-common.sh'
   assert_contains "$BASH_PROFILE_TEMPLATE_FILE" '. "$HOME/.bashrc"'
-  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
-  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '$HOME/.nix-profile/bin'
-  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" '[ "$dotfiles_shell_name" = "bash" ]'
+  assert_not_contains "$SHELL_COMMON_TEMPLATE_FILE" '__DOTFILES_REPO_ROOT__'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'DOTFILES_REPO_ROOT={{ $dotfilesRepoRoot.prequoted }}'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'home_nix_profile_bin'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'dotfiles_mise_activate_posix'
+  assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'case "$-" in'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'mise activate "$dotfiles_shell_name"'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'hm-session-vars.sh'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'shell/secrets.env'
@@ -3447,6 +3461,8 @@ test_bash_templates_support_dynamic_shell_setup() {
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'fgcc_rinit()'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'fgcc_p()'
   assert_contains "$SHELL_COMMON_TEMPLATE_FILE" 'gstop_instance()'
+  assert_contains "$SHELL_DATA_VALIDATE_FILE" 'home_local_bin'
+  assert_contains "$SHELL_DATA_VALIDATE_FILE" 'darwin_x86_64_homebrew_bin'
   assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
   assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
   assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '.chezmoitemplates/dotfiles-shell-common.sh'
@@ -5231,6 +5247,7 @@ test_nix_install_direct_copy_uses_bash_shebang() {
   mkdir -p "$repo/scripts/lib" "$repo/link" "$bin_dir"
   cp "$INSTALL_SCRIPT" "$script_copy"
   cp "$REPO_ROOT/scripts/lib/setup_profile.sh" "$repo/scripts/lib/setup_profile.sh"
+  copy_feature_flags_fixture "$repo"
   cp "$REPO_ROOT/scripts/lib/homebrew.sh" "$repo/scripts/lib/homebrew.sh"
   cp "$REPO_ROOT/scripts/lib/homebrew_fallback.sh" "$repo/scripts/lib/homebrew_fallback.sh"
   cp "$REPO_ROOT/scripts/lib/runtime.sh" "$repo/scripts/lib/runtime.sh"

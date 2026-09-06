@@ -43,6 +43,13 @@ readonly DARWIN_SUDO_LOCAL_PATH="${DOTFILES_DARWIN_SUDO_LOCAL_PATH:-/etc/pam.d/s
 readonly DARWIN_SUDO_LOCAL_BACKUP_PATH="${DARWIN_SUDO_LOCAL_PATH}.${HOME_MANAGER_BACKUP_EXTENSION}"
 readonly DARWIN_ETC_SHELL_RC_PATHS="${DOTFILES_DARWIN_ETC_SHELL_RC_PATHS:-/etc/bashrc:/etc/zshrc}"
 
+source "$SCRIPT_DIR/lib/features.sh"
+dotfiles_load_features "$REPO_ROOT" || {
+  feature_status=$?
+  echo "ERROR: failed to load feature flags for Nix setup." >&2
+  exit "$feature_status"
+}
+
 detect_host_os_name() {
   local uname_bin
   local kernel_name
@@ -292,6 +299,26 @@ homebrew_command_exists() {
 
 ensure_homebrew_available_for_profile() {
   local profile_name="$1"
+  local feature_status
+
+  if dotfiles_is_macos; then
+    if dotfiles_macos_features_enabled; then
+      feature_status=0
+    else
+      feature_status=$?
+    fi
+    case "$feature_status" in
+      0)
+        ;;
+      1)
+        echo "Skipping Homebrew precondition because features.macos=false"
+        return 0
+        ;;
+      *)
+        return "$feature_status"
+        ;;
+    esac
+  fi
 
   if ! dotfiles_profile_requires_homebrew "$profile_name" || homebrew_command_exists; then
     return 0
@@ -416,9 +443,28 @@ archive_existing_home_manager_backups() {
 }
 
 backup_existing_darwin_sudo_local() {
+  local feature_status
+
   if ! dotfiles_is_macos || (( DRY_RUN )); then
     return 0
   fi
+
+  if dotfiles_macos_features_enabled; then
+    feature_status=0
+  else
+    feature_status=$?
+  fi
+  case "$feature_status" in
+    0)
+      ;;
+    1)
+      echo "Skipping sudo Touch ID backup because features.macos=false"
+      return 0
+      ;;
+    *)
+      return "$feature_status"
+      ;;
+  esac
 
   [[ -e "$DARWIN_SUDO_LOCAL_PATH" ]] || return 0
   [[ -L "$DARWIN_SUDO_LOCAL_PATH" ]] && return 0
