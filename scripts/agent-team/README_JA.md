@@ -88,15 +88,32 @@ Orcaの実機確認はmacOSで行っています。tmuxでは、OrcaとCodexが�
 さらに実tmuxと模擬providerを使い、MCPでのread→release→ack、別CLIからの実行中処理の
 中断・停止、所有資源の回収を確認しました。これらは実モデルを使った検証ではありません。
 
-Claude Code 2.1.112のMainを`fable`/`high`、ログイン済みの`claude.ai`アカウントで起動すると、
-`fable`が存在しないか利用できないという応答になりました。代替モデルは使っていません。
-実モデルで全工程を試すには、アカウントで利用できる正式なモデルIDの指定が必要です。
+2026-09-06に、実際のClaude Code 2.1.261を使った`fable`/`high`のMainが、MCPで
+Claude ACP Plannerを呼び出し、prompt→wait→read→release→ackを完了しました。
+Plannerは指定ファイルを読み取り、正常な結果を返しました。公開stopで所有プロセス、state、
+socket、prompt、一時directoryの消滅も確認しています。隔離したPython環境にはこのpackageだけを
+導入し、Orca、Codex、OpenCode、Zellij、HerdrをPATHから除外しました。
+確認できたのは読み取り専用の経路であり、
+未実装の変更作成・レビューの全工程ではありません。
+
+以前の拒否は、Nix側の古いClaude Code 2.1.112を選んだことが原因でした。
+正式IDの`claude-fable-5-1`を指定すると`claude_code_version_too_old`が返り、既に導入済みの
+2.1.261では同じ`fable`が成功しました。PATHが選ぶ実行ファイルと版を確認してください。
+この失敗を解消するためのモデル変更は不要です。版の条件は公式の
+[モデル設定](https://code.claude.com/docs/en/model-config)を参照してください。
+
 LinuxのOrca実行ファイルは`orca-ide`に固定していますが、Linuxでの実機確認は未実施です。
 Windowsは非対応で、実行前に拒否します。Orcaの実行ファイルはOSごとに固定し、
 別名のPATH探索や環境変数による置き換えは行いません。
 
 - macOS: `orca`
 - Linux: `orca-ide`
+
+Codexも版の確認が必要です。WorkerとReviewerを別々に起動したdirect経路の試験では、
+0.152.1が`gpt-6-astra`に
+新しいclientを要求し、既に導入済みの0.153.4では設定どおりのAstra WorkerとReviewerが動きました。
+Workerによる指定ファイルの作成とReviewerによる読み取りを確認し、別の`:read-only` sandbox試験で
+書き込みの拒否を確認しました。これは未実装のチーム内レビュー・検証制御やOrcaの後始末の証拠ではありません。
 
 起動前に次を確認してください。
 
@@ -111,7 +128,11 @@ Windowsは非対応で、実行前に拒否します。Orcaの実行ファイル
 
 ```bash
 # bundled Orca configのprovider
+command -v claude
+claude --version
 claude auth status
+command -v codex
+codex --version
 codex login status
 # macOSのOrca runtime
 orca status --json

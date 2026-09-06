@@ -259,19 +259,26 @@ read-only/deny-allにしても、Codex internal toolの書き込みを止めら�
 provider native permissionを使うdirect Codexのままです。
 
 modelなしのnative tmux lifecycleは、OrcaとCodexがない環境、空白を含むworkspace path、
-削除済みconfigで確認しました。Claude 2.1.112のnative Mainを`fable`/`high`、ログイン済みの
-`claude.ai` accountで起動したところ、provider APIは`fable`を存在しない、または利用できない
-modelとして拒否しました。代替modelは使っていません。これはnative/provider end-to-end turnの
-証明ではありません。実行する場合はaccountが公開しているmodel IDを指定してください。ambient
-loginの経路はAPI keyなしで利用しますが、providerのsubscription billing ledgerは確認していません。
+削除済みconfigで確認しました。2026-09-06には、実際のClaude Code 2.1.261を使い、
+`fable`/`high`のMainからClaude ACP Plannerを呼び出すMCPの一巡と公開stopが成功しました。
+所有プロセス、state、socket、prompt、一時directoryの残存がないことを独立に確認しています。
+以前の2.1.112での拒否は`claude_code_version_too_old`であり、既に導入済みの2.1.261では
+同じ`fable`が成功しました。確認できたのは読み取り専用の経路で、未実装の変更作成・レビューの
+全工程ではありません。`claude.ai`の既存loginをAPI keyなしで利用しましたが、providerの
+subscription billing ledgerは確認していません。
 
-## non-goalを決めてruntimeを小さく保つ
+## 合意済み要件の未実装部分
 
-- HerdrまたはZellij runtime
-- native Workerやdirect Reviewer
-- native backendで10 harnessすべてを使うこと
-- 任意role graph、Mainなしの構成、background roleの並列実行
-- 現在の固定contractを超えるTaskSpec/review/verification/parallel workflow
+以下は合意した範囲から除外した項目ではなく、残る実装要件です。Issue #8、#9、#11で追跡します。
+
+- HerdrとZellijのruntime
+- native Workerと必要なReviewerの実行経路
+- 全10harnessで必要なprofileと実機証拠
+- 任意role graph、Mainなしの実行、明示的な並列task
+- TaskSpec、レビュー判定と回数制限、依存順序、レビューしたrevisionへの固定argv検証と完了判定
+
+## 意図的な対象外
+
 - configからの任意ACP server command登録
 - provider/transportの自動fallback
 - commit、push、publish、deployの自動実行
