@@ -120,21 +120,17 @@ zsh tests/test_agent_sync.sh
 
 ## Claude の profile 切替が拒否される
 
-共有 Keychain credential を変更する前に、Claude process を一覧し、すべての
-session を終了します。
-
-`claude-account auth-login` は、browser 認証が成功した後に共有 macOS Keychain
-login を変更します。
+`profile login lock is busy` は同じprofileのsessionが動いていることを示します。
+そのsessionを通常の手順で終了してから再認証します。他profileのsessionは継続できます。
 
 ```sh
-pgrep -fl claude
 claude-account auth-login <profile>
 ```
 
-関連のない process を自動で kill しないでください。active session が状態を保存
-できるよう、通常の手順で閉じます。共有 login と既存 profile mapping が一致しない
-場合は、その profile を最初に登録したアカウントで認証してください。command は
-既存 mapping を上書きせず保持します。
+profileのloginと登録済みの本人情報が一致しない場合は、初回と同じアカウント・組織を
+ブラウザで選んでください。別identityで登録情報を上書きしません。
+旧版から更新した場合はprofileごとに一度再loginが必要です。Fableのcredits要求は
+login失敗とは限らないので、契約とFable専用枠も確認してください。
 
 ## 全体テストで1件だけ skip される
 

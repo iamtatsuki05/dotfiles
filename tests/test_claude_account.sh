@@ -38,10 +38,17 @@ EOF
 
   cat > "$FIXTURE_BIN/claude" <<'EOF'
 #!/bin/sh
+if [ "${1:-}" = --version ]; then
+  printf '%s (Claude Code)\n' "${CLAUDE_TEST_VERSION:-2.1.261}"
+  exit 0
+fi
 printf '<%s>' "$@" >> "$CLAUDE_CALL_LOG"
 printf '\n' >> "$CLAUDE_CALL_LOG"
 
 if [ "${1:-}" = auth ] && [ "${2:-}" = login ]; then
+  if [ -n "${CLAUDE_CODE_CUSTOM_OAUTH_URL:-}" ] || [ -n "${CLAUDE_CODE_HOST_CREDS_FILE:-}" ] || [ -n "${USE_STAGING_OAUTH:-}" ]; then
+    exit 91
+  fi
   exit "${CLAUDE_AUTH_LOGIN_EXIT:-0}"
 fi
 
@@ -68,6 +75,8 @@ fi
       printf 'stdin=<eof>\n'
     fi
   fi
+  printf 'config_dir=%s\n' "${CLAUDE_CONFIG_DIR:-<unset>}"
+  printf 'agent_view=%s\n' "${CLAUDE_CODE_DISABLE_AGENT_VIEW:-<unset>}"
   printf 'token=%s\n' "${CLAUDE_CODE_OAUTH_TOKEN:-<unset>}"
   printf 'api_key=%s\n' "${ANTHROPIC_API_KEY:-<unset>}"
   printf 'auth_token=%s\n' "${ANTHROPIC_AUTH_TOKEN:-<unset>}"
@@ -97,8 +106,8 @@ write_login_registry() {
   local profile="$1"
   local identity_sha256="$2"
 
-  mkdir -p "$FIXTURE_HOME/.config/claude-account"
-  cat > "$FIXTURE_HOME/.config/claude-account/login-profiles.json" <<EOF
+  mkdir -p "$FIXTURE_HOME/.config/claude-account/accounts/personal"
+  cat > "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" <<EOF
 {
   "version": 1,
   "profiles": {
@@ -109,7 +118,7 @@ write_login_registry() {
   }
 }
 EOF
-  chmod 600 "$FIXTURE_HOME/.config/claude-account/login-profiles.json"
+  chmod 600 "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json"
 }
 
 test_default_run_requires_matching_full_login_and_forwards_arguments() {
@@ -117,10 +126,13 @@ test_default_run_requires_matching_full_login_and_forwards_arguments() {
   write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
 
   ANTHROPIC_API_KEY=api-secret \
+    CLAUDE_CODE_OAUTH_TOKEN=inherited-setup-token \
     ANTHROPIC_AUTH_TOKEN=auth-secret \
     ANTHROPIC_BASE_URL=https://gateway.example.test \
     run_account personal --resume session-123 --model fable --dangerously-skip-permissions
 
+  assert_line "$CLAUDE_LOG" "config_dir=$FIXTURE_HOME/.config/claude-account/accounts/personal"
+  assert_line "$CLAUDE_LOG" "agent_view=1"
   assert_line "$CLAUDE_LOG" "token=<unset>"
   assert_line "$CLAUDE_LOG" "api_key=<unset>"
   assert_line "$CLAUDE_LOG" "auth_token=<unset>"
@@ -160,7 +172,7 @@ test_default_run_rejects_shared_login_identity_mismatch() {
     fail "mismatched full-login identity unexpectedly succeeded"
   fi
 
-  assert_contains "$FIXTURE_ROOT/output" "shared Claude login does not match profile: personal"
+  assert_contains "$FIXTURE_ROOT/output" "Claude login does not match profile: personal"
   assert_contains "$FIXTURE_ROOT/output" "claude-account auth-login personal"
   assert_not_exists "$CLAUDE_LOG"
 }
@@ -173,7 +185,7 @@ test_default_run_rejects_same_email_in_a_different_organization() {
     fail "different organization with the same email unexpectedly succeeded"
   fi
 
-  assert_contains "$FIXTURE_ROOT/output" "shared Claude login does not match profile: personal"
+  assert_contains "$FIXTURE_ROOT/output" "Claude login does not match profile: personal"
   assert_not_exists "$CLAUDE_LOG"
 }
 
@@ -184,25 +196,66 @@ test_auth_login_registers_full_login_identity_without_storing_email() {
 
   assert_contains "$CLAUDE_CALL_LOG" "<auth><login>"
   assert_contains "$FIXTURE_ROOT/output" "Registered full-login profile: personal"
-  assert_contains "$FIXTURE_HOME/.config/claude-account/login-profiles.json" "$PERSONAL_IDENTITY_SHA256"
-  assert_not_contains "$FIXTURE_HOME/.config/claude-account/login-profiles.json" "personal@example.test"
-  [[ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$FIXTURE_HOME/.config/claude-account/login-profiles.json")" == 600 ]] || fail "login registry must be mode 600"
+  assert_contains "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" "$PERSONAL_IDENTITY_SHA256"
+  assert_not_contains "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" "personal@example.test"
+  [[ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json")" == 600 ]] || fail "login registry must be mode 600"
 }
 
-test_auth_login_refuses_to_switch_while_any_claude_process_is_running() {
+test_auth_login_allows_other_accounts_running() {
   setup_fixture
+  CLAUDE_RUNNING_PROCESSES=2 run_account auth-login personal > "$FIXTURE_ROOT/output"
+  assert_contains "$CLAUDE_CALL_LOG" "<auth><login>"
+}
 
-  if CLAUDE_RUNNING_PROCESSES=2 run_account auth-login personal > "$FIXTURE_ROOT/output" 2>&1; then
-    fail "auth login unexpectedly switched while Claude processes were running"
+test_profiles_share_transcripts_but_not_login_state() {
+  setup_fixture
+  mkdir -p "$FIXTURE_HOME/.claude/projects"
+  print -r -- 'existing transcript' > "$FIXTURE_HOME/.claude/projects/fixture.jsonl"
+  print -r -- '{"model":"fable"}' > "$FIXTURE_HOME/.claude/settings.json"
+  run_account auth-login personal >/dev/null
+  run_account auth-login work >/dev/null
+  local personal="$FIXTURE_HOME/.config/claude-account/accounts/personal"
+  local work="$FIXTURE_HOME/.config/claude-account/accounts/work"
+  [[ "$personal/projects/fixture.jsonl" -ef "$work/projects/fixture.jsonl" ]] || fail 'transcripts not shared'
+  [[ "$personal/settings.json" -ef "$FIXTURE_HOME/.claude/settings.json" ]] || fail 'settings not shared'
+  [[ ! "$personal/login-profiles.json" -ef "$work/login-profiles.json" ]] || fail 'identity registries shared'
+  [[ ! -L "$personal/.claude.json" && ! -L "$work/.claude.json" ]] || fail 'OAuth metadata shared'
+  run_account personal --resume fixture --model fable >/dev/null
+  assert_line "$CLAUDE_LOG" "config_dir=$personal"
+  run_account work --resume fixture --model fable >/dev/null
+  assert_line "$CLAUDE_LOG" "config_dir=$work"
+}
+
+test_login_failure_does_not_register_profile() {
+  setup_fixture
+  if CLAUDE_AUTH_LOGIN_EXIT=1 run_account auth-login personal >/dev/null 2>&1; then
+    fail 'failed auth login accepted'
   fi
+  assert_not_exists "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json"
+}
 
-  assert_contains "$FIXTURE_ROOT/output" "2 Claude processes are still running"
+test_custom_oauth_and_host_credentials_are_removed_for_login() {
+  setup_fixture
+  CLAUDE_CODE_CUSTOM_OAUTH_URL=https://invalid.example \
+    CLAUDE_CODE_HOST_CREDS_FILE=/tmp/fixture-host-creds \
+    USE_STAGING_OAUTH=1 run_account auth-login personal >/dev/null
+  assert_file "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json"
+}
+
+test_profile_directory_symlink_is_rejected() {
+  setup_fixture
+  mkdir -p "$FIXTURE_HOME/.config/claude-account/accounts" "$FIXTURE_ROOT/elsewhere"
+  ln -s "$FIXTURE_ROOT/elsewhere" "$FIXTURE_HOME/.config/claude-account/accounts/personal"
+  if run_account auth-login personal > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'profile symlink accepted'
+  fi
   assert_not_exists "$CLAUDE_CALL_LOG"
 }
 
+
 test_auth_login_refuses_while_a_managed_session_holds_the_shared_login_lock() {
   setup_fixture
-  local lock_dir="$FIXTURE_HOME/.config/claude-account"
+  local lock_dir="$FIXTURE_HOME/.config/claude-account/accounts/personal"
   local lock_file="$lock_dir/full-login.lock"
   local ready_file="$FIXTURE_ROOT/lock-ready"
   mkdir -p "$lock_dir"
@@ -231,9 +284,61 @@ PY
     fail "auth login unexpectedly ignored the shared login lock"
   fi
 
+  assert_contains "$FIXTURE_ROOT/output" "profile login lock is busy"
+  assert_not_exists "$CLAUDE_CALL_LOG"
+  if ! run_account auth-login work > "$FIXTURE_ROOT/other-output" 2>&1; then
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    fail 'another profile was blocked by the personal lock'
+  fi
+  assert_contains "$CLAUDE_CALL_LOG" '<auth><login>'
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
-  assert_contains "$FIXTURE_ROOT/output" "shared login lock is busy"
+}
+
+test_unverified_old_cli_is_rejected_before_login() {
+  setup_fixture
+  if CLAUDE_TEST_VERSION=2.1.80 run_account auth-login personal > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'old CLI accepted for credential isolation'
+  fi
+  assert_not_exists "$CLAUDE_CALL_LOG"
+}
+
+test_case_alias_and_old_cli_list_are_rejected() {
+  setup_fixture
+  if run_account auth-login Personal > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'case-insensitive alias accepted'
+  fi
+  assert_not_exists "$CLAUDE_CALL_LOG"
+  write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+  if CLAUDE_TEST_VERSION=2.1.80 run_account list > "$FIXTURE_ROOT/output" 2>&1; then
+    fail 'list used an unverified old CLI'
+  fi
+}
+
+test_list_does_not_read_credentials_during_login() {
+  setup_fixture
+  write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+  local lock_file="$FIXTURE_HOME/.config/claude-account/accounts/personal/full-login.lock"
+  local ready_file="$FIXTURE_ROOT/exclusive-ready"
+  python3 - "$lock_file" "$ready_file" <<'PY' &
+import fcntl, os, sys, time
+descriptor = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600)
+fcntl.flock(descriptor, fcntl.LOCK_EX)
+open(sys.argv[2], "w").close()
+time.sleep(30)
+PY
+  local holder_pid=$!
+  for _ in {1..50}; do
+    [[ -f "$ready_file" ]] && break
+    sleep 0.02
+  done
+  [[ -f "$ready_file" ]] || fail 'exclusive lock holder did not start'
+  local result=0
+  run_account list > "$FIXTURE_ROOT/output" 2>&1 || result=$?
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+  [[ "$result" -ne 0 ]] || fail 'list ignored exclusive login lock'
   assert_not_exists "$CLAUDE_CALL_LOG"
 }
 
@@ -246,8 +351,8 @@ test_auth_login_rejects_accidental_remap_of_existing_profile() {
   fi
 
   assert_contains "$FIXTURE_ROOT/output" "login identity does not match the registered profile: personal"
-  assert_contains "$FIXTURE_HOME/.config/claude-account/login-profiles.json" "$PERSONAL_IDENTITY_SHA256"
-  assert_not_contains "$FIXTURE_HOME/.config/claude-account/login-profiles.json" "$OTHER_IDENTITY_SHA256"
+  assert_contains "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" "$PERSONAL_IDENTITY_SHA256"
+  assert_not_contains "$FIXTURE_HOME/.config/claude-account/accounts/personal/login-profiles.json" "$OTHER_IDENTITY_SHA256"
 }
 
 test_removed_setup_token_commands_fail_without_legacy_aliases() {
@@ -267,7 +372,7 @@ test_list_marks_the_matching_shared_login_without_exposing_identity() {
 
   run_account list > "$FIXTURE_ROOT/output"
 
-  assert_line "$FIXTURE_ROOT/output" $'personal\tcurrent login\tmax'
+  assert_line "$FIXTURE_ROOT/output" $'personal\tlogged in\tmax'
   assert_not_contains "$FIXTURE_ROOT/output" "personal@example.test"
 }
 
@@ -286,6 +391,32 @@ test_authentication_settings_are_rejected_before_full_login_launch() {
   assert_not_exists "$CLAUDE_LOG"
 }
 
+test_settings_cannot_redirect_profile_or_enable_shared_daemon() {
+  local variable
+  for variable in CLAUDE_CONFIG_DIR CLAUDE_CODE_DISABLE_AGENT_VIEW; do
+    setup_fixture
+    write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+    mkdir -p "$FIXTURE_HOME/.claude"
+    printf '{"env":{"%s":"0"}}\n' "$variable" > "$FIXTURE_HOME/.claude/settings.json"
+    if run_account personal > "$FIXTURE_ROOT/output" 2>&1; then
+      fail "profile isolation overridden by settings: $variable"
+    fi
+    assert_not_exists "$CLAUDE_LOG"
+  done
+}
+
+test_remote_launch_flags_fail_before_session_start() {
+  local argument
+  for argument in --remote-control=demo --cloud=demo --teleport=demo --environment=demo; do
+    setup_fixture
+    write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+    if run_account personal "$argument" > "$FIXTURE_ROOT/output" 2>&1; then
+      fail "unsupported remote launch accepted: $argument"
+    fi
+    assert_not_exists "$CLAUDE_LOG"
+  done
+}
+
 main() {
   test_default_run_requires_matching_full_login_and_forwards_arguments
   test_default_run_rejects_unregistered_login_profile_without_token_fallback
@@ -293,12 +424,21 @@ main() {
   test_default_run_rejects_shared_login_identity_mismatch
   test_default_run_rejects_same_email_in_a_different_organization
   test_auth_login_registers_full_login_identity_without_storing_email
-  test_auth_login_refuses_to_switch_while_any_claude_process_is_running
+  test_auth_login_allows_other_accounts_running
+  test_profiles_share_transcripts_but_not_login_state
+  test_login_failure_does_not_register_profile
+  test_custom_oauth_and_host_credentials_are_removed_for_login
+  test_profile_directory_symlink_is_rejected
+  test_unverified_old_cli_is_rejected_before_login
+  test_case_alias_and_old_cli_list_are_rejected
+  test_list_does_not_read_credentials_during_login
   test_auth_login_refuses_while_a_managed_session_holds_the_shared_login_lock
   test_auth_login_rejects_accidental_remap_of_existing_profile
   test_removed_setup_token_commands_fail_without_legacy_aliases
   test_list_marks_the_matching_shared_login_without_exposing_identity
   test_authentication_settings_are_rejected_before_full_login_launch
+  test_settings_cannot_redirect_profile_or_enable_shared_daemon
+  test_remote_launch_flags_fail_before_session_start
   echo "claude account tests passed"
 }
 

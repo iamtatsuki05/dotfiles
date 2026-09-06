@@ -3,8 +3,9 @@
 set -euo pipefail
 
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-account"
-readonly LOGIN_PROFILES_FILE="$CONFIG_DIR/login-profiles.json"
-readonly LOGIN_LOCK_FILE="$CONFIG_DIR/full-login.lock"
+LOGIN_PROFILES_FILE=""
+LOGIN_LOCK_FILE=""
+PROFILE_DIR=""
 AUTH_ENV_COMMAND=(env)
 
 usage() {
@@ -14,11 +15,11 @@ Usage:
   claude-account list
   claude-account <profile> [claude arguments...]
 
-The default launch path uses the single full-scope `claude auth login`
-credential in macOS Keychain. Run `auth-login` with every Claude process
-closed before switching accounts.
+Each profile has an independent CLAUDE_CONFIG_DIR and full OAuth login.
+Log in once per profile; other profiles may keep running.
+Local transcripts are shared for explicit --resume across profiles.
 
-Profiles may contain letters, numbers, dots, underscores, and hyphens.
+Profiles may contain lowercase letters, numbers, dots, underscores, and hyphens.
 EOF
 }
 
@@ -26,15 +27,72 @@ validate_profile() {
   local profile="$1"
 
   case "$profile" in
-    ""|.*|-*|*[!A-Za-z0-9._-]*)
+    ""|.*|-*|*[!a-z0-9._-]*)
       echo "ERROR: invalid profile name: $profile" >&2
       return 2
       ;;
-    auth-login|list|help|add|add-token|token|__auth-login|__run-login)
+    auth-login|list|help|add|add-token|token|__auth-login|__run-login|__list-login)
       echo "ERROR: reserved profile name: $profile" >&2
       return 2
       ;;
   esac
+}
+
+select_profile() {
+  validate_profile "$1"
+  if [[ "$CONFIG_DIR" != /* ]]; then
+    echo 'ERROR: XDG_CONFIG_HOME must be an absolute path' >&2
+    return 1
+  fi
+  PROFILE_DIR="$CONFIG_DIR/accounts/$1"
+  if [[ -L "$CONFIG_DIR/accounts" || -L "$PROFILE_DIR" ]]; then
+    echo 'ERROR: profile directories must not be symlinks' >&2
+    return 1
+  fi
+  LOGIN_PROFILES_FILE="$PROFILE_DIR/login-profiles.json"
+  LOGIN_LOCK_FILE="$PROFILE_DIR/full-login.lock"
+  export CLAUDE_CONFIG_DIR="$PROFILE_DIR"
+}
+
+require_profile_cli() {
+  local version
+  version="$(claude --version)" || return 1
+  if ! printf '%s' "$version" | python3 -c '
+import re, sys
+match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+) \(Claude Code\)\s*", sys.stdin.read())
+raise SystemExit(0 if match and tuple(map(int, match.groups())) >= (2, 1, 261) else 1)
+'; then
+    echo 'ERROR: Claude Code 2.1.261 or later is required for verified profile isolation' >&2
+    return 1
+  fi
+}
+
+prepare_profile() {
+  local name source destination
+  umask 077
+  mkdir -p "$PROFILE_DIR"
+  chmod 700 "$PROFILE_DIR"
+  # Share authoring inputs and local transcripts, never OAuth state or daemon state.
+  for name in settings.json .mcp.json CLAUDE.md skills hooks commands agents rules projects; do
+    source="$HOME/.claude/$name"
+    destination="$PROFILE_DIR/$name"
+    if [[ "$name" == projects && ! -e "$source" ]]; then
+      mkdir -p "$source"
+    fi
+    if [[ -L "$destination" ]]; then
+      if [[ "$(readlink "$destination")" != "$source" ]]; then
+        echo "ERROR: conflicting profile link: $destination" >&2
+        return 1
+      fi
+    elif [[ -e "$destination" ]]; then
+      echo "ERROR: profile path already exists: $destination" >&2
+      return 1
+    elif [[ -e "$source" ]]; then
+      if ! ln -s "$source" "$destination" 2>/dev/null; then
+        [[ -L "$destination" && "$(readlink "$destination")" == "$source" ]] || return 1
+      fi
+    fi
+  done
 }
 
 run_with_login_lock() {
@@ -43,8 +101,8 @@ run_with_login_lock() {
   local lock_runner_code
 
   umask 077
-  mkdir -p "$CONFIG_DIR"
-  chmod 700 "$CONFIG_DIR"
+  mkdir -p "$PROFILE_DIR"
+  chmod 700 "$PROFILE_DIR"
   lock_runner_code="$(cat <<'PY'
 import fcntl
 import os
@@ -62,7 +120,7 @@ try:
     fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
 except BlockingIOError:
     print(
-        "ERROR: shared login lock is busy; exit managed Claude sessions and retry",
+        "ERROR: profile login lock is busy; exit sessions for this profile and retry",
         file=sys.stderr,
     )
     raise SystemExit(1)
@@ -106,6 +164,15 @@ from pathlib import Path
 
 def is_auth_env(name):
     exact = {
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDE_CODE_DISABLE_AGENT_VIEW",
+        "CLAUDE_CODE_HOST_CREDS_FILE",
+        "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+        "CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR",
+        "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+        "CLAUDE_TRUSTED_DEVICE_TOKEN",
+        "USE_LOCAL_OAUTH",
+        "USE_STAGING_OAUTH",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
@@ -200,6 +267,10 @@ validate_claude_arguments() {
 
   for argument in "$@"; do
     case "$argument" in
+      auth|setup-token|remote-control|--bg|--bg=*|--background|--background=*|--cloud|--cloud=*|--teleport|--teleport=*|--remote-control|--remote-control=*|--environment|--environment=*)
+        echo "ERROR: use auth-login for authentication; remote/background sessions are not supported by this profile runner" >&2
+        return 2
+        ;;
       --bare)
         echo "ERROR: --bare does not use subscription login" >&2
         return 2
@@ -222,18 +293,22 @@ build_auth_env_command() {
   AUTH_ENV_COMMAND=(env)
   while IFS='=' read -r env_name _; do
     case "$env_name" in
+      CLAUDE_CODE_HOST_CREDS_FILE|CLAUDE_CODE_SESSION_ACCESS_TOKEN|CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR|CLAUDE_CODE_CUSTOM_OAUTH_URL|CLAUDE_TRUSTED_DEVICE_TOKEN|USE_LOCAL_OAUTH|USE_STAGING_OAUTH)
+        AUTH_ENV_COMMAND+=( -u "$env_name" )
+        ;;
       ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_URL|ANTHROPIC_AWS_*|ANTHROPIC_BEDROCK_*|ANTHROPIC_CUSTOM_HEADERS|ANTHROPIC_FEDERATION_RULE_ID|ANTHROPIC_FOUNDRY_*|ANTHROPIC_GOOGLE_CLOUD_*|ANTHROPIC_ORGANIZATION_ID|ANTHROPIC_PROFILE|ANTHROPIC_UNIX_SOCKET|ANTHROPIC_VERTEX_*|ANTHROPIC_WORKSPACE_ID|AWS_BEARER_TOKEN_BEDROCK|CCR_OAUTH_TOKEN_*|CLAUDE_CODE_API_KEY_*|CLAUDE_CODE_HOST_AUTH_*|CLAUDE_CODE_MANAGED_SETTINGS_*|CLAUDE_CODE_OAUTH_*|CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST|CLAUDE_CODE_SIMPLE|CLAUDE_CODE_USE_ANTHROPIC_AWS|CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD|CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_FOUNDRY|CLAUDE_CODE_USE_GATEWAY|CLAUDE_CODE_USE_MANTLE|CLAUDE_CODE_USE_VERTEX)
         AUTH_ENV_COMMAND+=( -u "$env_name" )
         ;;
     esac
   done < <(env)
+  AUTH_ENV_COMMAND+=( "CLAUDE_CONFIG_DIR=$PROFILE_DIR" "CLAUDE_CODE_DISABLE_AGENT_VIEW=1" )
 }
 
 full_login_identity() {
   local auth_status
 
   if ! auth_status="$("${AUTH_ENV_COMMAND[@]}" claude auth status --json 2>/dev/null)"; then
-    echo "ERROR: failed to read the shared Claude login" >&2
+    echo "ERROR: failed to read this profile's Claude login" >&2
     return 1
   fi
   printf '%s' "$auth_status" | python3 -c '
@@ -263,7 +338,7 @@ identity_material = f"{email.strip().lower()}\0{organization.strip()}"
 identity = hashlib.sha256(identity_material.encode()).hexdigest()
 print(f"{identity}\t{subscription.strip().lower()}")
 ' || {
-    echo "ERROR: shared Claude login is not a full subscription login" >&2
+    echo "ERROR: profile Claude login is not a full subscription login" >&2
     return 1
   }
 }
@@ -338,20 +413,8 @@ PY
   chmod 600 "$LOGIN_PROFILES_FILE"
 }
 
-running_claude_process_count() {
-  local processes
-
-  processes="$(pgrep -x claude 2>/dev/null || true)"
-  if [[ -z "$processes" ]]; then
-    echo 0
-  else
-    printf '%s\n' "$processes" | awk 'NF { count += 1 } END { print count + 0 }'
-  fi
-}
-
 auth_login_profile() {
   local profile="$1"
-  local process_count
   local existing_info=""
   local existing_identity=""
   local login_info
@@ -359,17 +422,15 @@ auth_login_profile() {
   local subscription_type
 
   validate_profile "$profile"
+  require_profile_cli
   check_settings_for_auth_overrides
-  process_count="$(running_claude_process_count)"
-  if (( process_count > 0 )); then
-    echo "ERROR: $process_count Claude processes are still running; exit all Claude sessions before switching the shared login" >&2
-    return 1
-  fi
 
   if existing_info="$(read_registered_profile "$profile" 2>/dev/null)"; then
     existing_identity="${existing_info%%$'\t'*}"
   fi
 
+  prepare_profile
+  check_settings_for_auth_overrides
   build_auth_env_command
   "${AUTH_ENV_COMMAND[@]}" claude auth login
   if ! login_info="$(full_login_identity)"; then
@@ -379,7 +440,7 @@ auth_login_profile() {
   subscription_type="${login_info#*$'\t'}"
   if [[ -n "$existing_identity" && "$existing_identity" != "$identity_sha256" ]]; then
     echo "ERROR: login identity does not match the registered profile: $profile" >&2
-    echo "The shared login changed, but the existing profile mapping was preserved. Re-run auth-login and choose the account originally registered for this profile." >&2
+    echo "This profile's login changed, but its identity mapping was preserved. Re-run auth-login and choose the originally registered account." >&2
     return 1
   fi
 
@@ -396,7 +457,9 @@ run_login_profile() {
   local login_identity
 
   validate_profile "$profile"
+  require_profile_cli
   validate_claude_arguments "$@"
+  prepare_profile
   check_settings_for_auth_overrides
   if ! registered_info="$(read_registered_profile "$profile" 2>/dev/null)"; then
     echo "ERROR: full-login profile is not registered: $profile" >&2
@@ -412,8 +475,8 @@ run_login_profile() {
   fi
   login_identity="${login_info%%$'\t'*}"
   if [[ "$registered_identity" != "$login_identity" ]]; then
-    echo "ERROR: shared Claude login does not match profile: $profile" >&2
-    echo "Exit all Claude sessions, then run: claude-account auth-login $profile" >&2
+    echo "ERROR: Claude login does not match profile: $profile" >&2
+    echo "Exit sessions for this profile, then run: claude-account auth-login $profile" >&2
     return 1
   fi
 
@@ -424,40 +487,51 @@ run_login_profile() {
     claude "$@"
 }
 
-list_profiles() {
-  local login_info=""
-  local current_identity=""
-
-  if [[ ! -f "$LOGIN_PROFILES_FILE" ]]; then
-    echo "No full-login profiles registered."
-    return 0
-  fi
+show_login_profile() {
+  local profile="$1" registered_info login_info
   build_auth_env_command
-  if login_info="$(full_login_identity 2>/dev/null)"; then
-    current_identity="${login_info%%$'\t'*}"
+  registered_info="$(read_registered_profile "$profile")" || return 1
+  if login_info="$(full_login_identity 2>/dev/null)" &&
+      [[ "${login_info%%$'\t'*}" == "${registered_info%%$'\t'*}" ]]; then
+    printf '%s\tlogged in\t%s\n' "$profile" "${login_info#*$'\t'}"
+  else
+    printf '%s\tlogin required\t%s\n' "$profile" "${registered_info#*$'\t'}"
   fi
-  python3 - "$LOGIN_PROFILES_FILE" "$current_identity" <<'PY'
-import json
-import sys
-from pathlib import Path
+}
 
-data = json.loads(Path(sys.argv[1]).read_text())
-current = sys.argv[2]
-for name, record in sorted((data.get("profiles") or {}).items()):
-    state = "current login" if record.get("identitySha256") == current else "registered"
-    print(f"{name}\t{state}\t{record.get('subscriptionType', 'unknown')}")
-PY
+list_profiles() {
+  local directory profile found=0
+  require_profile_cli
+  for directory in "$CONFIG_DIR"/accounts/*; do
+    [[ -d "$directory" && -f "$directory/login-profiles.json" ]] || continue
+    found=1
+    profile="${directory##*/}"
+    (
+      select_profile "$profile"
+      run_with_login_lock shared __list-login "$profile"
+    )
+  done
+  if (( found == 0 )); then
+    echo "No isolated login profiles registered. Run: claude-account auth-login <profile>"
+  fi
 }
 
 main() {
   local command_name="${1:-}"
 
   case "$command_name" in
+    __list-login)
+      require_login_lock shared
+      [[ $# -eq 2 ]] || return 2
+      select_profile "$2"
+      show_login_profile "$2"
+      ;;
     __auth-login)
       require_login_lock exclusive
       if [[ $# -ne 2 ]]; then
         return 2
       fi
+      select_profile "$2"
       auth_login_profile "$2"
       ;;
     __run-login)
@@ -466,6 +540,7 @@ main() {
         return 2
       fi
       shift
+      select_profile "$1"
       run_login_profile "$@"
       ;;
     auth-login)
@@ -473,6 +548,7 @@ main() {
         usage >&2
         return 2
       fi
+      select_profile "$2"
       run_with_login_lock exclusive __auth-login "$2"
       ;;
     list)
@@ -492,6 +568,7 @@ main() {
       ;;
     *)
       shift
+      select_profile "$command_name"
       run_with_login_lock shared __run-login "$command_name" "$@"
       ;;
   esac

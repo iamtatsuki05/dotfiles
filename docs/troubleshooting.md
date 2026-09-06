@@ -122,21 +122,18 @@ or skills.
 
 ## Claude profile switching is blocked
 
-List all Claude processes and exit every session before changing the shared
-Keychain credential:
-
-`claude-account auth-login` changes the shared macOS Keychain login after the
-browser authentication succeeds.
+`profile login lock is busy` means a session using that profile is running.
+Exit that session normally before renewing its login. Other profiles can keep running.
 
 ```sh
-pgrep -fl claude
 claude-account auth-login <profile>
 ```
 
-Do not kill unrelated processes automatically. Close them normally so active
-sessions can save their state. If the shared login does not match an existing
-profile mapping, authenticate with the account originally registered for that
-profile; the command preserves the old mapping rather than overwriting it.
+If the login does not match the registered identity, select the same account and
+organization used on first registration. A different identity cannot overwrite
+the mapping. Upgrading from the shared-login wrapper requires one login per profile.
+A Fable credit prompt does not necessarily mean login failed: also check the plan
+and Fable-specific allowance.
 
 ## The full test suite skips one check
 
