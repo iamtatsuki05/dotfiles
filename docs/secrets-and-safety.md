@@ -88,7 +88,8 @@ behavior has been verified.
 
 ## Treat authentication changes as exclusive operations
 
-Claude Code profile switching changes one shared macOS Keychain credential.
-Exit all Claude processes before `claude-account auth-login`. Do not bypass the
-profile wrapper with a plain Claude launch during multi-account use. See
-[AI agent configuration](ai-agents.md) for the full procedure.
+Claude Code credentials are isolated by each profile's `CLAUDE_CONFIG_DIR`.
+Before `claude-account auth-login PROFILE`, exit only that profile's sessions.
+Running plain `claude auth login` against the same directory bypasses the lock;
+use the wrapper for credential changes. Transcripts are shared, so check data
+handling before resuming under another organization. See [AI agent configuration](ai-agents.md).
