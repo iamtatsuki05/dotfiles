@@ -144,6 +144,19 @@ change only `runtime` to `"herdr"` or `"zellij"` to select the corresponding
 terminal backend. The Main, ACP role permissions, TaskSpec catalog, and review
 gates remain the same.
 
+The native Claude ACP roles also use the existing assignment when Claude calls
+`AskUserQuestion`. With the private question socket available, the pinned
+ACP 0.70.0 adapter sends a form elicitation through SDK 1.3.0. No additional
+config field or permission is needed. Main answers the observed question
+Delivery through `message_reply`, acknowledges it only after every question is
+answered, and the same ACP session then resumes. This communication path does
+not widen TaskSpec paths or enable Bash, terminal, or other external tools.
+
+The real tmux question round trip, cooperative pending stop, and retained
+earlier failures are recorded in [Architecture](architecture.md). Herdr/Zellij
+question support has live-terminal/fake-provider contract coverage; real-model
+question acceptance for those runtimes is not claimed.
+
 The earlier model-free tmux CLI start/status/stop path succeeded with Orca
 and Codex absent, a workspace path containing spaces, and a deleted config. A
 real Claude Code 2.1.261 Main with `fable`/`high` and a logged-in `claude.ai`
@@ -197,7 +210,9 @@ A separate real Herdr active-cancel probe dispatched a Worker through public
 MCP, observed `CANCEL_STARTED`, rechecked the live kernel PID/PGID and native
 result absence immediately before stop, and independently confirmed that no
 owned PID/PGID, process reference, or path remained. This is representative
-Claude ACP cancellation evidence for Herdr, not all-harness coverage.
+Claude ACP cancellation evidence for Herdr, not all-harness coverage. It
+verified OS group/path cleanup only and did not prove an explicit ACP session
+close; the earlier process-group-based cleanup promotion has the same limitation.
 
 ## Top-level fields define one team contract
 
@@ -294,7 +309,11 @@ connection per assignment. Native does not select `acpx` and does not invoke
 `npm` or `npx` at runtime. Normal SDK persistence is disabled with
 `persistSession=false` and `autoMemoryEnabled=false`; interactive Main history
 remains in the normal Claude store. This is a direct SDK connection, not the
-provider's direct/model transport.
+provider's direct/model transport. When the selected native role is Claude,
+`AskUserQuestion` is enabled only with its owned private `q.sock`; the Node
+client supports form elicitation and the Python channel records the durable
+answer/receipt sequence. Codex has no question socket, and its public ACP
+profile remains disabled.
 
 The terminal behavior was verified with Herdr `0.8.2` and Zellij `0.44.1`.
 Herdr's handshake requires exact version `0.8.2` and protocol 20. Zellij's
@@ -332,6 +351,14 @@ and link/file-type checks. TaskSpec `allowed_paths` and `forbidden_paths` apply
 to Write/Edit only, with forbidden paths taking precedence. It denies Bash,
 terminal, and other RPC operations. Its Planner and Reviewer are read-only.
 All native ACP roles run as launcher-owned background processes.
+
+Questions are an additional communication channel, not a permission or file
+scope change. Only native Claude ACP assignments with the private socket
+advertised in their launch snapshot enable `AskUserQuestion`; Codex question
+handling remains disabled. Main must answer every question before
+`delivery_ack`. While that Delivery is pending, `role_read`, `role_release`,
+another dispatch, and `task_verify` are rejected. A successful completion is
+also rejected until the same ACP assignment consumes the answers.
 
 ## TaskSpec catalog is optional; required for native task dispatch
 
@@ -382,6 +409,21 @@ The native task lifecycle uses the ten public tools:
 5. Reviewer output is exact JSON with `task_id`, `stage`, `revision`, `decision`, and `findings`.
 6. `approve` advances the stage; `request_changes` returns to the original writer; `consult` waits for the user.
 7. After implementation approval, `task_verify` runs every declared fixed argv command.
+
+If `role_wait` returns a native `question`, Main calls `message_reply` once for
+each event `message_id` and then `delivery_ack`. The backend persists the
+answers before sending them through the assignment's private socket. The
+client returns a `received` receipt, Python records its hash-only receipt while
+retaining the protected outbox, and only then does it send `recorded` and allow
+the same ACP session to continue.
+Retrying the same message ID with the same body is idempotent; a different body
+is rejected. A batch has one to four questions, each question or answer is at
+most 20,000 characters, each frame is at most 512 KiB, and an assignment may
+receive at most 64 batches. Consumed receipts retain identities and hashes,
+while the protected outbox may retain raw question and answer text until the
+next question or terminal completion so publication failures can be recovered.
+A question does not implement Reviewer `consult` or post-review resume; that
+gate remains a separate unfinished requirement.
 
 Plan and implementation review rounds are counted separately and both obey
 `max_review_rounds`. Implementation review captures the workspace revision when

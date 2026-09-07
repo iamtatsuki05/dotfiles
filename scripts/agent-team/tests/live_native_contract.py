@@ -31,6 +31,7 @@ from typing import cast
 
 from agent_team.adapters import remove_owned_tree
 from agent_team.cli import _runtime_engine
+from agent_team.contracts import RuntimeFailure
 from agent_team.native_backend import (
     NativeBackend,
     _remove_socket_root,
@@ -230,13 +231,31 @@ class LiveNativeContractTest(unittest.TestCase):
         self._last_failure_details = ""
 
     def tearDown(self) -> None:
+        provider_roots: set[Path] = set()
+        for state_path in self._owned_state_paths:
+            if state_path.exists():
+                state = _json_state(state_path)
+                roles = state.get("roles")
+                if isinstance(roles, dict):
+                    for assignment in roles.values():
+                        if isinstance(assignment, dict) and isinstance(
+                            assignment.get("provider_private_root"), str
+                        ):
+                            provider_roots.add(
+                                Path(assignment["provider_private_root"])
+                            )
         for state_path in self._owned_state_paths:
             self._safe_cleanup(state_path)
         remaining = [path for path in self._owned_state_paths if path.exists()]
-        if remaining or self._last_failure_details:
+        remaining_roots = sorted(str(path) for path in provider_roots if path.exists())
+        if remaining_roots:
+            (self.root / "fixture-owned-roots.json").write_text(
+                json.dumps(remaining_roots), encoding="utf-8"
+            )
+        if remaining or remaining_roots or self._last_failure_details:
             print(
                 "LIVE_NATIVE_EVIDENCE_PRESERVED "
-                f"root={self.root} remaining={remaining} "
+                f"root={self.root} remaining={remaining} provider_roots={remaining_roots} "
                 f"details={self._last_failure_details}",
                 file=sys.stderr,
             )
@@ -286,6 +305,7 @@ marker.with_suffix('.pid').unlink(missing_ok=True)
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -320,6 +340,28 @@ pending = child_marker.with_name(child_marker.name + '.pending')
 pending.write_text(str(os.getpid()), encoding='ascii')
 pending.replace(child_marker)
 child = None
+connection = None
+model = args[args.index('--model') + 1]
+effort = args[args.index('--effort') + 1]
+result_path = Path(args[args.index('--result-file') + 1])
+launch_nonce = args[args.index('--launch-nonce') + 1]
+
+def finish(value, code):
+    pending_result = result_path.with_name('client-result.pending')
+    with pending_result.open('x', encoding='utf-8') as target:
+        os.fchmod(target.fileno(), 0o600)
+        json.dump(dict(version=1, launch_nonce=launch_nonce, receipt=value), target)
+        target.flush()
+        os.fsync(target.fileno())
+    os.link(pending_result, result_path)
+    pending_result.unlink()
+    directory = os.open(result_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    print(json.dumps(value), flush=True)
+    raise SystemExit(code)
 
 def record(value):
     with log.open('a', encoding='utf-8') as stream:
@@ -343,16 +385,22 @@ def stop(_signum, _frame):
                 child.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 pass
+    if connection is not None:
+        try:
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        connection.close()
     child_marker.unlink(missing_ok=True)
     descendant_marker.unlink(missing_ok=True)
-    raise SystemExit(0)
+    finish(dict(error='fixture client cancelled', session_id='fixture-session', model=model, effort=effort, cleanup_confirmed=child is None or child.poll() is not None), 1)
 
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
 record(dict(event='client-start', argv=args))
 prompt = sys.stdin.read()
 record(dict(event='prompt', text=prompt))
-if 'cancel-live-role' in prompt:
+if 'cancel-live-role' in prompt or 'cancel-question-live-role' in prompt:
     child = subprocess.Popen(
         [sys.executable, __file__, '--fixture-descendant', str(descendant_marker)],
         start_new_session=False,
@@ -361,20 +409,41 @@ if 'cancel-live-role' in prompt:
     while not descendant_marker.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     prompt_started.write_text('started', encoding='utf-8')
-    while True:
-        time.sleep(0.1)
+    if 'question-live-role' not in prompt:
+        while True:
+            time.sleep(0.1)
 
-model = args[args.index('--model') + 1]
-effort = args[args.index('--effort') + 1]
+if 'question-live-role' in prompt:
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    connection.connect(args[args.index('--question-socket') + 1])
+    with connection.makefile('rwb', buffering=0) as peer:
+        peer.write((json.dumps(dict(kind='question', session_id='fixture-session', tool_call_id='fixture-question', questions=[dict(field='question_0_custom', body='Which source should I inspect?')])) + chr(10)).encode('utf-8'))
+        record(dict(event='question-published'))
+        answer_line = peer.readline()
+        if not answer_line:
+            stop(0, None)
+        answer = json.loads(answer_line)
+        if answer != dict(kind='answer', answers=dict(question_0_custom='Inspect the declared source')):
+            raise SystemExit('unexpected question answer')
+        peer.write((json.dumps(dict(kind='received', session_id='fixture-session', tool_call_id='fixture-question')) + chr(10)).encode('utf-8'))
+        recorded_line = peer.readline()
+        if not recorded_line:
+            stop(0, None)
+        recorded = json.loads(recorded_line)
+        if recorded != dict(kind='recorded', session_id='fixture-session', tool_call_id='fixture-question'):
+            raise SystemExit('missing recorded frame')
+        record(dict(event='question-recorded'))
+    connection.close()
+    connection = None
 record(dict(event='client-complete'))
 child_marker.unlink(missing_ok=True)
-print(json.dumps(dict(
+finish(dict(
     output='fake native ACP planner output',
     session_id='fixture-session',
     model=model,
     effort=effort,
     cleanup_confirmed=True,
-)))
+), 0)
 """,
         )
 
@@ -612,7 +681,7 @@ prompt = "planner.md"
             backend = self._terminal_backend(state)
             receipt = backend._receipt_from_state(native)
             driver = backend._driver_from_receipt(receipt)
-        except (RuntimeError, OSError, TypeError, ValueError) as exc:
+        except (RuntimeFailure, RuntimeError, OSError, TypeError, ValueError) as exc:
             self._last_failure_details += f" terminal-receipt={exc!r}"
             return
         roles = state.get("roles")
@@ -906,7 +975,7 @@ prompt = "planner.md"
             self.assertEqual(len(waited["events"]), 1)
             event = waited["events"][0]
             self.assertEqual(event["kind"], "worker_done")
-            self.assertEqual(event["outcome"], "succeeded")
+            self.assertEqual(event["outcome"], "succeeded", event.get("body"))
             read = mcp.tool("role_read", {"role": "planner", "lines": 20})
             self.assertIn("fake native ACP planner output", read["output"])
             released = mcp.tool("role_release", {"role": "planner"})
@@ -943,6 +1012,61 @@ prompt = "planner.md"
         self.assertFalse(state_path.exists())
         self._assert_owned_resources_gone(final_state)
 
+    def test_question_reply_ack_uses_same_assignment_before_completion(self) -> None:
+        workspace, state_path, _ = self._start("question")
+        mcp = _McpProcess(env=self.environment, state_path=state_path)
+        try:
+            mcp.request("initialize", {"protocolVersion": "2025-06-18"})
+            assignment = mcp.tool(
+                "role_prompt", {"role": "planner", "text": "question-live-role"}
+            )
+            waited = mcp.tool("role_wait", {"role": "planner", "timeout_ms": 15_000})
+            self.assertEqual(len(waited["events"]), 1)
+            event = waited["events"][0]
+            self.assertEqual(event["kind"], "question")
+            before = read_state(state_path)
+            self.assertEqual(
+                before["native_question"]["dispatch_id"], assignment["dispatch_id"]
+            )
+            with self.assertRaises(AssertionError):
+                mcp.tool("delivery_ack", {"delivery_id": waited["delivery_id"]})
+            self.assertEqual(read_state(state_path), before)
+            mcp.tool(
+                "message_reply",
+                {
+                    "message_id": event["message_id"],
+                    "body": "Inspect the declared source",
+                },
+            )
+            mcp.tool("delivery_ack", {"delivery_id": waited["delivery_id"]})
+            self.assertEqual(
+                read_state(state_path)["roles"]["planner"]["dispatch_id"],
+                assignment["dispatch_id"],
+            )
+            completed = mcp.tool("role_wait", {"role": "planner", "timeout_ms": 15_000})
+            self.assertEqual(completed["events"][0]["kind"], "worker_done")
+            self.assertEqual(completed["events"][0]["outcome"], "succeeded")
+            saved = read_state(state_path)
+            question_receipt = saved["native_result"]["question_receipts"][0]
+            self.assertEqual(question_receipt["delivery_id"], waited["delivery_id"])
+            self.assertEqual(question_receipt["dispatch_id"], assignment["dispatch_id"])
+            mcp.tool("role_read", {"role": "planner", "lines": 20})
+            mcp.tool("role_release", {"role": "planner"})
+            mcp.tool("delivery_ack", {"delivery_id": completed["delivery_id"]})
+        finally:
+            mcp.close()
+        final_state = read_state(state_path)
+        self.assertEqual(final_state["roles"], {})
+        stop = self._run_cli(
+            ["stop", "--state", str(state_path), "--cwd", str(workspace)]
+        )
+        self.assertEqual(stop.returncode, 0, stop.stderr)
+        self.assertFalse(state_path.exists())
+        self._assert_owned_resources_gone(final_state)
+        self.assertIn(
+            "question-recorded", [entry.get("event") for entry in self._acp_events()]
+        )
+
     def test_natural_main_exit_can_be_stopped_without_original_config(self) -> None:
         workspace, state_path, _ = self._start("natural-exit")
         (workspace / "team.toml").unlink()
@@ -976,12 +1100,28 @@ prompt = "planner.md"
         self._assert_owned_resources_gone(final_state)
 
     def test_active_role_stop_from_different_cli_process(self) -> None:
-        workspace, state_path, _ = self._start("cancel")
+        self._check_active_role_stop(question=False)
+
+    def test_question_wait_can_stop_without_reply_or_ack(self) -> None:
+        self._check_active_role_stop(question=True)
+
+    def _check_active_role_stop(self, *, question: bool) -> None:
+        workspace, state_path, _ = self._start(
+            "cancel-question" if question else "cancel"
+        )
         mcp = _McpProcess(env=self.environment, state_path=state_path)
         stop_succeeded = False
         runner_pid: int | None = None
         try:
-            mcp.tool("role_prompt", {"role": "planner", "text": "cancel-live-role"})
+            mcp.tool(
+                "role_prompt",
+                {
+                    "role": "planner",
+                    "text": "cancel-question-live-role"
+                    if question
+                    else "cancel-live-role",
+                },
+            )
             state = self._wait_state(
                 state_path,
                 lambda item: (
@@ -999,6 +1139,14 @@ prompt = "planner.md"
             )
             self.assertTrue(self.acp_child_marker.exists())
             self.assertTrue(self.acp_descendant_marker.exists())
+            if question:
+                waited = mcp.tool(
+                    "role_wait", {"role": "planner", "timeout_ms": 15_000}
+                )
+                self.assertEqual(waited["events"][0]["kind"], "question")
+                pending = read_state(state_path)
+                self.assertEqual(pending["native_question"]["answers"], {})
+                self.assertEqual(pending["pending_delivery_id"], waited["delivery_id"])
             stop = self._run_cli(
                 ["stop", "--state", str(state_path), "--cwd", str(workspace)],
                 timeout=20.0,

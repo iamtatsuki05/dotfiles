@@ -51,8 +51,38 @@ detached mode、persistent clientなし、`--max-panes 1`なしを使います�
 terminalを1つと既知のsuppressed `zellij:link` pluginだけを受け入れ、未知のpane/pluginはunknownのままにします。
 
 HerdrとZellijはnative terminal driverとして利用できます。今後の実装課題には、任意role graph、
-Mainなしの構成、明示的なparallel workflow、10 harnessの大半、native ACPのquestion処理が
-残っています。これらの未実装部分を2つのsystemで分担すると、完了判定とcleanupの責任が曖昧になります。
+Mainなしの構成、明示的なparallel workflow、10 harnessの大半が残っています。これらの未実装部分を
+2つのsystemで分担すると、完了判定とcleanupの責任が曖昧になります。
+
+native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
+HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。
+任意の役割構成、Mainなしの実行、並列処理、全ハーネスへの対応は、引き続き未完了です。
+
+### 実モデルを使ったtmuxでの質問応答受入
+
+run `cf7ebe69-3a95-4f25-975c-d9b04269f025`では、Main、Worker、ReviewerにFable・effort `high`を使い、Plannerを省略しました。
+MainがWorkerの質問2件に回答して受領確認すると、同じWorkerのACPセッションが再開しました。
+Reviewerの承認後、同じリビジョン`535c5158e4c53e15ddc8a77629b203105b99ee1288bcb23cfbfdb0bc41a4b514`で宣言済みの固定コマンドが成功し、83.475秒でTaskが完了しました。
+変更は許可された計算用ファイルだけです。設定とプロンプトを削除してから公開`stop`を実行し、1.526秒で停止しました。
+担当2件の型付き結果からACPセッションの終了を確認し、所有するプロセス、グループ、パス、状態、試験用ファイル、隔離環境が
+残っていないことを独立に照合しました。この試験には、協調的な停止方式へ修正した実装を使っています。
+
+別のrun `77ff52c4-0973-400d-a4fb-106ca8233632`では、質問2件を未回答・未受領確認のまま、公開コマンドで停止しました。
+停止は1.500秒で完了し、型付きACP記録の`cleanup_confirmed=true`、対応するセッション、クライアントの終了コードを検証できました。
+観測した所有プロセス7件とプロセスグループ3件がすべて終了し、状態、一時パス、試験用ファイル、隔離環境、プロセスからの参照が
+残っていないことも独立に照合しました。試験に使ったwheelは実装63ファイルと一致し、Python 3.11のインストール確認では
+`dotfiles-agent-team`だけを含む環境で基本操作が通りました。
+
+それ以前の質問待ち停止、`1000018d-3ae0-4d62-b2af-a5c89be31c6a`と
+`c945f3f5-8dcf-4643-a05a-72d1a62bab78`は失敗しています。ACP記録には`cleanup_confirmed=true`がありましたが、
+Pythonがクライアントの終了コードを失い、完了結果を確定できませんでした。公開`stop`の`returncode=1`から、クライアントの終了コードは判断できません。
+処理プロセスは終了し、所有する待機中のtmux端末は後から回収しました。失敗時の状態、一時領域、スナップショット、結果ファイル、
+試験用ファイルは保持しています。今回の再試験が成功しても、過去の失敗を成功に変更することはありません。
+
+実際の端末と模擬プロバイダーを使う試験では、tmux、Herdr、Zellijの各5件が成功しました。プロバイダーや認証への呼び出しはありません。
+Zellijでは一時名のランダム部分が`_`で始まる場合も検証し、生成側の接頭辞を修正しています。既存の厳格なパス検証は維持しています。
+正式な検証には、記載済みのPython 3.11／3.13の全テスト、lint、型検査、ビルド、インストール確認を使います。
+最新headの結果とCIは[PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)に記録します。
 
 ## componentごとに責務を限定する
 
@@ -79,7 +109,8 @@ Mainなしの構成、明示的なparallel workflow、10 harnessの大半、nati
 | `agent_team/workspace_revision.py` | boundedなGit workspace revisionを作り、symlinkとspecial fileを拒否する。 |
 | `agent_team/scoped_acp.py`, `scoped_policy.mjs` | nativeのrole設定を固定し、TaskSpecのpath検査を共有する。 |
 | `agent_team/claude_scoped_agent.mjs`, `scoped_file_tools.mjs` | それぞれClaudeのtool hookと、Codex向けの4つのホストfile toolを制御する。 |
-| `agent_team/scoped_acp_client.mjs` | native assignmentごとにpublic ACP SDK接続を1本作り、cleanupを確認する。 |
+| `agent_team/scoped_acp_client.mjs`, `scoped_question_client.mjs` | native assignmentごとにpublic ACP SDK接続を1本作り、選択したClaudeのform elicitationとcleanupを確認する。 |
+| `agent_team/native_question_channel.py`, `native_questions.py` | boundedなprivate question socketと、native questionのdurable outbox/receipt contractを担当する。 |
 | `agent_team/native_acp_dependencies.py` | 選択したnative providerのNode、ACP adapter、SDK、必要なprovider実行fileだけを解決し、fingerprintを固定する。 |
 | `agent_team/codex_preflight.py`, `codex_acp.py` | 既存の認証file・設定を検証し、Codex専用の起動fileを固定する。公開設定ではCodex ACPを無効にしている。 |
 | `agent_team/codex_scoped_launch.mjs`, `codex_scoped_inspect.mjs`, `codex_scoped_transport.mjs`, `codex_scoped_bridge.mjs` | app-serverの起動設定を固定し、有効な設定の検査、通信の制限、file tool要求の仲介を担う。[Codex ACPの実装状況](acp_JA.md#範囲を制限したcodex-acpの実装公開設定では未有効)を参照。 |
@@ -198,6 +229,76 @@ Agent commandにはteam、role、nonceのmarkerを含めます。prune対象を�
 限定するため、他のacpx sessionを削除しません。nativeにはacpx session storeがなく、cleanupでは
 runnerのexact argvとprivate process groupを検証します。
 
+### native Claudeのquestionは同じassignment内で処理する
+
+選択したnative providerがClaude ACP 0.70.0の場合、SDK 1.3.0 clientはClaudeの
+`AskUserQuestion`を既存ACPのform elicitation requestとして受け取れます。この機能を有効にするのは、
+assignmentがprivateな`q.sock`を所有している場合だけです。Task、Dispatch、role、permission、
+TaskSpecは変わりません。Codex ACPにはquestion socketもquestion capabilityもありません。
+
+通信の順序は固定です。
+
+```text
+AskUserQuestion/form -> private q.sock -> native question outboxをdurableに保存
+  -> role_wait(question) -> すべてのmessage_idへmessage_reply
+  -> delivery_ack -> q.sockへanswer -> Nodeのreceived
+  -> Pythonがreceipt（identity/hashのみ）をdurableに保存
+     （protected outboxは保持） -> Nodeのrecorded
+  -> 同じACP sessionを再開
+```
+
+`message_reply`は回答をNodeへ渡す前に保存します。同じ`message_id`に同じ本文を再送した場合は
+idempotentに成功し、異なる本文は拒否します。Mainはbatch内の全questionへ回答してから
+`delivery_ack`を呼びます。1 batchは1〜4問、各question/answerは20,000文字以内、各JSONL frameは
+512 KiB以内、1 assignmentあたり最大64 batchです。消費後のassignment receiptにはmessage、session、
+delivery、tool-callのidentityとquestion/answerのhashだけを残します。protected outboxには、replace後の
+fsyncや`recorded`公開の失敗から復旧できるよう、次のquestionまたはterminal completionまでquestion/answer
+本文を保持する場合があります。receipt自体にはraw本文を含めません。
+
+questionのDeliveryが保留中は、`role_read`、`role_release`、別のdispatch、`task_verify`を拒否します。
+questionは同じassignmentの追加通信であり、既存のfile scope、Bash policy、その他のexternal-tool policyを
+広げません。ACP clientが消費するまでは、successful completionも拒否します。通常の完了経路は引き続き
+`role_wait(worker_done)` → `role_read` → `role_release` → `delivery_ack`です。
+
+question中のstopはoutboxを明示的にcancellingへ進め、acknowledgeを偽装しません。provider、process group、
+socket、private rootのcleanupを確認できた場合だけassignmentとstateを削除します。cleanupが不明なら
+stateを保持して調査します。Mainが根拠を持って答えられるquestionと、ユーザーだけが決められるquestionは
+区別します。Reviewerの`decision=consult`とpost-review resumeは別の未完了gateです。
+
+native clientは通常のstdoutを書く前に、private root固定の`client-result.json`を公開します。
+現在user所有のmode 0600、atomicかつ上書き不可で、1 MiB以下です。artifactはlaunch nonce、要求したmodel、
+effortに束縛します。終了code 0はtyped success、1はtyped failure、2は公開不確実を示します。
+Pythonはartifact、client exit status、取得時のstdout parity、session identity、process groupの証明をすべて
+検証します。signal、Event、artifactのいずれか単独ではcleanupの証拠になりません。artifactの欠落、破損、identity不一致、
+exit 2、cleanup不確認があれば、assignmentとprivate rootを保持します。
+
+scoped native runnerのsignal handlerは、runごとの`threading.Event`を設定するだけです。明示的なProcessRunner checkpointが
+cleanupを一度だけ開始し、cleanup開始後は非同期例外で中断しません。runnerはNode clientのleaderへsignalしてACP promptのcancelと
+session closeを進め、client streamを上限時間までdrainし、それでもleaderが生きている場合だけ所有process groupへ段階的に
+escalateします。Eventは制御要求であり、cleanup完了の証拠ではありません。raw signalを管理する別APIは公開しません。
+
+channel内部では`received`をclient receiptの検証後に保存し、`recorded`は`recorded` frameの送信成功後にだけ保存します。
+`received`の段階で失敗した場合はraw protected outboxを保持し、wire fieldは増やしません。
+
+native publication writerは競合時にreservation取得を最大1.5秒待機し、provider/state operation自体はretryしません。
+status、attach、resume、stop準備ではresourceをlock外でread-onlyに検査し、その後lockを再取得してcurrent `run_id`、
+`main_process`、phase、receiptを再確認します。final stopの直列化は維持します。callbackの例外は長さを制限した非機微なtyped failureへ
+正規化し、result memoryはpublication、cleanup、stdout parityの照合に必要なtyped receipt/artifactだけを保持します。
+
+`process_attempted`は`Popen`前に記録し、`completed_returncode`はprocess終了とgroup確認後にだけ記録します。attempt後もartifact、
+client exit、session identity、stdout parity、process groupの全確認を必須にします。public stopはsignal前に`native.phase=stopping`を保存し、
+publication reservation内では明示的なstopをprovider successより優先します。Reviewer evidenceを破棄し、保存済みoutcomeを`failed`にし、
+回答や受領確認は捏造しません。CLIの終了コード0/1は保存済みのoutcomeから決めます。
+
+native Claudeのprovider-private rootは、呼び出し元の深い`TMPDIR`の下ではなく`/tmp`直下に作ります。
+macOSではcanonical pathが`/private/tmp`になります。これにより、`TMPDIR`が長くてもprivateな`q.sock`が
+Unix socket pathの上限を超えません。rootはmode 0700、socketはmode 0600を維持します。Codexのallocationは
+設定済みtemporary directoryを使い、既存のtemporary-provider cleanupではUID、object type、directory descriptorの
+所有権を引き続き検査します。user configの変更項目ではありません。
+
+過去に完了した実Claude workflow、その成功receipt、確認済みのstop観測は、各runについて引き続き有効です。
+ここで狭めているのは過去のactive-cancel evidenceの解釈だけで、完了済みworkflowの証拠を取り消すものではありません。
+
 ## native TaskSpecとreview gateはdurableに保存する
 
 native runtimeのuserは、version 3 configの`[[tasks]]` tableとしてcompleteなTaskSpecを宣言し、
@@ -241,7 +342,8 @@ Deliveryがある場合、次のroleは起動できません。
 role_prompt
   -> role_wait
      -> worker_done: role_read -> role_release -> delivery_ack
-     -> question: message_reply -> delivery_ack -> role_wait
+     -> question: message_reply（全message_id） -> delivery_ack
+        -> q.sockのanswer -> received -> recorded -> 同じACP session -> role_wait
      -> escalation: 証拠を保持してユーザー判断を待つ
 ```
 
@@ -252,6 +354,16 @@ role_prompt
 native backendも`role_read` → `role_release` → `delivery_ack`の順序を使います。
 `native.last_ack`はacknowledgeしたDeliveryのreceipt markerを1つ記録するだけです。
 Taskの完了や、ユーザーのgoal全体の完了を示すものではありません。
+
+native questionでは、すべての回答をdurableに保存してacknowledgeするまでDeliveryを保留します。
+その後にだけprivate channelが保存済み回答を送り、clientの`received`/`recorded` handshakeを記録してから
+ACP promptを続けます。同じassignmentとACP sessionを再開し、新しいDispatchは作りません。
+`received` receiptはhashだけのreceiptを記録し、protected outboxは次のquestionまたはterminal completionまで
+利用可能です。
+
+channel内部では`received` → `recorded`を区別します。client receiptの検証後に`received`を保存し、
+`recorded` frameの送信成功後にだけ`recorded`を保存します。`received`の段階で失敗した場合は復旧用の
+raw protected outboxを保持します。wire fieldは増やしません。
 
 ## stateはprivateなlaunch snapshotとして保存する
 
@@ -279,8 +391,10 @@ native stateには選択したterminalのreceiptと、監督対象のMain proces
 nativeの所有権検査はsaved executable、private process group、exact argv、固定した
 `supervisor_argv`を比較します。
 `process_identity.py`はLinuxとmacOSでこのargv検査を行います。ACP assignmentのrunner PID、
-process group、argv、prompt sidecar、TaskSpec scope、private cleanup rootは、`role_release`で
-cleanupを確認するまで保持します。
+process group、argv、prompt sidecar、TaskSpec scope、question socket、private cleanup rootは、
+`role_release`または明示的なcancellationでcleanupを確認するまで保持します。消費済みquestionのreceiptには
+identityとhashだけを残し、rawのquestion/answer本文は次のquestionまたはterminal completionまでprotected
+outboxにだけ保持します。
 
 ## 失敗時はfail-closedで後始末する
 
@@ -328,7 +442,9 @@ pathがtyped contract、state、reservation helperを共有します。抽象bac
 methodは、別のuser-facing protocolではありません。
 
 共通MCP protocolでは観測したDeliveryを記録し、結果の読み取り、所有するrole resourceの解放、
-完了通知の受領確認という順序を強制します。質問は回答後に受領確認し、escalationは保留します。
+完了通知の受領確認という順序を強制します。native questionは全`message_reply`後に受領確認し、
+`delivery_ack`後にだけprivate channelが回答を渡してconsumed receiptを記録します。質問中は
+`role_read`、`role_release`、別dispatch、verificationをblockします。escalationは保留します。
 操作が失敗した場合は未処理状態を保持します。MCPのframingとtool schemaはbackendを選択せずに
 読み込めます。最初のstateful callで保存済みstateからOrcaまたは選択したnative runtimeを選びます。
 nativeの`status`、`attach`、`stop`は選択したdriverの所有resourceを検査または操作します。
@@ -352,6 +468,9 @@ workspace内を読め、TaskSpecのpath一覧では制限しません。Write/Ed
 同じuserのhostile processによる同時file差し替えをkernel levelで防ぐものではありません。
 Orcaのworkspace-writeはprovider native permissionを使うdirect Codexであり、nativeの書き込みは
 scoped Workerに限定します。
+質問応答は追加のcommunicationだけであり、TaskSpecのfile scopeを広げたり、Bash、terminal、
+その他のexternal toolを有効にしたりしません。question socketは所有するassignmentのprivateなsocketで、
+Claudeだけに有効です。Codexのquestion capabilityは無効のままです。
 
 以前のモデルを使わないtmuxの端末試験は、OrcaとCodexがない環境、空白を含むworkspace path、
 削除済みconfigで確認しました。2026-09-07には、Python 3.13.15のwheel-only環境で、実際の
@@ -363,7 +482,9 @@ gate、4 fileの依存bindingを含む実装で行いました。専用npm環境
 その依存だけを導入しました。別のactive cancel probeでは同じ最終runtimeのWorkerを
 停止し、所有processとartifactは0件でした。live SDK probeではallowed pathの編集と
 forbidden pathの拒否を確認し、SDK persistenceとauto-memoryを無効にしました。これは`308b1ba`時点の
-以前のtmux generation proofです。
+以前のtmux generation proofです。過去のactive-cancel probeが確認したのは、所有するOS process groupと
+pathのcleanupだけです。明示的なACP session closeは確認しておらず、以前のPython stop経路はprocess groupの
+終了をsession cleanupとして昇格していたため、session closeの証拠にはなりません。
 以前の2.1.112での拒否は`claude_code_version_too_old`であり、既に導入済みの2.1.261では
 同じ`fable`が成功しました。`claude.ai`の既存loginをAPI keyなしで利用しましたが、providerの
 subscription billing ledgerは確認していません。
@@ -388,15 +509,16 @@ pasteしたもののtextが貼付欄に残ったため、同じ初回messageを�
 
 別の実Herdr active-cancel probeでは、public MCPからWorkerをdispatchし、`CANCEL_STARTED`を観測したうえで、live kernel PID/PGIDとnative resultの不在を
 stop直前に再確認しました。独立readbackで所有PID/PGID、process reference、pathが残っていないことを確認しました。これはHerdrのClaude ACP cancelに関する
-代表的な証拠であり、すべてのharnessの証拠ではありません。
+代表的な証拠であり、すべてのharnessの証拠ではありません。確認したのはOS group/pathのcleanupだけで、
+明示的なACP session closeは確認していません。古いprocess groupベースのcleanup判定にも同じ限界があります。
 
 ## 合意済み要件の未実装部分
 
 以下は合意した範囲から除外した項目ではなく、残る実装要件です。Issue #8、#9、#11で追跡します。
 
 - 全10harnessで必要なprofileと実機証拠
-- 任意role graph、Mainなしの実行、明示的な並列task
-- native ACPのquestion/answer path
+- Dedicated Mainlessの実行、任意role graph、明示的な並列task、Orcaとnativeの共有progression
+- Reviewerの`consult`後に再開する経路
 - crashやcleanup不明後の自動recovery
 
 ## 意図的な対象外

@@ -8,19 +8,22 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 from agent_team import native_main
+from agent_team.locking import _LifecycleReservation
 
 
 class NativeMainContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
-        self.root = Path(self.directory.name)
-        self.root.chmod(0o700)
+        self.root = Path(self.directory.name) / "team"
+        self.root.mkdir(mode=0o700)
         self.state_path = self.root / "state.json"
         self.run_id = "run-123"
         self.environment_patcher = mock.patch.dict(
@@ -122,6 +125,117 @@ class NativeMainContractTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertFalse(marker.exists())
         self.assertNotIn("main_process", self._read_state(self.state_path)["native"])
+
+    def test_launch_waits_for_publication_lock_without_duplicate_process(self) -> None:
+        self._save_state(self._state([str(self.root / "main")]))
+        holder = _LifecycleReservation(self.state_path, create_parent=True)
+        holder.acquire()
+        release_started = threading.Event()
+
+        def release_holder() -> None:
+            release_started.set()
+            time.sleep(0.05)
+            holder.release()
+
+        process = mock.Mock(spec=subprocess.Popen)
+        process.pid = 12_345
+        release_thread = threading.Thread(target=release_holder)
+        release_thread.start()
+        release_started.wait()
+        try:
+            with (
+                mock.patch.object(
+                    native_main.subprocess, "Popen", return_value=process
+                ) as popen,
+                mock.patch.object(native_main.os, "getpgid", return_value=process.pid),
+            ):
+                child, published = native_main._launch_if_ready(
+                    self.state_path,
+                    self.run_id,
+                    supervisor_pid=67_890,
+                    is_cancelled=lambda: False,
+                )
+        finally:
+            release_thread.join(timeout=1.0)
+        self.assertFalse(release_thread.is_alive())
+        self.assertTrue(published)
+        self.assertIsNotNone(child)
+        popen.assert_called_once()
+
+    def test_launch_does_not_start_after_signal_arrives_while_waiting(self) -> None:
+        self._save_state(self._state([str(self.root / "main")]))
+        holder = _LifecycleReservation(self.state_path, create_parent=True)
+        holder.acquire()
+        cancelled = threading.Event()
+        release_started = threading.Event()
+
+        def release_holder() -> None:
+            release_started.set()
+            cancelled.set()
+            time.sleep(0.05)
+            holder.release()
+
+        release_thread = threading.Thread(target=release_holder)
+        release_thread.start()
+        release_started.wait()
+        try:
+            with mock.patch.object(native_main.subprocess, "Popen") as popen:
+                child, published = native_main._launch_if_ready(
+                    self.state_path,
+                    self.run_id,
+                    supervisor_pid=67_890,
+                    is_cancelled=cancelled.is_set,
+                )
+        finally:
+            release_thread.join(timeout=1.0)
+        self.assertFalse(release_thread.is_alive())
+        self.assertIsNone(child)
+        self.assertFalse(published)
+        popen.assert_not_called()
+
+    def test_publish_exited_waits_for_publication_lock(self) -> None:
+        process = mock.Mock(spec=subprocess.Popen)
+        process.pid = 12_345
+        child = native_main._ChildProcess(
+            process=process,
+            agent_pid=process.pid,
+            process_group_id=process.pid,
+            launch_nonce="a" * 32,
+        )
+        state = self._state([str(self.root / "main")])
+        native = cast(dict[str, object], state["native"])
+        native["main_process"] = native_main._running_record(67_890, child)
+        self._save_state(state)
+        holder = _LifecycleReservation(self.state_path, create_parent=True)
+        holder.acquire()
+        release_started = threading.Event()
+
+        def release_holder() -> None:
+            release_started.set()
+            time.sleep(0.05)
+            holder.release()
+
+        release_thread = threading.Thread(target=release_holder)
+        release_thread.start()
+        release_started.wait()
+        try:
+            published = native_main._publish_exited(
+                self.state_path,
+                self.run_id,
+                67_890,
+                child,
+                returncode=0,
+                group_stopped=True,
+            )
+        finally:
+            release_thread.join(timeout=1.0)
+        self.assertFalse(release_thread.is_alive())
+        self.assertTrue(published)
+        saved_native = cast(
+            dict[str, object], self._read_state(self.state_path)["native"]
+        )
+        saved = cast(dict[str, object], saved_native["main_process"])
+        self.assertEqual(saved["phase"], "exited")
 
     def test_normal_exit_reaps_a_descendant_and_publishes_exit_receipt(self) -> None:
         child_pid = self.root / "child.pid"

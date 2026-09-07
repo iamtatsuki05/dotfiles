@@ -8,12 +8,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const READ_TOOLS = Object.freeze(["Read", "Grep", "Glob"]);
 const WRITE_TOOLS = Object.freeze(["Write", "Edit"]);
+const ASK_USER_TOOL = "AskUserQuestion";
 const WORKSPACE_TOOLS = Object.freeze([...READ_TOOLS, ...WRITE_TOOLS]);
 const READ_TOOL_NAMES = new Set(READ_TOOLS.map((name) => name.toLowerCase()));
 const CLIENT_NAME = "agent-team-scoped-acp-client";
 const CLIENT_VERSION = "1";
 const CLEANUP_TIMEOUT_MS = 2_000;
 const CHILD_EXIT_TIMEOUT_MS = 2_000;
+const MAX_QUESTION_TOOL_CALL_ID_CHARS = 256;
+const MAX_RESULT_BYTES = 1 * 1024 * 1024;
+const RESULT_FILE_NAME = "client-result.json";
+const RESULT_TEMP_NAME = "client-result.pending";
+const LAUNCH_NONCE_RE = /^[a-z0-9]{8,64}$/;
 const SDK_PACKAGE = "@agentclientprotocol/sdk";
 const SDK_VERSIONS = Object.freeze({ claude: "1.3.0", codex: "1.4.0" });
 
@@ -56,6 +62,83 @@ function parsePositiveInteger(value, field) {
   return parsed;
 }
 
+function currentUid() {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid)) fail("current uid is unavailable");
+  return uid;
+}
+
+function validateLaunchNonce(value) {
+  const nonce = assertString(value, "launch-nonce");
+  if (!LAUNCH_NONCE_RE.test(nonce)) fail("launch-nonce is invalid");
+  return nonce;
+}
+
+function readPrivateDirectory(directory, label) {
+  let info;
+  try {
+    info = fs.lstatSync(directory);
+  } catch (error) {
+    fail(`${label} is unavailable: ${error?.message ?? error}`);
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) fail(`${label} must be a real directory`);
+  const canonical = fs.realpathSync.native(directory);
+  let canonicalInfo;
+  try {
+    canonicalInfo = fs.lstatSync(canonical);
+  } catch (error) {
+    fail(`${label} is unavailable: ${error?.message ?? error}`);
+  }
+  const uid = currentUid();
+  if (
+    canonicalInfo.isSymbolicLink() ||
+    !canonicalInfo.isDirectory() ||
+    canonicalInfo.uid !== uid ||
+    (canonicalInfo.mode & 0o777) !== 0o700
+  ) {
+    fail(`${label} must be current-user-owned mode 0700`);
+  }
+  return {
+    path: canonical,
+    identity: {
+      dev: canonicalInfo.dev,
+      ino: canonicalInfo.ino,
+      uid: canonicalInfo.uid,
+      mode: canonicalInfo.mode & 0o777,
+    },
+  };
+}
+
+function assertAbsent(pathname, label) {
+  try {
+    fs.lstatSync(pathname);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    fail(`${label} is unavailable: ${error?.message ?? error}`);
+  }
+  fail(`${label} already exists`);
+}
+
+export function validateResultFileSpec(rawPath) {
+  const value = assertString(rawPath, "result-file");
+  if (!path.isAbsolute(value)) fail("result-file must be absolute");
+  const absolute = path.resolve(value);
+  if (path.basename(absolute) !== RESULT_FILE_NAME) {
+    fail(`result-file basename must be ${RESULT_FILE_NAME}`);
+  }
+  const parent = readPrivateDirectory(path.dirname(absolute), "result-file parent");
+  const resultPath = path.join(parent.path, RESULT_FILE_NAME);
+  const tempPath = path.join(parent.path, RESULT_TEMP_NAME);
+  assertAbsent(resultPath, "result-file");
+  assertAbsent(tempPath, "result-file temporary path");
+  return {
+    path: resultPath,
+    tempPath,
+    parent: parent.path,
+    parentIdentity: parent.identity,
+  };
+}
+
 function parsePermission(value) {
   if (value !== "read-only" && value !== "workspace-write") {
     fail("permission must be read-only or workspace-write");
@@ -80,6 +163,9 @@ export function parseCliArgs(argv) {
     "--effort",
     "--instructions",
     "--timeout-ms",
+    "--question-socket",
+    "--result-file",
+    "--launch-nonce",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
@@ -112,8 +198,23 @@ export function parseCliArgs(argv) {
   if (!Array.isArray(agentArgv) || agentArgv.length === 0 || agentArgv.some((item) => typeof item !== "string" || item.length === 0 || item.includes("\0"))) {
     fail("agent argv must be a non-empty array of strings without NUL");
   }
+  const harness = parseHarness(values["--harness"]);
+  let questionSocket;
+  if (values["--question-socket"] !== undefined) {
+    if (harness !== "claude") fail("--question-socket is only available for claude");
+    const rawSocket = assertString(values["--question-socket"], "question socket");
+    if (!path.isAbsolute(rawSocket)) fail("question socket must be absolute");
+    questionSocket = path.resolve(rawSocket);
+  }
+  const hasResultFile = values["--result-file"] !== undefined;
+  const hasLaunchNonce = values["--launch-nonce"] !== undefined;
+  if (hasResultFile !== hasLaunchNonce) {
+    fail("result-file and launch-nonce must be provided together");
+  }
+  const resultFile = hasResultFile ? validateResultFileSpec(values["--result-file"]) : undefined;
+  const launchNonce = hasLaunchNonce ? validateLaunchNonce(values["--launch-nonce"]) : undefined;
   return {
-    harness: parseHarness(values["--harness"]),
+    harness,
     sdkEntry: absolutePath(values["--sdk-entry"], "SDK entry"),
     agentArgv,
     cwd: existingDirectory(values["--cwd"], "cwd"),
@@ -122,6 +223,9 @@ export function parseCliArgs(argv) {
     effort: assertString(values["--effort"], "effort"),
     instructions: assertString(values["--instructions"], "instructions"),
     timeoutMs: parsePositiveInteger(values["--timeout-ms"], "timeout-ms"),
+    questionSocket,
+    resultFile,
+    launchNonce,
   };
 }
 
@@ -160,15 +264,18 @@ async function loadSdk(sdkEntry, harness) {
   return sdk;
 }
 
-function fixedTools(permission) {
-  return permission === "workspace-write" ? [...WORKSPACE_TOOLS] : [...READ_TOOLS];
+function fixedTools(permission, questionsEnabled = false) {
+  const tools = permission === "workspace-write" ? [...WORKSPACE_TOOLS] : [...READ_TOOLS];
+  if (questionsEnabled) tools.push(ASK_USER_TOOL);
+  return tools;
 }
 
 export function buildSessionRequest(options) {
   if (parseHarness(options.harness) === "codex") {
     return { cwd: options.cwd, mcpServers: [] };
   }
-  const tools = fixedTools(options.permission);
+  const questionsEnabled = options.questions === true || options.questionSocket !== undefined;
+  const tools = fixedTools(options.permission, questionsEnabled);
   const claudeOptions = {
     model: options.model,
     tools,
@@ -279,14 +386,150 @@ async function stopChild(child) {
   return exited;
 }
 
+function cleanupConfirmed(cleanup) {
+  if (!cleanup.spawnAttempted) return true;
+  if (!cleanup.childSpawned || !cleanup.childExited) return false;
+  if (cleanup.connectionAttempted && !cleanup.connectionClosed) return false;
+  if (cleanup.sessionNewAttempted) {
+    return typeof cleanup.sessionId === "string" && cleanup.sessionClosed;
+  }
+  return true;
+}
+
+function boundedError(error) {
+  const message = String(error?.message ?? error);
+  return [...message].slice(0, 4_000).join("");
+}
+
+function failureReceipt(error, options, cleanup) {
+  return {
+    error: boundedError(error),
+    session_id: cleanup.sessionId,
+    model: options.model,
+    effort: options.effort,
+    cleanup_confirmed: cleanupConfirmed(cleanup),
+  };
+}
+
+function assertResultParent(spec) {
+  const parent = readPrivateDirectory(spec.parent, "result-file parent");
+  const expected = spec.parentIdentity;
+  if (
+    parent.identity.dev !== expected.dev ||
+    parent.identity.ino !== expected.ino ||
+    parent.identity.uid !== expected.uid ||
+    parent.identity.mode !== expected.mode
+  ) {
+    fail("result-file parent changed during execution");
+  }
+}
+
+function assertOwnedResult(pathname, label) {
+  let info;
+  try {
+    info = fs.lstatSync(pathname);
+  } catch (error) {
+    fail(`${label} is unavailable: ${error?.message ?? error}`);
+  }
+  const uid = currentUid();
+  if (info.isSymbolicLink() || !info.isFile() || info.uid !== uid || (info.mode & 0o777) !== 0o600) {
+    fail(`${label} must be current-user-owned mode 0600 regular file`);
+  }
+}
+
+function publishResultReceipt(spec, launchNonce, receipt, cleanup) {
+  if (cleanup.receiptAttempted) fail("result receipt publication was already attempted");
+  cleanup.receiptAttempted = true;
+  cleanup.receiptPublicationUnconfirmed = true;
+  const envelope = { version: 1, launch_nonce: launchNonce, receipt };
+  const encoded = Buffer.from(`${JSON.stringify(envelope)}\n`, "utf8");
+  if (encoded.length > MAX_RESULT_BYTES) fail("result receipt exceeds 1 MiB");
+  assertResultParent(spec);
+  assertAbsent(spec.path, "result-file");
+  assertAbsent(spec.tempPath, "result-file temporary path");
+  let fd;
+  try {
+    fd = fs.openSync(
+      spec.tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(fd, encoded);
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  assertResultParent(spec);
+  assertOwnedResult(spec.tempPath, "result-file temporary path");
+  fs.linkSync(spec.tempPath, spec.path);
+  fs.unlinkSync(spec.tempPath);
+  const directoryFd = fs.openSync(
+    spec.parent,
+    fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+  );
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
+  assertResultParent(spec);
+  assertOwnedResult(spec.path, "result-file");
+  cleanup.receiptPublicationUnconfirmed = false;
+  cleanup.receiptPublished = true;
+}
+
+function writeStdout(value) {
+  const encoded = `${JSON.stringify(value)}\n`;
+  return new Promise((resolve, reject) => {
+    let callbackDone = false;
+    let drained = true;
+    let settled = false;
+    const finish = (error) => {
+      if (settled || !callbackDone || !drained) return;
+      settled = true;
+      process.stdout.off("error", onError);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error) => {
+      settled = true;
+      process.stdout.off("drain", onDrain);
+      process.stdout.off("error", onError);
+      reject(error);
+    };
+    const onDrain = () => {
+      drained = true;
+      process.stdout.off("drain", onDrain);
+      finish();
+    };
+    process.stdout.once("error", onError);
+    drained = process.stdout.write(encoded, (error) => {
+      callbackDone = true;
+      finish(error);
+    });
+    if (!drained) process.stdout.once("drain", onDrain);
+  });
+}
+
 async function runTask(options, prompt, signalState) {
+  const cleanup = signalState.cleanup;
   const sdk = await loadSdk(options.sdkEntry, options.harness);
+  let questionClient;
+  if (options.questionSocket !== undefined) {
+    const questionModule = await import("./scoped_question_client.mjs");
+    options.questionSocket = questionModule.validateQuestionSocket(options.questionSocket);
+    if (options.questionSocket !== undefined) {
+      questionClient = new questionModule.ScopedQuestionClient(options.questionSocket);
+    }
+  }
+  cleanup.spawnAttempted = true;
   const child = spawn(options.agentArgv[0], options.agentArgv.slice(1), {
     cwd: options.cwd,
     env: { ...process.env },
     shell: false,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  cleanup.childSpawned = true;
   child.stdin.on("error", () => {});
   child.stdout.on("error", () => {});
   child.stderr.on("error", () => {});
@@ -300,17 +543,57 @@ async function runTask(options, prompt, signalState) {
   let sessionId;
   let connection;
   const messageText = new Map();
+  const observedAskToolCalls = new Set();
+  const inFlightAskToolCalls = new Set();
+  const consumedAskToolCalls = new Set();
+  let observedAskToolCallCount = 0;
   let lastMessageId;
   let promptInFlight = false;
   let cleanupStarted = false;
+  let promptAbort;
+  let fatalQuestionError;
+  let cancelActive;
+
+  const recordFatalQuestionError = (error) => {
+    if (fatalQuestionError || signalState.interrupted || signalState.timedOut) return;
+    fatalQuestionError = error instanceof Error ? error : new Error(String(error));
+    process.stderr.write(`scoped ACP question failed: ${fatalQuestionError.message}\n`);
+    if (promptAbort && !promptAbort.signal.aborted) promptAbort.abort(fatalQuestionError);
+    void cancelActive?.();
+  };
 
   const app = sdk
     .client({ name: CLIENT_NAME })
     .onRequest(sdk.methods.client.session.requestPermission, ({ params }) => selectPermission(params))
     .onNotification(sdk.methods.client.session.update, ({ params }) => {
       if (params?.sessionId !== sessionId) return;
-      const text = textFromUpdate(params.update);
-      const messageId = params.update?.messageId;
+      const update = params.update;
+      if (
+        update?.sessionUpdate === "tool_call" &&
+        update._meta?.claudeCode?.toolName === ASK_USER_TOOL
+      ) {
+        const toolCallId = update.toolCallId;
+        if (
+          typeof toolCallId !== "string" ||
+          toolCallId.length === 0 ||
+          [...toolCallId].length > MAX_QUESTION_TOOL_CALL_ID_CHARS
+        ) {
+          recordFatalQuestionError(new Error("AskUserQuestion tool call id is invalid"));
+        } else if (
+          observedAskToolCalls.has(toolCallId) ||
+          inFlightAskToolCalls.has(toolCallId) ||
+          consumedAskToolCalls.has(toolCallId)
+        ) {
+          recordFatalQuestionError(new Error("duplicate or empty AskUserQuestion tool call id"));
+        } else if (observedAskToolCallCount >= 64) {
+          recordFatalQuestionError(new Error("AskUserQuestion tool call limit exceeded"));
+        } else {
+          observedAskToolCalls.add(toolCallId);
+          observedAskToolCallCount += 1;
+        }
+      }
+      const text = textFromUpdate(update);
+      const messageId = update?.messageId;
       if (!text || typeof messageId !== "string" || messageId.length === 0) return;
       lastMessageId = messageId;
       messageText.set(messageId, `${messageText.get(messageId) ?? ""}${text}`);
@@ -328,11 +611,66 @@ async function runTask(options, prompt, signalState) {
       throw new Error("scoped ACP filesystem and terminal bridges are disabled");
     });
   }
-  connection = app.connect(stream);
+  if (questionClient) {
+    app.onRequest(
+      sdk.methods.client.elicitation.create,
+      (params) => params,
+      async ({ params, signal }) => {
+        if (params?.mode !== "form") {
+          recordFatalQuestionError(new Error("only form elicitations are supported"));
+          return { action: "cancel" };
+        }
+        if (params?.sessionId !== sessionId) {
+          recordFatalQuestionError(new Error("elicitation session does not match the active ACP session"));
+          return { action: "cancel" };
+        }
+        if (typeof params?.toolCallId !== "string" || params.toolCallId.length === 0) {
+          recordFatalQuestionError(new Error("elicitation tool call id is missing"));
+          return { action: "cancel" };
+        }
+        if (inFlightAskToolCalls.has(params.toolCallId)) {
+          recordFatalQuestionError(new Error("elicitation tool call already has an outstanding form"));
+          return { action: "cancel" };
+        }
+        if (consumedAskToolCalls.has(params.toolCallId)) {
+          recordFatalQuestionError(new Error("elicitation tool call was already consumed"));
+          return { action: "cancel" };
+        }
+        if (!observedAskToolCalls.has(params.toolCallId)) {
+          recordFatalQuestionError(new Error("elicitation tool call was not observed as AskUserQuestion"));
+          return { action: "cancel" };
+        }
+        observedAskToolCalls.delete(params.toolCallId);
+        inFlightAskToolCalls.add(params.toolCallId);
+        try {
+          const response = await questionClient.request(params, {
+            signal,
+            observedToolCall: true,
+          });
+          inFlightAskToolCalls.delete(params.toolCallId);
+          consumedAskToolCalls.add(params.toolCallId);
+          return response;
+        } catch (error) {
+          inFlightAskToolCalls.delete(params.toolCallId);
+          recordFatalQuestionError(error);
+          process.stderr.write(`scoped ACP question cancelled: ${error?.message ?? error}\n`);
+          return { action: "cancel" };
+        }
+      },
+    );
+  }
+  cleanup.connectionAttempted = true;
+  try {
+    connection = app.connect(stream);
+  } catch (error) {
+    cleanup.connectionClosed = false;
+    cleanup.childExited = await stopChild(child);
+    throw error;
+  }
   const agent = connection.agent;
   const request = (method, params, requestOptions = undefined) => agent.request(method, params, requestOptions);
 
-  const cancelActive = async () => {
+  cancelActive = async () => {
     if (!connection || !sessionId || cleanupStarted) return;
     try {
       await withTimeout(
@@ -351,20 +689,24 @@ async function runTask(options, prompt, signalState) {
   let childExited = false;
   try {
     if (signalState.interrupted) fail(signalState.reason);
+    const clientCapabilities = {
+      fs: { readTextFile: false, writeTextFile: false },
+      terminal: false,
+      ...(questionClient ? { elicitation: { form: {} } } : {}),
+    };
     await request(sdk.methods.agent.initialize, {
       protocolVersion: 1,
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-      },
+      clientCapabilities,
       clientInfo: { name: CLIENT_NAME, version: CLIENT_VERSION },
     });
     if (signalState.interrupted) fail(signalState.reason);
+    cleanup.sessionNewAttempted = true;
     const created = await request(sdk.methods.agent.session.new, buildSessionRequest(options));
     if (!created || typeof created.sessionId !== "string" || created.sessionId.length === 0) {
       fail("session/new returned no session id");
     }
     sessionId = created.sessionId;
+    cleanup.sessionId = sessionId;
     signalState.sessionId = sessionId;
     if (signalState.interrupted) {
       await cancelActive();
@@ -394,7 +736,7 @@ async function runTask(options, prompt, signalState) {
       fail(signalState.reason);
     }
 
-    const promptAbort = new AbortController();
+    promptAbort = new AbortController();
     signalState.promptAbort = promptAbort;
     const timeout = setTimeout(() => {
       signalState.timedOut = true;
@@ -410,6 +752,7 @@ async function runTask(options, prompt, signalState) {
         { cancellationSignal: promptAbort.signal },
       );
     } catch (error) {
+      if (fatalQuestionError) throw fatalQuestionError;
       if (signalState.interrupted) fail(signalState.reason);
       if (signalState.timedOut) fail("ACP prompt timed out");
       throw error;
@@ -417,10 +760,15 @@ async function runTask(options, prompt, signalState) {
       promptInFlight = false;
       clearTimeout(timeout);
     }
+    if (fatalQuestionError) throw fatalQuestionError;
     if (signalState.interrupted) fail(signalState.reason);
     if (signalState.timedOut) fail("ACP prompt timed out");
     if (!promptResponse || promptResponse.stopReason !== "end_turn") {
       fail(`ACP prompt stopped with ${String(promptResponse?.stopReason ?? "unknown")}`);
+    }
+    if (observedAskToolCalls.size > 0 || inFlightAskToolCalls.size > 0) {
+      recordFatalQuestionError(new Error("AskUserQuestion did not complete its form elicitation"));
+      throw fatalQuestionError;
     }
     const output = lastMessageId === undefined ? "" : messageText.get(lastMessageId) ?? "";
     if (output.length === 0) fail("ACP prompt completed without a tagged final agent message");
@@ -435,34 +783,40 @@ async function runTask(options, prompt, signalState) {
   } catch (error) {
     primaryError = error;
   } finally {
-    if (signalState.interrupted && promptInFlight) await cancelActive();
+    if ((signalState.interrupted || fatalQuestionError) && promptInFlight) await cancelActive();
     cleanupStarted = true;
+    await questionClient?.close();
     if (connection && sessionId) {
       try {
+        cleanup.sessionCloseAttempted = true;
         await withTimeout(
           request(sdk.methods.agent.session.close, { sessionId }),
           CLEANUP_TIMEOUT_MS,
           "session close",
         );
         sessionClosed = true;
+        cleanup.sessionClosed = true;
       } catch (error) {
         process.stderr.write(`scoped ACP session close failed: ${error?.message ?? error}\n`);
       }
     }
     try {
       connection?.close();
+      cleanup.connectionClosed = true;
     } catch (error) {
       process.stderr.write(`scoped ACP connection close failed: ${error?.message ?? error}\n`);
     }
     childExited = await stopChild(child);
+    cleanup.childExited = childExited;
   }
   if (primaryError) {
-    if (!sessionClosed || !childExited) {
+    if (!cleanupConfirmed(cleanup)) {
       primaryError = new Error(`${primaryError.message}; cleanup unconfirmed`);
     }
     throw primaryError;
   }
-  if (!sessionClosed || !childExited) fail("cleanup could not be confirmed");
+  if (!cleanupConfirmed(cleanup)) fail("cleanup could not be confirmed");
+  signalState.result.cleanup_confirmed = true;
   return signalState.result;
 }
 
@@ -500,6 +854,21 @@ async function main() {
     promptAbort: undefined,
     cancelActive: undefined,
     result: undefined,
+    stdoutAttempted: false,
+    cleanup: {
+      spawnAttempted: false,
+      childSpawned: false,
+      childExited: false,
+      connectionAttempted: false,
+      connectionClosed: false,
+      sessionNewAttempted: false,
+      sessionId: null,
+      sessionCloseAttempted: false,
+      sessionClosed: false,
+      receiptAttempted: false,
+      receiptPublicationUnconfirmed: false,
+      receiptPublished: false,
+    },
   };
   const inputAbort = new AbortController();
   const onSignal = (signal) => {
@@ -514,12 +883,44 @@ async function main() {
   const onSigint = () => onSignal("SIGINT");
   process.once("SIGTERM", onSigterm);
   process.once("SIGINT", onSigint);
+  let options;
   try {
-    const options = parseCliArgs(process.argv.slice(2));
+    options = parseCliArgs(process.argv.slice(2));
     const prompt = await readPrompt(inputAbort.signal);
     if (signalState.interrupted) fail(signalState.reason);
     const result = await runTask(options, prompt, signalState);
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (options.resultFile) {
+      publishResultReceipt(options.resultFile, options.launchNonce, result, signalState.cleanup);
+    }
+    signalState.stdoutAttempted = true;
+    await writeStdout(result);
+  } catch (error) {
+    let exitCode = 1;
+    if (options?.resultFile) {
+      const failure = failureReceipt(error, options, signalState.cleanup);
+      if (!signalState.cleanup.receiptAttempted) {
+        try {
+          publishResultReceipt(options.resultFile, options.launchNonce, failure, signalState.cleanup);
+        } catch (publishError) {
+          failure.cleanup_confirmed = false;
+          exitCode = 2;
+          process.stderr.write(`scoped ACP result receipt failed: ${publishError?.message ?? publishError}\n`);
+        }
+      } else if (!signalState.cleanup.receiptPublished) {
+        failure.cleanup_confirmed = false;
+      }
+      if (signalState.cleanup.receiptPublicationUnconfirmed) exitCode = 2;
+      if (!signalState.stdoutAttempted) {
+        signalState.stdoutAttempted = true;
+        try {
+          await writeStdout(failure);
+        } catch (stdoutError) {
+          process.stderr.write(`scoped ACP failure output failed: ${stdoutError?.message ?? stdoutError}\n`);
+        }
+      }
+    }
+    process.stderr.write(`${error?.message ?? error}\n`);
+    process.exitCode = exitCode;
   } finally {
     process.off("SIGTERM", onSigterm);
     process.off("SIGINT", onSigint);
@@ -538,6 +939,6 @@ if (!runningEval && process.argv[1] && !process.argv[1].startsWith("-")) {
 if (invokedAsScript) {
   main().catch((error) => {
     process.stderr.write(`${error?.message ?? error}\n`);
-    process.exitCode = 1;
+    if (process.exitCode === undefined || process.exitCode === 0) process.exitCode = 1;
   });
 }

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 from pathlib import Path
 from types import ModuleType
+from typing import Final
 
 from .contracts import ErrorCode, RuntimeFailure
 
@@ -14,6 +16,9 @@ try:
     import fcntl as _fcntl
 except ImportError:
     _fcntl = None
+
+_PUBLICATION_WAIT_SECONDS: Final = 1.5
+_PUBLICATION_POLL_SECONDS: Final = 0.02
 
 
 class _LifecycleReservation:
@@ -28,6 +33,11 @@ class _LifecycleReservation:
         self._fd: int | None = None
 
     def acquire(self) -> None:
+        if self._fd is not None:
+            raise RuntimeFailure(
+                ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                "agent-team lifecycle reservation is already held",
+            )
         if os.name == "nt" or _fcntl is None:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
@@ -101,6 +111,22 @@ class _LifecycleReservation:
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "agent-team lifecycle reservation could not be acquired",
             ) from exc
+
+    def acquire_for_publication(self) -> None:
+        """Acquire for an internal publisher with a bounded contention wait."""
+
+        deadline = time.monotonic() + _PUBLICATION_WAIT_SECONDS
+        while True:
+            try:
+                self.acquire()
+                return
+            except RuntimeFailure as exc:
+                if exc.code is not ErrorCode.TEAM_ALREADY_RUNNING:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(_PUBLICATION_POLL_SECONDS, remaining))
 
     def release(self, *, remove_file: bool = False) -> None:
         del remove_file

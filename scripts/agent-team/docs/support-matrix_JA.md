@@ -24,6 +24,20 @@ package download、process起動、workspace書き込みは行いません。
 | OpenClaw | なし | native `openclaw acp`、acpx built-in `openclaw` | 認識済み; direct=`not-run`; Docker=`blocked` | direct sandbox-offはsafe profileではない。Dockerのimage/context/endpoint pinも利用できない。 |
 | Grok | なし | native `grok agent stdio`、acpx built-in `grok-build` | 認識済み; direct=`blocked`; native stdio=`blocked` | authenticationが成立しておらず、direct/native-stdio phaseは`not-run`。 |
 
+### native Claudeのquestion status
+
+native Claudeの行は、既存role profileとprovider bindingを示します。これに加えて、現在のnative実装には
+Claude 0.70.0/SDK 1.3.0向けの制限付き`AskUserQuestion` → ACP form elicitation pathがあります。
+同じTaskとDispatch、Mainの`message_reply`/`delivery_ack`、assignmentのprivateな`q.sock`を使い、
+新しいroleを追加したり、TaskSpecのfile scopeやBash・external-tool policyを広げたりしません。
+Codexのquestion capabilityとquestion socketは無効で、公開Codex ACP profileも拒否したままです。
+
+実装にはbatch/order、failure、identity、stopを対象にしたfocused/mock coverageと、同じsession継続・fixed argv検証完了までを含む
+協調的な停止方式に修正した後の実モデルtmux受入run（`cf7ebe69-3a95-4f25-975c-d9b04269f025`）があります。Herdr/Zellijの実モデルquestion受入は
+主張しません。現在の証拠、未確認のpending stop 2件、最終検証の状態は
+[アーキテクチャ](architecture_JA.md)で管理しています。この説明は新しい`Verified` safety resultではなく実装状況を示します。
+完全検証済みの`0b3e5bc` milestoneは過去の証拠です。
+
 ACP adapterがインストールされていることやacpxが表示することだけでは、安全なrole用adapterで
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
 native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative configから選んだread-only

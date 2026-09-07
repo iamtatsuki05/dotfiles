@@ -175,15 +175,16 @@ def _launch_if_ready(
     state_path: Path,
     run_id: str,
     supervisor_pid: int,
-    pending_signal: int | None,
+    *,
+    is_cancelled: Callable[[], bool],
 ) -> tuple[_ChildProcess | None, bool]:
     """Launch and record Main while the lifecycle reservation is held."""
 
-    if pending_signal is not None:
+    if is_cancelled():
         return None, False
     reservation = _LifecycleReservation(state_path, create_parent=False)
     try:
-        reservation.acquire()
+        reservation.acquire_for_publication()
     except RuntimeFailure:
         return None, False
 
@@ -199,6 +200,8 @@ def _launch_if_ready(
         argv = _frozen_argv(native)
         workspace = _workspace(state)
         launch_nonce = _new_launch_nonce()
+        if is_cancelled():
+            return None, False
         try:
             process = subprocess.Popen(
                 argv,
@@ -360,7 +363,7 @@ def _publish_exited(
     expected = _running_record(supervisor_pid, child)
     reservation = _LifecycleReservation(state_path, create_parent=False)
     try:
-        reservation.acquire()
+        reservation.acquire_for_publication()
     except RuntimeFailure:
         return False
     try:
@@ -433,7 +436,10 @@ def run(state_path: Path, run_id: str) -> int:
         if ready is None or pending_signal is not None:
             return 1
         child, published = _launch_if_ready(
-            state_path, run_id, os.getpid(), pending_signal
+            state_path,
+            run_id,
+            os.getpid(),
+            is_cancelled=lambda: pending_signal is not None,
         )
         if child is None or not published:
             return 1

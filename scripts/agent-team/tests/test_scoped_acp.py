@@ -79,12 +79,16 @@ class ScopedAcpTest(unittest.TestCase):
                     "provider_private_root": str(private),
                     "write_policy_path": str(path),
                     "write_policy_sha256": digest,
+                    "question_socket": str(private / "q.sock"),
                     "task_spec": task.as_dict(),
                 }
                 role_spec = {
                     "scoped_wrapper_sha256": scoped_acp.checked_digest(wrapper),
                     "scoped_client_sha256": scoped_acp.checked_digest(wrapper),
                     "scoped_policy_sha256": scoped_acp.checked_digest(shared_policy),
+                    "scoped_question_client_sha256": scoped_acp.checked_digest(
+                        scoped_acp.SCOPED_QUESTIONS
+                    ),
                     "permission": "workspace-write",
                     "acp_executables": {"agent": str(wrapper)},
                 }

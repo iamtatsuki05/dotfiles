@@ -19,6 +19,7 @@ CODEX_SCOPED_ADAPTER_ID = "codex-acp-scoped-1.10.0"
 SCOPED_AGENT = Path(__file__).resolve().with_name("claude_scoped_agent.mjs")
 SCOPED_CLIENT = Path(__file__).resolve().with_name("scoped_acp_client.mjs")
 SCOPED_POLICY = Path(__file__).resolve().with_name("scoped_policy.mjs")
+SCOPED_QUESTIONS = Path(__file__).resolve().with_name("scoped_question_client.mjs")
 
 
 def native_profile(provider: str, role: str) -> dict[str, str]:
@@ -54,6 +55,9 @@ def client_argv(
     effort: str,
     instructions: str,
     timeout_seconds: int,
+    question_socket: Path | None = None,
+    result_file: Path | None = None,
+    launch_nonce: str | None = None,
 ) -> list[str]:
     if not (
         harness == "claude"
@@ -63,6 +67,19 @@ def client_argv(
     ):
         raise RuntimeValidationError(
             "native ACP harness does not match its dependencies"
+        )
+    if question_socket is not None and (
+        harness != "claude" or not question_socket.is_absolute()
+    ):
+        raise RuntimeValidationError(
+            "native question socket requires selected Claude and an absolute path"
+        )
+    if (result_file is None) != (launch_nonce is None) or (
+        result_file is not None
+        and (not result_file.is_absolute() or result_file.name != "client-result.json")
+    ):
+        raise RuntimeValidationError(
+            "native ACP result requires an absolute client-result.json and launch nonce"
         )
     executables.verify()
     return [
@@ -86,6 +103,16 @@ def client_argv(
         instructions,
         "--timeout-ms",
         str(timeout_seconds * 1_000),
+        *(
+            ["--question-socket", str(question_socket)]
+            if question_socket is not None
+            else []
+        ),
+        *(
+            ["--result-file", str(result_file), "--launch-nonce", str(launch_nonce)]
+            if result_file is not None
+            else []
+        ),
     ]
 
 
@@ -213,6 +240,14 @@ def validate_write_policy(
     if checked_digest(SCOPED_POLICY) != spec.get("scoped_policy_sha256"):
         raise RuntimeValidationError(
             "scoped ACP shared policy changed since team start"
+        )
+    if checked_digest(SCOPED_QUESTIONS) != spec.get("scoped_question_client_sha256"):
+        raise RuntimeValidationError(
+            "scoped ACP question client changed since team start"
+        )
+    if assignment.get("question_socket") != str(private_root / "q.sock"):
+        raise RuntimeValidationError(
+            "scoped ACP question socket does not match its assignment"
         )
     if checked_digest(policy_path, private=True) != assignment.get(
         "write_policy_sha256"

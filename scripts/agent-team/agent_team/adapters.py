@@ -21,7 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -84,6 +84,10 @@ class ExecutionError(AdapterError):
     def __init__(self, message: str, *, cleanup_confirmed: bool = False) -> None:
         super().__init__(message)
         self.cleanup_confirmed = cleanup_confirmed
+
+
+class ProcessCancellationRequested(Exception):
+    """A cooperative checkpoint observed a cancellation request."""
 
 
 class SnapshotError(AdapterError):
@@ -158,12 +162,14 @@ class ReadSnapshot:
 
 
 class ProcessRunner:
-    """Run fixed argv in a new process group with bounded output."""
+    """Retain the exit code after reaping the child and confirming group termination."""
 
     def __init__(self, *, max_output_bytes: int = MAX_PROCESS_OUTPUT_BYTES) -> None:
         if max_output_bytes < 1:
             raise ValueError("max_output_bytes must be positive")
         self.max_output_bytes = max_output_bytes
+        self.completed_returncode: int | None = None
+        self.process_attempted = False
 
     def run(
         self,
@@ -174,6 +180,8 @@ class ProcessRunner:
         input_text: str | None = None,
         timeout_seconds: float = 900.0,
     ) -> ProcessResult:
+        self.completed_returncode = None
+        self.process_attempted = False
         if not argv or any(not isinstance(item, str) or not item for item in argv):
             raise ExecutionError(
                 "provider argv must be non-empty strings", cleanup_confirmed=True
@@ -195,7 +203,10 @@ class ProcessRunner:
             ) from exc
         process: subprocess.Popen[bytes] | None = None
         process_group_id: int | None = None
+        stopping = False
         try:
+            self._check_cancelled()
+            self.process_attempted = True
             process = subprocess.Popen(
                 tuple(argv),
                 cwd=cwd,
@@ -216,46 +227,79 @@ class ProcessRunner:
                 input_bytes,
                 timeout_seconds=timeout_seconds,
                 max_output_bytes=self.max_output_bytes,
+                check_cancelled=self._check_cancelled,
             )
+            if process_group_id is not None and not _process_group_exited(
+                process_group_id
+            ):
+                stopping = True
+                self._stop(process, process_group_id)
+                stopping = False
+            try:
+                decoded_stdout = bytes(stdout_data).decode("utf-8")
+                decoded_stderr = bytes(stderr_data).decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ExecutionError(
+                    "provider output is not valid UTF-8", cleanup_confirmed=True
+                ) from exc
+            self.completed_returncode = process.returncode
+            return ProcessResult(process.returncode, decoded_stdout, decoded_stderr)
+        except ExecutionError:
+            # A failed group fence must retain its original cleanup verdict.
+            raise
+        except ProcessCancellationRequested as exc:
+            if stopping:
+                raise ExecutionError(
+                    "provider process cleanup was interrupted",
+                    cleanup_confirmed=self.completed_returncode is not None,
+                ) from exc
+            if process is not None:
+                self._stop(process, process_group_id)
+            raise ExecutionError(
+                "provider process was cancelled", cleanup_confirmed=True
+            ) from exc
         except _ProcessTimeout as exc:
             assert process is not None
-            _terminate_process_group(process, process_group_id)
+            self._stop(process, process_group_id)
             raise ExecutionError(
                 f"provider process timed out after {timeout_seconds:g}s",
                 cleanup_confirmed=True,
             ) from exc
         except _ProcessOutputLimit as exc:
             assert process is not None
-            _terminate_process_group(process, process_group_id)
+            self._stop(process, process_group_id)
             raise ExecutionError(
                 "provider output exceeds the configured limit", cleanup_confirmed=True
             ) from exc
         except (OSError, UnicodeEncodeError, ValueError, RuntimeError) as exc:
+            if stopping:
+                raise ExecutionError(
+                    "provider process cleanup was interrupted",
+                    cleanup_confirmed=self.completed_returncode is not None,
+                ) from exc
             if process is not None:
-                _terminate_process_group(process, process_group_id)
+                self._stop(process, process_group_id)
             raise ExecutionError(
                 f"provider process could not start: {exc}", cleanup_confirmed=True
             ) from exc
         except BaseException:
-            if process is not None:
-                _terminate_process_group(process, process_group_id)
+            if process is not None and not stopping:
+                self._stop(process, process_group_id)
             raise
         finally:
             if process is not None:
                 for stream in (process.stdin, process.stdout, process.stderr):
                     if stream is not None:
                         stream.close()
-        assert process is not None
-        if process_group_id is not None and not _process_group_exited(process_group_id):
-            _terminate_process_group(process, process_group_id)
-        try:
-            decoded_stdout = bytes(stdout_data).decode("utf-8")
-            decoded_stderr = bytes(stderr_data).decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ExecutionError(
-                "provider output is not valid UTF-8", cleanup_confirmed=True
-            ) from exc
-        return ProcessResult(process.returncode, decoded_stdout, decoded_stderr)
+
+    def _check_cancelled(self) -> None:
+        return None
+
+    def _stop(
+        self, process: subprocess.Popen[bytes], process_group_id: int | None
+    ) -> None:
+        _terminate_process_group(process, process_group_id)
+        self.completed_returncode = process.returncode
 
 
 class _ProcessTimeout(Exception):
@@ -272,6 +316,7 @@ def _bounded_communicate(
     *,
     timeout_seconds: float,
     max_output_bytes: int,
+    check_cancelled: Callable[[], None],
 ) -> tuple[bytearray, bytearray]:
     """Drain both pipes without retaining more than the configured bound."""
 
@@ -319,6 +364,7 @@ def _bounded_communicate(
                     raise _ProcessOutputLimit()
 
         while selector.get_map() or process.poll() is None:
+            check_cancelled()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise _ProcessTimeout()
@@ -330,6 +376,7 @@ def _bounded_communicate(
                     max(0.0, stdin_retry_deadline - time.monotonic()),
                 )
             events_ready = selector.select(select_timeout)
+            check_cancelled()
             if parent_exited:
                 # The parent is the only process whose output belongs to this
                 # result.  A descendant may retain inherited pipes forever;
@@ -384,12 +431,6 @@ def _bounded_communicate(
                 selector.close()
             except (OSError, RuntimeError, ValueError):
                 pass
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream is not None and not stream.closed:
-                try:
-                    stream.close()
-                except (OSError, RuntimeError, ValueError):
-                    pass
     process.wait()
     return stdout_data, stderr_data
 
@@ -1200,9 +1241,11 @@ def _remove_owned_tree(root: Path) -> None:
         identity_name = root.name.removesuffix("-ready")
     else:
         identity_name = root.name
-    if root.parent.resolve(
-        strict=False
-    ) != temporary_parent or not identity_name.startswith(allowed_prefixes):
+    allowed_parents = {temporary_parent}
+    if identity_name.startswith("agent-team-provider-"):
+        allowed_parents.add(Path("/tmp").resolve())
+    parent = root.parent.resolve(strict=False)
+    if parent not in allowed_parents or not identity_name.startswith(allowed_prefixes):
         raise SnapshotError(f"snapshot cleanup target is not launcher-owned: {root}")
     try:
         root_stat = root.lstat()
@@ -1224,7 +1267,7 @@ def _remove_owned_tree(root: Path) -> None:
     parent_fd: int | None = None
     root_fd: int | None = None
     try:
-        parent_fd = os.open(temporary_parent, directory_flags)
+        parent_fd = os.open(parent, directory_flags)
         root_fd = os.open(root.name, directory_flags, dir_fd=parent_fd)
         opened = os.fstat(root_fd)
         if (

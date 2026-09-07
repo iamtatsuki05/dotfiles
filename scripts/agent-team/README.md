@@ -10,6 +10,11 @@ Native runtimes `tmux`, `herdr`, and `zellij` provide the same direct Claude
 Main plus optional Claude ACP Planner, Worker, and Reviewer roles. Native
 Worker assignments require a config-declared TaskSpec and use the scoped Claude
 ACP policy; only the terminal driver changes.
+Native Claude ACP assignments also have a bounded `AskUserQuestion` path over
+the existing ACP form elicitation, using the same Task/Dispatch and a private
+question socket. The contract and current evidence are documented in
+[Architecture](docs/architecture.md). Real-model question acceptance covers
+tmux; Herdr and Zellij have live-terminal/fake-provider contract coverage.
 
 Read the install, prerequisite, and start sections to launch a team. Use the
 linked reference documents when changing the implementation or configuration.
@@ -50,6 +55,15 @@ permission and may include verified Claude ACP Planner/Reviewer roles with
 permission. Dispatching a native Worker requires a matching `[[tasks]]` entry;
 other unsupported native profiles are rejected before state, Task, Dispatch, or
 process effects are created.
+
+Native question handling is additional communication within the selected
+Claude ACP assignment. It does not change role permissions, TaskSpec file
+scope, Bash or external-tool policy, and it does not enable question handling
+for Codex. The previous fully verified `0b3e5bc` milestone remains historical.
+The bounded tmux acceptance and the cooperative test status are recorded in
+[Architecture](docs/architecture.md); they do not complete the broader
+Mainless, arbitrary-graph, parallel, all-harness, Codex-auth, or shared
+Orca/native progression requirements.
 
 ## Run from a checkout or install the project
 
@@ -150,8 +164,10 @@ A separate live SDK probe edited an allowed file and denied a forbidden path,
 with `persistSession=false`, `autoMemoryEnabled=false`, no residual selected
 SDK process, and no Claude project directory. A separate active-cancel probe
 stopped an active native Worker with the same final runtime and found zero owned processes
-and artifacts. These are bounded native checks, not evidence for every runtime,
-harness, or recovery path.
+and artifacts. The historical probe established owned OS process-group/path
+cleanup, but did not prove an explicit ACP session close; the earlier Python
+stop path promoted process-group exit to session cleanup. These are bounded
+native checks, not evidence for every runtime, harness, or recovery path.
 
 The new terminal drivers have separate public CLI evidence with a fake Main and
 fake Node, without a model call. Under Python 3.11 and 3.13, each of tmux,
@@ -192,7 +208,20 @@ A separate real Herdr active-cancel probe dispatched a Worker through the public
 MCP, observed `CANCEL_STARTED`, and rechecked the same live kernel PID/PGID plus
 native-result absence immediately before public stop. Independent readback then
 found no owned PID/PGID, process reference, or path. This is representative
-Claude ACP cancellation evidence for Herdr, not proof for all harnesses.
+Claude ACP cancellation evidence for Herdr, not proof for all harnesses. It
+established OS group/path cleanup only and did not prove an explicit ACP
+session close; the old process-group-based cleanup promotion has the same
+limitation.
+
+The real Claude tmux question run `cf7ebe69-3a95-4f25-975c-d9b04269f025` completed
+with Claude Code 2.1.263, Node 22.23.2, Claude ACP 0.70.0, SDK 1.3.0,
+Claude SDK 0.3.232, and `fable`/`high` for Main, Worker, and Reviewer, with
+Planner omitted. Main answered and acknowledged two questions, the same Worker
+ACP session resumed, Reviewer approved the same revision, and declared
+fixed-argv verification completed the Task. A separate pending-question run
+confirmed cooperative stop with typed ACP cleanup evidence. Both runs removed
+all owned resources. [Architecture](docs/architecture.md) records the bounded
+evidence, retained earlier failures, and the limits for other runtimes.
 
 In the earlier tmux proof at `308b1ba`, the wheel-only setup rejected each
 missing required native command (`node`, `claude-agent-acp`, `tmux`, or
@@ -402,6 +431,28 @@ task_dispatch(Planner or Worker)
   -> task_verify after implementation approve
 ```
 
+If `role_wait` returns `question`, answer each event's `message_id` with
+`message_reply` and then call `delivery_ack`. The answer is saved first, sent
+through the assignment's private `q.sock`, confirmed by Node as `received`,
+recorded durably by Python, and acknowledged as `recorded` before the same ACP
+session resumes. Retrying the same ID with the same body is idempotent;
+different text is rejected. A batch has one to four questions, each question or
+answer is at most 20,000 characters, each frame is at most 512 KiB, and one
+assignment accepts at most 64 batches. While the question Delivery is pending,
+`role_read`, `role_release`, another dispatch, and `task_verify` are rejected;
+successful completion is rejected until the question is consumed. Stopping
+there marks explicit cancellation and retains state when provider, process
+group, socket, or private cleanup is unproven. Reviewer `consult` and
+post-review resume remain a separate unfinished gate.
+
+Native completion and stop evidence is fail-closed. A typed client-result
+artifact, the client exit status, stdout parity at retrieval, session identity,
+and process-group proof are all required. A cancellation Event only requests
+cleanup; it is not cleanup evidence. Public stop records `native.phase=stopping`
+before signaling, and a concurrent stop takes precedence over provider success,
+discarding review evidence and persisting a failed outcome. Missing or
+inconclusive evidence retains the assignment and state for inspection.
+
 Plan and implementation reviews use separate `max_review_rounds` counters.
 Reviewer output is one exact JSON object with `task_id`, `stage`, `revision`,
 `decision`, and `findings`. Implementation review and `task_verify` use the
@@ -429,6 +480,12 @@ cleanup result requires user consultation and remains retained.
   The lifecycle order remains `role_read` → `role_release` → `delivery_ack`.
   Native `last_ack` stores one receipt marker and does not mean that a Task or
   the user's overall goal is complete.
+- Native Claude questions use the existing `AskUserQuestion` form elicitation
+  through the pinned ACP 0.70.0 / SDK 1.3.0 path. Consumed receipts retain
+  identities and hashes. The protected outbox may retain raw question and
+  answer text until the next question or terminal completion so publication
+  failures can be recovered. Codex question sockets and capability remain
+  disabled.
 - Native Worker Read/Glob/Grep can read the workspace, subject to protected-path
   and link/file-type checks. TaskSpec `allowed_paths` and `forbidden_paths`
   restrict Write/Edit only; forbidden paths take precedence for writes.

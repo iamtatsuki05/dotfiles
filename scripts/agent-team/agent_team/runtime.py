@@ -95,8 +95,15 @@ def build_acp_agent_command(
     *,
     executables: AcpExecutables | NativeAcpExecutables,
     write_policy: Path | None = None,
+    questions: bool = False,
 ) -> str:
     _require_identity(team_id, role, launch_nonce)
+    if type(questions) is not bool or (
+        questions and not isinstance(executables, NativeAcpExecutables)
+    ):
+        raise RuntimeValidationError(
+            "native questions require selected native Claude ACP"
+        )
     if isinstance(executables, NativeAcpExecutables):
         if write_policy is None:
             raise RuntimeValidationError("native ACP requires a scoped policy")
@@ -126,6 +133,7 @@ def build_acp_agent_command(
             str(executables.agent),
             "--policy",
             str(write_policy),
+            *(["--questions"] if questions else []),
         ]
     return shlex.join(argv)
 
@@ -722,6 +730,15 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
                 raise RuntimeValidationError(
                     f"agent-team state adapter snapshot has invalid {role}.sha256"
                 )
+    if is_native_runtime(runtime):
+        from .native_questions import validate_state as validate_questions
+
+        try:
+            validate_questions(state)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeValidationError(str(exc)) from exc
+    elif "native_question" in state:
+        raise RuntimeValidationError("Orca state must not contain a native question")
     return state
 
 

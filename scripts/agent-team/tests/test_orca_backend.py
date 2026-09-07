@@ -31,7 +31,6 @@ from agent_team.adapters import (
     ExecutionError,
     ProcessResult,
     ProcessRunner,
-    _bounded_communicate,
 )
 from agent_team.backend import (
     OrcaBackend,
@@ -3680,27 +3679,45 @@ class ProcessRunnerPortabilityTest(unittest.TestCase):
         stdout_read, stdout_write = os.pipe()
         stderr_read, stderr_write = os.pipe()
         process = mock.Mock()
+        process.pid = 730_001
         process.stdin = os.fdopen(stdin_write, "wb")
         process.stdout = os.fdopen(stdout_read, "rb")
         process.stderr = os.fdopen(stderr_read, "rb")
         process.poll.return_value = 0
         process.wait.return_value = 0
+
+        def stop_with_open_streams(_process, _group) -> None:
+            self.assertFalse(process.stdin.closed)
+            self.assertFalse(process.stdout.closed)
+            self.assertFalse(process.stderr.closed)
+
         try:
             with (
                 mock.patch.object(selectors, "PollSelector", FailingSelector),
-                self.assertRaises(OSError),
+                mock.patch(
+                    "agent_team.adapters.subprocess.Popen", return_value=process
+                ),
+                mock.patch("agent_team.adapters.os.getpgid", return_value=process.pid),
+                mock.patch.object(
+                    ProcessRunner, "_stop", side_effect=stop_with_open_streams
+                ) as stop,
+                self.assertRaises(ExecutionError),
             ):
-                _bounded_communicate(
-                    process,
-                    b"input",
+                ProcessRunner(max_output_bytes=100).run(
+                    [sys.executable, "-V"],
+                    cwd=Path.cwd(),
+                    env={},
+                    input_text="input",
                     timeout_seconds=1,
-                    max_output_bytes=100,
                 )
+            stop.assert_called_once()
             self.assertTrue(process.stdin.closed)
             self.assertTrue(process.stdout.closed)
             self.assertTrue(process.stderr.closed)
             self.assertTrue(FailingSelector.instances[-1].closed)
         finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
             os.close(stdin_read)
             os.close(stdout_write)
             os.close(stderr_write)
