@@ -160,11 +160,15 @@ GitHub Issueの実装からverified PRまでを依頼された場合だけ読む
 1. `gh issue view <number> --comments` で本文と全threadを読み、最新の要求、非目標、未回答質問を確定する。
 2. Issue番号と症状の同義語でopen/all PRを検索し、関連fileの最近のcommitも確認して重複作業を避ける。
 3. 現在のcodeと設計意図を確認し、Issueの前提がまだ正しいか検証する。すでに解決済み、要求が古い、別layerの問題なら実装前に報告する。
-4. observableなacceptance criteria、影響範囲、rollback、security/production riskを定義する。
+4. Issueを仕様の基準として、目的・対象外・観測可能な受け入れ条件を揃え、影響範囲、rollback、security/production riskを確認する。既存の記載が十分なら書き直さない。方式の選択や要件の矛盾など設計判断がある場合だけ、対象のIssue本文・合意済みコメントの版を固定し、関連codeとともに独立reviewへ渡してから実装する。明確な修正に別仕様書や仕様reviewを必須化しない。
 5. class全体を直す最小変更を実装し、適切なregression testを先に失敗させてから通す。testを一時的にsabotageして、修正を戻すと実際に失敗することも確認する。
-6. repositoryのtest/lint/typecheckと独立reviewを実施し、新規failureと既存baselineを分ける。
+6. repositoryのtest/lint/typecheckと独立reviewを実施し、新規failureと既存baselineを分ける。reviewには合意した受け入れ条件、対象commit、差分、検証結果を渡し、AGENTS.mdの「レビュー・助言の依頼」に従って指摘を分類・再確認する。
 7. Issue、branch、PRをこのskillのmetadata/Links規則で結び、PR作成後はbase/head、diff、CI run ID、assignee、labels、closing linkをreadbackする。
 8. CIをlive evidenceで追跡する。失敗を直した場合は同じcheckを再実行し、未完了・pending・既存failureをgreenと表現しない。
+
+記録先は、Issue本文が合意した目的・対象外・受け入れ条件、PR本文がその条件に対する実装結果・検証証跡・未達/未検証事項、既存のsession作業ログが途中のreview指摘と採否判断を担う。Issueの補足・編集・コメント投稿、後続Issueの起票は、このskillのwrite権限の範囲でだけ行う。許可がなければ補足案をローカルに残し、合意が必要な変更は未確定として扱う。
+
+別件の指摘はPRに残し、後続Issueで追跡するか、理由を付けて見送るかを決める。起票待ちは参照先があるように扱わず、未起票と明示する。改善案をすべて起票せず、今回必須の指摘が残る間は完了・Readyにしない。
 
 人気Issueでは重複PRが発生しやすい。既存PRを見つけた場合、黙って競合実装を続けず、差分・不足・引継ぎ可否を示す。
 

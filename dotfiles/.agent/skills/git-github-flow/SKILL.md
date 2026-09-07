@@ -37,6 +37,8 @@ Git/GitHub 作業を「確認 → 依頼された範囲だけ write → readback
 
 ## Issue / PR の作成
 
+既存Issueに基づく実装では、[operations.md の Issue to Pull Request](references/operations.md#issue-to-pull-request) に従い、受け入れ条件をレビュー・検証・PRへ引き継ぐ。
+
 - 既存 Issue があるときだけ `gh issue develop` で Development link し、PR のために Issue を作らない。`Closes #N` は base が既定 branch で merge が Issue を完了させる場合だけ、それ以外は `Refs #N` を使う。
 - assignee は `@me` を使わず `--assignee "$current_user"`。label は `gh label list` にある既存から最小限を選び、推測で新設しない。
 - commit subject、PR title、PR 本文の Markdown 見出しは英語にする。本文の言語は、今回の明示指示 → 同種作業の human-authored な最近の PR → 日本語の順で決める。repo に template があればその構造を保ち、無い場合だけ [templates.md](references/templates.md) を使う。
