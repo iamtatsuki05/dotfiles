@@ -132,6 +132,7 @@ class RoleSpec:
     scoped_wrapper_sha256: str | None = None
     scoped_client_sha256: str | None = None
     scoped_policy_sha256: str | None = None
+    scoped_question_client_sha256: str | None = None
     provider_snapshot: Mapping[str, object] | None = None
 
 

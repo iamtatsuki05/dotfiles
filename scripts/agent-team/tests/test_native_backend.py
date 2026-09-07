@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -14,12 +18,14 @@ from types import SimpleNamespace
 from unittest import mock
 
 import agent_team.native_backend as native
-from agent_team import cli, tmux_backend
+from agent_team import cli, tmux_backend, zellij
 from agent_team.contracts import (
     Attach,
     DeliveryAck,
     DeliveryRef,
     ErrorCode,
+    MessageRef,
+    MessageReply,
     Role,
     RolePrompt,
     RoleRead,
@@ -174,6 +180,726 @@ def role_spec(
 
 
 class NativeBackendTest(unittest.TestCase):
+    def test_group_permission_error_only_accepts_a_confirmed_exit(self) -> None:
+        for exited in (False, True):
+            with (
+                self.subTest(exited=exited),
+                mock.patch.object(native.os, "getpgrp", return_value=730_000),
+                mock.patch.object(
+                    native, "_process_group_alive", side_effect=[True, not exited]
+                ) as alive,
+                mock.patch.object(
+                    native.os,
+                    "killpg",
+                    side_effect=PermissionError("fixture permission error"),
+                ) as kill,
+            ):
+                if exited:
+                    native._terminate_process_group(730_001, 730_001)
+                else:
+                    with self.assertRaises(RuntimeFailure) as failure:
+                        native._terminate_process_group(730_001, 730_001)
+                    self.assertIs(failure.exception.code, ErrorCode.IDENTITY_MISMATCH)
+                self.assertEqual(alive.call_count, 2)
+                kill.assert_called_once_with(730_001, native.signal.SIGTERM)
+
+    def test_public_inspection_does_not_block_internal_publishers(self) -> None:
+        inspect = FakeTmuxDriver.inspect
+        for operation in ("status", "attach", "resume", "stop"):
+            with self.subTest(operation=operation):
+                self.state_path = self.root / f"inspection-{operation}" / "state.json"
+                spec = self.spec()
+                backend = self.start_backend(spec)
+                state = native.runtime_read_state(self.state_path)
+                receipt = backend._receipt_from_state(state["native"])
+                state["native"]["main_process"] = {
+                    "supervisor_pid": receipt.pane_pid,
+                    "agent_pid": 70_003,
+                    "process_group_id": 70_003,
+                    "launch_nonce": "a" * 32,
+                    "phase": "running",
+                }
+                native.runtime_write_state(self.state_path, state)
+                calls = []
+
+                def inspect_with_publisher(driver, receipt, calls=calls):
+                    reservation = native._LifecycleReservation(self.state_path)
+                    reservation.acquire()
+                    reservation.release()
+                    calls.append(receipt)
+                    return inspect(driver, receipt)
+
+                with (
+                    mock.patch.object(
+                        FakeTmuxDriver, "inspect", inspect_with_publisher
+                    ),
+                    mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
+                    mock.patch.object(
+                        native.shutil, "which", return_value="/usr/bin/true"
+                    ),
+                    mock.patch.object(
+                        native.subprocess,
+                        "run",
+                        return_value=SimpleNamespace(returncode=0),
+                    ),
+                ):
+                    if operation == "status":
+                        backend.request(Status())
+                    elif operation == "attach":
+                        backend.request(Attach(Role.MAIN))
+                    elif operation == "resume":
+                        tmux_backend.TmuxBackend(
+                            launcher_path=self.launcher, resume_existing=True
+                        ).start(spec)
+                    else:
+                        with (
+                            mock.patch.object(
+                                backend,
+                                "_stop_supervisor",
+                                side_effect=RuntimeFailure(
+                                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                                    "fixture stops after preparation",
+                                ),
+                            ),
+                            self.assertRaisesRegex(
+                                RuntimeFailure, "fixture stops after preparation"
+                            ),
+                        ):
+                            backend.stop()
+                self.assertEqual(len(calls), 1)
+
+    def test_public_inspection_rejects_changed_snapshot_before_using_it(self) -> None:
+        inspect = FakeTmuxDriver.inspect
+        for operation in ("status", "attach", "resume", "stop"):
+            for changed in ("phase", "receipt", "main_process"):
+                with self.subTest(operation=operation, changed=changed):
+                    self.state_path = (
+                        self.root / f"drift-{operation}-{changed}" / "state.json"
+                    )
+                    spec = self.spec()
+                    backend = self.start_backend(spec)
+                    state = native.runtime_read_state(self.state_path)
+                    receipt = backend._receipt_from_state(state["native"])
+                    state["native"]["main_process"] = {
+                        "supervisor_pid": receipt.pane_pid,
+                        "agent_pid": 70_003,
+                        "process_group_id": 70_003,
+                        "launch_nonce": "a" * 32,
+                        "phase": "running",
+                    }
+                    native.runtime_write_state(self.state_path, state)
+
+                    def inspect_then_change(driver, receipt, changed=changed):
+                        observed = inspect(driver, receipt)
+                        current = native.runtime_read_state(self.state_path)
+                        if changed == "phase":
+                            current["native"]["phase"] = "stopping"
+                        elif changed == "main_process":
+                            current["native"]["main_process"].update(
+                                phase="exited", returncode=0, group_stopped=True
+                            )
+                        else:
+                            current["native"]["tmux_receipt"]["server_pid"] += 1
+                        native.runtime_write_state(self.state_path, current)
+                        return observed
+
+                    with (
+                        mock.patch.object(
+                            FakeTmuxDriver, "inspect", inspect_then_change
+                        ),
+                        mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
+                        mock.patch.object(
+                            native.shutil, "which", return_value="/usr/bin/true"
+                        ),
+                        mock.patch.object(native.subprocess, "run") as attach,
+                        mock.patch.object(backend, "_stop_supervisor") as stop,
+                        self.assertRaisesRegex(
+                            RuntimeFailure, "changed during inspection"
+                        ),
+                    ):
+                        if operation == "status":
+                            backend.request(Status())
+                        elif operation == "attach":
+                            backend.request(Attach(Role.MAIN))
+                        elif operation == "resume":
+                            tmux_backend.TmuxBackend(
+                                launcher_path=self.launcher, resume_existing=True
+                            ).start(spec)
+                        else:
+                            backend.stop()
+                    attach.assert_not_called()
+                    stop.assert_not_called()
+
+    def question_request(self, count: int = 1) -> dict[str, object]:
+        return {
+            "kind": "question",
+            "session_id": "question-session",
+            "tool_call_id": "ask-1",
+            "questions": [
+                {"field": f"question_{index}_custom", "body": f"確認事項 {index + 1}"}
+                for index in range(count)
+            ],
+        }
+
+    def question_identity(self) -> dict[str, str]:
+        state = native.runtime_read_state(self.state_path)
+        saved = state["roles"]["planner"]
+        return {
+            "role": "planner",
+            "run_id": state["run_id"],
+            **{
+                key: saved[key]
+                for key in ("task_id", "dispatch_id", "terminal_handle", "launch_nonce")
+            },
+        }
+
+    def publish_question(self, request: dict[str, object]) -> None:
+        with mock.patch.object(native, "_assert_publisher"):
+            native.publish_question(
+                self.state_path, **self.question_identity(), request=request
+            )
+
+    def test_question_reply_ack_retains_assignment_and_task_until_real_completion(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            initial = native.runtime_read_state(self.state_path)
+            request = self.question_request()
+            self.publish_question(request)
+            wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+            self.assertEqual(len(wait.events), 1)
+            event = wait.events[0]
+            self.assertEqual(event.kind.value, "question")
+            self.assertEqual(event.body, "確認事項 1")
+            self.assertEqual(
+                event.identity.dispatch_id._value,
+                initial["roles"]["planner"]["dispatch_id"],
+            )
+            observed = self.state_path.read_bytes()
+            for forbidden in (
+                DeliveryAck(wait.delivery_id),
+                MessageReply(MessageRef("unknown"), "answer"),
+                RoleRead(Role.PLANNER, 100),
+                RoleRelease(Role.PLANNER),
+                TaskDispatch(Role.PLANNER, task, "repeat"),
+                TaskVerify(task.task_id),
+            ):
+                with self.subTest(request=type(forbidden).__name__):
+                    with self.assertRaises(RuntimeFailure):
+                        backend.request(forbidden)
+                    self.assertEqual(self.state_path.read_bytes(), observed)
+            session = NativeMcpSession.__new__(NativeMcpSession)
+            session.path = self.state_path
+            session.run_id = initial["run_id"]
+            session.runtime = backend.runtime
+            session.backend = backend
+            arguments = {
+                "message_id": event.message_id._value,
+                "body": "設定ファイルを根拠にしてください",
+            }
+            self.assertEqual(
+                session.execute("message_reply", arguments), {"replied": True}
+            )
+            replied = self.state_path.read_bytes()
+            self.assertEqual(
+                session.execute("message_reply", arguments), {"replied": True}
+            )
+            self.assertEqual(self.state_path.read_bytes(), replied)
+            with self.assertRaises(RuntimeFailure):
+                session.execute("message_reply", {**arguments, "body": "別の回答"})
+            with mock.patch.object(native, "_assert_publisher"):
+                self.assertIsNone(
+                    native.question_answers(
+                        self.state_path, **self.question_identity(), request=request
+                    )
+                )
+            backend.request(DeliveryAck(wait.delivery_id))
+            acknowledged = native.runtime_read_state(self.state_path)
+            self.assertEqual(acknowledged["roles"], initial["roles"])
+            self.assertEqual(acknowledged["tasks"], initial["tasks"])
+            self.assertNotIn("pending_delivery_id", acknowledged)
+            with mock.patch.object(native, "_assert_publisher"):
+                self.assertEqual(
+                    native.question_answers(
+                        self.state_path, **self.question_identity(), request=request
+                    ),
+                    {"question_0_custom": arguments["body"]},
+                )
+                native.confirm_question(
+                    self.state_path, **self.question_identity(), request=request
+                )
+            consumed = native.runtime_read_state(self.state_path)
+            self.assertEqual(consumed["native_question"]["phase"], "received")
+            receipts = consumed["roles"]["planner"]["question_receipts"]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["delivery_id"], wait.delivery_id._value)
+            self.assertNotIn(
+                arguments["body"], json.dumps(receipts, ensure_ascii=False)
+            )
+            with mock.patch.object(native, "_assert_publisher"):
+                native.record_question_sent(
+                    self.state_path, **self.question_identity(), request=request
+                )
+            self.finish_task(backend, Role.PLANNER, "調査結果")
+            completed_role = native.runtime_read_state(self.state_path)
+            self.assertNotIn("native_question", completed_role)
+            self.assertEqual(
+                completed_role["tasks"][task.task_id]["status"], "awaiting_plan_review"
+            )
+            self.assertEqual(
+                completed_role["tasks"][task.task_id]["writer_result"][
+                    "question_receipts"
+                ],
+                receipts,
+            )
+
+    def test_question_answer_poll_does_not_reserve_the_lifecycle(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            request = self.question_request()
+            self.publish_question(request)
+            wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+            for acknowledged in (False, True):
+                if acknowledged:
+                    backend.request(MessageReply(wait.events[0].message_id, "answer"))
+                    backend.request(DeliveryAck(wait.delivery_id))
+                before = self.state_path.read_bytes()
+                reservation = native._LifecycleReservation(self.state_path)
+                reservation.acquire()
+                try:
+                    with mock.patch.object(native, "_assert_publisher"):
+                        answers = native.question_answers(
+                            self.state_path,
+                            **self.question_identity(),
+                            request=request,
+                        )
+                    self.assertEqual(
+                        answers,
+                        {"question_0_custom": "answer"} if acknowledged else None,
+                    )
+                    self.assertEqual(self.state_path.read_bytes(), before)
+                finally:
+                    reservation.release()
+
+    def test_internal_question_and_completion_survive_short_main_reservation(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            identity = self.question_identity()
+            request = self.question_request()
+            acquire = native._LifecycleReservation.acquire
+            for operation in ("question", "completion"):
+                holder = native._LifecycleReservation(self.state_path)
+                holder.acquire()
+                contended = threading.Event()
+
+                def observe_contention(reservation, contended=contended):
+                    try:
+                        acquire(reservation)
+                    except RuntimeFailure as exc:
+                        if exc.code is ErrorCode.TEAM_ALREADY_RUNNING:
+                            contended.set()
+                        raise
+
+                with (
+                    mock.patch.object(native, "_assert_publisher"),
+                    mock.patch.object(
+                        native._LifecycleReservation, "acquire", observe_contention
+                    ),
+                    ThreadPoolExecutor(max_workers=1) as executor,
+                ):
+                    if operation == "question":
+                        future = executor.submit(
+                            native.publish_question,
+                            self.state_path,
+                            request=request,
+                            **identity,
+                        )
+                    else:
+                        future = executor.submit(
+                            native.publish_completion,
+                            self.state_path,
+                            **identity,
+                            outcome="failed",
+                            body="fixture cancellation",
+                            cleanup_confirmed=True,
+                        )
+                    try:
+                        self.assertTrue(
+                            contended.wait(timeout=1),
+                            "publisher did not attempt reservation",
+                        )
+                        self.assertFalse(future.done())
+                    finally:
+                        holder.release()
+                    future.result(timeout=3)
+                saved = native.runtime_read_state(self.state_path)
+                self.assertEqual(saved["native_question"]["request"], request)
+                if operation == "question":
+                    self.assertNotIn("native_result", saved)
+                else:
+                    self.assertEqual(saved["native_question"]["phase"], "failed")
+                    self.assertTrue(saved["native_result"]["cleanup_confirmed"])
+
+    def test_explicit_stop_dominates_a_concurrent_successful_question_completion(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.publish_question(self.question_request())
+            delivery = backend.request(RoleWait(Role.PLANNER, 1_000))
+            state = native.runtime_read_state(self.state_path)
+            state["native"]["phase"] = "stopping"
+            state["native_question"]["phase"] = "cancelling"
+            native.runtime_write_state(self.state_path, state)
+            with mock.patch.object(native, "_assert_publisher"):
+                native.publish_completion(
+                    self.state_path,
+                    **self.question_identity(),
+                    outcome="succeeded",
+                    body="client finished before cancellation was observed",
+                    cleanup_confirmed=True,
+                )
+            saved = native.runtime_read_state(self.state_path)
+            self.assertEqual(saved["native_result"]["outcome"], "failed")
+            self.assertTrue(saved["native_result"]["cleanup_confirmed"])
+            self.assertEqual(saved["native_question"]["phase"], "cancelling")
+            self.assertEqual(saved["native_question"]["answers"], {})
+            self.assertEqual(saved["pending_delivery_id"], delivery.delivery_id._value)
+
+    def test_explicit_stop_drops_valid_reviewer_evidence(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(reviewer=True, task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.finish_task(backend, Role.PLANNER, "Plan: inspect config and source")
+            self.dispatch_task(backend, Role.REVIEWER, task)
+            state = native.runtime_read_state(self.state_path)
+            assignment = state["roles"][Role.REVIEWER.value]
+            evidence = {
+                "task_id": task.task_id,
+                "stage": "plan",
+                "revision": state["tasks"][task.task_id]["revision"],
+                "decision": "approve",
+                "findings": [],
+            }
+            state["native"]["phase"] = "stopping"
+            native.runtime_write_state(self.state_path, state)
+            with mock.patch.object(native, "_assert_publisher"):
+                outcome = native.publish_completion(
+                    self.state_path,
+                    role=Role.REVIEWER.value,
+                    run_id=state["run_id"],
+                    task_id=assignment["task_id"],
+                    dispatch_id=assignment["dispatch_id"],
+                    terminal_handle=assignment["terminal_handle"],
+                    launch_nonce=assignment["launch_nonce"],
+                    outcome="succeeded",
+                    body="approved before cancellation was observed",
+                    cleanup_confirmed=True,
+                    task_evidence=evidence,
+                )
+            saved = native.runtime_read_state(self.state_path)
+            self.assertEqual(outcome, "failed")
+            self.assertEqual(saved["native_result"]["outcome"], "failed")
+            self.assertNotIn("task_evidence", saved["native_result"])
+
+    def test_question_batch_requires_all_replies_and_preserves_failed_writes(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.publish_question(self.question_request(2))
+            wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+            backend.request(MessageReply(wait.events[0].message_id, "first"))
+            before = self.state_path.read_bytes()
+            with self.assertRaises(RuntimeFailure):
+                backend.request(DeliveryAck(wait.delivery_id))
+            with (
+                mock.patch.object(
+                    native,
+                    "_save_state",
+                    side_effect=RuntimeFailure(
+                        ErrorCode.BACKEND_PROTOCOL_FAILURE, "write failed"
+                    ),
+                ),
+                self.assertRaises(RuntimeFailure),
+            ):
+                backend.request(MessageReply(wait.events[1].message_id, "second"))
+            self.assertEqual(self.state_path.read_bytes(), before)
+            backend.request(MessageReply(wait.events[1].message_id, "second"))
+            answered = self.state_path.read_bytes()
+            with (
+                mock.patch.object(
+                    native,
+                    "_save_state",
+                    side_effect=RuntimeFailure(
+                        ErrorCode.BACKEND_PROTOCOL_FAILURE, "write failed"
+                    ),
+                ),
+                self.assertRaises(RuntimeFailure),
+            ):
+                backend.request(DeliveryAck(wait.delivery_id))
+            self.assertEqual(self.state_path.read_bytes(), answered)
+            backend.request(DeliveryAck(wait.delivery_id))
+            self.assertEqual(
+                native.runtime_read_state(self.state_path)["native_question"]["phase"],
+                "acknowledged",
+            )
+
+    def test_question_publication_rejects_identity_change_and_pending_completion(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            identity = self.question_identity()
+            before = self.state_path.read_bytes()
+            with mock.patch.object(native, "_assert_publisher"):
+                for key in (
+                    "run_id",
+                    "task_id",
+                    "dispatch_id",
+                    "terminal_handle",
+                    "launch_nonce",
+                ):
+                    with self.subTest(key=key), self.assertRaises(RuntimeFailure):
+                        native.publish_question(
+                            self.state_path,
+                            **{**identity, key: "different"},
+                            request=self.question_request(),
+                        )
+                    self.assertEqual(self.state_path.read_bytes(), before)
+                native.publish_question(
+                    self.state_path, **identity, request=self.question_request()
+                )
+                pending = self.state_path.read_bytes()
+                with self.assertRaises(RuntimeFailure):
+                    native.publish_completion(
+                        self.state_path,
+                        **identity,
+                        outcome="succeeded",
+                        body="premature",
+                        cleanup_confirmed=True,
+                    )
+                self.assertEqual(self.state_path.read_bytes(), pending)
+
+            state = native.runtime_read_state(self.state_path)
+            for field, replacement in (
+                ("dispatch_id", "different"),
+                ("phase", "acknowledged"),
+                ("message_ids", []),
+            ):
+                damaged = json.loads(json.dumps(state))
+                damaged["native_question"][field] = replacement
+                with (
+                    self.subTest(field=field),
+                    self.assertRaises(RuntimeValidationError),
+                ):
+                    native.runtime_write_state(self.state_path, damaged)
+                self.assertEqual(self.state_path.read_bytes(), pending)
+
+    def test_question_stop_cancels_without_fabricating_ack_or_cleanup(self) -> None:
+        task = self.task_spec()
+        for phase in ("published", "observed", "acknowledged", "failed"):
+            self.state_path = self.root / f"question-stop-{phase}" / "state.json"
+            with (
+                self.subTest(phase=phase),
+                self.planner_backend(task_specs=(task,)) as backend,
+            ):
+                self.dispatch_task(backend, Role.PLANNER, task)
+                state = native.runtime_read_state(self.state_path)
+                receipt = backend._receipt_from_state(state["native"])
+                state["native"]["main_process"] = {
+                    "supervisor_pid": receipt.pane_pid,
+                    "agent_pid": 70_003,
+                    "process_group_id": 70_003,
+                    "launch_nonce": "a" * 32,
+                    "phase": "running",
+                }
+                native.runtime_write_state(self.state_path, state)
+                question = self.question_request()
+                self.publish_question(question)
+                if phase != "published":
+                    wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+                    if phase == "acknowledged":
+                        backend.request(
+                            MessageReply(wait.events[0].message_id, "answer")
+                        )
+                        backend.request(DeliveryAck(wait.delivery_id))
+                    elif phase == "failed":
+                        with mock.patch.object(native, "_assert_publisher"):
+                            native.fail_question(
+                                self.state_path,
+                                request=question,
+                                **self.question_identity(),
+                            )
+                        self.assertEqual(backend.request(Status()).status, "unknown")
+                before = native.runtime_read_state(self.state_path)
+                with (
+                    mock.patch.object(
+                        backend,
+                        "_cancel_runner",
+                        side_effect=RuntimeFailure(
+                            ErrorCode.BACKEND_PROTOCOL_FAILURE, "cleanup unconfirmed"
+                        ),
+                    ) as cancel,
+                    mock.patch.object(backend, "_stop_supervisor") as main_stop,
+                    mock.patch.object(native.os, "kill") as kill,
+                    self.assertRaisesRegex(RuntimeFailure, "cleanup unconfirmed"),
+                ):
+                    backend.stop()
+                cancel.assert_called_once()
+                main_stop.assert_not_called()
+                kill.assert_not_called()
+                after = native.runtime_read_state(self.state_path)
+                self.assertEqual(after["native"]["phase"], "stopping")
+                self.assertEqual(after["native_question"]["phase"], "cancelling")
+                self.assertEqual(after["roles"], before["roles"])
+                self.assertEqual(after["tasks"], before["tasks"])
+                self.assertEqual(
+                    after.get("pending_delivery_id"), before.get("pending_delivery_id")
+                )
+                self.assertEqual(
+                    after["native_question"]["answers"],
+                    before["native_question"]["answers"],
+                )
+
+    def test_question_cancel_requires_trusted_cleanup_before_removing_outbox(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        for confirmed in (False, True):
+            self.state_path = self.root / f"question-cancel-{confirmed}" / "state.json"
+            with (
+                self.subTest(confirmed=confirmed),
+                self.planner_backend(task_specs=(task,)) as backend,
+            ):
+                self.dispatch_task(backend, Role.PLANNER, task)
+                self.publish_question(self.question_request())
+                wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+                state = native.runtime_read_state(self.state_path)
+                state["native"]["phase"] = "stopping"
+                state["native_question"]["phase"] = "cancelling"
+                native.runtime_write_state(self.state_path, state)
+                with mock.patch.object(native, "_assert_publisher"):
+                    native.publish_completion(
+                        self.state_path,
+                        **self.question_identity(),
+                        outcome="failed",
+                        body="cancelled",
+                        cleanup_confirmed=confirmed,
+                    )
+                before = native.runtime_read_state(self.state_path)
+                with (
+                    mock.patch.object(
+                        native, "_process_group_alive", return_value=False
+                    ),
+                    mock.patch.object(native.os, "kill") as kill,
+                ):
+                    if confirmed:
+                        backend._cancel_runner(before, Role.PLANNER)
+                    else:
+                        with self.assertRaisesRegex(
+                            RuntimeFailure, "cleanup is unconfirmed"
+                        ):
+                            backend._cancel_runner(before, Role.PLANNER)
+                    kill.assert_not_called()
+                after = native.runtime_read_state(self.state_path)
+                self.assertEqual(after["tasks"][task.task_id]["status"], "running")
+                self.assertNotEqual(
+                    after["native"].get("last_ack"), wait.delivery_id._value
+                )
+                if confirmed:
+                    self.assertEqual(after["roles"], {})
+                    self.assertNotIn("native_question", after)
+                    self.assertNotIn("native_result", after)
+                    self.assertNotIn("pending_delivery_id", after)
+                else:
+                    self.assertEqual(after, before)
+
+    def test_question_confirm_post_replace_failure_keeps_answer_outbox(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            request = self.question_request()
+            self.publish_question(request)
+            wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+            backend.request(MessageReply(wait.events[0].message_id, "saved answer"))
+            backend.request(DeliveryAck(wait.delivery_id))
+            fsync = os.fsync
+
+            def fail_directory(fd: int) -> None:
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError(errno.EIO, "injected directory fsync failure")
+                fsync(fd)
+
+            with mock.patch.object(native, "_assert_publisher"):
+                with (
+                    mock.patch(
+                        "agent_team.runtime.os.fsync", side_effect=fail_directory
+                    ),
+                    self.assertRaises(RuntimeFailure) as raised,
+                ):
+                    native.confirm_question(
+                        self.state_path, request=request, **self.question_identity()
+                    )
+                self.assertIsInstance(
+                    raised.exception.__cause__, native.StatePublishError
+                )
+                disk = native.runtime_read_state(self.state_path)
+                self.assertIn("native_question", disk)
+                self.assertEqual(disk["native_question"]["phase"], "received")
+                self.assertEqual(
+                    disk["native_question"]["answers"],
+                    {wait.events[0].message_id._value: "saved answer"},
+                )
+                native.fail_question(
+                    self.state_path, request=request, **self.question_identity()
+                )
+            failed = native.runtime_read_state(self.state_path)
+            self.assertEqual(failed["native_question"]["phase"], "failed")
+            self.assertEqual(
+                failed["native_question"]["answers"], disk["native_question"]["answers"]
+            )
+            self.assertEqual(backend.request(Status()).status, "unknown")
+
+    def test_question_received_does_not_discard_unsent_recorded_on_failure(
+        self,
+    ) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            request = self.question_request()
+            self.publish_question(request)
+            wait = backend.request(RoleWait(Role.PLANNER, 1_000))
+            backend.request(MessageReply(wait.events[0].message_id, "answer"))
+            backend.request(DeliveryAck(wait.delivery_id))
+            with mock.patch.object(native, "_assert_publisher"):
+                native.confirm_question(
+                    self.state_path, request=request, **self.question_identity()
+                )
+                native.publish_completion(
+                    self.state_path,
+                    **self.question_identity(),
+                    outcome="failed",
+                    body="recorded send failed",
+                    cleanup_confirmed=True,
+                )
+            saved = native.runtime_read_state(self.state_path)
+            self.assertIn("native_question", saved)
+            self.assertEqual(saved["native_question"]["phase"], "failed")
+            self.assertEqual(
+                saved["native_question"]["answers"],
+                {wait.events[0].message_id._value: "answer"},
+            )
+
     def test_codex_inspection_failure_preserves_unconfirmed_cleanup(self) -> None:
         from agent_team import codex_acp
         from agent_team.adapters import ExecutionError
@@ -259,7 +985,7 @@ class NativeBackendTest(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeFailure, "unconfirmed"):
                             backend.stop()
                         with self.assertRaisesRegex(RuntimeFailure, "unconfirmed"):
-                            backend._resume_locked(self.spec(), {})
+                            backend._resume(self.spec(), {})
                         self.assertEqual(backend.request(Status()).status, "unknown")
                         self.assertTrue(private_root.is_dir())
                 self.state_path.unlink()
@@ -419,11 +1145,14 @@ class NativeBackendTest(unittest.TestCase):
         self.fixture_trees: list[Path] = []
 
         def make_fixture_directory(**kwargs: object) -> str:
-            if kwargs.get("dir") == "/tmp":
+            if (
+                kwargs.get("dir") == "/tmp"
+                and kwargs.get("prefix") != "agent-team-provider-"
+            ):
                 kwargs["dir"] = str(self.root)
             path = make_directory(**kwargs)
             if kwargs.get("prefix") in {"agent-team-provider-", "agent-team-snapshot-"}:
-                self.fixture_trees.append(Path(path))
+                self.fixture_trees.append(Path(path).resolve())
             return path
 
         socket_patch = mock.patch.object(
@@ -473,6 +1202,24 @@ class NativeBackendTest(unittest.TestCase):
         ):
             backend.start(spec)
         return backend
+
+    def test_socket_root_with_underscored_temp_suffix_satisfies_zellij_contract(
+        self,
+    ) -> None:
+        allocated = []
+
+        def allocate(*, prefix, dir):
+            self.assertEqual(dir, "/tmp")
+            root = self.root / (prefix + "_fixture")
+            root.mkdir(mode=0o700)
+            allocated.append(root)
+            return str(root)
+
+        with mock.patch.object(native.tempfile, "mkdtemp", side_effect=allocate):
+            self.start_backend(self.spec())
+        self.assertEqual(len(allocated), 1)
+        lexical_root = Path("/tmp") / allocated[0].name
+        self.assertEqual(zellij._private_root_path(lexical_root), lexical_root)
 
     @contextmanager
     def planner_backend(
@@ -757,6 +1504,7 @@ class NativeBackendTest(unittest.TestCase):
                 mock.patch.object(native, "_assert_publisher"),
             ):
                 result = cli._acp_run_turn(
+                    cancellation=threading.Event(),
                     state=state,
                     role="worker",
                     state_path=self.state_path,
@@ -1107,6 +1855,58 @@ class NativeBackendTest(unittest.TestCase):
             backend._cancel_runner(state, Role.PLANNER)
         terminate.assert_not_called()
 
+    def test_runner_exit_during_identity_probe_requires_group_absence(self) -> None:
+        assignment = {
+            "runner_pid": 77_001,
+            "runner_process_group_id": 77_001,
+            "runner_argv": ["/bin/python3", "owned"],
+        }
+        for still_alive in (False, True):
+            with (
+                self.subTest(still_alive=still_alive),
+                mock.patch.object(
+                    native, "_process_group_alive", side_effect=[True, still_alive]
+                ),
+                mock.patch.object(native.os, "getpgid", side_effect=ProcessLookupError),
+                mock.patch.object(native, "read_process_argv", return_value=None),
+                mock.patch.object(native.os, "getpgrp", return_value=1234),
+            ):
+                if still_alive:
+                    with self.assertRaises(RuntimeFailure):
+                        native._runner_identity_is_owned(assignment)
+                else:
+                    self.assertEqual(
+                        native._runner_identity_is_owned(assignment), (77_001, 77_001)
+                    )
+
+    def test_cancel_rechecks_identity_if_an_exited_group_appears_live_again(
+        self,
+    ) -> None:
+        backend = self.backend(self.spec())
+        assignment = {
+            "runner_pid": 77_001,
+            "runner_process_group_id": 77_001,
+            "runner_argv": ["/bin/python3", "owned"],
+        }
+        state = {"state_path": str(self.state_path), "roles": {"planner": assignment}}
+        with (
+            mock.patch.object(native, "_validate_runner_argv"),
+            mock.patch.object(
+                native, "_process_group_alive", side_effect=[True, False, True, True]
+            ),
+            mock.patch.object(
+                native.os, "getpgid", side_effect=[ProcessLookupError(), 77_001]
+            ),
+            mock.patch.object(
+                native, "read_process_argv", side_effect=[None, ("foreign",)]
+            ),
+            mock.patch.object(native.os, "getpgrp", return_value=1234),
+            mock.patch.object(native, "_terminate_process_group") as terminate,
+            self.assertRaises(RuntimeFailure),
+        ):
+            backend._cancel_runner(state, Role.PLANNER)
+        terminate.assert_not_called()
+
     def test_framework_process_identity_keeps_the_original_python_launch(self) -> None:
         def framework_argv(launch: list[str]) -> tuple[str, ...]:
             return ("/Framework/Python.app/Contents/MacOS/Python", *launch[1:])
@@ -1334,7 +2134,7 @@ class NativeBackendTest(unittest.TestCase):
                 self.assertEqual(self.state_path.read_bytes(), before)
         stopped_state["native"]["phase"] = "running"
         native.runtime_write_state(self.state_path, stopped_state)
-        reload_state = backend._reload_locked
+        reload_state = backend._reload_state
 
         def competing_wait(path: Path) -> dict[str, object]:
             current = reload_state(path)
@@ -1342,7 +2142,7 @@ class NativeBackendTest(unittest.TestCase):
             return current
 
         with (
-            mock.patch.object(backend, "_reload_locked", side_effect=competing_wait),
+            mock.patch.object(backend, "_reload_state", side_effect=competing_wait),
             self.assertRaises(RuntimeFailure) as raised,
         ):
             backend.request(RoleWait(Role.PLANNER, 1_000))

@@ -65,6 +65,47 @@ schemaとレビュー・検証の流れは[設定リファレンス](configurati
 導入済みの依存package自体は信頼する前提です。entry fileのfingerprintは、読み込まれる
 全依存fileの固定や、同じユーザー権限の別プロセスによる悪意ある同時差し替えを保証しません。
 
+### native Claudeのquestion path
+
+native Claude profileは既存の`AskUserQuestion`とACP form elicitationを使います。選択した
+0.70.0 adapterとSDK 1.3.0 clientがこれを有効にするのは、assignmentがprivateな`q.sock`を
+所有している場合だけです。questionは同じTaskとDispatchに属します。Python側でquestion outboxと
+各`message_reply`を保存し、全回答を`delivery_ack`でacknowledgeした後にだけ`q.sock`へ回答を送り、
+Nodeの`received` receiptを受け取ります。Pythonがhashだけのreceiptを保存し、protected outboxを保持してから
+`recorded`を返し、同じACP sessionを再開します。
+channel内部ではclient receiptの検証後に`received`を保存し、`recorded` frameの送信成功後にだけ
+`recorded`へ進めます。`received`の段階で失敗した場合はraw protected outboxを保持します。wire fieldは増やしません。
+
+制限付きの通信契約では、1 batchあたり1〜4問、question/answer各20,000文字以内、JSONL frame 512 KiB以内、
+1 assignmentあたり64 batchまでです。同じmessage IDと本文の再送はidempotentですが、異なる本文は
+拒否します。消費済みreceiptにはassignment、session、delivery、tool-callのidentityとquestion/answerの
+hashだけを残します。protected outboxには、replace後のfsyncや`recorded`公開の失敗から復旧できるよう、
+次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。receipt自体に
+raw本文は含めません。question Deliveryが保留中は`role_read`、`role_release`、別のdispatch、`task_verify`を
+拒否し、successful completionもpublishできません。stopはquestionをcancellingへ進め、acknowledgeを
+偽装しません。provider、process group、socket、private rootのcleanupを確認できない場合はstateを保持します。
+
+実モデルを使ったtmuxのrun `cf7ebe69-3a95-4f25-975c-d9b04269f025`では、Fable・effort `high`を使い、Plannerを省略して質問応答を一巡させました。
+Mainの回答と受領確認後、同じWorkerのACPセッションが再開し、Reviewer承認、同一リビジョンの固定コマンド検証、Task完了、公開`stop`まで確認しています。
+別のrunでは、未回答の質問を待つ間の停止と、型付きACP終了記録も検証しました。
+[アーキテクチャ](architecture_JA.md)に両試験、保持している過去の失敗、Herdr/Zellijの確認範囲を記載しています。
+
+native clientは通常のstdoutを書く前に、private root固定の`client-result.json`を公開します。現在user所有の
+mode 0600、atomicかつ上書き不可で、1 MiB以下です。artifactはlaunch nonce、要求したmodel、effortに束縛します。
+終了code 0はtyped success、1はtyped failure、2は公開不確実を示します。Pythonはartifact、client exit status、取得時のstdout
+parity、session identity、process groupの証明をすべて検証します。signalやcancellation Event、artifactの単独の存在はcleanupの
+証拠ではありません。artifactの欠落、破損、identity不一致、exit 2、cleanup不確認があればassignmentとprivate rootを保持します。
+
+signal handlerはrunごとの`threading.Event`を設定するだけです。明示的なProcessRunner checkpointがcleanupを一度だけ開始し、
+cleanup開始後は非同期例外で中断しません。runnerはNode clientのleaderへsignalし、streamを上限時間までdrainし、それでもleaderが
+生きている場合だけ所有process groupへ段階的にescalateします。public stopはsignal前に`native.phase=stopping`を保存し、publication
+reservation内ではstopをprovider successより優先し、Reviewer evidenceを破棄してfailed outcomeを保存します。CLI結果は保存済みoutcomeから決めます。
+
+実pending stopの`1000018d-3ae0-4d62-b2af-a5c89be31c6a`と`c945f3f5-8dcf-4643-a05a-72d1a62bab78`は、実ACP session-close receiptがあった
+一方でPythonがclient exit statusを失ったため、どちらも失敗しました。public stopの`returncode=1`はclientのexit codeではありません。
+全workload processは終了し、所有idle tmuxは別途回収しました。failed state、private root、snapshot、artifact、fixtureは保持しており、
+いずれもcleanup成功の証拠として扱いません。
+
 ## 範囲を制限したCodex ACPの実装：公開設定では未有効
 
 native backendには、変更範囲を制限したCodexの実装を追加しています。
@@ -97,6 +138,10 @@ dispatch、再開、停止成功の判定を止めます。
 file制御、通信、依存選択、native assignmentの接続は、模擬認証や偽のagentでテストしています。
 ネットワークを遮断した別試験では、実際のCodexのthread設定をモデル実行なしで確認しました。
 これらは、実認証を使うモデルの挙動を検証した証拠ではありません。
+
+Codexの質問応答は無効のままです。Codex profileにはquestion socketも
+`AskUserQuestion` capabilityもなく、公開Codex ACP registry entryも引き続き拒否します。
+通常認証の保留中試験と、そのpermission/cleanup確認も変わりません。
 
 ## 認証とsubscription
 

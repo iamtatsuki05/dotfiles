@@ -75,6 +75,70 @@ See [configuration](configuration.md) for the schema and review/verification flo
 Installed dependency trees remain trusted; entry-file fingerprints do not make
 the entire import closure hermetic or prevent hostile same-user filesystem races.
 
+### Native Claude question path
+
+The native Claude profile uses the existing `AskUserQuestion` tool and ACP
+form elicitation. The selected 0.70.0 adapter and SDK 1.3.0 client enable it
+only when the assignment owns its private `q.sock`. The question remains in
+the same Task and Dispatch. The Python side persists the question outbox and
+each `message_reply`; after every answer is acknowledged with `delivery_ack`,
+it sends the answers through `q.sock`, receives Node's `received` receipt,
+records its hash-only receipt while retaining the protected outbox, and sends
+`recorded` before the same ACP session resumes.
+The channel stores an internal `received` phase after validating the client
+receipt and advances to `recorded` only after the `recorded` frame is sent
+successfully. A failure while it is only `received` keeps the raw protected
+outbox. No new wire fields are added.
+
+The bounded contract accepts one to four questions per batch, 20,000 characters
+per question or answer, 512 KiB per JSONL frame, and 64 batches per assignment.
+The same message ID and body may be retried idempotently; a different body is
+rejected. Consumed receipts retain assignment/session/delivery/tool-call IDs and
+question/answer hashes. The protected outbox may retain raw question and answer
+text until the next question or terminal completion so post-replace fsync or
+`recorded` publication failures can be recovered; the receipt itself contains
+no raw question text. While a question Delivery is pending, `role_read`,
+`role_release`, another dispatch, and `task_verify` are rejected, and successful
+completion cannot be published. Stop marks the question as cancelling and never
+fabricates an acknowledgment; unproven provider, process-group, socket, or
+private-root cleanup retains state.
+
+The real-model tmux run `cf7ebe69-3a95-4f25-975c-d9b04269f025` confirmed a full
+question round trip with Fable at high effort, Planner omitted, and the same
+Worker ACP session. Main's answers and acknowledgment were followed by Reviewer
+approval, fixed-argv verification of the same revision, Task completion, and
+public stop. A separate run confirmed stop during unanswered questions with
+typed ACP cleanup evidence. [Architecture](architecture.md) records both runs,
+the retained earlier failures, and the limits for Herdr/Zellij.
+
+The native client publishes a fixed private-root `client-result.json` before
+ordinary stdout. It is mode 0600, atomically created without overwrite, limited
+to 1 MiB, and bound to the launch nonce, requested model, and effort. Exit 0
+is a typed success, exit 1 a typed failure, and exit 2 publication uncertainty.
+Python must retrieve and verify the artifact, client exit status, stdout parity
+at retrieval, session identity, and process-group proof together. A signal or
+cancellation Event is only a control request, not cleanup evidence. Missing,
+damaged, mismatched, exit-2, or cleanup-unconfirmed results retain the
+assignment and private root.
+
+The signal handler only sets the per-run `threading.Event`. An explicit
+ProcessRunner checkpoint begins cleanup exactly once; asynchronous exceptions
+do not interrupt cleanup after it starts. The runner signals the Node client
+leader first, drains its streams for a bounded period, and escalates to the
+owned process group only if the leader remains live. Public stop saves
+`native.phase=stopping` before signaling; the publication reservation gives
+that phase priority over provider success, discards Reviewer evidence, and
+persists a failed outcome. The CLI result is derived from the saved outcome.
+
+The pending stop attempts
+`1000018d-3ae0-4d62-b2af-a5c89be31c6a` and
+`c945f3f5-8dcf-4643-a05a-72d1a62bab78` both failed because Python lost the
+client exit status despite an actual ACP session-close receipt. A public-stop
+`returncode=1` is not the client exit code. All workload processes exited and
+the owned idle tmux terminals were recovered separately; failed state, private
+root, snapshot, artifact, and fixture were retained. Neither run is successful
+cleanup evidence.
+
 ## Scoped Codex ACP implementation: not enabled
 
 The native backend contains a scoped Codex implementation, but the registry still
@@ -109,6 +173,11 @@ Tests cover the file policy, protocol/transport, dependency selection, and nativ
 assignment wiring with synthetic authentication or fake agents. A separate
 network-blocked trial checked actual Codex thread settings without a model turn.
 These checks do not establish authenticated model behavior.
+
+Codex question handling remains disabled: there is no question socket or
+`AskUserQuestion` capability for the Codex profile, and the public Codex ACP
+registry entry remains rejected. The pending normal-authentication trial and
+its permission/cleanup checks are unchanged.
 
 ## Authentication and subscription
 

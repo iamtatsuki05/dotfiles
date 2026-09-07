@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from typing import ClassVar, cast
 from unittest import mock
 
@@ -492,7 +493,7 @@ class CodexCliWiringTest(unittest.TestCase):
 
     def test_acp_run_turn_uses_codex_native_runner_and_environment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             workspace = root / "workspace"
             workspace.mkdir()
             state_path = root / "state.json"
@@ -500,6 +501,7 @@ class CodexCliWiringTest(unittest.TestCase):
             assignment: dict[str, object] = {
                 "provider_private_root": str(root / "private")
             }
+            (root / "private").mkdir(mode=0o700)
             spec: dict[str, object] = {
                 "provider": "codex",
                 "transport": "acp",
@@ -550,6 +552,18 @@ class CodexCliWiringTest(unittest.TestCase):
                             "timeout_seconds": timeout_seconds,
                         }
                     )
+                    result_file = root / "private" / "client-result.json"
+                    result_file.write_text(
+                        json.dumps(
+                            {
+                                "version": 1,
+                                "launch_nonce": "nonce1234",
+                                "receipt": receipt,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    result_file.chmod(0o600)
                     return ProcessResult(0, json.dumps(receipt), "")
 
             with (
@@ -572,12 +586,16 @@ class CodexCliWiringTest(unittest.TestCase):
                     "client_argv",
                     return_value=["node", "codex-client"],
                 ) as client,
-                mock.patch.object(cli, "ProcessRunner", FakeRunner),
+                mock.patch.object(cli, "_NativeAcpClientRunner", FakeRunner),
                 mock.patch.object(cli, "run_acpx") as run_acpx,
                 mock.patch.object(sys, "stdout", io.StringIO()) as stdout,
-                mock.patch("agent_team.native_backend.publish_completion") as publish,
+                mock.patch(
+                    "agent_team.native_backend.publish_completion",
+                    return_value="succeeded",
+                ) as publish,
             ):
                 result = cli._acp_run_turn(
+                    cancellation=Event(),
                     state=state,
                     role="worker",
                     state_path=state_path,
@@ -603,6 +621,8 @@ class CodexCliWiringTest(unittest.TestCase):
                 effort="medium",
                 instructions="worker instructions",
                 timeout_seconds=cli.ACP_TIMEOUT_SECONDS,
+                result_file=root / "private" / "client-result.json",
+                launch_nonce="nonce1234",
             )
             run_acpx.assert_not_called()
             self.assertEqual(len(FakeRunner.instances), 1)
@@ -758,6 +778,7 @@ class CodexCliWiringTest(unittest.TestCase):
                     mock.patch.object(sys, "stderr", io.StringIO()),
                 ):
                     result = cli._acp_run_turn(
+                        cancellation=Event(),
                         state=state,
                         role=Role.PLANNER.value,
                         state_path=state_path,

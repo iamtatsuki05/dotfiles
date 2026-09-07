@@ -10,22 +10,29 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
+from threading import Event
 from types import FrameType
 from typing import TYPE_CHECKING, Final, cast
 
 from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .adapters import (
+    MAX_PROCESS_OUTPUT_BYTES,
     AdapterContext,
     AdapterSnapshot,
     ExecutionError,
     FileIdentity,
+    ProcessCancellationRequested,
+    ProcessResult,
     ProcessRunner,
     _terminate_process_group,
+    _wait_for_process_group_exit,
     background_adapter,
     remove_owned_tree,
 )
@@ -148,7 +155,7 @@ class AcpProcessCleanupError(RuntimeError):
     pass
 
 
-class NativeAcpCancelled(RuntimeError):
+class NativeAcpCancelled(ProcessCancellationRequested):
     pass
 
 
@@ -551,9 +558,14 @@ def role_instructions(role: str, config: TeamConfig, state_path: Path) -> str:
             "未宣言の作業はユーザーに設定の更新とチームの再起動を依頼してください。"
             "設計が必要ならPlannerから始め、計画レビュー承認後にWorkerへ進みます。"
             "簡単な作業はWorkerから始められます。構成にないroleは起動しません。\n"
-            "各roleの`role_wait`で完了を待ち、`role_read`、`role_release`、`delivery_ack`の順に処理します。"
-            "これらが終わるまで次のroleを起動してはいけません。"
-            "質問・相談が必要ならユーザーへ提示し、推測で回答・再実行しません。\n"
+            "`role_wait`の通知はkindで分類します。`worker_done`は`role_read`、"
+            "`role_release`、`delivery_ack`の順に処理し、終わるまで次のroleを起動しません。"
+            "`question`は完了ではありません。各eventのmessage_idへ`message_reply`で回答し、"
+            "全質問に回答してからDelivery全体を`delivery_ack`し、同じroleを再待機します。"
+            "回答は保存後、受領確認した時点で元のACP接続へ渡されます。質問中のread、release、"
+            "別role起動、検証はできません。Mainが根拠を持って答えられる質問には回答し、"
+            "ユーザーだけが決められる質問は内容を提示して実際の回答を待ってください。"
+            "回答でTaskSpecや権限を変更したり、待機時間を回答とみなしたりしてはいけません。\n"
             "`task_get`でタスクの状態を確認します。awaiting_plan_reviewまたは"
             "awaiting_implementation_reviewなら同じTaskSpecをReviewerへ渡します。"
             "構造化レビューはJSONのdecision（approve、request_changes、consult）で判定されます。"
@@ -734,6 +746,7 @@ def acp_agent_command(
     *,
     executables: AcpExecutables | NativeAcpExecutables,
     write_policy: Path | None = None,
+    questions: bool = False,
 ) -> str:
     try:
         return build_acp_agent_command(
@@ -742,6 +755,7 @@ def acp_agent_command(
             launch_nonce,
             executables=executables,
             **({"write_policy": write_policy} if write_policy is not None else {}),
+            questions=questions,
         )
     except RuntimeValidationError as exc:
         raise ConfigError(str(exc)) from exc
@@ -1388,6 +1402,7 @@ def _acp_assignment(
             launch_nonce,
             executables=executables,
             **({"write_policy": write_policy} if write_policy is not None else {}),
+            questions=is_native_runtime(state["runtime"]),
         )
     if assignment.get("agent_command") != expected_command:
         raise ConfigError("ACP assignment has an invalid agent command")
@@ -1581,10 +1596,11 @@ def acp_run(
         else {}
     )
 
+    cancellation = Event() if native else None
+
     def cancel(_number: int, _frame: FrameType | None) -> None:
-        for number in previous:
-            signal.signal(number, signal.SIG_IGN)
-        raise NativeAcpCancelled("native ACP cancellation requested")
+        assert cancellation is not None
+        cancellation.set()
 
     try:
         for number in previous:
@@ -1598,28 +1614,133 @@ def acp_run(
             terminal_handle=terminal_handle,
             prompt_path=prompt_path,
             launch_nonce=launch_nonce,
+            cancellation=cancellation,
         )
-    except NativeAcpCancelled:
-        if native:
-            from .native_backend import publish_completion
-
-            publish_completion(
-                state_path,
-                role=role,
-                run_id=str(state["run_id"]),
-                task_id=task_id,
-                dispatch_id=dispatch_id,
-                terminal_handle=terminal_handle,
-                launch_nonce=launch_nonce,
-                outcome="failed",
-                body="ACP runner was interrupted outside the confirmed cleanup phase",
-                cleanup_confirmed=False,
-            )
-        return 1
     finally:
         for number, handler in previous.items():
             if handler is not None:
                 signal.signal(number, handler)
+
+
+class _NativeAcpClientRunner(ProcessRunner):
+    def __init__(
+        self, *, cancellation: Event, max_output_bytes: int = MAX_PROCESS_OUTPUT_BYTES
+    ) -> None:
+        super().__init__(max_output_bytes=max_output_bytes)
+        self._cancellation = cancellation
+
+    def _check_cancelled(self) -> None:
+        if self._cancellation.is_set():
+            raise NativeAcpCancelled("native ACP cancellation requested")
+
+    def _stop(
+        self, process: subprocess.Popen[bytes], process_group_id: int | None
+    ) -> None:
+        group = process.pid if process_group_id is None else process_group_id
+        if group != process.pid:
+            raise ExecutionError(
+                "native ACP client process group ownership is unconfirmed",
+                cleanup_confirmed=False,
+            )
+        try:
+            if process.poll() is None:
+                # The client must close its ACP session before the adapter is signaled.
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
+            streams = [
+                stream
+                for stream in (process.stdout, process.stderr)
+                if stream is not None and not stream.closed
+            ]
+            for stream in streams:
+                os.set_blocking(stream.fileno(), False)
+            deadline = time.monotonic() + 12.0
+            while time.monotonic() < deadline:
+                for stream in streams:
+                    try:
+                        os.read(stream.fileno(), 65_536)
+                    except BlockingIOError:
+                        pass
+                if _wait_for_process_group_exit(
+                    group,
+                    timeout_seconds=min(0.05, max(0.0, deadline - time.monotonic())),
+                    process=process,
+                ):
+                    process.wait(timeout=2.0)
+                    self.completed_returncode = process.returncode
+                    return
+            if process.poll() is not None:
+                raise ExecutionError(
+                    "native ACP client exited with an unconfirmed live process group",
+                    cleanup_confirmed=False,
+                )
+            super()._stop(process, group)
+            self.completed_returncode = process.returncode
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ExecutionError(
+                "native ACP client cleanup is unconfirmed", cleanup_confirmed=False
+            ) from exc
+
+
+@contextmanager
+def _native_question_context(
+    state_path: Path, socket_path: Path, identity: Mapping[str, str]
+) -> Iterator[None]:
+    from .native_backend import (
+        confirm_question,
+        fail_question,
+        publish_question,
+        question_answers,
+        record_question_sent,
+    )
+    from .native_question_channel import (
+        QuestionChannel,
+        QuestionChannelError,
+        QuestionRequest,
+    )
+
+    def exchange(request: QuestionRequest, stopped: Event) -> Mapping[str, str]:
+        if stopped.is_set():
+            raise RuntimeError("native question was interrupted")
+        wire = request.as_dict()
+        publish_question(state_path, request=wire, **identity)
+        while not stopped.is_set():
+            answers = question_answers(state_path, request=wire, **identity)
+            if answers is not None:
+                return answers
+            stopped.wait(0.1)
+        raise RuntimeError("native question was interrupted")
+
+    def delivered(request: QuestionRequest) -> None:
+        confirm_question(state_path, request=request.as_dict(), **identity)
+
+    def recorded(request: QuestionRequest) -> None:
+        record_question_sent(state_path, request=request.as_dict(), **identity)
+
+    def failed(request: QuestionRequest | None, _error: Exception) -> None:
+        fail_question(
+            state_path,
+            request=request.as_dict() if request is not None else None,
+            **identity,
+        )
+
+    try:
+        channel = QuestionChannel(
+            socket_path, exchange, delivered, failed, recorded=recorded
+        )
+        with channel:
+            yield
+    except QuestionChannelError as exc:
+        raise ExecutionError(str(exc), cleanup_confirmed=exc.cleanup_confirmed) from exc
+    if channel.failure is not None:
+        raise ExecutionError(
+            "native question channel failed; pending question state is retained",
+            cleanup_confirmed=True,
+        )
 
 
 def _acp_run_turn(
@@ -1632,10 +1753,15 @@ def _acp_run_turn(
     terminal_handle: str,
     prompt_path: Path,
     launch_nonce: str,
+    cancellation: Event | None,
 ) -> int:
     """Run one selected ACP turn and publish its trusted result."""
 
     try:
+        if is_native_runtime(state["runtime"]) and cancellation is None:
+            raise ConfigError("native ACP requires a cancellation controller")
+        if cancellation is not None and cancellation.is_set():
+            raise ConfigError("native ACP cancellation requested before client launch")
         assignment, spec, executables = _acp_assignment(
             state,
             role,
@@ -1683,6 +1809,7 @@ def _acp_run_turn(
                 launch_nonce,
                 executables=executables,
                 **({"write_policy": write_policy} if write_policy is not None else {}),
+                questions=is_native_runtime(state["runtime"]),
             )
             native_environment = acp_env()
         session_name = acp_session_name(role, launch_nonce)
@@ -1698,6 +1825,14 @@ def _acp_run_turn(
                 effort=effort,
                 instructions=instructions,
                 timeout_seconds=ACP_TIMEOUT_SECONDS,
+                result_file=Path(str(assignment["provider_private_root"]))
+                / "client-result.json",
+                launch_nonce=launch_nonce,
+                **(
+                    {"question_socket": Path(str(assignment["question_socket"]))}
+                    if spec["provider"] == "claude"
+                    else {}
+                ),
             )
     except (
         ConfigError,
@@ -1724,6 +1859,8 @@ def _acp_run_turn(
     cleanup_errors: list[str] = []
     output = ""
     failure: str | None = None
+    native_client: _NativeAcpClientRunner | None = None
+    native_result: ProcessResult | None = None
 
     def acp_command(*operation: str) -> list[str]:
         if not isinstance(executables, AcpExecutables):
@@ -1739,24 +1876,35 @@ def _acp_run_turn(
 
     try:
         if native_argv is not None:
-            result = ProcessRunner(
-                max_output_bytes=MAX_ACP_OUTPUT_CHARS * 4 + 4096
-            ).run(
-                native_argv,
-                cwd=workspace,
-                env=native_environment,
-                input_text=prompt_text,
-                timeout_seconds=ACP_TIMEOUT_SECONDS,
-            )
-            if result.returncode != 0:
-                failure = "native ACP client failed: " + _tail(
-                    result.stderr, maximum=4_000
+            question_context = (
+                _native_question_context(
+                    state_path,
+                    Path(str(assignment["question_socket"])),
+                    {
+                        "role": role,
+                        "run_id": str(state["run_id"]),
+                        "task_id": task_id,
+                        "dispatch_id": dispatch_id,
+                        "terminal_handle": terminal_handle,
+                        "launch_nonce": launch_nonce,
+                    },
                 )
-            else:
-                try:
-                    output = _native_client_output(result.stdout, model, effort)
-                except (ValueError, TypeError) as exc:
-                    failure = f"native ACP receipt is invalid: {exc}"
+                if isinstance(executables, NativeAcpExecutables)
+                else nullcontext()
+            )
+            assert cancellation is not None
+            native_client = _NativeAcpClientRunner(
+                cancellation=cancellation,
+                max_output_bytes=MAX_ACP_OUTPUT_CHARS * 4 + 4096,
+            )
+            with question_context:
+                native_result = native_client.run(
+                    native_argv,
+                    cwd=workspace,
+                    env=native_environment,
+                    input_text=prompt_text,
+                    timeout_seconds=ACP_TIMEOUT_SECONDS,
+                )
         else:
             session_attempted = True
             new_session = run_acpx(
@@ -1817,6 +1965,94 @@ def _acp_run_turn(
                     cleanup_errors.append(prune_error)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 cleanup_errors.append(f"ACP session prune failed: {exc}")
+    if cancellation is not None and cancellation.is_set() and failure is None:
+        failure = "native ACP cancellation requested"
+    if native_argv is not None and (
+        native_result is not None
+        or (native_client is not None and native_client.process_attempted)
+    ):
+        from .native_client_result import (
+            NativeClientResultError,
+            parse_client_receipt_json,
+            read_client_result,
+        )
+
+        native_cleanup_confirmed = False
+        try:
+            receipt = read_client_result(
+                Path(str(assignment["provider_private_root"])),
+                launch_nonce=launch_nonce,
+                model=model,
+                effort=effort,
+            )
+            client_code = (
+                native_result.returncode
+                if native_result is not None
+                else native_client.completed_returncode
+                if native_client is not None
+                else None
+            )
+            expected_code = 0 if receipt.succeeded else 1
+            if client_code != expected_code:
+                raise ValueError(
+                    "native client exit does not confirm result artifact publication"
+                )
+            if native_result is not None and (
+                parse_client_receipt_json(
+                    native_result.stdout, model=model, effort=effort
+                )
+                != receipt
+            ):
+                raise ValueError(
+                    "native client stdout does not match its result artifact"
+                )
+            if isinstance(executables, NativeAcpExecutables):
+                current = read_state(state_path)
+                current_assignment = cast(
+                    dict[str, dict[str, object]], current["roles"]
+                )[role]
+                receipts = cast(
+                    list[dict[str, object]],
+                    current_assignment.get("question_receipts", []),
+                )
+                if any(item["session_id"] != receipt.session_id for item in receipts):
+                    raise ValueError(
+                        "native question session does not match the final ACP receipt"
+                    )
+                question = current.get("native_question")
+                if isinstance(question, dict):
+                    if (
+                        cast(dict[str, object], question["request"])["session_id"]
+                        != receipt.session_id
+                    ):
+                        raise ValueError(
+                            "active native question session does not match the final ACP receipt"
+                        )
+                    if (
+                        failure is None
+                        and receipt.succeeded
+                        and question.get("phase") != "recorded"
+                    ):
+                        raise ValueError("native question delivery is unfinished")
+            native_cleanup_confirmed = receipt.cleanup_confirmed
+            if receipt.succeeded:
+                output = cast(str, receipt.output)
+            elif failure is None:
+                failure = "native ACP client failed: " + cast(str, receipt.error)
+        except (
+            NativeClientResultError,
+            RuntimeValidationError,
+            OSError,
+            ValueError,
+            TypeError,
+        ) as exc:
+            native_cleanup_confirmed = False
+            detail = f"native ACP result is unconfirmed: {exc}"
+            failure = f"{failure}; {detail}" if failure else detail
+        if not native_cleanup_confirmed:
+            cleanup_errors.append(
+                "native ACP session cleanup is unconfirmed; result artifact retained"
+            )
     task_evidence = None
     if failure is None and role == "reviewer" and "task_spec" in assignment:
         try:
@@ -1858,7 +2094,7 @@ def _acp_run_turn(
         if is_native_runtime(state["runtime"]):
             from .native_backend import publish_completion
 
-            publish_completion(
+            outcome = publish_completion(
                 state_path,
                 role=role,
                 run_id=str(state["run_id"]),
@@ -1890,31 +2126,12 @@ def _acp_run_turn(
 
 
 def _native_client_output(raw: str, model: str, effort: str) -> str:
-    receipt = json.loads(raw)
-    if not isinstance(receipt, dict) or set(receipt) != {
-        "output",
-        "session_id",
-        "model",
-        "effort",
-        "cleanup_confirmed",
-    }:
-        raise ValueError("client receipt fields are invalid")
-    if receipt["model"] != model or receipt["effort"] != effort:
-        raise ValueError("client did not confirm the selected model and effort")
-    if (
-        receipt["cleanup_confirmed"] is not True
-        or not isinstance(receipt["session_id"], str)
-        or not receipt["session_id"]
-    ):
-        raise ValueError("client session cleanup is unconfirmed")
-    output = receipt["output"]
-    if (
-        not isinstance(output, str)
-        or not output.strip()
-        or len(output) > MAX_ACP_OUTPUT_CHARS
-    ):
-        raise ValueError("client output is empty or exceeds the character limit")
-    return output
+    from .native_client_result import parse_client_receipt_json
+
+    receipt = parse_client_receipt_json(raw, model=model, effort=effort)
+    if not receipt.succeeded:
+        raise ValueError("native client did not return a successful result")
+    return cast(str, receipt.output)
 
 
 def _background_assignment(
@@ -2207,6 +2424,9 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
             scoped_wrapper_sha256=cast(str | None, launch.get("scoped_wrapper_sha256")),
             scoped_client_sha256=cast(str | None, launch.get("scoped_client_sha256")),
             scoped_policy_sha256=cast(str | None, launch.get("scoped_policy_sha256")),
+            scoped_question_client_sha256=cast(
+                str | None, launch.get("scoped_question_client_sha256")
+            ),
             provider_snapshot=dict(raw_provider_snapshot)
             if raw_provider_snapshot is not None
             else None,

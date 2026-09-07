@@ -326,6 +326,99 @@ try {
         self.assertEqual(allowed["behavior"], "allow")
         self.assertEqual(denied["behavior"], "deny")
 
+    def test_questions_require_explicit_capability_and_never_auto_allow(self) -> None:
+        params = {
+            "cwd": str(self.workspace),
+            "mcpServers": [],
+            "additionalDirectories": [],
+        }
+        question_options = self.run_probe(
+            "injectSessionParams",
+            params,
+            self.policy,
+            {"questionsEnabled": True},
+        )
+        fixed = question_options["_meta"]["claudeCode"]["options"]
+        self.assertIn("AskUserQuestion", fixed["tools"])
+        self.assertNotIn("AskUserQuestion", fixed["disallowedTools"])
+
+        valid_input = {
+            "questions": [
+                {
+                    "question": "Which plan?",
+                    "header": "Plan",
+                    "options": [{"label": "Safe", "description": "Conservative."}],
+                    "multiSelect": False,
+                }
+            ]
+        }
+        ask = self.run_probe(
+            "hookDecision",
+            self.policy,
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "AskUserQuestion",
+                "tool_input": valid_input,
+            },
+            {"questionsEnabled": True},
+        )
+        self.assertEqual(ask["behavior"], "ask")
+
+        prefilled = {**valid_input, "answers": {"Which plan?": "Safe"}}
+        denied = self.run_probe(
+            "hookDecision",
+            self.policy,
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "AskUserQuestion",
+                "tool_input": prefilled,
+            },
+            {"questionsEnabled": True},
+        )
+        self.assertEqual(denied["behavior"], "deny")
+
+        without_capability = self.run_probe(
+            "hookDecision",
+            self.policy,
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "AskUserQuestion",
+                "tool_input": valid_input,
+            },
+        )
+        self.assertEqual(without_capability["behavior"], "deny")
+
+    def test_wrapper_question_flag_is_explicit_and_strict(self) -> None:
+        enabled = self.run_probe(
+            "parseMainArgs",
+            [
+                "--agent-entry",
+                "/tmp/entry.js",
+                "--policy",
+                "/tmp/policy.json",
+                "--questions",
+            ],
+        )
+        disabled = self.run_probe(
+            "parseMainArgs",
+            ["--agent-entry", "/tmp/entry.js", "--policy", "/tmp/policy.json"],
+        )
+        self.assertTrue(enabled["questionsEnabled"])
+        self.assertFalse(disabled["questionsEnabled"])
+        self.assertIn(
+            "usage",
+            self.run_probe_error(
+                "parseMainArgs",
+                [
+                    "--agent-entry",
+                    "/tmp/entry.js",
+                    "--policy",
+                    "/tmp/policy.json",
+                    "--unexpected",
+                ],
+            ),
+        )
+
     def test_reads_are_workspace_wide_but_protected_reads_are_denied(self) -> None:
         outside_allowed = self.workspace / "docs.md"
         outside_allowed.write_text("docs\n", encoding="utf-8")

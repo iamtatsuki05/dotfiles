@@ -7,6 +7,7 @@ import { decideTool, loadPolicy, parsePolicy } from "./scoped_policy.mjs";
 
 const READ_ONLY_TOOLS = Object.freeze(["Read", "Grep", "Glob"]);
 const WORKSPACE_WRITE_TOOLS = Object.freeze(["Read", "Grep", "Glob", "Write", "Edit"]);
+const ASK_USER_TOOL = "AskUserQuestion";
 const WRITE_TOOLS = new Set(["Write", "Edit"]);
 const FIXED_DISALLOWED_TOOLS = Object.freeze([
   "Bash",
@@ -60,8 +61,9 @@ function policyForUse(rawPolicy) {
     : parsePolicy(rawPolicy);
 }
 
-function toolsForPolicy(policy) {
-  return policy.permission === "read-only" ? READ_ONLY_TOOLS : WORKSPACE_WRITE_TOOLS;
+function toolsForPolicy(policy, questionsEnabled = false) {
+  const tools = policy.permission === "read-only" ? READ_ONLY_TOOLS : WORKSPACE_WRITE_TOOLS;
+  return questionsEnabled ? [...tools, ASK_USER_TOOL] : [...tools];
 }
 
 function within(candidate, root) {
@@ -70,17 +72,95 @@ function within(candidate, root) {
     path.relative(root, candidate) !== "..";
 }
 
-export async function hookDecision(rawPolicy, input) {
+function questionText(value, field) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
+    fail(`${field} must be a non-empty string without NUL`);
+  }
+  if ([...value].length > 20_000) fail(`${field} exceeds 20000 characters`);
+  return value;
+}
+
+function validateAskUserQuestionInput(toolInput) {
+  if (!isObject(toolInput)) fail("AskUserQuestion input must be an object");
+  const keys = Object.keys(toolInput);
+  if (keys.length !== 1 || keys[0] !== "questions") {
+    fail("AskUserQuestion input must contain questions and no prefilled answers");
+  }
+  if (!Array.isArray(toolInput.questions) || toolInput.questions.length === 0 || toolInput.questions.length > 4) {
+    fail("AskUserQuestion questions must contain one to four entries");
+  }
+  for (const [index, question] of toolInput.questions.entries()) {
+    if (!isObject(question)) fail(`AskUserQuestion questions[${index}] must be an object`);
+    const allowed = new Set(["question", "header", "options", "multiSelect"]);
+    if (Object.keys(question).some((key) => !allowed.has(key))) {
+      fail(`AskUserQuestion questions[${index}] has an unknown field`);
+    }
+    questionText(question.question, `AskUserQuestion questions[${index}].question`);
+    if (question.header !== undefined) questionText(question.header, `AskUserQuestion questions[${index}].header`);
+    if (question.multiSelect !== undefined && typeof question.multiSelect !== "boolean") {
+      fail(`AskUserQuestion questions[${index}].multiSelect must be boolean`);
+    }
+    if (!Array.isArray(question.options) || question.options.length === 0) {
+      fail(`AskUserQuestion questions[${index}].options must be non-empty`);
+    }
+    for (const [optionIndex, option] of question.options.entries()) {
+      if (!isObject(option)) fail(`AskUserQuestion questions[${index}].options[${optionIndex}] must be an object`);
+      const optionKeys = new Set(["label", "description", "preview"]);
+      if (Object.keys(option).some((key) => !optionKeys.has(key))) {
+        fail(`AskUserQuestion questions[${index}].options[${optionIndex}] has an unknown field`);
+      }
+      questionText(option.label, `AskUserQuestion questions[${index}].options[${optionIndex}].label`);
+      if (option.description !== undefined) {
+        questionText(option.description, `AskUserQuestion questions[${index}].options[${optionIndex}].description`);
+      }
+      if (option.preview !== undefined) {
+        questionText(option.preview, `AskUserQuestion questions[${index}].options[${optionIndex}].preview`);
+      }
+    }
+  }
+  return true;
+}
+
+function askToolDecision(toolInput, questionsEnabled) {
+  if (!questionsEnabled) {
+    return { behavior: "deny", message: "AskUserQuestion is disabled without a question channel" };
+  }
+  try {
+    validateAskUserQuestionInput(toolInput);
+  } catch (error) {
+    return { behavior: "deny", message: error?.message ?? String(error) };
+  }
+  return {
+    behavior: "ask",
+    message: "AskUserQuestion requires ACP form elicitation",
+  };
+}
+
+export async function hookDecision(rawPolicy, input, rawOptions = undefined) {
   const policy = parsePolicy(rawPolicy);
   const toolName = isObject(input) ? input.tool_name : undefined;
   const toolInput = isObject(input) ? input.tool_input : undefined;
+  if (toolName === ASK_USER_TOOL) {
+    return askToolDecision(toolInput, rawOptions?.questionsEnabled === true);
+  }
   return decideTool(policy, toolName, toolInput);
 }
 
-export function createPreToolUseHook(rawPolicy) {
+export function createPreToolUseHook(rawPolicy, rawOptions = undefined) {
   const policy = policyForUse(rawPolicy);
+  const questionsEnabled = rawOptions?.questionsEnabled === true;
   return async (input) => {
     if (!isObject(input) || input.hook_event_name !== "PreToolUse") return {};
+    if (input.tool_name === ASK_USER_TOOL) {
+      const decision = askToolDecision(input.tool_input, questionsEnabled);
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: decision.behavior,
+          permissionDecisionReason: decision.message,
+        },
+      };
+    }
     const decision = decideTool(policy, input.tool_name, input.tool_input);
     return {
       hookSpecificOutput: {
@@ -112,12 +192,12 @@ function sameStringArray(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function securityOptions(rawOptions, policy) {
+function securityOptions(rawOptions, policy, questionsEnabled = false) {
   if (!isObject(policy) || policy.version !== POLICY_VERSION) {
     policy = policyForUse(policy);
   }
   const incoming = isObject(rawOptions) ? rawOptions : {};
-  const fixedTools = toolsForPolicy(policy);
+  const fixedTools = toolsForPolicy(policy, questionsEnabled);
   if (incoming.tools !== undefined && !sameStringArray(incoming.tools, fixedTools)) {
     fail("session options cannot override tools");
   }
@@ -159,6 +239,7 @@ function securityOptions(rawOptions, policy) {
         "Agent(*)",
         "WebFetch(*)",
         "WebSearch(*)",
+        ...(questionsEnabled ? [] : ["AskUserQuestion(*)"]),
         ...(policy.permission === "read-only" ? ["Write(*)", "Edit(*)"] : []),
       ],
     },
@@ -166,35 +247,40 @@ function securityOptions(rawOptions, policy) {
   options.tools = [...fixedTools];
   options.allowedTools = [...fixedTools];
   options.disallowedTools = [
-    ...FIXED_DISALLOWED_TOOLS,
+    ...FIXED_DISALLOWED_TOOLS.filter((tool) => tool !== ASK_USER_TOOL || !questionsEnabled),
     ...(policy.permission === "read-only" ? [...WRITE_TOOLS] : []),
   ];
   options.mcpServers = {};
   options.additionalDirectories = [];
   options.hooks = {
-    PreToolUse: [{ hooks: [createPreToolUseHook(policy)] }],
+    PreToolUse: [{ hooks: [createPreToolUseHook(policy, { questionsEnabled })] }],
   };
   return options;
 }
 
-export function fixedSessionOptions(rawPolicy, rawOptions = undefined) {
-  return securityOptions(rawOptions, policyForUse(rawPolicy));
+export function fixedSessionOptions(rawPolicy, rawOptions = undefined, rawQuestionOptions = undefined) {
+  return securityOptions(
+    rawOptions,
+    policyForUse(rawPolicy),
+    rawQuestionOptions?.questionsEnabled === true,
+  );
 }
 
-function safeMeta(rawMeta, policy) {
+function safeMeta(rawMeta, policy, questionsEnabled = false) {
   const meta = isObject(rawMeta) ? { ...rawMeta } : {};
   const claudeCode = isObject(meta.claudeCode) ? { ...meta.claudeCode } : {};
-  claudeCode.options = securityOptions(claudeCode.options, policy);
+  claudeCode.options = securityOptions(claudeCode.options, policy, questionsEnabled);
   meta.claudeCode = claudeCode;
   delete meta.additionalRoots;
   return meta;
 }
 
-export function injectSessionParams(rawParams, rawPolicy) {
+export function injectSessionParams(rawParams, rawPolicy, rawQuestionOptions = undefined) {
   if (!isObject(rawParams)) fail("session params must be an object");
   const policy = isObject(rawPolicy) && rawPolicy.version === POLICY_VERSION
     ? rawPolicy
     : policyForUse(rawPolicy);
+  const questionsEnabled = rawQuestionOptions?.questionsEnabled === true;
   if (rawParams.cwd !== policy.workspace) fail("session cwd does not match policy workspace");
   if (rawParams.mcpServers !== undefined &&
       (!Array.isArray(rawParams.mcpServers) || rawParams.mcpServers.length > 0)) {
@@ -209,7 +295,7 @@ export function injectSessionParams(rawParams, rawPolicy) {
     cwd: policy.workspace,
     mcpServers: [],
     additionalDirectories: [],
-    _meta: safeMeta(rawParams._meta, policy),
+    _meta: safeMeta(rawParams._meta, policy, questionsEnabled),
   };
 }
 
@@ -256,20 +342,21 @@ export function resolveAgentLibrary(entry) {
   return pathToFileURL(packageRootFromEntry(entry).libPath).href;
 }
 
-function wrapSessionMethod(agent, method, policy) {
+function wrapSessionMethod(agent, method, policy, questionsEnabled = false) {
   const original = agent[method];
   if (typeof original !== "function") fail(`agent does not expose ${method}`);
   agent[method] = function scopedSessionMethod(params, ...rest) {
-    return original.call(agent, injectSessionParams(params, policy), ...rest);
+    return original.call(agent, injectSessionParams(params, policy, { questionsEnabled }), ...rest);
   };
 }
 
-export function installSessionGuards(agent, rawPolicy) {
+export function installSessionGuards(agent, rawPolicy, rawQuestionOptions = undefined) {
   const policy = isObject(rawPolicy) && rawPolicy.version === POLICY_VERSION
     ? rawPolicy
     : policyForUse(rawPolicy);
+  const questionsEnabled = rawQuestionOptions?.questionsEnabled === true;
   for (const method of ["newSession", "loadSession", "resumeSession", "unstable_forkSession"]) {
-    wrapSessionMethod(agent, method, policy);
+    wrapSessionMethod(agent, method, policy, questionsEnabled);
   }
   for (const method of ["setSessionMode", "setSessionConfigOption"]) {
     const original = agent[method];
@@ -288,13 +375,25 @@ export function installSessionGuards(agent, rawPolicy) {
   return agent;
 }
 
-async function runMain() {
-  const args = process.argv.slice(2);
-  if (args.length !== 4 || args[0] !== "--agent-entry" || args[2] !== "--policy") {
-    fail("usage: --agent-entry /absolute/dist/index.js --policy /absolute/write-policy.json");
+export function parseMainArgs(args) {
+  if (
+    !Array.isArray(args) ||
+    (args.length !== 4 && args.length !== 5) ||
+    args[0] !== "--agent-entry" ||
+    args[2] !== "--policy" ||
+    (args.length === 5 && args[4] !== "--questions")
+  ) {
+    fail("usage: --agent-entry /absolute/dist/index.js --policy /absolute/write-policy.json [--questions]");
   }
-  const entry = args[1];
-  const policyPath = args[3];
+  return {
+    entry: args[1],
+    policyPath: args[3],
+    questionsEnabled: args.length === 5,
+  };
+}
+
+async function runMain() {
+  const { entry, policyPath, questionsEnabled } = parseMainArgs(process.argv.slice(2));
   const policy = await loadPolicy(policyPath);
   const entryInfo = packageRootFromEntry(entry);
   if (!policy.protected_paths.includes(entryInfo.packageRoot)) {
@@ -315,7 +414,7 @@ async function runMain() {
   console.warn = console.error;
   console.debug = console.error;
   const { connection, agent } = library.runAcp(undefined);
-  installSessionGuards(agent, policy);
+  installSessionGuards(agent, policy, { questionsEnabled });
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;

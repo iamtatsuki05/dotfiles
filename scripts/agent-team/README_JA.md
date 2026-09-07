@@ -8,6 +8,10 @@ Planner → Worker → Reviewerの流れと、Task・メッセージ・端末・
 native runtimeの`tmux`、`herdr`、`zellij`では、同じdirect Claude Mainと任意のClaude ACP
 Planner、Worker、Reviewerを使います。native Workerはconfigに宣言したTaskSpecとscoped
 Claude ACP policyを使い、terminal driverだけがruntimeごとに変わります。
+native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
+制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
+[アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
+HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。
 
 初めて使う場合は、「managed commandを導入する」「起動前の条件を満たす」
 「teamを起動する」を読んでください。実装や設定を変える場合は、詳細ドキュメントも
@@ -43,6 +47,12 @@ Mainをdirect Claude・permission `orchestrator`として定義し、verified Cl
 Planner/Reviewer（`read-only`）とscoped Worker（`workspace-write`）を追加できます。
 native Workerへdispatchするには、一致する`[[tasks]]` entryが必要です。その他の未対応profileは、state、
 Task、Dispatch、processに影響する前に拒否します。
+
+nativeの質問応答は、選択したClaude ACP assignment内の追加通信です。roleのpermission、
+TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質問応答も有効にしません。
+完全検証済みの`0b3e5bc` milestoneは過去の証拠です。tmuxのbounded acceptanceと協調的な検証状況は
+[アーキテクチャ](docs/architecture_JA.md)に記載し、専任Mainなしの実行、任意構成のチーム、明示的な並列実行、
+全harness、Codex認証、Orcaとnativeに共通する進行管理の要件とは分けて扱います。
 
 ## checkoutから実行する、またはprojectをinstallする
 
@@ -131,7 +141,9 @@ Mainが`NATIVE_WORKFLOW_OK`を報告しました。
 別のlive SDK probeでは、許可pathの編集と禁止pathの拒否を確認しました。`persistSession=false`、
 `autoMemoryEnabled=false`で、選択したSDK processとClaude project directoryは残りませんでした。
 別のactive cancel probeでは、同じ最終runtimeで実行中のnative Workerを停止し、所有processとartifactが
-0件でした。いずれも限定されたnative checkであり、すべてのruntime、harness、recoveryの証拠ではありません。
+0件でした。この過去のprobeが確認したのは、所有するOS process groupとpathのcleanupだけです。明示的なACP
+session closeは確認しておらず、以前のPython stop経路はprocess groupの終了をsession cleanupへ昇格していました。
+いずれも限定されたnative checkであり、すべてのruntime、harness、recoveryの証拠ではありません。
 
 新しいterminal driverには、modelを呼び出さないfake Main/Nodeのpublic CLI evidenceがあります。
 最新コードでPython 3.11と3.13の両方を使い、tmux、Herdr、Zellijそれぞれ3 case（MCP
@@ -162,7 +174,15 @@ Herdrの初回はtextとEnterを同時にpasteしたもののtextが貼付欄に
 別の実Herdr active-cancel probeでは、public MCPからWorkerをdispatchし、`CANCEL_STARTED`を観測したうえで、
 同じWorkerのlive kernel PID/PGIDとnative resultの不在をpublic stop直前に再確認しました。独立readbackで
 所有PID/PGID、process reference、pathが残っていないことを確認しました。これはHerdrのClaude ACP
-cancelに関する代表的な証拠であり、すべてのharnessの証拠ではありません。
+cancelに関する代表的な証拠であり、すべてのharnessの証拠ではありません。確認したのはOS group/pathのcleanupだけで、
+明示的なACP session closeは確認していません。古いprocess groupベースのcleanup判定にも同じ限界があります。
+
+実Claudeを使ったtmuxの質問応答試験では、run `cf7ebe69-3a95-4f25-975c-d9b04269f025`を完了しました。
+Claude Code 2.1.263、Node 22.23.2、Claude ACP 0.70.0、SDK 1.3.0、Claude SDK 0.3.232を使い、
+Main、Worker、Reviewerは`fable`/`high`、Plannerは省略しました。Mainが質問2件に回答して受領確認した後、同じWorkerの
+ACPセッションを再開し、Reviewer承認と同一リビジョンの固定コマンド検証を経てTaskが完了しました。
+別の質問待ち試験では、協調的な停止と型付きACP終了記録を確認しました。両試験とも、所有するリソースはすべて回収済みです。
+[アーキテクチャ](docs/architecture_JA.md)に確認範囲、保持している過去の失敗、他の実行環境の制約を記載しています。
 
 以前のtmux proofである`308b1ba`では、wheel-only環境からnative必須command（`node`、
 `claude-agent-acp`、`tmux`、`claude`）を1つずつ欠落させると、state作成前に拒否しました。
@@ -359,6 +379,21 @@ task_dispatch（PlannerまたはWorker）
   -> implementation approve後にtask_verify
 ```
 
+`role_wait`が`question`を返した場合は、各eventの`message_id`へ`message_reply`を送り、
+その後に`delivery_ack`を呼びます。回答を先に保存し、assignmentのprivateな`q.sock`へ送り、Nodeの
+`received`、Pythonのdurableな消費記録、`recorded`の順に確認してから同じACP sessionを再開します。
+同じIDと同じ本文の再送はidempotentですが、異なる本文は拒否します。1 batchは1〜4問、各question/answerは
+20,000文字以内、frameは512 KiB以内、1 assignmentは最大64 batchです。question Deliveryが保留中は
+`role_read`、`role_release`、別dispatch、`task_verify`を拒否し、消費前のsuccessful completionも拒否します。
+その間にstopした場合は明示的なcancellationとして扱い、provider、process group、socket、private cleanupが
+不明ならstateを保持します。Reviewerの`consult`とpost-review resumeは別の未完了gateです。
+
+nativeの完了・停止証拠はfail-closedです。typed client-result artifact、clientのexit status、取得時のstdout parity、
+session identity、process groupの証明をすべてそろえる必要があります。cancellation Eventはcleanupを要求するための
+制御情報であり、cleanupの証拠ではありません。public stopはsignal前に`native.phase=stopping`を保存し、同時に
+providerが成功してもstopを優先してReviewer evidenceを破棄し、failed outcomeを保存します。証拠が欠ける場合や
+判定できない場合はassignmentとstateを保持して調査します。
+
 planとimplementationのreviewは`max_review_rounds`を別々に数えます。Reviewerの出力は
 `task_id`、`stage`、`revision`、`decision`、`findings`だけを持つexact JSONです。
 implementation reviewと`task_verify`は同じworkspace revisionに束縛されます。宣言済みの
@@ -381,6 +416,10 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
 - native ACPの完了はterminal paneの文字列ではなく`publish_completion`で通知します。lifecycleの
   順序は`role_read` → `role_release` → `delivery_ack`です。nativeの`last_ack`は1つのreceipt
   markerを記録するだけで、Taskやユーザーのgoal全体の完了を意味しません。
+- native Claudeのquestionは、pinned ACP 0.70.0 / SDK 1.3.0の既存`AskUserQuestion` form elicitationを
+  使います。消費済みreceiptにはidentityとhashだけを残します。protected outboxには、公開失敗から
+  復旧できるよう、次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。
+  Codexのquestion socketとcapabilityは無効のままです。
 - native WorkerのRead/Glob/Grepは、保護pathやlink・file typeの検査を除き、workspace内を
   読めます。TaskSpecの`allowed_paths`と`forbidden_paths`はWrite/Editだけを制限し、書き込みは
   禁止pathを優先します。Bash、terminal、その他の

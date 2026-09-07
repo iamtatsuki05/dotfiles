@@ -74,6 +74,10 @@ class NativeMcpSession:
                 DeliveryRef(bounded_text(arguments, "delivery_id", maximum=256))
             )
         elif name == "message_reply":
+            if set(arguments) != {"message_id", "body"}:
+                raise ToolInputError(
+                    "message_reply requires exactly message_id and body"
+                )
             request = MessageReply(
                 MessageRef(bounded_text(arguments, "message_id", maximum=256)),
                 bounded_text(arguments, "body", maximum=20_000),

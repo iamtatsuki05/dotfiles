@@ -136,6 +136,16 @@ goal全体の完了を示しません。
 `"zellij"`へ変えると対応するterminal backendを選びます。Main、ACP roleのpermission、TaskSpec
 catalog、review gateは変わりません。
 
+native Claude ACP roleでClaudeが`AskUserQuestion`を呼ぶ場合も、既存のassignmentを使います。
+privateなquestion socketが利用できると、pinned ACP 0.70.0 adapterがSDK 1.3.0のform elicitationを
+送ります。追加のconfig fieldやpermissionは不要です。Mainは`message_reply`でquestion Deliveryへ
+回答し、全questionへ回答してからだけacknowledgeします。その後、同じACP sessionが再開します。
+この通信経路はTaskSpecのpathやBash、terminal、その他のexternal toolを広げません。
+
+tmuxでの実モデルの質問応答、協調的な質問待ち停止、保持している過去の失敗は
+[アーキテクチャ](architecture_JA.md)に記載しています。HerdrとZellijの質問機能は、実際の端末と模擬プロバイダーを使って検証しています。
+この2環境では、質問応答を実モデルで確認する試験はまだ行っていません。
+
 以前のモデルを使わないtmux CLI start/status/stop試験は、OrcaとCodexがない環境、空白を含むworkspace
 path、削除済みconfigで成功しました。実際のClaude Code 2.1.261を使った`fable`/`high`の
 Mainも、ログイン済みの`claude.ai` accountでClaude ACP Plannerを呼び出し、MCPの
@@ -173,6 +183,8 @@ pasteしたもののtextが貼付欄に残ったため、同じ初回messageを�
 別の実Herdr active-cancel probeでは、public MCPからWorkerをdispatchし、`CANCEL_STARTED`を観測したうえで、live kernel
 PID/PGIDとnative resultの不在をstop直前に再確認しました。独立readbackで所有PID/PGID、process reference、pathが残っていない
 ことを確認しました。これはHerdrのClaude ACP cancelに関する代表的な証拠であり、すべてのharnessの証拠ではありません。
+確認したのはOS group/pathのcleanupだけで、明示的なACP session closeは確認していません。古いprocess groupベースの
+cleanup判定にも同じ限界があります。
 
 ## top-level fieldで1つのteam contractを定義する
 
@@ -258,7 +270,10 @@ native runtimeは別のbindingを使います。Node.js `22.0.0`以降、導入�
 assignmentごとにpublic ACP SDK connectionを1本だけ使い、nativeでは`acpx`を選択せず、`npm`や
 `npx`をruntimeから呼びません。通常のSDK persistenceは`persistSession=false`、
 `autoMemoryEnabled=false`に固定し、interactive Mainの通常Claude historyは残します。これは
-public SDKへの直接接続であり、providerのdirect/model transportではありません。
+public SDKへの直接接続であり、providerのdirect/model transportではありません。選択したnative roleが
+Claudeの場合、`AskUserQuestion`を有効にするのは所有するprivateな`q.sock`がある場合だけです。
+Node clientはform elicitationを処理し、Python channelは回答とreceiptのdurableな順序を記録します。
+Codexにはquestion socketがなく、公開Codex ACP profileも引き続き無効です。
 
 terminalの挙動はHerdr `0.8.2`とZellij `0.44.1`で確認しています。Herdrはversion `0.8.2`と
 protocol 20のhandshakeを厳密に確認します。Zellijのpreflightはexecutableと既知のinventoryを確認し、
@@ -293,6 +308,12 @@ workspace内を読めます。TaskSpecの`allowed_paths`と`forbidden_paths`はW
 書き込みでは禁止pathを優先します。Bash、
 terminal、その他のRPCを拒否します。native Planner/Reviewerはread-onlyで、全native ACP roleは
 launcher所有のbackground processとして動きます。
+
+質問応答は追加のcommunicationであり、permissionやfile scopeの変更ではありません。private socketを
+持つnative Claude ACP assignmentだけが`AskUserQuestion`を有効にします。Codexの質問応答は
+無効のままです。Mainは全questionへ回答してから`delivery_ack`を呼びます。Deliveryが保留中は
+`role_read`、`role_release`、別dispatch、`task_verify`を拒否し、同じACP assignmentが回答を消費するまで
+successful completionも拒否します。
 
 ## TaskSpec catalog is optional; required for native task dispatch
 
@@ -341,6 +362,15 @@ native task lifecycleの順序は次のとおりです。
 5. Reviewerは`task_id`、`stage`、`revision`、`decision`、`findings`だけのexact JSONを返します。
 6. `approve`は次のstageへ進み、`request_changes`は元のwriterへ戻り、`consult`はuser判断で停止します。
 7. implementation approval後に`task_verify`が宣言済みfixed argvを実行します。
+
+`role_wait`がnativeの`question`を返した場合、Mainは各eventの`message_id`へ`message_reply`を送り、
+その後に`delivery_ack`を呼びます。backendはassignmentのprivate socketへ送る前に回答を保存します。
+clientは`received` receiptを返し、Pythonがhashだけのreceiptを保存してprotected outboxを保持してから
+`recorded`を送り、同じACP sessionを続けます。同じmessage IDと同じ本文の再送はidempotentですが、異なる本文は拒否します。
+1 batchは1〜4問、各question/answerは20,000文字以内、各frameは512 KiB以内、1 assignmentは最大64
+batchです。消費済みreceiptにはidentityとhashだけを残します。protected outboxには、公開失敗から復旧できるよう、
+次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。このquestion pathは
+Reviewerの`consult`やpost-review resumeを実装したものではなく、別の未完了要件です。
 
 planとimplementationのreview roundは別々に数え、どちらも`max_review_rounds`に従います。
 implementation reviewはReviewer assignment準備時のworkspace revisionに束縛されます。

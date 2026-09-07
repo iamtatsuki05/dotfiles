@@ -25,6 +25,28 @@ login, downloads packages, starts a process, or writes a workspace.
 | OpenClaw | None | Native `openclaw acp`; acpx built-in `openclaw` | Recognized; direct=`not-run`; Docker=`blocked` | Direct sandbox-off is not a safe profile; Docker image/context/endpoint pins are unavailable. |
 | Grok | None | Native `grok agent stdio`; acpx built-in `grok-build` | Recognized; direct=`blocked`; native stdio=`blocked` | Authentication is not established; direct/native-stdio phases are `not-run`. |
 
+### Native Claude question status
+
+The native Claude row covers the existing role profiles and their provider
+binding. In addition, the current native implementation supports a bounded
+`AskUserQuestion` → ACP form elicitation path for Claude 0.70.0/SDK 1.3.0.
+It uses the same Task and Dispatch, Main's `message_reply`/`delivery_ack`, and
+the assignment's private `q.sock`; it does not add a role, widen TaskSpec file
+scope, or change Bash/external-tool policy. Codex question capability and
+question sockets remain disabled, and the public Codex ACP profile remains
+rejected.
+
+The implementation has focused/mock coverage for batch and order handling,
+failure, identity, and stop, plus the real-model tmux acceptance run
+`cf7ebe69-3a95-4f25-975c-d9b04269f025` after the cooperative cancellation
+changes, with same-session continuation
+and completed fixed-argv verification. Herdr/Zellij real-model question
+acceptance is not claimed. The current evidence, two unconfirmed pending-stop
+attempts, and final validation status are maintained in
+[Architecture](architecture.md); this paragraph is implementation status,
+not a new `Verified` safety result. The fully verified `0b3e5bc` milestone
+remains historical evidence.
+
 An ACP adapter being installed or listed by acpx does not prove that the
 adapter is safe for a role. It is shown separately from the verified
 agent-team profile. Native tmux, Herdr, and Zellij Claude ACP are separate runtime profiles: their
