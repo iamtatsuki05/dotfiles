@@ -26,7 +26,7 @@ test -n "$current_user"
 例えば `main <- develop <- feature/*` なら、通常作業は `develop` から分岐してPRも `develop` 向けにし、`develop -> main` を最終統合とする。hotfixが `main` へ直接入る運用ならhotfixだけ `main` を使う。`main <- develop <- work/topic-integration <- child/*` では、子PRの直接baseは `work/topic-integration`、umbrella PRの直接baseは `develop`、最終統合PRのbaseは `main` と、PRごとに別の値を持つ。
 
 ```bash
-base_repo=OWNER/REPO  # IssueとPRを置く対象。fork checkoutでは明示する
+base_repo=OWNER/REPO  # PRを置く対象。fork checkoutでは明示する
 gh repo view -R "$base_repo" --json defaultBranchRef
 gh pr list -R "$base_repo" --state all --limit 50 \
   --json number,title,baseRefName,headRefName,mergedAt,isDraft
@@ -49,10 +49,11 @@ IssueまたはPRを作るときは、対象に対応するテンプレートを 
 
 独立した並列作業は、作業ごとに branch と worktree を分ける。現在の checkout が dirty な場合も worktree を優先する。Issue から開始するときは branch を Development に先に結び付ける。branchごとに確定した直接のmerge先を `target_base` とし、そのbranchの起点、`gh issue develop --base`、`gh pr create --base` の3か所で同じ値を使う。
 
-GitHubの対象リポジトリを `base_repo`、それを指すGit remoteを `base_remote`、head branchを置くGitHubリポジトリを `branch_repo`、それを指すGit remoteを `head_remote` として対応付ける。同一リポジトリでは通常どちらのremoteも `origin` になる。forkでは `gh issue develop --branch-repo` と、各リポジトリを指すremoteを明示し、`origin` と決め打ちしない。
+Issueを置くリポジトリを `issue_repo`、PRを置くリポジトリを `base_repo`、それを指すGit remoteを `base_remote`、head branchを置くGitHubリポジトリを `branch_repo`、それを指すGit remoteを `head_remote` として対応付ける。同一リポジトリでは通常どちらのremoteも `origin` になる。forkでは `gh issue develop --branch-repo` と、各リポジトリを指すremoteを明示し、`origin` と決め打ちしない。
 
 ```bash
 base_repo=OWNER/REPO
+issue_repo=OWNER/ISSUE_REPO  # 対象IssueのURLから確定する。同一repoならbase_repoと同じ値
 branch_repo=OWNER/REPO
 base_remote=origin
 head_remote=origin
@@ -62,7 +63,7 @@ test "$(gh repo view "$(git remote get-url "$base_remote")" --json nameWithOwner
 test "$(gh repo view "$(git remote get-url "$head_remote")" --json nameWithOwner --jq .nameWithOwner)" = "$branch_repo"
 git fetch "$base_remote" "$target_base"
 base_oid=$(git rev-parse "$base_remote/$target_base")
-gh issue develop 42 -R "$base_repo" --branch-repo "$branch_repo" \
+gh issue develop 42 -R "$issue_repo" --branch-repo "$branch_repo" \
   --name "$branch" --base "$target_base"
 git fetch "$head_remote" "$branch"
 git worktree add ../repo-login-redirect-loop --track \
@@ -83,6 +84,48 @@ force-push境界、commit整理、merge済み変更のrevert、失敗した履�
 - `gh label list` で確認した既存ラベルから、種類・領域・優先度など判断に役立つ最小限を選び、実際に作成・編集するIssue/PRへ `--label` または `--add-label` で付ける。ラベルを推測で新設しない。適切な既存ラベルがなければ明示し、作成は別途許可を得る。
 - GitHubのauto-closeを使う場合、PRのbaseが既定ブランチ以外なら、論理的に完了していても `Refs #123` を使う。PRのbaseが既定ブランチで、そのmergeがIssueを完了させる場合だけ `Closes #123` を使う。親 tracker は全体完了まで閉じず、`Part of #100` と子 Issue/PR のリンクを併記する。
 - 対応対象の既存Issueがある場合、IssueとbranchのDevelopment linkは `gh issue develop`、作成後の確認は `gh issue develop --list 123` のように対象Issueを指定する。IssueがないPRではDevelopment linkや`Closes` / `Refs`を捏造しない。
+
+### PR–IssueのDevelopmentリンク
+
+本文の `Refs #N` / `Part of #N`、timelineの相互参照、Issue–branchのリンクは、PR–IssueのDevelopmentリンクの証拠ではない。PR作成・編集時は、対応する既存Issueについて本文参照とDevelopment欄の関係を両方確認する。正しい既存リンクは保持し、不足分だけ追加する。
+
+未完了を維持すべきIssueにPR本文・commit messageのclosing keywordや手動closingリンクがあれば、Ready・mergeへ進まず誤closeの影響を報告する。本文補正や手動リンクの削除は許可された範囲で行い、未修正なら紐づけ作業を完了扱いしない。手動リンクの削除は `removeCloseIssueReferences` に同じ `issueId` / `pullRequestIds` を渡して行うが、本文keywordは別途補正して両側を読み戻す。commit messageのkeywordはDevelopment欄に出ないためcommit履歴も確認し、履歴変更やforce-pushの許可がなければ未完了として報告する。
+
+1. 対象Issueのrepo/番号、PRのrepo/番号/base、Issueをいつ完了させるかを確認する。本文参照は同一repoなら `#N`、別repoなら `OWNER/REPO#N` とし、keywordにも完全な参照を付ける。`Closes #N` は既定branch向けPR本文で解釈され、Developmentにも反映される。既に反映済みなら手動リンクを重複追加しない。非既定branch向けでは本文keywordだけではリンクされないため、手動リンクを確認する。
+2. Developmentの手動PRリンクもclosing関係で、既定branchへのmerge時にIssueを自動closeし得る。`Refs` へ変えるだけでは手動リンクのclose効果を無効にできない。未完了を維持する親Issueや部分実装のIssueにはclosingリンクを作らず、本文参照を残してDevelopment未設定の理由を報告する。必要なら完了単位の子Issueを使うが、未承認で新設しない。base変更時も再確認する。
+3. PRの `closingIssuesReferences` とIssueの `closedByPullRequestsReferences` を読み、双方に対象があるか確認する。branchからPRへの自動リンクも推測せず読み戻す。下記queryの各connectionを独立にページングする。`hasNextPage` がtrueの側の `endCursor` を、次回は `-f issueAfter=<cursor>` / `-f prAfter=<cursor>` として渡し、取得済みページと合わせて全対象を確認する。初回は両引数を省略する。途中のページだけで未リンクと判断しない。
+4. 不足していれば、許可された対象に限って `addCloseIssueReferences` で追加する。PR本文の正しい既存参照は維持し、本文とDevelopmentが同じrepoの同じIssueを指すことも確認する。API・権限の不足やreadback不能は未完了として報告し、branchリンクや本文参照を代替の成功証拠にしない。
+
+`gh issue view <number> -R <issue-repo> --json id --jq .id` と `gh pr view <number> -R <pr-repo> --json id --jq .id` で取得した空でないnode IDを、対象URL・解決済みの `$github_host` と照合して `issue_id` / `pr_id` に使う。読み戻しは次のqueryで行う。
+
+```bash
+gh api graphql --hostname "$github_host" -f issueId="$issue_id" -f prId="$pr_id" -f query='
+query($issueId: ID!, $prId: ID!, $issueAfter: String, $prAfter: String) {
+  issue: node(id: $issueId) { ... on Issue {
+    url closedByPullRequestsReferences(first: 100, after: $issueAfter, includeClosedPrs: true) {
+      nodes { id url } pageInfo { hasNextPage endCursor }
+    }
+  } }
+  pr: node(id: $prId) { ... on PullRequest {
+    url closingIssuesReferences(first: 100, after: $prAfter) {
+      nodes { id url } pageInfo { hasNextPage endCursor }
+    }
+  } }
+}'
+```
+
+追加が必要で自動closeの条件にも問題がない場合だけ、次を実行して同じqueryで再確認する。終了コードやmutationの応答だけでリンク済みと報告しない。
+
+```bash
+gh api graphql --hostname "$github_host" -f issueId="$issue_id" -f prId="$pr_id" -f query='
+mutation($issueId: ID!, $prId: ID!) {
+  addCloseIssueReferences(input: {issueId: $issueId, pullRequestIds: [$prId]}) {
+    issue { id url }
+  }
+}'
+```
+
+仕様は [GitHubのIssueとPRのリンク](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue) と [GraphQLのaddCloseIssueReferences](https://docs.github.com/en/graphql/reference/issues#addcloseissuereferences) を参照する。紐づける既存IssueがないPRでは「対象Issueなし」とし、この操作を行わない。
 
 GitHub 上の作成・編集・状態確認は `gh issue ...`、`gh pr ...`、`gh label ...`、必要な場合の `gh api ...` で行う。ユーザーが依頼していない push、merge、close、branch/worktree 削除まで権限を広げない。当該PRのマージ報告を受けた場合の限定的な整理は、[マージ後の後片付け](post-merge-cleanup.md)に従う。`gh pr create` は未公開branchを暗黙にpushし得るため、PR作成の依頼にbranch公開が含まれる場合だけ明示的にpushし、`git ls-remote --exit-code --heads "$head_remote" "$branch"` でheadの存在を確認する。
 
@@ -141,36 +184,19 @@ gate通過後に `gh pr edit` で `[WIP]` を外した最終titleと、最終的
 
 ## 作成後の検証
 
-作成・編集後は readback し、作成・編集したIssue/PRのURL、base/head、Draft状態、title、body、`$current_user`、labelsを確認する。assigneesに `$current_user` が無ければ前述の補正と再確認を行う。対応する既存Issueがある場合だけDevelopmentとclosing linkも確認する。branch作成直後は、作成直前に記録した `base_oid` がhead branchの祖先であることも確認する。PR時点の `baseRefOid` は作成後に進み得るため、`headRefOid` の祖先であることを要求せず、両OIDは現在のserver stateとして記録する。
+作成・編集後は readback し、作成・編集したIssue/PRのURL、base/head、Draft状態、title、body、`$current_user`、labelsを確認する。assigneesに `$current_user` が無ければ前述の補正と再確認を行う。対応する既存Issueがある場合は上記のPR–IssueのDevelopmentリンクを双方から確認し、branchリンクの確認だけで済ませない。branch作成直後は、作成直前に記録した `base_oid` がhead branchの祖先であることも確認する。PR時点の `baseRefOid` は作成後に進み得るため、`headRefOid` の祖先であることを要求せず、両OIDは現在のserver stateとして記録する。
+
+Issue側の `issue_repo` は実際のIssueのrepository、PR側の `base_repo` はPRを置くrepositoryとする。同一repoの場合だけ両者が同じ値になる。
 
 ```bash
-gh issue view 42 -R "$base_repo" --json url,title,body,assignees,labels
-gh issue develop --list 42 -R "$base_repo"
+gh issue view 42 -R "$issue_repo" --json url,title,body,assignees,labels
+gh issue develop --list 42 -R "$issue_repo"
 gh pr view 57 -R "$base_repo" \
   --json url,title,body,isDraft,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner,assignees,labels,closingIssuesReferences
 gh pr checks 57 -R "$base_repo"
 ```
 
 「コマンドが成功した」だけで完了にせず、readback と必要な CI/検証結果を報告する。
-
-## Issue to Pull Request
-
-GitHub Issueの実装からverified PRまでを依頼された場合だけ読む。
-
-1. `gh issue view <number> --comments` で本文と全threadを読み、最新の要求、非目標、未回答質問を確定する。
-2. Issue番号と症状の同義語でopen/all PRを検索し、関連fileの最近のcommitも確認して重複作業を避ける。
-3. 現在のcodeと設計意図を確認し、Issueの前提がまだ正しいか検証する。すでに解決済み、要求が古い、別layerの問題なら実装前に報告する。
-4. Issueを仕様の基準として、目的・対象外・観測可能な受け入れ条件を揃え、影響範囲、rollback、security/production riskを確認する。既存の記載が十分なら書き直さない。方式の選択や要件の矛盾など設計判断がある場合だけ、対象のIssue本文・合意済みコメントの版を固定し、関連codeとともに独立reviewへ渡してから実装する。明確な修正に別仕様書や仕様reviewを必須化しない。
-5. class全体を直す最小変更を実装し、適切なregression testを先に失敗させてから通す。testを一時的にsabotageして、修正を戻すと実際に失敗することも確認する。
-6. repositoryのtest/lint/typecheckと独立reviewを実施し、新規failureと既存baselineを分ける。reviewには合意した受け入れ条件、対象commit、差分、検証結果を渡し、AGENTS.mdの「レビュー・助言の依頼」に従って指摘を分類・再確認する。
-7. Issue、branch、PRをこのskillのmetadata/Links規則で結び、PR作成後はbase/head、diff、CI run ID、assignee、labels、closing linkをreadbackする。
-8. CIをlive evidenceで追跡する。失敗を直した場合は同じcheckを再実行し、未完了・pending・既存failureをgreenと表現しない。
-
-記録先は、Issue本文が合意した目的・対象外・受け入れ条件、PR本文がその条件に対する実装結果・検証証跡・未達/未検証事項、既存のsession作業ログが途中のreview指摘と採否判断を担う。Issueの補足・編集・コメント投稿、後続Issueの起票は、このskillのwrite権限の範囲でだけ行う。許可がなければ補足案をローカルに残し、合意が必要な変更は未確定として扱う。
-
-別件の指摘はPRに残し、後続Issueで追跡するか、理由を付けて見送るかを決める。起票待ちは参照先があるように扱わず、未起票と明示する。改善案をすべて起票せず、今回必須の指摘が残る間は完了・Readyにしない。
-
-人気Issueでは重複PRが発生しやすい。既存PRを見つけた場合、黙って競合実装を続けず、差分・不足・引継ぎ可否を示す。
 
 ## Repository Management
 

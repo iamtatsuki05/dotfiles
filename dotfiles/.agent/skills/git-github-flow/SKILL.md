@@ -37,9 +37,9 @@ Git/GitHub 作業を「確認 → 依頼された範囲だけ write → readback
 
 ## Issue / PR の作成
 
-既存Issueに基づく実装では、[operations.md の Issue to Pull Request](references/operations.md#issue-to-pull-request) に従い、受け入れ条件をレビュー・検証・PRへ引き継ぐ。
+既存Issueの実装から提出までの進行は [issue-driven-development](../issue-driven-development/SKILL.md) に従う。このskillはGit/GitHub操作を担当し、Issueの閲覧・起票だけ、既存PRのレビューだけでは開発workflowを起動しない。
 
-- 既存 Issue があるときだけ `gh issue develop` で Development link し、PR のために Issue を作らない。`Closes #N` は base が既定 branch で merge が Issue を完了させる場合だけ、それ以外は `Refs #N` を使う。
+- 実装対象の既存Issueは、本文の `#N` と [PR–IssueのDevelopmentリンク](references/operations.md#prissueのdevelopmentリンク) の両方で結ぶ。`gh issue develop` のbranchリンクだけで完了にしない。`Closes #N` は既定branchへのmergeでIssueが完了する場合だけ使い、それ以外は `Refs #N` とする。Developmentリンクも自動closeし得るため、未完了の親Issueを誤って閉じるリンクは作らない。別repoのIssue参照は `OWNER/REPO#N` とする。PRのためにIssueを新設しない。
 - assignee は `@me` を使わず `--assignee "$current_user"`。label は `gh label list` にある既存から最小限を選び、推測で新設しない。
 - commit subject、PR title、PR 本文の Markdown 見出しは英語にする。本文の言語は、今回の明示指示 → 同種作業の human-authored な最近の PR → 日本語の順で決める。repo に template があればその構造を保ち、無い場合だけ [templates.md](references/templates.md) を使う。
 - 新規 PR は local 検証済みでも必ず Draft で作り、title は `[WIP] <concise English title>` にする。
@@ -77,7 +77,7 @@ Git/GitHub 作業を「確認 → 依頼された範囲だけ write → readback
 
 ## 詳細を読む場面
 
-- Issue から実装して verified PR まで、fork / organization fork からの PR、repo 作成・remote・release・settings: [operations.md](references/operations.md)
+- Developmentリンク、fork / organization fork からの PR、repo 作成・remote・release・settings: [operations.md](references/operations.md)
 - 既存 PR のレビュー依頼、review / comment の投稿: [code-review.md](references/code-review.md)
 - commit 整理、merge 済み変更の revert、失敗した rebase / revert の復旧、gh-stack: [history-and-stacks.md](references/history-and-stacks.md)
 
