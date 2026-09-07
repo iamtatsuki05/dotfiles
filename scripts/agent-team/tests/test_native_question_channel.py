@@ -17,7 +17,9 @@ from agent_team.native_question_channel import (
     QuestionCallbackError,
     QuestionChannel,
     QuestionChannelError,
+    QuestionProtocolError,
     QuestionRequest,
+    QuestionValidationError,
     validate_question_request,
 )
 
@@ -113,11 +115,17 @@ class NativeQuestionChannelTest(unittest.TestCase):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(3.0)
             connection.connect(str(self.socket_path))
-            if isinstance(value, bytes):
-                connection.sendall(value)
-            else:
-                connection.sendall(self._frame(value))
-            answer = self._recv_line(connection)
+            try:
+                if isinstance(value, bytes):
+                    connection.sendall(value)
+                else:
+                    connection.sendall(self._frame(value))
+                answer = self._recv_line(connection)
+            except (BrokenPipeError, ConnectionResetError):
+                if expect_answer:
+                    raise
+                # Rejecting a frame with unread bytes can reset the stream on Linux.
+                return b""
             if expect_answer:
                 self.assertTrue(answer, "channel closed before answer")
                 decoded = json.loads(answer)
@@ -231,9 +239,12 @@ class NativeQuestionChannelTest(unittest.TestCase):
         )
 
     def test_strict_malformed_frames_are_rejected_before_a_valid_batch(self) -> None:
+        calls: list[QuestionRequest] = []
+
         def exchange(
             request: QuestionRequest, stopped: threading.Event
         ) -> Mapping[str, str]:
+            calls.append(request)
             return {request.questions[0].field: "ok"}
 
         self._new_channel(exchange)
@@ -267,13 +278,22 @@ class NativeQuestionChannelTest(unittest.TestCase):
                 previous_channel.close()
             self.failed.clear()
             malformed_channel = self._new_channel(exchange)
-            self._send_request(frame, expect_answer=False)
+            self.assertEqual(self._send_request(frame, expect_answer=False), b"")
             self._wait_for(lambda: bool(self.failed))
+            self.assertEqual(calls, [])
+            self.assertTrue(
+                all(
+                    isinstance(error, (QuestionProtocolError, QuestionValidationError))
+                    for _, error in self.failed
+                ),
+                [(type(error).__name__, str(error)) for _, error in self.failed],
+            )
             malformed_channel.close()
         self.failed.clear()
         valid_channel = self._new_channel(exchange)
         answer = self._send_request(self._request("s", "valid"))
         self.assertEqual(json.loads(answer)["answers"], {"question_0_custom": "ok"})
+        self.assertEqual(len(calls), 1)
         self._wait_for(lambda: len(self.delivered) == 1)
         self.assertEqual(
             [request.tool_call_id for request in self.delivered], ["valid"]

@@ -375,7 +375,10 @@ class NativeAcpRunnerTest(unittest.TestCase):
         dummy_sdk = executables.sdk.parent.parent
         shutil.rmtree(dummy_sdk)
         dummy_sdk.symlink_to(sdk.parent.parent, target_is_directory=True)
-        node = Path(shutil.which("node")).resolve(strict=True)
+        source_node = Path(shutil.which("node")).resolve(strict=True)
+        node = executables.node
+        shutil.copyfile(source_node, node)
+        node.chmod(0o700)
         library_source = (
             Path(__file__).with_name("fixtures") / "native_question_agent.mjs"
         )
