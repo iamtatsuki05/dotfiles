@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 
 set -euo pipefail
+unset CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
 
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
@@ -139,7 +140,7 @@ test_default_run_requires_matching_full_login_and_forwards_arguments() {
   assert_line "$CLAUDE_LOG" "base_url=<unset>"
   assert_line "$CLAUDE_LOG" "login_command=1"
   assert_line "$CLAUDE_LOG" "logout_command=1"
-  assert_line "$CLAUDE_LOG" "subprocess_scrub=1"
+  assert_line "$CLAUDE_LOG" "subprocess_scrub=<unset>"
   assert_line "$CLAUDE_LOG" "args=<--resume><session-123><--model><fable><--dangerously-skip-permissions>"
 }
 
@@ -431,6 +432,7 @@ test_remote_launch_flags_fail_before_session_start() {
 }
 
 main() {
+  test_permission_mode_preserves_explicit_subprocess_hardening
   test_login_completes_onboarding_without_copying_account_or_trust
   test_repair_requires_matching_identity_and_preserves_other_config
   test_default_clear_rejects_relative_config_without_deleting_files
@@ -460,6 +462,17 @@ main() {
   test_settings_cannot_redirect_profile_or_enable_shared_daemon
   test_remote_launch_flags_fail_before_session_start
   echo "claude account tests passed"
+}
+
+test_permission_mode_preserves_explicit_subprocess_hardening() {
+  setup_fixture
+  write_login_registry personal "$PERSONAL_IDENTITY_SHA256"
+  local value
+  for value in 0 1; do
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB="$value" run_account personal --permission-mode plan
+    assert_line "$CLAUDE_LOG" "subprocess_scrub=$value"
+    assert_line "$CLAUDE_LOG" 'args=<--permission-mode><plan>'
+  done
 }
 
 test_login_completes_onboarding_without_copying_account_or_trust() {
