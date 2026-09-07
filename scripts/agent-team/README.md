@@ -597,11 +597,19 @@ The native driver checks are fake-provider terminal evidence; the bounded
 real-model Herdr/Zellij workflow and Herdr cancellation evidence is described
 above. Do not treat an absent pane or session alone as cleanup success.
 
-The public SDK client tests require an explicit SDK entry path; they do not use
-a personal-path default and skip when `AGENT_TEAM_SDK_ENTRY` is unset:
+The public SDK client contract tests use fake agents. To run every case, provide
+SDK `1.3.0` for Claude and SDK `1.4.0` for Codex. This test-only setup uses the
+same package alias as CI:
 
 ```bash
-AGENT_TEAM_SDK_ENTRY=/path/to/node_modules/@agentclientprotocol/sdk/dist/acp.js \
+npm install --prefix /path/to/agent-team-sdk-test --ignore-scripts --no-audit --no-fund \
+  @agentclientprotocol/sdk@1.3.0 codex-acp-sdk@npm:@agentclientprotocol/sdk@1.4.0
+AGENT_TEAM_SDK_ENTRY=/path/to/agent-team-sdk-test/node_modules/@agentclientprotocol/sdk/dist/acp.js \
+AGENT_TEAM_CODEX_SDK_ENTRY=/path/to/agent-team-sdk-test/node_modules/codex-acp-sdk/dist/acp.js \
   uv run --locked --project scripts/agent-team python -m unittest \
   scripts/agent-team/tests/test_scoped_acp_client.py -v
 ```
+
+There is no personal-path default. The client suite skips when Node or the Claude
+SDK entry is absent; once enabled, it fails if the Codex SDK entry is missing.
+These fixtures do not establish real-model support for the disabled Codex ACP profile.

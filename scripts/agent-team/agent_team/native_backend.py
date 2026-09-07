@@ -7,6 +7,7 @@ never interpreted as a lifecycle message.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import secrets
@@ -28,6 +29,7 @@ from typing import Final, Generic, NoReturn, cast
 
 from . import native_acp_dependencies
 from .adapters import (
+    ExecutionError,
     _process_group_exited,
     _wait_for_process_group_exit,
     remove_owned_tree,
@@ -104,11 +106,12 @@ from .runtime import (
     write_state as runtime_write_state,
 )
 from .scoped_acp import (
-    SCOPED_ADAPTER_ID,
     SCOPED_AGENT,
     SCOPED_CLIENT,
+    SCOPED_POLICY,
     checked_digest,
     create_write_policy,
+    native_profile,
 )
 from .task_execution import (
     acknowledge_task,
@@ -120,7 +123,6 @@ from .task_spec import TaskSpec, parse_task_specs
 from .workspace_revision import snapshot_revision
 
 NATIVE_PHASES: Final = frozenset({"starting", "running", "stopping"})
-ACP_ADAPTER_ID: Final = "claude-acp-0.70.0"
 ACP_ROLES: Final = frozenset({Role.PLANNER, Role.WORKER, Role.REVIEWER})
 MAX_RESULT_BODY_CHARS: Final = 100_000
 PROCESS_WAIT_SECONDS: Final = 5.0
@@ -229,8 +231,17 @@ def _native(state: Mapping[str, object]) -> dict[str, object]:
 
 
 def _require_running(state: Mapping[str, object]) -> None:
+    _require_codex_inspection_cleanup(state)
     if _native(state).get("phase") != "running":
         raise RuntimeFailure(ErrorCode.BUSY, "native team is not running")
+
+
+def _require_codex_inspection_cleanup(state: Mapping[str, object]) -> None:
+    if _native(state).get("codex_inspection_cleanup") is not None:
+        raise RuntimeFailure(
+            ErrorCode.BUSY,
+            "Codex inspection process cleanup is unconfirmed; state is retained",
+        )
 
 
 def _assignment(state: Mapping[str, object], role: Role) -> dict[str, object]:
@@ -296,6 +307,16 @@ def _spec_dict(spec: object, role: Role) -> dict[str, object]:
     client_digest = getattr(spec, "scoped_client_sha256", None)
     if client_digest is not None:
         result["scoped_client_sha256"] = client_digest
+    policy_digest = getattr(spec, "scoped_policy_sha256", None)
+    if policy_digest is not None:
+        result["scoped_policy_sha256"] = policy_digest
+    provider_snapshot = getattr(spec, "provider_snapshot", None)
+    if provider_snapshot is not None:
+        if not isinstance(provider_snapshot, Mapping):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "provider snapshot must be a mapping"
+            )
+        result["provider_snapshot"] = copy.deepcopy(dict(provider_snapshot))
     return result
 
 
@@ -352,19 +373,16 @@ def _validate_profile(
                     "native Main cannot carry an ACP adapter",
                 )
         else:
-            expected = {
-                "provider": "claude",
-                "transport": "acp",
-                "permission": "workspace-write" if role is Role.WORKER else "read-only",
-                "execution": "background",
-                "adapter_id": SCOPED_ADAPTER_ID
-                if role is Role.WORKER
-                else ACP_ADAPTER_ID,
-            }
+            try:
+                expected = native_profile(
+                    cast(str, normalized.get("provider")), role.value
+                )
+            except RuntimeValidationError as exc:
+                raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
             if any(normalized.get(key) != value for key, value in expected.items()):
                 raise RuntimeFailure(
                     ErrorCode.INVALID_REQUEST,
-                    f"native {role.value} must be verified Claude ACP read-only",
+                    f"native {role.value} does not match its scoped ACP profile",
                 )
             raw = normalized.get("acp_executables")
             if not isinstance(raw, Mapping):
@@ -374,13 +392,38 @@ def _validate_profile(
                 )
             if preflight:
                 try:
-                    from_dict = native_acp_dependencies.NativeAcpExecutables.from_dict
-                    executables = from_dict(raw)
-                    executables.verify()
+                    executables: (
+                        native_acp_dependencies.CodexAcpExecutables
+                        | native_acp_dependencies.NativeAcpExecutables
+                    )
+                    if normalized["provider"] == "codex":
+                        from . import codex_acp
+
+                        executables = (
+                            native_acp_dependencies.CodexAcpExecutables.from_dict(raw)
+                        )
+                        executables.verify()
+                        provider_snapshot = normalized.get("provider_snapshot")
+                        if not isinstance(provider_snapshot, Mapping):
+                            raise RuntimeValidationError(
+                                "Codex provider snapshot is missing"
+                            )
+                        codex_acp.verify_snapshot(provider_snapshot, spec.workspace)
+                    else:
+                        executables = (
+                            native_acp_dependencies.NativeAcpExecutables.from_dict(raw)
+                        )
+                        executables.verify()
                     # The snapshot helper is part of the explicit ACP boundary.
                     # It is called before state/task/process creation so a bad
                     # binding cannot leave a native assignment behind.
-                    snapshot = native_acp_dependencies.adapter_snapshot(executables)
+                    snapshot = (
+                        native_acp_dependencies.codex_adapter_snapshot(executables)
+                        if isinstance(
+                            executables, native_acp_dependencies.CodexAcpExecutables
+                        )
+                        else native_acp_dependencies.adapter_snapshot(executables)
+                    )
                 except Exception as exc:
                     raise _runtime_error(
                         exc,
@@ -394,8 +437,10 @@ def _validate_profile(
                     )
                 acp_bindings[role.value] = executables
                 normalized["acp_executables"] = executables.as_dict()
-                normalized["scoped_wrapper_sha256"] = checked_digest(SCOPED_AGENT)
-                normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
+                if normalized["provider"] == "claude":
+                    normalized["scoped_wrapper_sha256"] = checked_digest(SCOPED_AGENT)
+                    normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
+                    normalized["scoped_policy_sha256"] = checked_digest(SCOPED_POLICY)
         role_specs[role.value] = normalized
 
     if not preflight:
@@ -934,19 +979,21 @@ def publish_completion(
                 ErrorCode.IDENTITY_MISMATCH, "native completion role is not selected"
             )
         selected_spec = selected.get(role)
-        if not isinstance(selected_spec, Mapping) or any(
+        if not isinstance(selected_spec, Mapping):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH, "native completion role spec is missing"
+            )
+        try:
+            expected = native_profile(cast(str, selected_spec.get("provider")), role)
+        except RuntimeValidationError as exc:
+            raise RuntimeFailure(ErrorCode.IDENTITY_MISMATCH, str(exc)) from exc
+        if any(
             selected_spec.get(key) != expected_value
-            for key, expected_value in {
-                "provider": "claude",
-                "transport": "acp",
-                "permission": "workspace-write" if role == "worker" else "read-only",
-                "execution": "background",
-                "adapter_id": SCOPED_ADAPTER_ID if role == "worker" else ACP_ADAPTER_ID,
-            }.items()
+            for key, expected_value in expected.items()
         ):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
-                "native completion role spec does not match Claude ACP",
+                "native completion role spec does not match its ACP profile",
             )
         assignment = _assignment(state, Role(role))
         saved_task, saved_dispatch, saved_terminal, saved_nonce = _assignment_identity(
@@ -1309,6 +1356,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         self._ensure_supported_platform()
         previous = self._require_state()
         path = _state_path(previous)
+        _require_codex_inspection_cleanup(_read_state(path))
         self._wait_for_main_process_receipt(path)
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
@@ -1522,6 +1570,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         self, spec: StartSpec, expected_role_specs: dict[str, dict[str, object]]
     ) -> StartResult:
         state = _read_state(_absolute(spec.state_path))
+        _require_codex_inspection_cleanup(state)
         self._assert_state_matches_spec(state, spec, expected_role_specs)
         native = _native(state)
         phase = native.get("phase")
@@ -1682,6 +1731,8 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     else:
                         status = "unknown"
             team_id = _required_string(state.get("team_id"), "team_id")
+            if native.get("codex_inspection_cleanup") is not None:
+                status = "unknown"
             run_id = _required_string(state.get("run_id"), "run_id")
             response: dict[str, object] = {
                 "status": status,
@@ -1762,7 +1813,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             )
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST, "native role is not a Claude ACP role"
+                ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
         text = request.message if isinstance(request, TaskDispatch) else request.text
         if not isinstance(text, str) or not text.strip():
@@ -1788,9 +1839,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         release_write: int | None = None
         try:
             state = self._reload_locked(path)
-            native = _native(state)
-            if native.get("phase") != "running":
-                raise RuntimeFailure(ErrorCode.BUSY, "native team is not running")
+            _require_running(state)
             if _verification_pending(state):
                 raise RuntimeFailure(
                     ErrorCode.BUSY,
@@ -1831,31 +1880,54 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             raw_spec = specs.get(request.role.value)
             if not isinstance(raw_spec, Mapping):
                 raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role is not selected")
-            expected_spec = {
-                "provider": "claude",
-                "transport": "acp",
-                "permission": "workspace-write"
-                if request.role is Role.WORKER
-                else "read-only",
-                "execution": "background",
-                "adapter_id": SCOPED_ADAPTER_ID
-                if request.role is Role.WORKER
-                else ACP_ADAPTER_ID,
-            }
+            try:
+                expected_spec = native_profile(
+                    cast(str, raw_spec.get("provider")), request.role.value
+                )
+            except RuntimeValidationError as exc:
+                raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
             if any(
                 raw_spec.get(key) != expected_value
                 for key, expected_value in expected_spec.items()
             ):
                 raise RuntimeFailure(
                     ErrorCode.INVALID_REQUEST,
-                    "native role does not satisfy Claude ACP read-only capability",
+                    "native role does not match its scoped ACP profile",
                 )
             try:
-                executables = native_acp_dependencies.NativeAcpExecutables.from_dict(
-                    raw_spec.get("acp_executables")
+                executables: (
+                    native_acp_dependencies.NativeAcpExecutables
+                    | native_acp_dependencies.CodexAcpExecutables
                 )
-                executables.verify()
-                snapshot = native_acp_dependencies.adapter_snapshot(executables)
+                if raw_spec["provider"] == "codex":
+                    from . import codex_acp
+
+                    executables = native_acp_dependencies.CodexAcpExecutables.from_dict(
+                        raw_spec.get("acp_executables")
+                    )
+                    executables.verify()
+                    provider_snapshot = raw_spec.get("provider_snapshot")
+                    if not isinstance(provider_snapshot, Mapping):
+                        raise RuntimeValidationError(
+                            "Codex provider snapshot is missing"
+                        )
+                    codex_acp.verify_snapshot(
+                        provider_snapshot, Path(str(state["workspace"]))
+                    )
+                else:
+                    executables = (
+                        native_acp_dependencies.NativeAcpExecutables.from_dict(
+                            raw_spec.get("acp_executables")
+                        )
+                    )
+                    executables.verify()
+                snapshot = (
+                    native_acp_dependencies.codex_adapter_snapshot(executables)
+                    if isinstance(
+                        executables, native_acp_dependencies.CodexAcpExecutables
+                    )
+                    else native_acp_dependencies.adapter_snapshot(executables)
+                )
                 if not isinstance(snapshot, Mapping):
                     raise TypeError("ACP adapter snapshot is invalid")
             except Exception as exc:
@@ -1866,30 +1938,92 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     "selected ACP dependencies are unavailable",
                     code=ErrorCode.INVALID_REQUEST,
                 ) from exc
-            launch_nonce = secrets.token_hex(16)
-            private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
-            if checked_digest(SCOPED_AGENT) != raw_spec.get(
-                "scoped_wrapper_sha256"
-            ) or checked_digest(SCOPED_CLIENT) != raw_spec.get("scoped_client_sha256"):
+            if raw_spec["provider"] == "claude" and (
+                checked_digest(SCOPED_AGENT) != raw_spec.get("scoped_wrapper_sha256")
+                or checked_digest(SCOPED_CLIENT) != raw_spec.get("scoped_client_sha256")
+                or checked_digest(SCOPED_POLICY) != raw_spec.get("scoped_policy_sha256")
+            ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
                     "scoped ACP runtime changed since team start",
                 )
-            write_policy, policy_digest = create_write_policy(
-                private_root,
-                Path(str(state["workspace"])),
-                path,
-                request.task if isinstance(request, TaskDispatch) else None,
-                executables.agent,
-                permission=str(raw_spec["permission"]),
-            )
-            agent_command = build_acp_agent_command(
-                _required_string(state.get("team_id"), "team_id"),
-                request.role.value,
-                launch_nonce,
-                executables=executables,
-                **({"write_policy": write_policy} if write_policy is not None else {}),
-            )
+            launch_nonce = secrets.token_hex(16)
+            private_root = Path(tempfile.mkdtemp(prefix="agent-team-provider-"))
+            codex_fields: dict[str, object] = {}
+            if isinstance(executables, native_acp_dependencies.CodexAcpExecutables):
+                from . import codex_acp
+
+                # The journal must be durable before inspection can spawn a child.
+                inspection_state = self._reload_locked(path)
+                _native(inspection_state)["codex_inspection_cleanup"] = {
+                    "role": request.role.value,
+                    "provider_private_root": str(private_root),
+                    "cleanup_confirmed": False,
+                }
+                _save_state(
+                    path, inspection_state, require_existing=True, reservation_held=True
+                )
+                inspection_root, private_root = private_root, None
+                inspection_confirmed = False
+                try:
+                    codex_fields = codex_acp.prepare_assignment(
+                        private_root=inspection_root,
+                        workspace=Path(str(state["workspace"])),
+                        state_path=path,
+                        task=request.task
+                        if isinstance(request, TaskDispatch)
+                        else None,
+                        permission=str(raw_spec["permission"]),
+                        executables=executables,
+                        model=str(raw_spec["model"]),
+                        effort=str(raw_spec["effort"]),
+                        instructions=str(raw_spec["instructions"]),
+                        provider_snapshot=cast(
+                            Mapping[str, object], raw_spec["provider_snapshot"]
+                        ),
+                    )
+                    inspection_confirmed = True
+                except ExecutionError as exc:
+                    inspection_confirmed = exc.cleanup_confirmed
+                    if inspection_confirmed:
+                        raise
+                    raise RuntimeFailure(
+                        ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                        "Codex inspection process cleanup is unconfirmed; "
+                        f"private root retained: {inspection_root}",
+                    ) from exc
+                except RuntimeValidationError:
+                    inspection_confirmed = True
+                    raise
+                finally:
+                    if inspection_confirmed:
+                        private_root = inspection_root
+                        _native(inspection_state).pop("codex_inspection_cleanup")
+                        _save_state(
+                            path,
+                            inspection_state,
+                            require_existing=True,
+                            reservation_held=True,
+                        )
+                write_policy = Path(str(codex_fields["write_policy_path"]))
+                policy_digest = str(codex_fields["write_policy_sha256"])
+                agent_command = codex_acp.agent_command(executables)
+            else:
+                write_policy, policy_digest = create_write_policy(
+                    private_root,
+                    Path(str(state["workspace"])),
+                    path,
+                    request.task if isinstance(request, TaskDispatch) else None,
+                    executables.agent,
+                    permission=str(raw_spec["permission"]),
+                )
+                agent_command = build_acp_agent_command(
+                    _required_string(state.get("team_id"), "team_id"),
+                    request.role.value,
+                    launch_nonce,
+                    executables=executables,
+                    write_policy=write_policy,
+                )
             session_name = build_acp_session_name(request.role.value, launch_nonce)
             task_id = _new_id()
             dispatch_id = _new_id()
@@ -1950,6 +2084,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 "adapter_snapshot": dict(snapshot),
                 "runner_argv": runner_argv,
                 "runner_startup_argv": list(gate_argv),
+                **codex_fields,
             }
             if isinstance(request, TaskDispatch):
                 assert task_record is not None
@@ -2148,7 +2283,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
     def _wait(self, request: RoleWait) -> WaitReceipt:
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST, "native role is not a Claude ACP role"
+                ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
         if request.timeout_ms < 1:
             raise RuntimeFailure(
@@ -2262,7 +2397,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
     def _read(self, request: RoleRead) -> ReadReceipt:
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST, "native role is not a Claude ACP role"
+                ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
         if request.lines < 1:
             raise RuntimeFailure(
@@ -2316,7 +2451,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
     def _release(self, request: RoleRelease) -> ReleaseReceipt:
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST, "native role is not a Claude ACP role"
+                ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
         previous = self._require_state()
         path = _state_path(previous)
@@ -2487,7 +2622,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
     def _role_get(self, request: RoleGet) -> RoleStatusReceipt:
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST, "native role is not a Claude ACP role"
+                ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
         previous = self._require_state()
         path = _state_path(previous)
@@ -2524,6 +2659,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         self, path: Path
     ) -> tuple[dict[str, object], ReceiptT, dict[str, object], Role | None]:
         state = self._reload_locked(path)
+        _require_codex_inspection_cleanup(state)
         if _verification_pending(state):
             raise RuntimeFailure(
                 ErrorCode.BUSY,

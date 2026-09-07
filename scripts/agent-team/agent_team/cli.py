@@ -54,7 +54,12 @@ from .harness_launch import (
     build_codex_argv,
     build_plan_role_command,
 )
-from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
+from .native_acp_dependencies import (
+    CodexAcpExecutables,
+    NativeAcpDependencyError,
+    NativeAcpExecutables,
+    codex_adapter_snapshot,
+)
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .registry import (
     CANONICAL_HARNESSES,
@@ -87,7 +92,7 @@ from .runtime import (
 from .runtime import (
     write_state as runtime_write_state,
 )
-from .scoped_acp import SCOPED_ADAPTER_ID, client_argv, validate_write_policy
+from .scoped_acp import client_argv, native_profile, validate_write_policy
 from .task_execution import parse_review
 from .task_spec import TaskSpec, parse_task_specs
 from .workflow import WorkflowEngine
@@ -779,9 +784,14 @@ def _saved_acp_executables(spec: dict[str, object]) -> AcpExecutables:
 
 
 def _validate_acp_assignment_snapshot(
-    assignment: dict[str, object], executables: AcpExecutables | NativeAcpExecutables
+    assignment: dict[str, object],
+    executables: AcpExecutables | NativeAcpExecutables | CodexAcpExecutables,
 ) -> None:
     snapshot = assignment.get("adapter_snapshot")
+    if isinstance(executables, CodexAcpExecutables):
+        if snapshot != codex_adapter_snapshot(executables):
+            raise ConfigError("Codex ACP assignment has an invalid executable snapshot")
+        return
     identity = snapshot.get("identity") if isinstance(snapshot, dict) else None
     if not isinstance(snapshot, dict) or not isinstance(identity, dict):
         raise ConfigError("ACP assignment has an invalid executable snapshot")
@@ -868,7 +878,7 @@ def build_plan(
     roles: dict[str, dict[str, object]] = {}
     for role, role_config in role_configs.items():
         role_env: dict[str, str] = {}
-        if role_config.provider == "codex":
+        if role_config.provider == "codex" and role_config.transport == "direct":
             role_env["CODEX_HOME"] = str(state_dir_for(team_id) / "codex" / role)
         instructions = role_instructions(role, config, state_path)
         execution = profile_execution(
@@ -1303,7 +1313,11 @@ def _acp_assignment(
     terminal_handle: str,
     prompt_path: Path,
     launch_nonce: str,
-) -> tuple[dict[str, object], dict[str, object], AcpExecutables | NativeAcpExecutables]:
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    AcpExecutables | NativeAcpExecutables | CodexAcpExecutables,
+]:
     state_state_path = state.get("state_path")
     if not isinstance(state_state_path, str) or state_path.resolve(
         strict=False
@@ -1327,23 +1341,29 @@ def _acp_assignment(
     spec = specs.get(role) if isinstance(specs, dict) else None
     if not isinstance(spec, dict):
         raise ConfigError(f"ACP launch plan is missing role: {role}")
+    try:
+        expected_profile = native_profile(
+            cast(str, spec.get("provider"))
+            if is_native_runtime(state["runtime"])
+            else "claude",
+            role,
+        )
+    except RuntimeValidationError as exc:
+        raise ConfigError(str(exc)) from exc
     if (
-        spec.get("transport") != "acp"
-        or spec.get("provider") != "claude"
-        or spec.get("execution") != "background"
-        or spec.get("adapter_id")
-        != (SCOPED_ADAPTER_ID if role == "worker" else "claude-acp-0.70.0")
-        or spec.get("permission")
-        != ("workspace-write" if role == "worker" else "read-only")
+        any(spec.get(key) != value for key, value in expected_profile.items())
         or not isinstance(spec.get("model"), str)
         or not isinstance(spec.get("effort"), str)
         or not isinstance(spec.get("instructions"), str)
     ):
-        raise ConfigError("ACP role does not satisfy the Claude read-only capability")
+        raise ConfigError("ACP role does not match its scoped capability")
+    executables: AcpExecutables | NativeAcpExecutables | CodexAcpExecutables
     if is_native_runtime(state["runtime"]):
         try:
-            executables: AcpExecutables | NativeAcpExecutables = (
-                NativeAcpExecutables.from_dict(spec.get("acp_executables"))
+            executables = (
+                CodexAcpExecutables.from_dict(spec.get("acp_executables"))
+                if spec["provider"] == "codex"
+                else NativeAcpExecutables.from_dict(spec.get("acp_executables"))
             )
             executables.verify()
         except NativeAcpDependencyError as exc:
@@ -1351,18 +1371,25 @@ def _acp_assignment(
     else:
         executables = _saved_acp_executables(spec)
     team_id = nested_string(state, ("team_id",), "agent-team state")
-    write_policy = (
-        validate_write_policy(state, assignment, spec)
-        if is_native_runtime(state["runtime"])
-        else None
-    )
-    if assignment.get("agent_command") != acp_agent_command(
-        team_id,
-        role,
-        launch_nonce,
-        executables=executables,
-        **({"write_policy": write_policy} if write_policy is not None else {}),
-    ):
+    if isinstance(executables, CodexAcpExecutables):
+        from . import codex_acp
+
+        codex_acp.validate_assignment(state, assignment, spec)
+        expected_command = codex_acp.agent_command(executables)
+    else:
+        write_policy = (
+            validate_write_policy(state, assignment, spec)
+            if is_native_runtime(state["runtime"])
+            else None
+        )
+        expected_command = acp_agent_command(
+            team_id,
+            role,
+            launch_nonce,
+            executables=executables,
+            **({"write_policy": write_policy} if write_policy is not None else {}),
+        )
+    if assignment.get("agent_command") != expected_command:
         raise ConfigError("ACP assignment has an invalid agent command")
     session_name = assignment.get("session_name")
     if session_name != acp_session_name(role, launch_nonce):
@@ -1433,13 +1460,10 @@ def _native_completion_run_id(
     spec = specs.get(role) if isinstance(specs, dict) else None
     if not isinstance(spec, dict):
         return None
-    expected_spec = {
-        "provider": "claude",
-        "transport": "acp",
-        "permission": "workspace-write" if role == "worker" else "read-only",
-        "execution": "background",
-        "adapter_id": SCOPED_ADAPTER_ID if role == "worker" else "claude-acp-0.70.0",
-    }
+    try:
+        expected_spec = native_profile(cast(str, spec.get("provider")), role)
+    except RuntimeValidationError:
+        return None
     if any(spec.get(key) != value for key, value in expected_spec.items()):
         return None
     return run_id
@@ -1609,7 +1633,7 @@ def _acp_run_turn(
     prompt_path: Path,
     launch_nonce: str,
 ) -> int:
-    """Run one Claude ACP turn and publish its trusted result."""
+    """Run one selected ACP turn and publish its trusted result."""
 
     try:
         assignment, spec, executables = _acp_assignment(
@@ -1640,24 +1664,34 @@ def _acp_run_turn(
             role=role,
             launch_nonce=launch_nonce,
         )
-        write_policy = (
-            validate_write_policy(state, assignment, spec)
-            if is_native_runtime(state["runtime"])
-            else None
-        )
-        agent_command = acp_agent_command(
-            nested_string(state, ("team_id",), "agent-team state"),
-            role,
-            launch_nonce,
-            executables=executables,
-            **({"write_policy": write_policy} if write_policy is not None else {}),
-        )
+        if isinstance(executables, CodexAcpExecutables):
+            from . import codex_acp
+
+            agent_command = codex_acp.agent_command(executables)
+            native_environment = codex_acp.environment(
+                Path(str(assignment["provider_private_root"])), executables
+            )
+        else:
+            write_policy = (
+                validate_write_policy(state, assignment, spec)
+                if is_native_runtime(state["runtime"])
+                else None
+            )
+            agent_command = acp_agent_command(
+                nested_string(state, ("team_id",), "agent-team state"),
+                role,
+                launch_nonce,
+                executables=executables,
+                **({"write_policy": write_policy} if write_policy is not None else {}),
+            )
+            native_environment = acp_env()
         session_name = acp_session_name(role, launch_nonce)
         native_argv = None
-        if isinstance(executables, NativeAcpExecutables):
+        if isinstance(executables, (NativeAcpExecutables, CodexAcpExecutables)):
             native_argv = client_argv(
                 executables,
                 agent_command,
+                harness=cast(str, spec["provider"]),
                 workspace=workspace,
                 permission=cast(str, spec["permission"]),
                 model=model,
@@ -1710,7 +1744,7 @@ def _acp_run_turn(
             ).run(
                 native_argv,
                 cwd=workspace,
-                env=acp_env(),
+                env=native_environment,
                 input_text=prompt_text,
                 timeout_seconds=ACP_TIMEOUT_SECONDS,
             )
@@ -2145,6 +2179,13 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
             raise TypeError(
                 f"launch plan contains invalid ACP executable bindings: {role_name}"
             )
+        raw_provider_snapshot = launch.get("provider_snapshot")
+        if raw_provider_snapshot is not None and not isinstance(
+            raw_provider_snapshot, Mapping
+        ):
+            raise TypeError(
+                f"launch plan contains invalid provider snapshot: {role_name}"
+            )
         role_config = RoleSpec(
             provider=cast(str, values["provider"]),
             transport=cast(str, values["transport"]),
@@ -2165,6 +2206,10 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
             ),
             scoped_wrapper_sha256=cast(str | None, launch.get("scoped_wrapper_sha256")),
             scoped_client_sha256=cast(str | None, launch.get("scoped_client_sha256")),
+            scoped_policy_sha256=cast(str | None, launch.get("scoped_policy_sha256")),
+            provider_snapshot=dict(raw_provider_snapshot)
+            if raw_provider_snapshot is not None
+            else None,
         )
         role_specs[Role(role_name)] = role_config
     return StartSpec(
@@ -2177,6 +2222,16 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         max_review_rounds=cast(int | None, plan.get("max_review_rounds")),
         task_specs=parse_task_specs(plan.get("task_specs", [])),
     )
+
+
+def _codex_auth_path() -> Path:
+    from .codex_preflight import file_auth_path
+
+    home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    try:
+        return file_auth_path(home)
+    except RuntimeValidationError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _start_prerequisites(plan: dict[str, object]) -> None:
@@ -2208,54 +2263,85 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         for launch in roles.values()
         if isinstance(launch, dict) and launch.get("transport") == "acp"
     ]
-    if acp_launches:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for launch in acp_launches:
+        provider = launch.get("provider")
+        if provider not in ("claude", "codex") or not isinstance(provider, str):
+            raise ConfigError("selected ACP provider is unsupported")
+        if provider == "codex" and not is_native_runtime(runtime):
+            raise ConfigError("scoped Codex ACP requires a native runtime")
+        groups.setdefault(provider, []).append(launch)
+    if not os.access(mcp_server_path(), os.X_OK):
+        raise ConfigError(
+            f"agent-team MCP server is not executable: {mcp_server_path()}"
+        )
+    selected: dict[
+        str, AcpExecutables | NativeAcpExecutables | CodexAcpExecutables
+    ] = {}
+    for provider in sorted(groups):
         try:
-            executables = (
-                NativeAcpExecutables.resolve()
-                if is_native_runtime(plan["runtime"])
-                else AcpExecutables.resolve()
-            )
-            node_version = subprocess.run(
-                [str(executables.node), "--version"],
+            if provider == "codex":
+                selected[provider] = CodexAcpExecutables.resolve()
+            elif is_native_runtime(runtime):
+                selected[provider] = NativeAcpExecutables.resolve()
+            else:
+                selected[provider] = AcpExecutables.resolve()
+        except (AcpDependencyError, NativeAcpDependencyError, OSError) as exc:
+            raise ConfigError(
+                f"selected {provider} ACP dependencies are unavailable: {exc}"
+            ) from exc
+    minimum = (22, 0, 0) if is_native_runtime(runtime) else (22, 13, 0)
+    for node in sorted({binding.node for binding in selected.values()}):
+        try:
+            result = subprocess.run(
+                [str(node), "--version"],
                 check=False,
                 capture_output=True,
                 env=acp_environment(),
                 text=True,
                 timeout=5,
             )
-        except (
-            AcpDependencyError,
-            NativeAcpDependencyError,
-            OSError,
-            subprocess.TimeoutExpired,
-        ) as exc:
-            raise ConfigError(
-                f"selected Claude ACP dependencies are unavailable: {exc}"
-            ) from exc
-        if node_version.returncode != 0:
-            detail = node_version.stderr.strip() or node_version.stdout.strip()
-            raise ConfigError(
-                "selected Node --version check failed"
-                + (f": {detail}" if detail else "")
-            )
-        match = re.fullmatch(
-            r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?",
-            node_version.stdout.strip(),
-        )
-        minimum = (22, 0, 0) if is_native_runtime(plan["runtime"]) else (22, 13, 0)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ConfigError("selected Node --version check failed") from exc
+        if result.returncode != 0:
+            raise ConfigError("selected Node --version check failed")
+        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", result.stdout.strip())
         if match is None or tuple(int(item) for item in match.groups()) < minimum:
             raise ConfigError(
                 "selected Node must be version "
                 + ".".join(map(str, minimum))
                 + " or newer"
             )
-        binding = executables.as_dict()
-        for launch in acp_launches:
+    provider_snapshots: dict[str, dict[str, object]] = {}
+    if "codex" in selected:
+        from . import codex_acp
+
+        codex = selected["codex"]
+        assert isinstance(codex, CodexAcpExecutables)
+        try:
+            version = subprocess.run(
+                [str(codex.codex), "--version"],
+                check=False,
+                capture_output=True,
+                env=acp_environment(),
+                text=True,
+                timeout=5,
+            )
+            if version.returncode != 0 or version.stdout.strip() != "codex-cli 0.153.4":
+                raise ConfigError(
+                    "scoped Codex ACP requires the selected codex-cli 0.153.4 binary"
+                )
+            provider_snapshots["codex"] = codex_acp.snapshot(
+                Path(str(plan["workspace"])), _codex_auth_path()
+            )
+        except (OSError, subprocess.TimeoutExpired, RuntimeValidationError) as exc:
+            raise ConfigError(f"selected Codex ACP preflight failed: {exc}") from exc
+    for provider, launches in groups.items():
+        binding = selected[provider].as_dict()
+        for launch in launches:
             launch["acp_executables"] = dict(binding)
-    if not os.access(mcp_server_path(), os.X_OK):
-        raise ConfigError(
-            f"agent-team MCP server is not executable: {mcp_server_path()}"
-        )
+            if provider in provider_snapshots:
+                launch["provider_snapshot"] = provider_snapshots[provider]
 
 
 def _ensure_orca_platform() -> None:

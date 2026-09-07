@@ -77,9 +77,12 @@ Mainなしの構成、明示的なparallel workflow、10 harnessの大半、nati
 | `agent_team/task_execution.py` | TaskSpec digest、dependency admission、review decision、stage別round limitを保存する。 |
 | `agent_team/task_verification.py` | approved workspace revisionでfixed argvを実行し、bounded evidenceを保存する。 |
 | `agent_team/workspace_revision.py` | boundedなGit workspace revisionを作り、symlinkとspecial fileを拒否する。 |
-| `agent_team/scoped_acp.py`, `claude_scoped_agent.mjs` | native Worker policyを作り、model tool callをTaskSpec scopeへ束縛する。 |
+| `agent_team/scoped_acp.py`, `scoped_policy.mjs` | nativeのrole設定を固定し、TaskSpecのpath検査を共有する。 |
+| `agent_team/claude_scoped_agent.mjs`, `scoped_file_tools.mjs` | それぞれClaudeのtool hookと、Codex向けの4つのホストfile toolを制御する。 |
 | `agent_team/scoped_acp_client.mjs` | native assignmentごとにpublic ACP SDK接続を1本作り、cleanupを確認する。 |
-| `agent_team/native_acp_dependencies.py` | Node、Claude ACP 0.70.0、その依存のSDK 1.3.0をexact fingerprint付きで解決する。 |
+| `agent_team/native_acp_dependencies.py` | 選択したnative providerのNode、ACP adapter、SDK、必要なprovider実行fileだけを解決し、fingerprintを固定する。 |
+| `agent_team/codex_preflight.py`, `codex_acp.py` | 既存の認証file・設定を検証し、Codex専用の起動fileを固定する。公開設定ではCodex ACPを無効にしている。 |
+| `agent_team/codex_scoped_launch.mjs`, `codex_scoped_inspect.mjs`, `codex_scoped_transport.mjs`, `codex_scoped_bridge.mjs` | app-serverの起動設定を固定し、有効な設定の検査、通信の制限、file tool要求の仲介を担う。[Codex ACPの実装状況](acp_JA.md#範囲を制限したcodex-acpの実装公開設定では未有効)を参照。 |
 | `agent_team/runtime.py` | identity、private file、state v3、command、environment、cleanupの安全helperを共有する。state writeは、callerがreservationを保持していない限り共有lockを取得する。 |
 | `agent_team/process_identity.py` | LinuxとmacOSでprocessのexact argvを読み、表示文字列に依存しないnative所有権検査を提供する。 |
 | `agent_team/registry.py` | 認識済みharnessと検証済みrole profileを記録し、別providerへのfallthroughを行わない。 |

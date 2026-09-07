@@ -1,4 +1,4 @@
-"""Frozen policy files for the selected Claude ACP write profile."""
+"""Frozen policy artifacts and the native ACP profile contract."""
 
 from __future__ import annotations
 
@@ -10,19 +10,44 @@ import stat
 from collections.abc import Mapping
 from pathlib import Path
 
-from .native_acp_dependencies import NativeAcpExecutables
+from .native_acp_dependencies import CodexAcpExecutables, NativeAcpExecutables
 from .runtime import RuntimeValidationError
 from .task_spec import TaskSpec
 
 SCOPED_ADAPTER_ID = "claude-acp-scoped-0.70.0"
+CODEX_SCOPED_ADAPTER_ID = "codex-acp-scoped-1.10.0"
 SCOPED_AGENT = Path(__file__).resolve().with_name("claude_scoped_agent.mjs")
 SCOPED_CLIENT = Path(__file__).resolve().with_name("scoped_acp_client.mjs")
+SCOPED_POLICY = Path(__file__).resolve().with_name("scoped_policy.mjs")
+
+
+def native_profile(provider: str, role: str) -> dict[str, str]:
+    if (
+        not isinstance(provider, str)
+        or not isinstance(role, str)
+        or provider not in {"claude", "codex"}
+        or role not in {"planner", "worker", "reviewer"}
+    ):
+        raise RuntimeValidationError("unsupported native ACP provider or role")
+    adapter = (
+        CODEX_SCOPED_ADAPTER_ID
+        if provider == "codex"
+        else (SCOPED_ADAPTER_ID if role == "worker" else "claude-acp-0.70.0")
+    )
+    return {
+        "provider": provider,
+        "transport": "acp",
+        "permission": "workspace-write" if role == "worker" else "read-only",
+        "execution": "background",
+        "adapter_id": adapter,
+    }
 
 
 def client_argv(
-    executables: NativeAcpExecutables,
+    executables: NativeAcpExecutables | CodexAcpExecutables,
     agent_command: str,
     *,
+    harness: str,
     workspace: Path,
     permission: str,
     model: str,
@@ -30,10 +55,21 @@ def client_argv(
     instructions: str,
     timeout_seconds: int,
 ) -> list[str]:
+    if not (
+        harness == "claude"
+        and isinstance(executables, NativeAcpExecutables)
+        or harness == "codex"
+        and isinstance(executables, CodexAcpExecutables)
+    ):
+        raise RuntimeValidationError(
+            "native ACP harness does not match its dependencies"
+        )
     executables.verify()
     return [
         str(executables.node),
         str(SCOPED_CLIENT),
+        "--harness",
+        harness,
         "--sdk-entry",
         str(executables.sdk),
         "--agent-argv",
@@ -174,6 +210,10 @@ def validate_write_policy(
         raise RuntimeValidationError("scoped ACP wrapper changed since team start")
     if checked_digest(SCOPED_CLIENT) != spec.get("scoped_client_sha256"):
         raise RuntimeValidationError("scoped ACP client changed since team start")
+    if checked_digest(SCOPED_POLICY) != spec.get("scoped_policy_sha256"):
+        raise RuntimeValidationError(
+            "scoped ACP shared policy changed since team start"
+        )
     if checked_digest(policy_path, private=True) != assignment.get(
         "write_policy_sha256"
     ):

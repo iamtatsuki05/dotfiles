@@ -84,9 +84,12 @@ cleanup ambiguous.
 | `agent_team/task_execution.py` | Persists TaskSpec digests, dependency admission, review decisions, and per-stage round limits. |
 | `agent_team/task_verification.py` | Runs declared fixed argv against the approved workspace revision and records bounded evidence. |
 | `agent_team/workspace_revision.py` | Creates a bounded Git workspace revision and rejects symlinks and special files. |
-| `agent_team/scoped_acp.py`, `claude_scoped_agent.mjs` | Create the native Worker policy and enforce TaskSpec scope for model tool calls. |
+| `agent_team/scoped_acp.py`, `scoped_policy.mjs` | Bind native role profiles and share TaskSpec path-policy checks. |
+| `agent_team/claude_scoped_agent.mjs`, `scoped_file_tools.mjs` | Enforce Claude tool hooks and the four Codex host file tools, respectively. |
 | `agent_team/scoped_acp_client.mjs` | Opens one direct public ACP SDK connection per native assignment and confirms cleanup. |
-| `agent_team/native_acp_dependencies.py` | Resolves Node, Claude ACP 0.70.0, and its SDK 1.3.0 dependency with exact fingerprints. |
+| `agent_team/native_acp_dependencies.py` | Resolves only the selected native provider's Node, ACP adapter, SDK, and required provider binary with exact fingerprints. |
+| `agent_team/codex_preflight.py`, `codex_acp.py` | Validate existing file authentication/configuration and bind private Codex launch artifacts. The public Codex ACP profile remains disabled. |
+| `agent_team/codex_scoped_launch.mjs`, `codex_scoped_inspect.mjs`, `codex_scoped_transport.mjs`, `codex_scoped_bridge.mjs` | Fix app-server startup, inspect effective configuration, and mediate bounded ACP/app-server traffic and file-tool requests. See the [Codex ACP implementation status](acp.md#scoped-codex-acp-implementation-not-enabled). |
 | `agent_team/runtime.py` | Shares identity, private-file, state-v3, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
 | `agent_team/process_identity.py` | Reads exact argv tuples on Linux and macOS so native ownership checks do not rely on display text. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |

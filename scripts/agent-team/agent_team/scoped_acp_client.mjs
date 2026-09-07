@@ -15,7 +15,7 @@ const CLIENT_VERSION = "1";
 const CLEANUP_TIMEOUT_MS = 2_000;
 const CHILD_EXIT_TIMEOUT_MS = 2_000;
 const SDK_PACKAGE = "@agentclientprotocol/sdk";
-const SDK_VERSION = "1.3.0";
+const SDK_VERSIONS = Object.freeze({ claude: "1.3.0", codex: "1.4.0" });
 
 function fail(message) {
   throw new Error(`scoped ACP client: ${message}`);
@@ -63,9 +63,15 @@ function parsePermission(value) {
   return value;
 }
 
+function parseHarness(value) {
+  if (value !== "claude" && value !== "codex") fail("harness must be claude or codex");
+  return value;
+}
+
 export function parseCliArgs(argv) {
   const values = {};
   const known = new Set([
+    "--harness",
     "--sdk-entry",
     "--agent-argv",
     "--cwd",
@@ -85,6 +91,7 @@ export function parseCliArgs(argv) {
     index += 1;
   }
   for (const key of [
+    "--harness",
     "--sdk-entry",
     "--cwd",
     "--permission",
@@ -106,6 +113,7 @@ export function parseCliArgs(argv) {
     fail("agent argv must be a non-empty array of strings without NUL");
   }
   return {
+    harness: parseHarness(values["--harness"]),
     sdkEntry: absolutePath(values["--sdk-entry"], "SDK entry"),
     agentArgv,
     cwd: existingDirectory(values["--cwd"], "cwd"),
@@ -117,7 +125,7 @@ export function parseCliArgs(argv) {
   };
 }
 
-function validateSdkEntry(entry) {
+function validateSdkEntry(entry, version) {
   if (path.basename(entry) !== "acp.js" || path.basename(path.dirname(entry)) !== "dist") {
     fail("SDK entry must be @agentclientprotocol/sdk/dist/acp.js");
   }
@@ -131,7 +139,7 @@ function validateSdkEntry(entry) {
       } catch (error) {
         fail(`SDK package manifest is invalid: ${error?.message ?? error}`);
       }
-      if (manifest?.name === SDK_PACKAGE && manifest?.version === SDK_VERSION) {
+      if (manifest?.name === SDK_PACKAGE && manifest?.version === version) {
         return entry;
       }
     }
@@ -139,14 +147,15 @@ function validateSdkEntry(entry) {
     if (parent === current) break;
     current = parent;
   }
-  fail(`SDK entry must belong to ${SDK_PACKAGE}@${SDK_VERSION}`);
+  fail(`SDK entry must belong to ${SDK_PACKAGE}@${version}`);
 }
 
-async function loadSdk(sdkEntry) {
-  validateSdkEntry(sdkEntry);
+async function loadSdk(sdkEntry, harness) {
+  const version = SDK_VERSIONS[parseHarness(harness)];
+  validateSdkEntry(sdkEntry, version);
   const sdk = await import(pathToFileURL(sdkEntry).href);
   if (typeof sdk.client !== "function" || typeof sdk.ndJsonStream !== "function") {
-    fail(`installed ${SDK_PACKAGE}@${SDK_VERSION} does not expose client and ndJsonStream`);
+    fail(`installed ${SDK_PACKAGE}@${version} does not expose client and ndJsonStream`);
   }
   return sdk;
 }
@@ -156,6 +165,9 @@ function fixedTools(permission) {
 }
 
 export function buildSessionRequest(options) {
+  if (parseHarness(options.harness) === "codex") {
+    return { cwd: options.cwd, mcpServers: [] };
+  }
   const tools = fixedTools(options.permission);
   const claudeOptions = {
     model: options.model,
@@ -268,7 +280,7 @@ async function stopChild(child) {
 }
 
 async function runTask(options, prompt, signalState) {
-  const sdk = await loadSdk(options.sdkEntry);
+  const sdk = await loadSdk(options.sdkEntry, options.harness);
   const child = spawn(options.agentArgv[0], options.agentArgv.slice(1), {
     cwd: options.cwd,
     env: { ...process.env },
@@ -365,12 +377,18 @@ async function runTask(options, prompt, signalState) {
       value: options.model,
     });
     const selectedModel = requireConfigValue(modelResponse, "model", "model selection");
+    if (selectedModel !== options.model) fail("model selection does not match requested model");
+    const effortId = options.harness === "codex" ? "reasoning_effort" : "effort";
     const effortResponse = await request(sdk.methods.agent.session.setConfigOption, {
       sessionId,
-      configId: "effort",
+      configId: effortId,
       value: options.effort,
     });
-    const selectedEffort = requireConfigValue(effortResponse, "effort", "effort selection");
+    const selectedEffort = requireConfigValue(effortResponse, effortId, "effort selection");
+    if (selectedEffort !== options.effort) fail("effort selection does not match requested effort");
+    if (requireConfigValue(effortResponse, "model", "effort selection") !== options.model) {
+      fail("model selection does not match requested model after effort selection");
+    }
     if (signalState.interrupted) {
       await cancelActive();
       fail(signalState.reason);

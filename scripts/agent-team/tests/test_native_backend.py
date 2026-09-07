@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -174,6 +174,96 @@ def role_spec(
 
 
 class NativeBackendTest(unittest.TestCase):
+    def test_codex_inspection_failure_preserves_unconfirmed_cleanup(self) -> None:
+        from agent_team import codex_acp
+        from agent_team.adapters import ExecutionError
+
+        class FakeCodexExecutables(FakeExecutables):
+            @classmethod
+            def from_dict(cls, _value: object) -> FakeCodexExecutables:
+                return cls()
+
+        task = self.task_spec()
+        for failure in ("unconfirmed", "confirmed", "interrupt", "journal-write"):
+            confirmed = failure == "confirmed"
+            with self.subTest(failure=failure):
+                self.state_path = self.root / f"state-{failure}" / "state.json"
+                with self.planner_backend(task_specs=(task,)) as backend:
+                    state = native.runtime_read_state(self.state_path)
+                    state["role_specs"]["planner"].update(
+                        native.native_profile("codex", "planner"),
+                        provider_snapshot={"test": "snapshot"},
+                    )
+                    native.runtime_write_state(self.state_path, state)
+                    before = self.state_path.read_bytes()
+                    with (
+                        mock.patch.object(
+                            native.native_acp_dependencies,
+                            "CodexAcpExecutables",
+                            FakeCodexExecutables,
+                        ),
+                        mock.patch.object(
+                            native.native_acp_dependencies,
+                            "codex_adapter_snapshot",
+                            return_value={"test": "adapter"},
+                        ),
+                        mock.patch.object(codex_acp, "verify_snapshot"),
+                        mock.patch.object(
+                            native,
+                            "_save_state",
+                            side_effect=RuntimeFailure(
+                                ErrorCode.BACKEND_PROTOCOL_FAILURE, "write failed"
+                            ),
+                        )
+                        if failure == "journal-write"
+                        else nullcontext(),
+                        mock.patch.object(
+                            codex_acp,
+                            "prepare_assignment",
+                            side_effect=KeyboardInterrupt()
+                            if failure == "interrupt"
+                            else ExecutionError(
+                                "inspection failed", cleanup_confirmed=confirmed
+                            ),
+                        ) as prepare,
+                        mock.patch.object(native.subprocess, "Popen") as popen,
+                        self.assertRaises(
+                            KeyboardInterrupt
+                            if failure == "interrupt"
+                            else RuntimeFailure
+                        ),
+                    ):
+                        backend.request(TaskDispatch(Role.PLANNER, task, "inspect"))
+                    popen.assert_not_called()
+                    private_root = self.fixture_trees[-1]
+                    current = native.runtime_read_state(self.state_path)
+                    self.assertEqual(current["roles"], {})
+                    self.assertEqual(current.get("tasks"), state.get("tasks"))
+                    if failure == "journal-write":
+                        prepare.assert_not_called()
+                    if confirmed or failure == "journal-write":
+                        self.assertFalse(private_root.exists())
+                        self.assertEqual(self.state_path.read_bytes(), before)
+                    else:
+                        self.assertTrue(private_root.is_dir())
+                        self.assertEqual(
+                            current["native"]["codex_inspection_cleanup"],
+                            {
+                                "role": "planner",
+                                "provider_private_root": str(private_root),
+                                "cleanup_confirmed": False,
+                            },
+                        )
+                        with self.assertRaisesRegex(RuntimeFailure, "unconfirmed"):
+                            backend.request(RolePrompt(Role.PLANNER, "retry"))
+                        with self.assertRaisesRegex(RuntimeFailure, "unconfirmed"):
+                            backend.stop()
+                        with self.assertRaisesRegex(RuntimeFailure, "unconfirmed"):
+                            backend._resume_locked(self.spec(), {})
+                        self.assertEqual(backend.request(Status()).status, "unknown")
+                        self.assertTrue(private_root.is_dir())
+                self.state_path.unlink()
+
     def task_spec(self, *, dependencies: tuple[str, ...] = ()) -> TaskSpec:
         return TaskSpec(
             task_id="inspect-project",
@@ -645,6 +735,9 @@ class NativeBackendTest(unittest.TestCase):
             self.assertEqual(len(saved["write_policy_sha256"]), 64)
             self.assertEqual(
                 len(state["role_specs"]["worker"]["scoped_wrapper_sha256"]), 64
+            )
+            self.assertEqual(
+                len(state["role_specs"]["worker"]["scoped_policy_sha256"]), 64
             )
 
     def test_worker_preflight_failure_publishes_consumable_failed_result(self) -> None:
