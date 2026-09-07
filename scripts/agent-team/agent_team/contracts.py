@@ -131,6 +131,8 @@ class RoleSpec:
     acp_executables: Mapping[str, object] | None = None
     scoped_wrapper_sha256: str | None = None
     scoped_client_sha256: str | None = None
+    scoped_policy_sha256: str | None = None
+    provider_snapshot: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,12 +22,20 @@ SDK_ENTRY = (
 )
 if SDK_ENTRY is not None and not SDK_ENTRY.is_file():
     raise RuntimeError("AGENT_TEAM_SDK_ENTRY must identify the pinned ACP SDK entry")
+CODEX_SDK_ENTRY = (
+    Path(os.environ["AGENT_TEAM_CODEX_SDK_ENTRY"])
+    if "AGENT_TEAM_CODEX_SDK_ENTRY" in os.environ
+    else None
+)
+if CODEX_SDK_ENTRY is not None and not CODEX_SDK_ENTRY.is_file():
+    raise RuntimeError("AGENT_TEAM_CODEX_SDK_ENTRY must identify ACP SDK 1.4.0")
 
 
 FIXTURE = r"""
 import fs from "node:fs";
 
-const [logPath, mode] = process.argv.slice(2);
+const [logPath, mode, harness] = process.argv.slice(2);
+const effortId = harness === "codex" ? "reasoning_effort" : "effort";
 const pending = new Map();
 let model = "default";
 let effort = "default";
@@ -59,7 +67,7 @@ function configOptions() {
       options: [{ value: "sonnet", name: "Sonnet" }],
     },
     {
-      id: "effort",
+      id: effortId,
       type: "select",
       name: "Effort",
       currentValue: effort,
@@ -98,11 +106,14 @@ process.stdin.on("data", (chunk) => {
       send(message.id, { sessionId: "fixture-session", configOptions: configOptions() });
     } else if (method === "session/set_config_option") {
       if (message.params.configId === "model") model = message.params.value;
-      if (message.params.configId === "effort") effort = message.params.value;
+      if (message.params.configId === effortId) effort = message.params.value;
+      if (mode === "model-mismatch") model = "other-model";
+      if (mode === "effort-mismatch" && message.params.configId === "effort") effort = "low";
+      if (mode === "effort-reroutes-model" && message.params.configId === "effort") model = "other-model";
       send(message.id, { configOptions: configOptions() });
     } else if (method === "session/prompt") {
       pending.set(message.params.sessionId, message.id);
-      if (mode === "success") {
+      if (["success", "model-mismatch", "effort-mismatch", "effort-reroutes-model"].includes(mode)) {
         process.stdout.write(`${JSON.stringify({
           jsonrpc: "2.0",
           method: "session/update",
@@ -179,14 +190,18 @@ class ScopedAcpClientTest(unittest.TestCase):
         mode: str = "success",
         *,
         permission: str = "workspace-write",
+        harness: str = "claude",
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         log_path = self.root / f"{mode}.jsonl"
-        agent_argv = [NODE, str(self.fixture), str(log_path), mode]
+        sdk_entry = CODEX_SDK_ENTRY if harness == "codex" else SDK_ENTRY
+        agent_argv = [NODE, str(self.fixture), str(log_path), mode, harness]
         args = [
             NODE,
             str(CLIENT),
+            "--harness",
+            harness,
             "--sdk-entry",
-            str(SDK_ENTRY),
+            str(sdk_entry),
             "--cwd",
             str(self.workspace),
             "--permission",
@@ -240,6 +255,7 @@ class ScopedAcpClientTest(unittest.TestCase):
 const client = await import(process.argv[1]);
 const wrapper = await import(process.argv[2]);
 const request = client.buildSessionRequest({
+  harness: "claude",
   cwd: process.argv[3],
   permission: "workspace-write",
   model: "sonnet",
@@ -282,6 +298,7 @@ process.stdout.write(JSON.stringify({request, injected}));
         script = """
 const client = await import(process.argv[1]);
 const parsed = client.parseCliArgs([
+  "--harness", "claude",
   "--sdk-entry", process.argv[2],
   "--agent-argv", "[\\"node\\",\\"agent\\"]",
   "--cwd", process.argv[3],
@@ -369,6 +386,35 @@ process.stdout.write(JSON.stringify(parsed));
         self.assertEqual(options["tools"], ["Read", "Grep", "Glob"])
         self.assertEqual(options["allowedTools"], ["Read", "Grep", "Glob"])
 
+    def test_codex_uses_its_effort_option_and_omits_claude_metadata(self) -> None:
+        self.assertIsNotNone(CODEX_SDK_ENTRY, "AGENT_TEAM_CODEX_SDK_ENTRY is required")
+        result, log_path = self._run(harness="codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self._events(log_path)
+        self.assertEqual(calls[3]["value"]["configId"], "reasoning_effort")
+        self.assertEqual(
+            calls[1]["value"],
+            {"cwd": str(self.workspace.resolve()), "mcpServers": []},
+        )
+        self.assertEqual(json.loads(result.stdout)["effort"], "high")
+
+    def test_unknown_harness_is_rejected_before_agent_spawn(self) -> None:
+        result, log_path = self._run(harness="unselected")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("harness must be claude or codex", result.stderr)
+        self.assertFalse(log_path.exists())
+
+    def test_model_and_effort_mismatch_is_rejected_before_prompt(self) -> None:
+        for mode in ("model-mismatch", "effort-mismatch", "effort-reroutes-model"):
+            with self.subTest(mode=mode):
+                result, log_path = self._run(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("selection does not match", result.stderr)
+                methods = [entry["event"] for entry in self._events(log_path)]
+                self.assertNotIn("session/prompt", methods)
+                self.assertEqual(methods[-2:], ["session/close", "stdin-end"])
+                self.assertEqual(result.stdout, "")
+
     def test_client_does_not_create_acpx_or_claude_state(self) -> None:
         result, _ = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -387,6 +433,8 @@ process.stdout.write(JSON.stringify(parsed));
         args = [
             NODE,
             str(CLIENT),
+            "--harness",
+            "claude",
             "--sdk-entry",
             str(SDK_ENTRY),
             "--agent-argv",

@@ -524,11 +524,19 @@ AGENT_TEAM_RUN_LIVE_ZELLIJ=1 uv run --locked --project scripts/agent-team \
 これはfake providerのterminal evidenceです。実モデルのHerdr/Zellij workflowとHerdrのcancel evidenceは
 上記のとおりです。paneやsessionの消失だけをcleanup成功とは扱いません。
 
-public SDK client testは、導入済みSDK entryを`AGENT_TEAM_SDK_ENTRY`で明示した場合に実行します。
-個人固有のpathを既定値にせず、この変数がない場合はskipします。
+公開SDK clientの契約テストは、偽のagentを使います。全ケースの実行には、
+Claude用のSDK `1.3.0`とCodex用のSDK `1.4.0`を明示してください。
+次のテスト専用の導入例は、CIと同じpackage aliasを使います。
 
 ```bash
-AGENT_TEAM_SDK_ENTRY=/path/to/node_modules/@agentclientprotocol/sdk/dist/acp.js \
+npm install --prefix /path/to/agent-team-sdk-test --ignore-scripts --no-audit --no-fund \
+  @agentclientprotocol/sdk@1.3.0 codex-acp-sdk@npm:@agentclientprotocol/sdk@1.4.0
+AGENT_TEAM_SDK_ENTRY=/path/to/agent-team-sdk-test/node_modules/@agentclientprotocol/sdk/dist/acp.js \
+AGENT_TEAM_CODEX_SDK_ENTRY=/path/to/agent-team-sdk-test/node_modules/codex-acp-sdk/dist/acp.js \
   uv run --locked --project scripts/agent-team python -m unittest \
   scripts/agent-team/tests/test_scoped_acp_client.py -v
 ```
+
+個人固有のpathは既定値にしません。NodeまたはClaude用SDKの指定がなければsuiteをskipし、
+実行が有効な状態でCodex用SDKの指定が欠けていれば失敗します。
+この試験は、公開設定で無効にしているCodex ACPの実モデル対応を実証するものではありません。

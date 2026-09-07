@@ -15,6 +15,7 @@ from agent_team.runtime import read_state
 from agent_team.scoped_acp import (
     SCOPED_AGENT,
     SCOPED_CLIENT,
+    SCOPED_POLICY,
     checked_digest,
     create_write_policy,
 )
@@ -149,6 +150,7 @@ class NativeAcpRunnerTest(unittest.TestCase):
                     "acp_executables": executables.as_dict(),
                     "scoped_wrapper_sha256": checked_digest(SCOPED_AGENT),
                     "scoped_client_sha256": checked_digest(SCOPED_CLIENT),
+                    "scoped_policy_sha256": checked_digest(SCOPED_POLICY),
                 },
             },
             "roles": {"planner": assignment},

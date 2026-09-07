@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "agent_team" / "claude_scoped_agent.mjs"
+SHARED_POLICY = ROOT / "agent_team" / "scoped_policy.mjs"
 NODE = shutil.which("node")
 
 
@@ -140,6 +141,19 @@ export function runAcp() {
         self.assertIn("symlink", message)
 
     def run_probe(self, operation: str, *arguments: object) -> object:
+        module = (
+            SHARED_POLICY
+            if operation in {"parsePolicy", "loadPolicy", "decideTool"}
+            else WRAPPER
+        )
+        return self.run_probe_from(module, operation, *arguments)
+
+    def run_shared_probe(self, operation: str, *arguments: object) -> object:
+        return self.run_probe_from(SHARED_POLICY, operation, *arguments)
+
+    def run_probe_from(
+        self, module: Path, operation: str, *arguments: object
+    ) -> object:
         assert NODE is not None
         script = """
  const scoped = await import(process.argv[1]);
@@ -158,7 +172,7 @@ try {
                 "--input-type=module",
                 "-e",
                 script,
-                str(WRAPPER),
+                str(module),
                 operation,
                 json.dumps(arguments, ensure_ascii=False),
             ],
@@ -174,7 +188,35 @@ try {
             raise AssertionError(payload["error"])
         return payload["result"]
 
+    def test_shared_policy_exports_parse_load_and_decide(self) -> None:
+        policy_path = self.private_root / "shared-policy.json"
+        policy_path.write_text(json.dumps(self.policy), encoding="utf-8")
+        policy_path.chmod(0o600)
+
+        parsed = self.run_shared_probe("parsePolicy", self.policy)
+        loaded = self.run_shared_probe("loadPolicy", str(policy_path))
+        decision = self.run_shared_probe(
+            "decideTool",
+            self.policy,
+            "Edit",
+            {"file_path": str(self.workspace / "src" / "ok.py")},
+        )
+
+        self.assertEqual(parsed["workspace"], str(self.workspace))
+        self.assertEqual(loaded["workspace"], str(self.workspace))
+        self.assertEqual(decision["behavior"], "allow")
+
     def run_probe_error(self, operation: str, *arguments: object) -> str:
+        module = (
+            SHARED_POLICY
+            if operation in {"parsePolicy", "loadPolicy", "decideTool"}
+            else WRAPPER
+        )
+        return self.run_probe_error_from(module, operation, *arguments)
+
+    def run_probe_error_from(
+        self, module: Path, operation: str, *arguments: object
+    ) -> str:
         assert NODE is not None
         script = """
  const scoped = await import(process.argv[1]);
@@ -193,7 +235,7 @@ try {
                 "--input-type=module",
                 "-e",
                 script,
-                str(WRAPPER),
+                str(module),
                 operation,
                 json.dumps(arguments, ensure_ascii=False),
             ],

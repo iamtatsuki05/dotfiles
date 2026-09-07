@@ -40,14 +40,14 @@ runnerもACP実行の前に再検証して、各session operationで同じfile�
 これらのACP依存関係を解決せず、directだけのteamにも必要ありません。static harness inventoryは
 この起動前検査とは別であり、providerのinstallや起動を行いません。
 
-Codex ACPは意図的に拒否しています。negative testで、ACPの`deny-all`/read-only制御を設定しても
+追加の制御を持たないCodex ACPは、引き続き拒否しています。negative testで、ACPの`deny-all`/read-only制御を設定しても
 Codex internal toolのwriteを防げないことを確認したためです。検証済みのworkspace-write Workerと
 read-only Reviewerには、隔離した`CODEX_HOME`とprovider native permission profileを持つdirect
 Codexを使います。
 
-## native tmuxのACP
+## native runtimeのClaude ACP
 
-native tmuxでは専用clientが、assignmentごとに公開ACPの接続を1本使います。
+native tmux、Herdr、Zellijでは専用clientが、assignmentごとに公開ACPの接続を1本使います。
 必要な依存はNode.js、`@agentclientprotocol/claude-agent-acp@0.70.0`、そのadapterに
 導入された`@agentclientprotocol/sdk@1.3.0`です。`acpx`は選択しません。
 起動時にNode、adapter entry、実際にimportする`dist/lib.js`、SDK entryの計4 fileについて、
@@ -65,6 +65,39 @@ schemaとレビュー・検証の流れは[設定リファレンス](configurati
 導入済みの依存package自体は信頼する前提です。entry fileのfingerprintは、読み込まれる
 全依存fileの固定や、同じユーザー権限の別プロセスによる悪意ある同時差し替えを保証しません。
 
+## 範囲を制限したCodex ACPの実装：公開設定では未有効
+
+native backendには、変更範囲を制限したCodexの実装を追加しています。
+ただし、registryは引き続きCodex ACPの設定を拒否します。実行可能な対応済み構成ではありません。
+有効化には、実際の認証を使うモデル実行と、その権限・終了処理の検証が必要です。
+
+この実装が選択する依存は、Node.js 22以上、
+`@agentclientprotocol/codex-acp@1.10.0`、そのSDK `1.4.0`、
+versionを`codex-cli 0.153.4`と返すCodex実行fileです
+（npmでの配布名は`@openai/codex@0.153.4`）。共通のnative進行処理と公開ACP clientを使います。
+`acpx`やdirect Codexの実行経路には切り替えません。
+Python側で専用の起動manifestを作り、時間・出力量を制限した設定検査を行います。
+その結果をassignmentに固定してからACP runnerを起動します。
+
+app-serverのproxyはmodel、effort、指示、読み取り専用sandbox、空の実行環境一覧を固定し、
+補助機能を無効にします。設定されたMCP serverもthread作成前に個別に無効化します。
+ホスト側で提供するtoolは`read_text`、`list_files`、`write_text`、`edit_text`の4つです。
+書き込みにはWorkerのTaskSpecで宣言された変更範囲が必要です。PlannerとReviewerは書き込めません。
+共通のpath検査で、状態、認証、設定、依存file、制御用runtimeを保護します。
+それ以外のtool要求や、追加threadの作成は拒否します。
+
+専用の`CODEX_HOME`から、既存のChatGPT認証fileへlinkを張ります。
+起動時には認証のdigest・有効期限とproject設定を固定します。
+未対応のsystem設定やproject設定がある場合は、app-server起動前に拒否します。
+providerによるtoken更新はlink先の認証fileを変更する可能性があります。
+通常の認証を使う実機試験は未実施で、保存済みのPro情報だけでは認証成功や課金を確認できません。
+設定検査のプロセス終了を確認できなかった場合は、専用directoryを状態に記録して保持し、
+dispatch、再開、停止成功の判定を止めます。
+
+file制御、通信、依存選択、native assignmentの接続は、模擬認証や偽のagentでテストしています。
+ネットワークを遮断した別試験では、実際のCodexのthread設定をモデル実行なしで確認しました。
+これらは、実認証を使うモデルの挙動を検証した証拠ではありません。
+
 ## 認証とsubscription
 
 ACPはaccountを選択したり、providerのbilling policyを回避したりしません。Claude profileは
@@ -76,8 +109,7 @@ adapterが利用できるambientな`claude.ai` loginを再利用します。特�
 
 adapterを対応matrixへ登録するには、exact version policy、認証経路、positive lifecycle smoke test、
 read/write/process/networkのnegative testを記録する必要があります。adapterが存在するだけでは
-不十分です。条件が揃うまでは`recognized-but-rejected`のままとし、Orca resource作成前にconfigを
-拒否します。
+不十分です。条件が揃うまで、その構成はruntimeのresourceを作成する前に拒否します。
 
 この依存関係bindingで確認できるのは、選択したClaude profileの実行ファイルidentityです。
 他のACP adapterをrunnableへ昇格させたり、[対応matrix](support-matrix_JA.md)に記録したscopeや
