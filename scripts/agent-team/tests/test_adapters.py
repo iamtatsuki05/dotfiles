@@ -530,7 +530,35 @@ class AdapterSafetyTest(unittest.TestCase):
             start_new_session=True,
         )
         try:
-            time.sleep(0.2)
+            deadline = time.monotonic() + 2.0
+            while True:
+                ps_result = subprocess.run(
+                    (
+                        "/bin/ps",
+                        "-p",
+                        str(process.pid),
+                        "-o",
+                        "pid=,pgid=,stat=",
+                    ),
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=1.0,
+                )
+                last_ps_row = ps_result.stdout.strip() or "<missing>"
+                fields = ps_result.stdout.split()
+                if (
+                    ps_result.returncode == 0
+                    and len(fields) == 3
+                    and fields[0] == str(process.pid)
+                    and fields[1] == str(process.pid)
+                    and fields[2].startswith("Z")
+                ):
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.fail(f"owned child did not become a zombie: {last_ps_row!r}")
+                time.sleep(min(remaining, 0.01))
             self.assertTrue(_process_group_exited(process.pid))
         finally:
             process.wait(timeout=2.0)

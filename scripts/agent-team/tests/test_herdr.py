@@ -419,6 +419,28 @@ class HerdrDriverContractTest(unittest.TestCase):
         (receipt.session_dir / "unowned-link").symlink_to(receipt.config_path)
         self.assertFalse(driver._known_paths_owned(receipt))
 
+    def _replace_socket_path_for_test(self, path: Path) -> None:
+        original = _identity(path)
+        staged_path = path.with_name(".replacement")
+        replacement = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            replacement.bind(str(staged_path))
+            staged = _identity(staged_path)
+            self.assertNotEqual(
+                (original.device, original.inode),
+                (staged.device, staged.inode),
+            )
+            staged_path.replace(path)
+            observed = _identity(path)
+            self.assertEqual(
+                (observed.device, observed.inode),
+                (staged.device, staged.inode),
+            )
+        finally:
+            replacement.close()
+            staged_path.unlink(missing_ok=True)
+        path.chmod(0o600)
+
     def test_socket_inode_replacement_blocks_close_for_both_sockets(self) -> None:
         for socket_name in ("socket_path", "client_socket_path"):
             with (
@@ -434,13 +456,7 @@ class HerdrDriverContractTest(unittest.TestCase):
                     receipt = self._sample_receipt()
                     driver = self._restored_driver(receipt)
                     path = getattr(receipt, socket_name)
-                    path.unlink()
-                    replacement = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    try:
-                        replacement.bind(str(path))
-                    finally:
-                        replacement.close()
-                    path.chmod(0o600)
+                    self._replace_socket_path_for_test(path)
                     absent = HerdrInspection(
                         presence="absent",
                         running=False,
@@ -498,13 +514,7 @@ class HerdrDriverContractTest(unittest.TestCase):
                     calls += 1
                     if calls == 2:
                         path = receipt.socket_path
-                        path.unlink()
-                        replacement = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                        try:
-                            replacement.bind(str(path))
-                        finally:
-                            replacement.close()
-                        path.chmod(0o600)
+                        self._replace_socket_path_for_test(path)
                     return present if calls == 1 else absent
 
                 with (
