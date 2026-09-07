@@ -125,15 +125,14 @@ if agent_dir:
 lines.extend(
     [
         "- 作業内容に合う最小限の方法で検証し、未検証事項を報告する。コードなら lint/test/build、文書や資料なら事実・体裁・リンク、ブラウザ操作なら表示や状態を確認する。",
-        "- 複数ファイル、共有ロジック、重要文書、セキュリティ、本番影響、データ損失リスクを含む変更では、最終回答前に read-only reviewer を入れる。",
+        "- 独立レビューの要否は AGENTS.md の「作業後レビュー」に従う。ファイル間の整合性や共有ロジック、重要文書、安全性に影響する変更は read-only reviewer で確認し、ファイル数だけを理由に工程を増やさない。",
         "- notebook は paired jupytext の .py を編集し、.ipynb を直接編集しない。",
     ]
 )
 
-if normalized_event == "UserPromptSubmit":
-    lines.append(
-        "- 独立した副タスクが2件以上なら、出力依存と共有状態の競合がないことを確認し、最初の待機前に同じ wave でまとめて起動する。依存または競合が1つでもあれば直列にする。2件なら2体、3件以上なら3〜5体とし、結果を揃えて一度だけ統合する。"
-    )
+lines.append(
+    "- 通常の調査・設計・実装・検証はメインの agent が単体で進める。subagent は独立レビュー、またはユーザーが明示的に委譲を依頼した場合に使う。対象を分割できることだけを理由に起動しない。"
+)
 
 if normalized_event not in {"SubagentStart", "SubagentStop"}:
     lines.append(
