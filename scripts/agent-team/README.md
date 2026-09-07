@@ -212,6 +212,13 @@ Before starting a team:
    bundled Orca roles require both Claude and Codex; native runtimes require Claude.
 4. For `runtime = "orca"`, register the target repository with Orca once.
 
+Native runtimes currently use the standard Claude login under the normal home
+directory. They resolve the Claude executable directly and do not inherit a
+`claude-account` default profile or forward `CLAUDE_CONFIG_DIR`. Confirm that
+this standard login with `env -u CLAUDE_CONFIG_DIR claude auth status` before
+starting a native team. Named account profiles are not supported by the native
+runtime yet.
+
 ```bash
 # Providers for the bundled Orca configuration
 command -v claude

@@ -181,6 +181,12 @@ cancelに関する代表的な証拠であり、すべてのharnessの証拠で�
    native runtimeではClaudeが必要です。
 4. `runtime = "orca"`では対象repositoryをOrcaへ一度登録している。
 
+現在のnative runtimeは、通常のホームディレクトリにある標準のClaudeログインを使います。
+Claudeの実行ファイルを直接起動するため、`claude-account`の既定プロファイルを選択せず、
+`CLAUDE_CONFIG_DIR`も渡しません。native teamを起動する前に、
+`env -u CLAUDE_CONFIG_DIR claude auth status`で標準のログインが意図したアカウントであることを
+確認してください。名前付きアカウントプロファイルにはまだ対応していません。
+
 ```bash
 # bundled Orca configのprovider
 command -v claude
