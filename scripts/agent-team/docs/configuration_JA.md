@@ -5,7 +5,7 @@
 
 `agent-team`は既存のversion 3固定role設定を維持しながら、明示的なversion 4の
 topology設定も受け付けます。version 3の`runtime = "orca"`は4 role固定のcontractを
-使い、version 3の`runtime = "tmux"`はdirect Claude Mainと任意のClaude ACP Planner、
+使い、version 3の`runtime = "tmux"`、`"herdr"`、`"zellij"`はdirect Claude Mainと任意のClaude ACP Planner、
 Worker、Reviewerを持つ実験的なnative subsetです。native Workerのassignmentにはconfigの
 `[[tasks]]` catalogにあるTaskSpecとの完全一致が必要です。必須値の欠落や未対応の組み合わせは、
 roleを起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
@@ -55,17 +55,17 @@ permission = "read-only"
 bundled configでは、MainとPlannerに`fable`、WorkerとReviewerに`gpt-6-astra`を使います。
 canonical PlannerはClaudeのread-only ACP roleで、canonical WorkerとReviewerはdirect Codexのままです。
 
-## 実験的なnative tmux subsetを明示的に選ぶ
+## 実験的なnative terminal runtimeを明示的に選ぶ
 
-`runtime = "tmux"`はcustomなversion 3 configでだけ指定します。Mainは必須で、direct
+native runtimeはcustomなversion 3 configでだけ指定します。Mainは必須で、direct
 Claude・permission `orchestrator`でなければなりません。PlannerとReviewerは省略するか、
 それぞれverified Claude ACP・permission `read-only`・pinned `claude-acp-0.70.0` adapterで
 定義できます。Workerはscoped Claude ACPの`workspace-write` profileとして選択できますが、
 選択にはReviewerも必要です。Workerへ作業をdispatchするときは、一致する`[[tasks]]` entryが
 必要です。direct Worker/Reviewerとその他のnative
 profileは、state、Task、Dispatch、processに影響する前に拒否します。
-nativeの起動には`tmux` commandが必要で、OrcaやCodexは必要ありません。ACP roleを選ぶconfig
-では、後述するpinned Node.jsとACP dependencyも必要です。
+nativeの起動には選択したterminalのcommandが必要で、OrcaやCodexは必要ありません。ACP roleを選ぶconfig
+では、後述するNode.jsの最低版とACP dependencyも必要です。
 
 ```toml
 version = 3
@@ -127,12 +127,16 @@ timeout_seconds = 30
 この例は既定の`fable`を維持しています。起動前に`command -v claude`と`claude --version`を
 確認してください。実Main/Plannerの経路はClaude Code 2.1.261で成功し、2.1.112はFableに
 対応する版を満たしませんでした。nativeの`start`、`status`、`attach`、`stop`は
-`TmuxBackend`へ送られ、`attach`できるのはMainだけです。native ACPの完了はrunnerが
-publishし、tmux paneの文字列には依存しません。lifecycleには`role_read` → `role_release`
+選択したnative backendへ送られ、`attach`できるのはMainだけです。native ACPの完了はrunnerが
+publishし、terminal paneの文字列には依存しません。lifecycleには`role_read` → `role_release`
 → `delivery_ack`の順序が必要です。`native.last_ack`は1つのreceipt markerであり、Taskや
 goal全体の完了を示しません。
 
-modelなしのnative tmux CLI start/status/stopは、OrcaとCodexがない環境、空白を含むworkspace
+上のroleと`[[tasks]]`宣言はすべてのnative runtimeで共通です。`runtime`だけを`"herdr"`または
+`"zellij"`へ変えると対応するterminal backendを選びます。Main、ACP roleのpermission、TaskSpec
+catalog、review gateは変わりません。
+
+以前のモデルを使わないtmux CLI start/status/stop試験は、OrcaとCodexがない環境、空白を含むworkspace
 path、削除済みconfigで成功しました。実際のClaude Code 2.1.261を使った`fable`/`high`の
 Mainも、ログイン済みの`claude.ai` accountでClaude ACP Plannerを呼び出し、MCPの
 read/release/ackと公開stopを完了しました。所有資源の消滅を独立に確認しています。
@@ -141,21 +145,46 @@ PATHから除外しました。これは読み取り専用のMain/Plannerの一�
 Python 3.13.15のwheel-only環境でnativeのPlanner、Worker、Reviewerを6 assignment実行し、
 意図的な`a-b`実装を差し戻し、`a+b`を同じworkspace revisionで承認して、trusted fixed-argv
 verificationまで完了しました。元のconfigとpromptを削除した後のpublic stopで、所有processと
-artifactは0件でした。約282秒の再試験は、起動時のTaskSpec catalog、PID/PGID/argvのgate、
-4 fileの依存bindingを含む実装で行い、catalogが最後まで変わらないことを確認しました。以前の2.1.112
+artifactは0件でした。再試験は、起動時のTaskSpec catalog、PID/PGID/argvのgate、
+4 fileの依存bindingを含む実装で行い、catalogが最後まで変わらないことを確認しました。これは`308b1ba`時点の
+以前のtmux generation proofです。以前の2.1.112
 での拒否はCLIの版が古いことによるもので、`fable`の利用不可を意味しません。
+
+新しいterminal driverには、modelを呼び出さないfake Main/Nodeのpublic CLI evidenceがあります。
+Python 3.11と3.13でtmux、Herdr、ZellijそれぞれがMCP read/release/ack、active cancel、Main自然終了後の
+元config/prompt削除とcold status/stopに成功し、PID、socket、state、config、private rootの消失を独立確認しました。
+Herdr 0.8.2は通常shell bootstrapを使い、HERDR_ENVを偽装しません。0.44.1で互換性を確認したZellijはdetached mode、
+persistent clientなし、`--max-panes 1`なし、Main pane保持です。これはfake providerの証拠だけです。
+
+別の実Claude Code 2.1.261 workflowでは、HerdrとZellijをPython 3.13.15のisolated wheel-only環境で実行し、
+Node 22.23.2、Claude ACP 0.70.0、SDK 1.3.0、Claude SDK 0.3.232だけを選択しました。各direct Claude Mainは
+Claude Max header付きのFable 5.1、effort `high`で動き、Planner、Reviewer、Workerの6 assignmentを、plan approve、
+implementation request_changes、implementation approveの順に自律完了しました。trusted fixed-argv verificationは
+`FIXED_ARGV_OK`を返し、catalog、Worker scope、protected file、kernel identityを確認しました。元のconfigとpromptを
+削除してからpublic stopを実行し、所有PID/PGID、state、socket、private pathが残っていないことを確認しました。
+通常のinteractive Main historyは残り、自動SDK callには`persistSession=false`を使いました。runtime package 51 fileはbuilt wheelとbyte-levelで一致しました
+（`655c3bc3c24a278c366cd6282bb2870d10129806f6f312d765329463b47afb7b`）。
+選択したACP依存のpackage metadataを122件確認しました。未選択packageの不在は依存一覧で照合し、
+未選択CLIと`npm`、`npx`、`uv`の不在は実行時の`PATH`で別に検査しました。Herdrの初回はtextとEnterを同時に
+pasteしたもののtextが貼付欄に残ったため、同じ初回messageを別のEnterで送信しました。追加の指示は送らず、typed verificationは完了しました。
+停止前に最終画面の`NATIVE_WORKFLOW_OK` markerは観測していません。Zellijは初回submissionからworkflow全体が自動で進み、
+最終markerを観測しました。従来の実モデルtmux proofは`308b1ba`時点のrunです。
+
+別の実Herdr active-cancel probeでは、public MCPからWorkerをdispatchし、`CANCEL_STARTED`を観測したうえで、live kernel
+PID/PGIDとnative resultの不在をstop直前に再確認しました。独立readbackで所有PID/PGID、process reference、pathが残っていない
+ことを確認しました。これはHerdrのClaude ACP cancelに関する代表的な証拠であり、すべてのharnessの証拠ではありません。
 
 ## top-level fieldで1つのteam contractを定義する
 
 | Field | Contract |
 |---|---|
 | `version` | 整数`3`だけを受け付ける。自動migrationは行わない。 |
-| `runtime` | `"orca"`または`"tmux"`だけを受け付ける。`orca`は4 role、`tmux`は実験的なnative subset。HerdrやZellijへのfallbackはない。 |
+| `runtime` | `"orca"`、`"tmux"`、`"herdr"`、`"zellij"`を受け付ける。`orca`は4 role、nativeは共通NativeBackendと選択terminal driverを使う。 |
 | `team_prefix` | `[a-z][a-z0-9-]{0,23}`に一致する値。runtime team IDの一部になる。 |
 | `max_review_rounds` | 正の整数。各段階の初回判定と再判定を数える。 |
 | `main` | 必須のMain role table。 |
-| `roles` | `orca`は`planner`、`worker`、`reviewer`を過不足なく含める。`tmux`は任意の`planner`、`worker`、`reviewer`を含められますが、WorkerにはReviewerが必要です。Mainは別に宣言し、常に必須です。 |
-| `tasks` | native tmuxだけで使う任意の`[[tasks]]` TaskSpec catalogです。各taskの固定検証は`[[tasks.verification]]`で宣言します。Orcaはこのfieldを拒否します。未指定ならread-onlyの`role_prompt`は使えますが、structured `task_dispatch`は拒否します。 |
+| `roles` | `orca`は`planner`、`worker`、`reviewer`を過不足なく含める。各native runtimeは任意の`planner`、`worker`、`reviewer`を含められますが、WorkerにはReviewerが必要です。Mainは別に宣言し、常に必須です。 |
+| `tasks` | native runtimeだけで使う任意の`[[tasks]]` TaskSpec catalogです。各taskの固定検証は`[[tasks.verification]]`で宣言します。Orcaはこのfieldを拒否します。未指定ならread-onlyの`role_prompt`は使えますが、structured `task_dispatch`は拒否します。 |
 
 runtime team IDは、`team_prefix`、workspace名、workspaceのabsolute pathのhashから
 作ります。config pathはIDに含みません。同じprefixとworkspaceを使う2つのconfigは、
@@ -195,7 +224,7 @@ workspace-write Claude、すべてのworkspace-write ACPはfail-fastで拒否し
 新しいproviderやACP adapterの追加は、configだけでは完了しません。code変更、
 capability/permission test、exact version policy、実lifecycle/cleanup smokeが必要です。
 
-native tmuxの対応matrixはさらに小さくなります。
+native terminalの対応matrixはさらに小さくなります。
 
 | Role | 対応するprovider / transport | 必須permission |
 |---|---|---|
@@ -223,13 +252,18 @@ absoluteなfile pathとSHA-256 fingerprintをlaunch snapshotへ保存します�
 runnerは保存したbindingを検証して使います。fileの不足や変更はfail-closedで停止します。実行時の
 commandは`npm`や`npx`を呼び出さず、directだけのconfigではACP依存関係を解決しません。
 
-native tmuxは別のbindingを使います。Node.js `22.13.0`以降、導入済みの
+native runtimeは別のbindingを使います。Node.js `22.0.0`以降、導入済みの
 `@agentclientprotocol/claude-agent-acp@0.70.0` command、その依存の
 `@agentclientprotocol/sdk@1.3.0`と実際にimportする`dist/lib.js`を解決し、4 fileのabsolute pathとSHA-256 fingerprintを保存します。
 assignmentごとにpublic ACP SDK connectionを1本だけ使い、nativeでは`acpx`を選択せず、`npm`や
 `npx`をruntimeから呼びません。通常のSDK persistenceは`persistSession=false`、
 `autoMemoryEnabled=false`に固定し、interactive Mainの通常Claude historyは残します。これは
 public SDKへの直接接続であり、providerのdirect/model transportではありません。
+
+terminalの挙動はHerdr `0.8.2`とZellij `0.44.1`で確認しています。Herdrはversion `0.8.2`と
+protocol 20のhandshakeを厳密に確認します。Zellijのpreflightはexecutableと既知のinventoryを確認し、
+CLIのexact versionは要求しません。確認したcompatibility versionではpersistent clientなしのdetached
+sessionを使い、`--max-panes 1`を使いません。
 
 ## effortはproviderごとの値を使う
 
@@ -254,15 +288,15 @@ configのpermission文字列だけではroleを昇格できません。
 direct Codexでは、隔離した`CODEX_HOME`を作り、`:read-only`または`:workspace`から
 permission profileを派生させます。read-only Claude ACPではtoolを`Read`、`Grep`、`Glob`へ
 限定し、readを許可します。non-interactive permissionを解決できない場合は失敗します。
-native tmuxのscoped Workerは、保護pathやlink・file typeの検査を除き、Read/Grep/Globで
+native runtimeのscoped Workerは、保護pathやlink・file typeの検査を除き、Read/Grep/Globで
 workspace内を読めます。TaskSpecの`allowed_paths`と`forbidden_paths`はWrite/Editだけを制限し、
 書き込みでは禁止pathを優先します。Bash、
 terminal、その他のRPCを拒否します。native Planner/Reviewerはread-onlyで、全native ACP roleは
 launcher所有のbackground processとして動きます。
 
-## TaskSpecはnative configで宣言する
+## TaskSpec catalog is optional; required for native task dispatch
 
-native tmuxのtask dispatchはcatalog方式です。taskごとに`[[tasks]]` tableを1つ宣言し、
+native task dispatchはcatalog方式です。taskごとに`[[tasks]]` tableを1つ宣言し、
 fixed argvごとに`[[tasks.verification]]` tableを1つ以上記述します。
 
 ```toml
@@ -357,7 +391,7 @@ agent-team start \
 ```
 
 `status`、`attach`、`stop`でも同じ値を使います。`--cwd`の既定値は現在のdirectoryです。
-4つのcommandは保存した`runtime`が選んだbackendへ送られ、native tmuxで`attach`できるのは
+4つのcommandは保存した`runtime`が選んだbackendへ送られ、native runtimeで`attach`できるのは
 Mainだけです。
 
 configを有効にする前にdry runを実行します。
@@ -376,4 +410,6 @@ Task固有のidentityを含むため、Dispatch時にだけ生成します。
 
 現在のcodeはconfig version 2を拒否します。version 2のteamは、version 3へ切り替える
 前に、旧launcherの`agent-team stop`で停止してください。live stateを編集したり、state
-version間でfieldをcopyしたりしないでください。
+version間でfieldをcopyしたりしないでください。古いnative terminal contractのstateで、固定した
+`supervisor_argv`やMain process receiptが欠ける場合は保持したままfail-closedにし、自動再構成や
+migrationは行いません。upgrade前に一致するexecutable/versionで停止してください。

@@ -36,25 +36,30 @@ from .mcp_protocol import (
     bounded_text,
     require_role,
 )
-from .native_backend import TmuxBackend
+from .native_terminal import is_native_runtime
 from .runtime import MAX_PROMPT_CHARS, read_state
 from .task_spec import TaskSpec
 
 
 class NativeMcpSession:
     def __init__(self, path: Path, state: dict[str, object]) -> None:
-        from .cli import _management_plan_from_state, _start_spec
+        from .cli import _management_plan_from_state, _runtime_engine, _start_spec
 
+        runtime = state.get("runtime")
+        if not is_native_runtime(runtime):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH, "native MCP requires a native runtime"
+            )
         self.path = path.resolve()
         self.run_id = state["run_id"]
-        self.backend = TmuxBackend(resume_existing=True)
-        self.backend.start(
-            _start_spec(_management_plan_from_state(state), attach=False)
-        )
+        self.runtime = runtime
+        plan = _management_plan_from_state(state)
+        _engine, self.backend = _runtime_engine(plan, resume_existing=True)
+        self.backend.start(_start_spec(plan, attach=False))
 
     def execute(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
         current = read_state(self.path)
-        if current["runtime"] != "tmux" or current["run_id"] != self.run_id:
+        if current["runtime"] != self.runtime or current["run_id"] != self.run_id:
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "native MCP run identity changed"
             )

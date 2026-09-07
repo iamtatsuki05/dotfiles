@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
@@ -14,6 +15,7 @@ from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .contracts import ErrorCode, RuntimeFailure
 from .locking import _LifecycleReservation
 from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
+from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .task_execution import validate_saved_tasks, validate_task_assignment
 
 ACP_ROLES: Final = frozenset({"planner", "worker", "reviewer"})
@@ -497,6 +499,46 @@ def _read_bounded_fd(fd: int, maximum: int) -> bytes:
     return bytes(data)
 
 
+def validate_native_main_process(value: object) -> None:
+    if not isinstance(value, Mapping):
+        raise RuntimeValidationError("native Main process receipt must be an object")
+    fields = {
+        "supervisor_pid",
+        "agent_pid",
+        "process_group_id",
+        "launch_nonce",
+        "phase",
+    }
+    phase = value.get("phase")
+    if phase == "exited":
+        fields.update({"returncode", "group_stopped"})
+    elif phase != "running":
+        raise RuntimeValidationError("native Main process phase is invalid")
+    if set(value) != fields:
+        raise RuntimeValidationError("native Main process receipt fields are invalid")
+    for key in ("supervisor_pid", "agent_pid"):
+        pid = value[key]
+        if type(pid) is not int or pid <= 1:
+            raise RuntimeValidationError(f"native Main process {key} is invalid")
+    if value["supervisor_pid"] == value["agent_pid"]:
+        raise RuntimeValidationError("native Main process must be a separate child")
+    nonce = value["launch_nonce"]
+    if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
+        raise RuntimeValidationError("native Main process launch nonce is invalid")
+    group = value["process_group_id"]
+    if group is not None and (type(group) is not int or group != value["agent_pid"]):
+        raise RuntimeValidationError("native Main process group identity is invalid")
+    if phase == "running":
+        if group is None:
+            raise RuntimeValidationError("running Main process group is unproven")
+    elif (
+        type(value["returncode"]) is not int
+        or type(value["group_stopped"]) is not bool
+        or (value["group_stopped"] and group is None)
+    ):
+        raise RuntimeValidationError("native Main process exit evidence is invalid")
+
+
 def validate_state_object(path: Path, state: object) -> dict[str, object]:
     path = _canonical(path)
     if not isinstance(state, dict):
@@ -506,12 +548,13 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
             f"agent-team state has an unsupported format (expected version {STATE_VERSION})"
         )
     runtime = state.get("runtime")
-    if not isinstance(runtime, str) or runtime not in {"orca", "tmux"}:
+    if runtime != "orca" and not is_native_runtime(runtime):
         raise RuntimeValidationError(
-            "agent-team state runtime must be 'orca' or 'tmux'"
+            "agent-team state runtime must be one of: "
+            + ", ".join(sorted({"orca", *NATIVE_RUNTIMES}))
         )
     required: tuple[str, ...] = _STATE_REQUIRED_KEYS
-    if runtime == "tmux":
+    if is_native_runtime(runtime):
         if "worktree_id" in state or "orca_socket" in state:
             raise RuntimeValidationError("native state must not contain Orca metadata")
         required = tuple(
@@ -541,6 +584,8 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
             or not Path(main_argv[0]).is_absolute()
         ):
             raise RuntimeValidationError("native state has an invalid Main command")
+        if "main_process" in native:
+            validate_native_main_process(native["main_process"])
     for key in required:
         value = state.get(key)
         if key in {"role_specs", "roles"}:
@@ -617,7 +662,9 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
                     f"agent-team state role assignment is missing {role}.{key}"
                 )
         ownership_key = (
-            "launcher_owned_runner" if runtime == "tmux" else "launcher_owned_terminal"
+            "launcher_owned_runner"
+            if is_native_runtime(runtime)
+            else "launcher_owned_terminal"
         )
         if assignment.get(ownership_key) is not True:
             raise RuntimeValidationError(

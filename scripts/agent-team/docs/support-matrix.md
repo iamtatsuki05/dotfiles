@@ -14,7 +14,7 @@ login, downloads packages, starts a process, or writes a workspace.
 
 | Harness | Direct profiles currently runnable | ACP adapter known | Static registry snapshot (not safety status) | Why not broader |
 |---|---|---|---|---|
-| Claude | Main `orchestrator`; Planner/Reviewer `read-only` | Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`; native tmux: direct public SDK with `@agentclientprotocol/sdk@1.3.0` | Verified | Bundled Orca ACP remains read-only; native tmux has a separate scoped Worker profile bound to declared TaskSpecs. |
+| Claude | Main `orchestrator`; Planner/Reviewer `read-only` | Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`; native tmux/Herdr/Zellij: direct public SDK with `@agentclientprotocol/sdk@1.3.0` | Verified | Bundled Orca ACP remains read-only; all native terminal drivers share the scoped Worker profile bound to declared TaskSpecs. |
 | Codex | Main `orchestrator`; Planner/Reviewer `read-only`; Worker `workspace-write` | `codex-acp` | Direct verified; ACP rejected | ACP permission mediation did not stop internal writes in the negative test. |
 | GitHub Copilot | Planner/Reviewer `read-only` (direct background, exact `1.0.81`) | Native `copilot --acp`; acpx built-in `copilot` | Verified when exact GitHub CLI is resolved | The profile is intentionally limited to read-only Planner/Reviewer; Workers remain rejected. |
 | Cursor | None | Native `cursor-agent acp`; acpx built-in `cursor` | Recognized; direct=`not-run`; acp=`not-run` | A historical auth observation is unverified; current permission phases are `not-run`. |
@@ -27,9 +27,9 @@ login, downloads packages, starts a process, or writes a workspace.
 
 An ACP adapter being installed or listed by acpx does not prove that the
 adapter is safe for a role. It is shown separately from the verified
-agent-team profile. Native tmux Claude ACP is a separate runtime profile: its
+agent-team profile. Native tmux, Herdr, and Zellij Claude ACP are separate runtime profiles: their
 read-only Planner/Reviewer and scoped workspace-write Worker are selected only
-from a version-3 tmux config, and Worker dispatch requires an exact declared
+from a version-3 native config, and Worker dispatch requires an exact declared
 TaskSpec. Unknown providers and recognized-but-rejected profiles fail before
 an Orca Task, terminal, or ACP process is created. There is no fallback to
 another harness.
@@ -37,7 +37,7 @@ another harness.
 The Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
 Orca resolves only the selected ACP roles' `node`, `acpx`, and
 `claude-agent-acp` files, verifies the exact package manifests, and records
-absolute paths with SHA-256 fingerprints. Native tmux instead resolves `node`,
+absolute paths with SHA-256 fingerprints. Native terminal runtimes instead resolve `node`,
 `claude-agent-acp@0.70.0`, its `dist/lib.js` library, and its dependency
 `@agentclientprotocol/sdk@1.3.0`; all four absolute paths and SHA-256
 fingerprints are stored. It does not select acpx. Installed transitive

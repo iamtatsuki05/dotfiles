@@ -1,13 +1,14 @@
-"""Opt-in live contract tests for the native tmux runtime.
+"""Opt-in live contract tests for an explicitly selected native runtime.
 
 Run with ``AGENT_TEAM_RUN_LIVE_NATIVE=1`` from the agent-team project, for
 example::
 
-    AGENT_TEAM_RUN_LIVE_NATIVE=1 uv run --project scripts/agent-team \
+    AGENT_TEAM_RUN_LIVE_NATIVE=1 AGENT_TEAM_LIVE_RUNTIME=tmux \
+      uv run --project scripts/agent-team \
       python -m unittest scripts/agent-team/tests/live_native_contract.py -v
 
 The test never uses a real provider.  It creates disposable Claude and native
-ACP dependency fixtures, while tmux itself is the selected live terminal
+ACP dependency fixtures, while the selected CLI is the live terminal
 implementation.  The fake Node executable models the native client's
 one-shot JSON receipt and process cleanup; the public SDK wire contract is
 covered separately by ``test_scoped_acp_client.py``.
@@ -29,21 +30,25 @@ from pathlib import Path
 from typing import cast
 
 from agent_team.adapters import remove_owned_tree
+from agent_team.cli import _runtime_engine
+from agent_team.native_backend import (
+    NativeBackend,
+    _remove_socket_root,
+    _terminal_stop_is_owned,
+    _validated_supervisor_argv,
+)
+from agent_team.native_terminal import NativeTerminalReceipt, is_native_runtime
 from agent_team.process_identity import read_process_argv
 from agent_team.runtime import (
     read_state,
     remove_prompt_file,
     remove_state_tree,
 )
-from agent_team.tmux import (
-    TmuxDriver,
-    TmuxReceipt,
-)
 
 RUN_LIVE = os.environ.get("AGENT_TEAM_RUN_LIVE_NATIVE") == "1"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path(sys.executable)
-REAL_TMUX = shutil.which("tmux")
+LIVE_RUNTIME = os.environ.get("AGENT_TEAM_LIVE_RUNTIME", "tmux")
 
 
 def _write_executable(path: Path, text: str) -> None:
@@ -152,8 +157,13 @@ class LiveNativeContractTest(unittest.TestCase):
     def setUp(self) -> None:
         if not RUN_LIVE:
             self.fail("set AGENT_TEAM_RUN_LIVE_NATIVE=1 for the explicit live test")
-        if REAL_TMUX is None:
-            self.fail("live native contract requires an installed tmux")
+        if not is_native_runtime(LIVE_RUNTIME):
+            self.fail(f"unsupported explicit native runtime: {LIVE_RUNTIME}")
+        self.runtime = LIVE_RUNTIME
+        executable = shutil.which(self.runtime)
+        if executable is None:
+            self.fail(f"live native contract requires an installed {self.runtime}")
+        self.terminal_executable = Path(executable).resolve()
         self.root = Path(tempfile.mkdtemp(prefix="agent-team-live-native-"))
         self.root.chmod(0o700)
         self.fake_bin = self.root / "fake-bin"
@@ -197,12 +207,18 @@ class LiveNativeContractTest(unittest.TestCase):
             "orca-ide",
             "codex",
             "opencode",
+            "tmux",
             "zellij",
             "herdr",
             "acpx",
             "npm",
             "npx",
         ):
+            if command == self.runtime:
+                self.assertIsNotNone(
+                    shutil.which(command, path=self.environment["PATH"])
+                )
+                continue
             self.assertIsNone(shutil.which(command, path=self.environment["PATH"]))
         self.assertIsNotNone(
             shutil.which("node", path=self.environment["PATH"]),
@@ -228,9 +244,7 @@ class LiveNativeContractTest(unittest.TestCase):
         shutil.rmtree(self.root)
 
     def _install_fixtures(self) -> None:
-        if REAL_TMUX is None:
-            raise AssertionError("tmux was checked in setUp")
-        (self.fake_bin / "tmux").symlink_to(Path(REAL_TMUX).resolve())
+        (self.fake_bin / self.runtime).symlink_to(self.terminal_executable)
         self.python_bin.joinpath("python3").symlink_to(PYTHON)
         _write_executable(
             self.fake_bin / "claude",
@@ -260,8 +274,10 @@ def stop(_signum, _frame):
 
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
-while True:
+while not marker.with_suffix('.exit').exists():
     time.sleep(0.1)
+marker.with_suffix('.done').write_text('natural-exit', encoding='utf-8')
+marker.with_suffix('.pid').unlink(missing_ok=True)
 """,
         )
         _write_executable(
@@ -415,8 +431,8 @@ print(json.dumps(dict(
         (workspace / "planner.md").write_text("fake Planner", encoding="utf-8")
         config = workspace / "team.toml"
         config.write_text(
-            """version = 3
-runtime = "tmux"
+            f"""version = 3
+runtime = "{self.runtime}"
 team_prefix = "live"
 max_review_rounds = 1
 
@@ -551,6 +567,9 @@ prompt = "planner.md"
             ]
         )
         if result.returncode != 0:
+            self._owned_state_paths.extend(self.xdg_state.rglob("state.json"))
+            if not self._owned_state_paths:
+                self._last_failure_details += " startup-failed-without-state"
             self.fail(
                 "native public start failed: "
                 f"stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -585,15 +604,13 @@ prompt = "planner.md"
         if not isinstance(native, dict):
             self._last_failure_details += " native-state-missing"
             return
-        raw_receipt = native.get("tmux_receipt")
-        receipt: TmuxReceipt | None = None
-        driver: TmuxDriver | None = None
-        if raw_receipt is not None:
-            try:
-                receipt = TmuxReceipt.from_dict(raw_receipt)
-                driver = TmuxDriver.from_receipt(receipt)
-            except (RuntimeError, OSError, TypeError, ValueError) as exc:
-                self._last_failure_details += f" tmux-receipt={exc!r}"
+        try:
+            backend = self._terminal_backend(state)
+            receipt = backend._receipt_from_state(native)
+            driver = backend._driver_from_receipt(receipt)
+        except (RuntimeError, OSError, TypeError, ValueError) as exc:
+            self._last_failure_details += f" terminal-receipt={exc!r}"
+            return
         roles = state.get("roles")
         if isinstance(roles, dict):
             for raw_assignment in roles.values():
@@ -673,8 +690,10 @@ prompt = "planner.md"
         if receipt is not None and driver is not None:
             try:
                 inspected = driver.inspect(receipt)
-                if inspected.identity_verified:
-                    process = native.get("main_process")
+                process = native.get("main_process")
+                if isinstance(process, dict) and _terminal_stop_is_owned(
+                    receipt, inspected, process
+                ):
                     main_proven = (
                         isinstance(process, dict)
                         and process.get("phase") == "exited"
@@ -683,6 +702,13 @@ prompt = "planner.md"
                     if isinstance(process, dict) and process.get("phase") == "running":
                         supervisor = process.get("supervisor_pid")
                         if supervisor == receipt.pane_pid:
+                            if read_process_argv(
+                                supervisor
+                            ) != _validated_supervisor_argv(state):
+                                self._last_failure_details += (
+                                    " supervisor-identity-unproven"
+                                )
+                                return
                             try:
                                 os.kill(supervisor, signal.SIGTERM)
                             except ProcessLookupError:
@@ -713,9 +739,15 @@ prompt = "planner.md"
                         and closed.server_terminated
                         and closed.socket_removed
                     ):
-                        self._last_failure_details += f" tmux-close={closed!r}"
+                        self._last_failure_details += f" terminal-close={closed!r}"
+                        return
+                    _remove_socket_root(backend._socket_root(receipt))
+                else:
+                    self._last_failure_details += " terminal-ownership-unproven"
+                    return
             except (RuntimeError, OSError, TypeError, ValueError) as exc:
-                self._last_failure_details += f" tmux-cleanup={exc!r}"
+                self._last_failure_details += f" terminal-cleanup={exc!r}"
+                return
         try:
             remove_state_tree(state_path, state)
         except (RuntimeError, OSError, TypeError, ValueError) as exc:
@@ -791,16 +823,28 @@ prompt = "planner.md"
         except (OSError, ValueError) as exc:
             self._last_failure_details += f" acp-descendant-cleanup={exc!r}"
 
+    def _terminal_backend(
+        self, state: dict[str, object]
+    ) -> NativeBackend[NativeTerminalReceipt]:
+        if state.get("runtime") != self.runtime:
+            raise ValueError("fixture state runtime differs from the selected runtime")
+        _, backend = _runtime_engine(state, resume_existing=True)
+        if not isinstance(backend, NativeBackend):
+            raise TypeError("fixture runtime did not select a native backend")
+        return cast(NativeBackend[NativeTerminalReceipt], backend)
+
     def _assert_owned_resources_gone(self, state: dict[str, object]) -> None:
         native = cast(dict[str, object], state["native"])
-        receipt = TmuxReceipt.from_dict(native["tmux_receipt"])
+        backend = self._terminal_backend(state)
+        receipt = backend._receipt_from_state(native)
         process = cast(dict[str, object], native["main_process"])
         for pid in (receipt.server_pid, receipt.pane_pid, process["agent_pid"]):
             self._wait_pid_gone(cast(int, pid))
+        receipt_fields = receipt.as_dict()
         for path in (
-            receipt.socket_path,
-            receipt.config_path,
-            receipt.socket_path.parent,
+            Path(cast(str, receipt_fields["socket_path"])),
+            Path(cast(str, receipt_fields["config_path"])),
+            backend._socket_root(receipt),
         ):
             self.assertFalse(path.exists(), str(path))
         for assignment in cast(dict[str, dict[str, object]], state["roles"]).values():
@@ -888,6 +932,38 @@ prompt = "planner.md"
         self.assertNotIn("sessions", client_argv)
         self.assertNotIn("acpx", " ".join(client_argv))
         self.assertIn("normal live turn", cast(str, events[1]["text"]))
+        stop = self._run_cli(
+            ["stop", "--state", str(state_path), "--cwd", str(workspace)]
+        )
+        self.assertEqual(stop.returncode, 0, stop.stderr)
+        self.assertFalse(state_path.exists())
+        self._assert_owned_resources_gone(final_state)
+
+    def test_natural_main_exit_can_be_stopped_without_original_config(self) -> None:
+        workspace, state_path, _ = self._start("natural-exit")
+        (workspace / "team.toml").unlink()
+        (workspace / "main.md").unlink()
+        (workspace / "planner.md").unlink()
+        self.main_marker.with_suffix(".exit").write_text("exit", encoding="utf-8")
+        final_state = self._wait_state(
+            state_path,
+            lambda state: (
+                isinstance(state.get("native"), dict)
+                and isinstance(state["native"].get("main_process"), dict)
+                and state["native"]["main_process"].get("phase") == "exited"
+                and state["native"]["main_process"].get("group_stopped") is True
+            ),
+        )
+        process = cast(dict[str, object], final_state["native"]["main_process"])
+        self._wait_pid_gone(cast(int, process["supervisor_pid"]))
+        status = self._run_cli(
+            ["status", "--state", str(state_path), "--cwd", str(workspace)]
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(
+            self.main_marker.with_suffix(".done").read_text(encoding="utf-8"),
+            "natural-exit",
+        )
         stop = self._run_cli(
             ["stop", "--state", str(state_path), "--cwd", str(workspace)]
         )

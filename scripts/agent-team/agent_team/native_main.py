@@ -17,6 +17,7 @@ from typing import Any, Final
 from .adapters import _process_group_exited, _wait_for_process_group_exit
 from .contracts import RuntimeFailure
 from .locking import _LifecycleReservation
+from .native_terminal import is_native_runtime
 from .runtime import RuntimeValidationError
 from .runtime import read_state as runtime_read_state
 from .runtime import write_state as runtime_write_state
@@ -53,8 +54,8 @@ def _run_id(state: dict[str, object], expected: str) -> None:
         raise NativeMainError("agent-team native Main requires state version 3")
     if state.get("run_id") != expected:
         raise NativeMainError("agent-team state run identity changed")
-    if state.get("runtime") != "tmux":
-        raise NativeMainError("agent-team native Main requires tmux runtime")
+    if not is_native_runtime(state.get("runtime")):
+        raise NativeMainError("agent-team native Main requires a native runtime")
 
 
 def _native_state(state: dict[str, object]) -> dict[str, object]:
@@ -397,7 +398,7 @@ def _publish_exited(
 
 
 def run(state_path: Path, run_id: str) -> int:
-    """Wait for a ready tmux run, then supervise its frozen Main argv."""
+    """Wait for a ready native run, then supervise its frozen Main argv."""
 
     if os.name == "nt" or not isinstance(state_path, Path):
         return 1

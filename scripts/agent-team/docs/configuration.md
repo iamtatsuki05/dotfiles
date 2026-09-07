@@ -5,7 +5,8 @@
 
 `agent-team` keeps the existing version-3 fixed-role configuration and also
 accepts the explicit version-4 topology configuration. Version-3 `runtime =
-"orca"` retains the fixed four-role contract; version-3 `runtime = "tmux"` is
+"orca"` retains the fixed four-role contract; version-3 `runtime = "tmux"`,
+`"herdr"`, or `"zellij"` selects
 an experimental native subset with direct Claude Main and optional Claude ACP
 Planner, Worker, and Reviewer roles. Native Worker assignments require an
 exact TaskSpec from the config's `[[tasks]]` catalog. Missing values and
@@ -58,17 +59,18 @@ The bundled config uses `fable` for Main and Planner and `gpt-6-astra` for
 Worker and Reviewer. The canonical Planner is the Claude read-only ACP role;
 the canonical Worker and Reviewer remain direct Codex roles.
 
-## Select the experimental native tmux subset explicitly
+## Select an experimental native terminal runtime explicitly
 
-Use `runtime = "tmux"` only in a custom version-3 config. Main is required and
+Use a native `runtime = "tmux"`, `"herdr"`, or `"zellij"` only in a custom
+version-3 config. Main is required and
 must be direct Claude with `orchestrator` permission. Planner and Reviewer may
 be omitted or may each be verified Claude ACP with `read-only` permission and
 the pinned `claude-acp-0.70.0` adapter. Worker may be selected as the scoped
 Claude ACP `workspace-write` profile; selecting it requires a Reviewer.
 Dispatching its work requires a matching `[[tasks]]` entry. Direct Worker/Reviewer and every other native profile are
 rejected before state, Task, Dispatch, or process effects are created.
-Native startup requires the `tmux` executable and does not require Orca or
-Codex. A config that selects an ACP role still requires the pinned Node.js and
+Native startup requires the selected terminal executable and does not require
+Orca or Codex. A config that selects an ACP role still requires the documented Node.js minimum and
 ACP dependencies described below.
 
 ```toml
@@ -131,13 +133,18 @@ timeout_seconds = 30
 The example retains the bundled `fable` alias. Check `command -v claude` and
 `claude --version` before starting: the real Main/Planner path was verified
 with Claude Code 2.1.261, while 2.1.112 was too old for Fable. Native `start`, `status`,
-`attach`, and `stop` route to `TmuxBackend`; only Main can be attached. Native
-ACP completion is published by the runner and is independent of tmux pane
+`attach`, and `stop` route to the selected native backend; only Main can be attached. Native
+ACP completion is published by the runner and is independent of terminal pane
 text. The lifecycle still requires `role_read` → `role_release` →
 `delivery_ack`; `native.last_ack` is one receipt marker, not Task or goal
 completion.
 
-The model-free native tmux CLI start/status/stop path has succeeded with Orca
+The role and `[[tasks]]` declarations above are shared by all native runtimes;
+change only `runtime` to `"herdr"` or `"zellij"` to select the corresponding
+terminal backend. The Main, ACP role permissions, TaskSpec catalog, and review
+gates remain the same.
+
+The earlier model-free tmux CLI start/status/stop path succeeded with Orca
 and Codex absent, a workspace path containing spaces, and a deleted config. A
 real Claude Code 2.1.261 Main with `fable`/`high` and a logged-in `claude.ai`
 account also completed a Claude ACP Planner request through MCP, including
@@ -148,22 +155,61 @@ Python 3.13.15 wheel-only run completed six native Planner/Worker/Reviewer
 assignments: an intentional `a-b` Worker result was rejected, `a+b` was
 approved at the same workspace revision, and trusted fixed-argv verification
 succeeded. Public stop after removing the original config and prompts left
-zero owned processes and artifacts. The 282-second repeat included the
+zero owned processes and artifacts. The repeat included the
 startup TaskSpec catalog, durable PID/PGID/argv gate, and four-file dependency
-binding. The catalog remained unchanged throughout the run. The older 2.1.112 rejection was a CLI
+binding. The catalog remained unchanged throughout the run. This was the earlier tmux-generation proof at
+`308b1ba`. The older 2.1.112 rejection was a CLI
 version error, not an unavailable `fable` alias.
+
+The new terminal drivers have separate public CLI evidence with fake Main and
+fake Node, without a model call. Under Python 3.11 and 3.13, tmux, Herdr, and
+Zellij each pass MCP read/release/ack, active cancellation, and natural Main
+exit followed by original config/prompt deletion and cold status/stop. PID,
+socket, state, config, and private-root absence are checked independently.
+Herdr 0.8.2 uses the normal-shell bootstrap without faking `HERDR_ENV`.
+The Zellij compatibility version tested at 0.44.1 uses detached mode, no persistent
+client, no `--max-panes 1`, and a held Main pane. These are fake-provider tests only.
+
+Separate real Claude Code 2.1.261 workflow runs on Herdr and Zellij used isolated
+Python 3.13.15 wheel-only environments with Node 22.23.2, Claude ACP 0.70.0,
+SDK 1.3.0, and Claude SDK 0.3.232 selected. Each direct Claude Main used Fable
+5.1 at high effort with the Claude Max header and completed six autonomous
+Planner/Reviewer/Worker assignments through plan approval, implementation
+request-changes, and implementation approval. Trusted fixed-argv verification
+returned `FIXED_ARGV_OK`; the catalog, Worker scopes, protected files, and
+kernel identities remained consistent. Public stop after deleting the original
+config and prompts left no owned PID/PGID, state, socket, or private path, while
+normal interactive Main history remained and automated SDK calls used
+`persistSession=false`. The 51 runtime package files byte-matched the built
+wheel (`655c3bc3c24a278c366cd6282bb2870d10129806f6f312d765329463b47afb7b`);
+the selected ACP dependency audit inspected 122 package metadata records.
+The dependency inventory confirmed no unselected packages; separate runtime
+`PATH` checks confirmed no unselected CLIs, `npm`, `npx`, or `uv`.
+Herdr's first attempt pasted the text and Enter together
+but left the text in the paste field; a separate Enter then submitted that same
+initial message. No additional instructions were sent; typed verification
+completed, but its final `NATIVE_WORKFLOW_OK` screen marker was not observed.
+Zellij accepted the complete initial submission automatically and its final
+marker was observed. The earlier real-model tmux proof remains the run at
+`308b1ba`.
+
+A separate real Herdr active-cancel probe dispatched a Worker through public
+MCP, observed `CANCEL_STARTED`, rechecked the live kernel PID/PGID and native
+result absence immediately before stop, and independently confirmed that no
+owned PID/PGID, process reference, or path remained. This is representative
+Claude ACP cancellation evidence for Herdr, not all-harness coverage.
 
 ## Top-level fields define one team contract
 
 | Field | Contract |
 |---|---|
 | `version` | Must be integer `3`. No automatic migration is performed. |
-| `runtime` | Must be `"orca"` or `"tmux"`. `orca` uses four roles; `tmux` is the experimental native subset. There is no Herdr or Zellij fallback. |
+| `runtime` | Must be `"orca"`, `"tmux"`, `"herdr"`, or `"zellij"`. `orca` uses four roles; each native runtime uses the shared NativeBackend and its selected terminal driver. |
 | `team_prefix` | Must match `[a-z][a-z0-9-]{0,23}`. It contributes to the runtime team ID. |
 | `max_review_rounds` | Positive integer. Counts the first Reviewer decision and every retry for one stage. |
 | `main` | Required Main role table. |
-| `roles` | `orca` must contain exactly `planner`, `worker`, and `reviewer`; `tmux` may contain optional `planner`, `worker`, and `reviewer`. Main is declared separately and is always required. A native Worker requires a Reviewer. |
-| `tasks` | Native tmux only: optional `[[tasks]]` TaskSpec catalog with `[[tasks.verification]]` entries. Orca rejects this field. Without it, read-only `role_prompt` remains available but structured `task_dispatch` is rejected. |
+| `roles` | `orca` must contain exactly `planner`, `worker`, and `reviewer`; each native runtime may contain optional `planner`, `worker`, and `reviewer`. Main is declared separately and is always required. A native Worker requires a Reviewer. |
+| `tasks` | Native runtimes only: optional `[[tasks]]` TaskSpec catalog with `[[tasks.verification]]` entries. Orca rejects this field. Without it, read-only `role_prompt` remains available but structured `task_dispatch` is rejected. |
 
 The runtime team ID combines `team_prefix` with the workspace name and a hash
 of the absolute workspace path. The config path is not part of the ID. Two
@@ -207,7 +253,7 @@ Adding a new provider or ACP adapter is not a config-only operation. It requires
 a code change, capability and permission tests, an exact version policy, and a
 real lifecycle/cleanup smoke test.
 
-The native tmux capability matrix is smaller:
+The native terminal capability matrix is smaller:
 
 | Role | Allowed provider / transport | Required permission |
 |---|---|---|
@@ -239,7 +285,7 @@ uses that saved binding. Missing or changed files fail closed. Runtime commands
 never invoke `npm` or `npx`; a direct-only config does not resolve ACP
 dependencies.
 
-Native tmux uses a separate binding. It resolves Node.js `22.13.0` or newer,
+Native runtimes use a separate binding. They resolve Node.js `22.0.0` or newer,
 the installed `@agentclientprotocol/claude-agent-acp@0.70.0` command, and its
 dependency `@agentclientprotocol/sdk@1.3.0`. It also binds the actual
 `dist/lib.js` import, saving absolute paths and SHA-256 fingerprints for all four
@@ -249,6 +295,12 @@ connection per assignment. Native does not select `acpx` and does not invoke
 `persistSession=false` and `autoMemoryEnabled=false`; interactive Main history
 remains in the normal Claude store. This is a direct SDK connection, not the
 provider's direct/model transport.
+
+The terminal behavior was verified with Herdr `0.8.2` and Zellij `0.44.1`.
+Herdr's handshake requires exact version `0.8.2` and protocol 20. Zellij's
+preflight checks the executable and known inventory, not an exact CLI version;
+the tested compatibility version uses a detached session with no persistent
+client and no `--max-panes 1`.
 
 ## Effort values are provider-specific
 
@@ -274,16 +326,16 @@ The config cannot promote a role by changing only its permission string:
 For direct Codex, agent-team creates an isolated `CODEX_HOME` and derives a
 profile from `:read-only` or `:workspace`. For read-only Claude ACP, the client
 limits tools to `Read`, `Grep`, and `Glob`, approves reads, and fails when a
-non-interactive permission question cannot be resolved. Native tmux's scoped
+non-interactive permission question cannot be resolved. Native runtimes' scoped
 Worker can read the workspace with Read/Grep/Glob, subject to protected-path
 and link/file-type checks. TaskSpec `allowed_paths` and `forbidden_paths` apply
 to Write/Edit only, with forbidden paths taking precedence. It denies Bash,
 terminal, and other RPC operations. Its Planner and Reviewer are read-only.
 All native ACP roles run as launcher-owned background processes.
 
-## TaskSpec is declared in the native config
+## TaskSpec catalog is optional; required for native task dispatch
 
-Native tmux task dispatch is catalog-driven. Declare one `[[tasks]]` table per
+Native task dispatch is catalog-driven. Declare one `[[tasks]]` table per
 task and one or more `[[tasks.verification]]` tables for its fixed argv:
 
 ```toml
@@ -386,7 +438,7 @@ agent-team start \
 
 Use the same values for `status`, `attach`, and `stop`. The default workspace
 is the current directory. All four commands route through the backend named by
-the saved `runtime`; `attach` supports Main only for native tmux.
+the saved `runtime`; `attach` supports Main only for native runtimes.
 
 Before making a config active:
 
@@ -405,4 +457,8 @@ at dispatch time.
 
 Config version 2 is rejected by current code. Stop a version-2 team with its old
 launcher before installing or switching to version 3. Do not edit a live state
-file or copy fields between state versions.
+file or copy fields between state versions. Existing native state from an older
+native-terminal contract that lacks the frozen `supervisor_argv` and complete
+Main process receipt is retained and fails closed; it is not reconstructed or
+migrated automatically. Stop it with the matching executable/version before
+upgrading.

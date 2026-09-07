@@ -20,6 +20,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+from .native_terminal import TerminalPresence
+
 
 class TmuxError(RuntimeError):
     """Base class for deterministic tmux-driver failures."""
@@ -187,6 +189,10 @@ class TmuxInspection:
     server_pid: int | None
     observed_nonce: str | None
     reason: str | None = None
+
+    @property
+    def presence(self) -> TerminalPresence:
+        return "present" if self.identity_verified and self.pane_present else "unknown"
 
 
 @dataclass(frozen=True)

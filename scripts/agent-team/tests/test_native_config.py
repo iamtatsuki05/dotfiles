@@ -15,6 +15,67 @@ from agent_team.runtime import RuntimeValidationError, read_state, write_state
 
 
 class NativeConfigTest(unittest.TestCase):
+    def test_terminal_backends_use_the_native_role_and_instruction_contract(
+        self,
+    ) -> None:
+        for runtime in ("herdr", "zellij"):
+            with (
+                self.subTest(runtime=runtime),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                with mock.patch.object(subprocess, "Popen", side_effect=AssertionError):
+                    config = cli.load_config(self.config(root, runtime=runtime))
+                    plan = cli.build_plan(config, root)
+                    spec = cli._start_spec(plan, attach=False)
+                self.assertEqual(plan["runtime"], runtime)
+                self.assertNotIn("orca_socket", plan)
+                self.assertEqual(set(plan["roles"]), {"main", "planner"})
+                self.assertEqual(
+                    {role.value for role in spec.role_specs}, {"main", "planner"}
+                )
+                self.assertIn(
+                    "native実行時の契約", plan["roles"]["main"]["instructions"]
+                )
+
+    def test_terminal_preflight_checks_only_the_selected_backend_and_harness(
+        self,
+    ) -> None:
+        plan: dict[str, object] = {
+            "runtime": "zellij",
+            "roles": {
+                "main": {
+                    "provider": "claude",
+                    "transport": "direct",
+                    "execution": "tui_direct",
+                }
+            },
+        }
+        for runtime in ("herdr", "zellij"):
+            plan["runtime"] = runtime
+            with (
+                self.subTest(runtime=runtime),
+                mock.patch.object(cli, "require_binary") as require,
+                mock.patch.object(
+                    cli, "mcp_server_path", return_value=Path(sys.executable)
+                ),
+                mock.patch.object(
+                    cli.AcpExecutables, "resolve", side_effect=AssertionError
+                ),
+                mock.patch.object(subprocess, "Popen", side_effect=AssertionError),
+            ):
+                cli._start_prerequisites(plan)
+            self.assertEqual(
+                require.call_args_list, [mock.call(runtime), mock.call("claude")]
+            )
+
+    def test_unknown_runtime_does_not_fall_back_to_orca(self) -> None:
+        with (
+            mock.patch.dict(sys.modules, {"agent_team.backend": None}),
+            self.assertRaises(cli.ConfigError),
+        ):
+            cli._runtime_engine({"runtime": "not-registered"}, resume_existing=False)
+
     def test_declared_task_catalog_is_validated_and_snapshotted_without_effects(
         self,
     ) -> None:
@@ -59,7 +120,7 @@ timeout_seconds = 10
                 path.read_text().replace('runtime = "tmux"', 'runtime = "orca"')
             )
             with self.assertRaisesRegex(
-                cli.ConfigError, "declared tasks require.*tmux"
+                cli.ConfigError, "declared tasks require.*native"
             ):
                 cli.load_config(path)
 
@@ -105,7 +166,7 @@ timeout_seconds = 10
             config.write_text(
                 config.read_text().replace('runtime = "tmux"', 'runtime = "orca"')
             )
-            with self.assertRaisesRegex(cli.ConfigError, "scoped.*tmux"):
+            with self.assertRaisesRegex(cli.ConfigError, "scoped.*native"):
                 cli.load_config(config)
 
     def test_mcp_declarations_do_not_load_a_backend_or_require_runtime_state(
