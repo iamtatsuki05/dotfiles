@@ -43,6 +43,87 @@ raise SystemExit(main(sys.argv[1:]))
 
 
 class DependencyIsolationTest(unittest.TestCase):
+    def test_native_runtime_factory_imports_only_the_selected_backend(self) -> None:
+        program = """
+import importlib.abc
+import subprocess
+import sys
+
+selected = sys.argv[1]
+class SelectedBackendOnly(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        names = {"tmux", "herdr", "zellij"} - {selected}
+        blocked = {f"agent_team.{name}" for name in names}
+        blocked.update(f"agent_team.{name}_backend" for name in names)
+        blocked.update({"agent_team.orca", "agent_team.backend"})
+        if fullname in blocked:
+            raise ModuleNotFoundError("unselected backend is unavailable")
+
+def refuse_process(*args, **kwargs):
+    raise AssertionError("backend selection must not start a process")
+
+sys.meta_path.insert(0, SelectedBackendOnly())
+subprocess.Popen = refuse_process
+from agent_team.cli import _runtime_engine
+_, backend = _runtime_engine({"runtime": selected}, resume_existing=True)
+assert backend.runtime == selected
+print(selected)
+"""
+        for runtime in ("tmux", "herdr", "zellij"):
+            with (
+                self.subTest(runtime=runtime),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                result = subprocess.run(
+                    [sys.executable, "-c", program, runtime],
+                    cwd=directory,
+                    env={**os.environ, "PATH": ""},
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, runtime + "\n")
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_native_core_import_does_not_require_a_terminal_backend(self) -> None:
+        program = """
+import importlib.abc
+import subprocess
+import sys
+
+class MissingTerminalBackends(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in {
+            "agent_team.tmux", "agent_team.zellij", "agent_team.herdr",
+            "agent_team.orca", "agent_team.backend",
+        }:
+            raise ModuleNotFoundError("terminal backend is unavailable")
+
+def refuse_process(*args, **kwargs):
+    raise AssertionError("import must not start an external process")
+
+sys.meta_path.insert(0, MissingTerminalBackends())
+subprocess.Popen = refuse_process
+from agent_team.native_backend import NativeBackend, publish_completion
+assert NativeBackend and publish_completion
+print("native core imported")
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "-c", program],
+                cwd=directory,
+                env={**os.environ, "PATH": ""},
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "native core imported\n")
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_main_command_uses_frozen_argv_after_config_and_prompt_change(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -10,10 +10,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import agent_team.native_backend as native
-from agent_team import cli
+from agent_team import cli, tmux_backend
 from agent_team.contracts import (
     Attach,
     DeliveryAck,
@@ -32,6 +33,7 @@ from agent_team.contracts import (
     TaskVerify,
 )
 from agent_team.native_mcp import NativeMcpSession
+from agent_team.runtime import RuntimeValidationError
 from agent_team.task_spec import TaskSpec, VerificationSpec
 from agent_team.tmux import CloseEvidence, TmuxInspection, TmuxReceipt, _PathIdentity
 
@@ -191,6 +193,7 @@ class NativeBackendTest(unittest.TestCase):
             session = NativeMcpSession.__new__(NativeMcpSession)
             session.path = self.state_path
             session.run_id = native.runtime_read_state(self.state_path)["run_id"]
+            session.runtime = backend.runtime
             session.backend = backend
             with (
                 mock.patch.object(native.subprocess, "Popen", FakePopen),
@@ -260,6 +263,7 @@ class NativeBackendTest(unittest.TestCase):
             session = NativeMcpSession.__new__(NativeMcpSession)
             session.path = self.state_path
             session.run_id = native.runtime_read_state(self.state_path)["run_id"]
+            session.runtime = backend.runtime
             session.backend = backend
             before = self.state_path.read_bytes()
             with (
@@ -285,6 +289,7 @@ class NativeBackendTest(unittest.TestCase):
             session = NativeMcpSession.__new__(NativeMcpSession)
             session.path = self.state_path
             session.run_id = native.runtime_read_state(self.state_path)["run_id"]
+            session.runtime = backend.runtime
             session.backend = backend
             for field, value in (
                 ("task_id", "unapproved"),
@@ -361,18 +366,18 @@ class NativeBackendTest(unittest.TestCase):
             max_review_rounds=2,
         )
 
-    def backend(self, spec: StartSpec) -> native.TmuxBackend:
+    def backend(self, spec: StartSpec) -> tmux_backend.TmuxBackend:
         del spec
-        backend = native.TmuxBackend(
+        backend = tmux_backend.TmuxBackend(
             tmux_executable="tmux",
             launcher_path=self.launcher,
         )
         return backend
 
-    def start_backend(self, spec: StartSpec) -> native.TmuxBackend:
+    def start_backend(self, spec: StartSpec) -> tmux_backend.TmuxBackend:
         backend = self.backend(spec)
         with (
-            mock.patch.object(native, "TmuxDriver", FakeTmuxDriver),
+            mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
         ):
@@ -386,7 +391,7 @@ class NativeBackendTest(unittest.TestCase):
         worker: bool = False,
         reviewer: bool = False,
         task_specs: tuple[TaskSpec, ...] = (),
-    ) -> Iterator[native.TmuxBackend]:
+    ) -> Iterator[tmux_backend.TmuxBackend]:
         executables = FakeExecutables()
         spec = replace(
             self.spec(),
@@ -448,7 +453,7 @@ class NativeBackendTest(unittest.TestCase):
             mock.patch.object(
                 native, "build_acp_agent_command", return_value="fixture-agent"
             ),
-            mock.patch.object(native, "TmuxDriver", FakeTmuxDriver),
+            mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
             mock.patch.object(
@@ -467,7 +472,7 @@ class NativeBackendTest(unittest.TestCase):
             yield backend
 
     def dispatch_task(
-        self, backend: native.TmuxBackend, role: Role, task: TaskSpec
+        self, backend: tmux_backend.TmuxBackend, role: Role, task: TaskSpec
     ) -> dict[str, object]:
         with (
             mock.patch.object(native.subprocess, "Popen", FakePopen),
@@ -478,7 +483,7 @@ class NativeBackendTest(unittest.TestCase):
 
     def finish_task(
         self,
-        backend: native.TmuxBackend,
+        backend: tmux_backend.TmuxBackend,
         role: Role,
         body: str,
         evidence: dict[str, object] | None = None,
@@ -1036,7 +1041,7 @@ class NativeBackendTest(unittest.TestCase):
         spec = self.spec(Role.WORKER)
         backend = self.backend(spec)
         with (
-            mock.patch.object(native, "TmuxDriver", FakeTmuxDriver),
+            mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             self.assertRaises(RuntimeFailure),
         ):
@@ -1048,7 +1053,7 @@ class NativeBackendTest(unittest.TestCase):
         spec = self.spec()
         backend = self.backend(spec)
         with (
-            mock.patch.object(native, "TmuxDriver", FakeTmuxDriver),
+            mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
         ):
@@ -1069,6 +1074,8 @@ class NativeBackendTest(unittest.TestCase):
         driver = backend._driver
         assert isinstance(driver, FakeTmuxDriver) and driver.created is not None
         _argv, child_cwd, child_env, _title = driver.created
+        self.assertEqual(native_state["supervisor_argv"][1:], list(_argv[1:]))
+        self.assertTrue(Path(native_state["supervisor_argv"][0]).is_absolute())
         self.assertEqual(child_cwd, native.PACKAGE_ROOT)
         self.assertNotIn("PYTHONPATH", child_env)
         source_probe = subprocess.run(
@@ -1090,7 +1097,9 @@ class NativeBackendTest(unittest.TestCase):
         state["native"].pop("tmux_receipt")
         state["native"]["phase"] = "starting"
         native.runtime_write_state(self.state_path, state)
-        resumed = native.TmuxBackend(launcher_path=self.launcher, resume_existing=True)
+        resumed = tmux_backend.TmuxBackend(
+            launcher_path=self.launcher, resume_existing=True
+        )
         resumed.start(spec)
         status = resumed.request(Status())
         self.assertEqual(status.status, "starting")
@@ -1116,11 +1125,11 @@ class NativeBackendTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeFailure, "ownership is unproven"):
                 native._runner_identity_is_owned(assignment)
             self.assertEqual(
-                native.TmuxBackend._saved_runner_status(assignment), "unknown"
+                tmux_backend.TmuxBackend._saved_runner_status(assignment), "unknown"
             )
         with mock.patch.object(native, "_process_group_alive", return_value=False):
             self.assertEqual(
-                native.TmuxBackend._saved_runner_status(assignment), "exited"
+                tmux_backend.TmuxBackend._saved_runner_status(assignment), "exited"
             )
 
     def test_acp_completion_observes_read_release_ack_in_durable_order(self) -> None:
@@ -1156,7 +1165,7 @@ class NativeBackendTest(unittest.TestCase):
             },
         }
         with (
-            mock.patch.object(native, "TmuxDriver", FakeTmuxDriver),
+            mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
             mock.patch.object(
@@ -1301,7 +1310,7 @@ class NativeBackendTest(unittest.TestCase):
             },
         }
         with (
-            mock.patch.object(native, "TmuxDriver", FakeTmuxDriver),
+            mock.patch.object(tmux_backend, "TmuxDriver", FakeTmuxDriver),
             mock.patch.object(native.shutil, "which", return_value="/usr/bin/true"),
             mock.patch.object(native, "acp_environment", return_value={"PATH": "/bin"}),
             mock.patch.object(
@@ -1338,29 +1347,219 @@ class NativeBackendTest(unittest.TestCase):
         assert isinstance(driver, FakeTmuxDriver)
         self.assertFalse(driver.closed)
 
+    def test_stop_reclaims_an_owned_empty_host_after_main_cleanup(self) -> None:
+        self.state_path = self.root / "agent-team-native-test" / "state.json"
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        state["native"]["main_process"] = {
+            "supervisor_pid": receipt.pane_pid,
+            "agent_pid": 70_003,
+            "process_group_id": 70_003,
+            "launch_nonce": "a" * 32,
+            "phase": "exited",
+            "returncode": 0,
+            "group_stopped": True,
+        }
+        native.runtime_write_state(self.state_path, state)
+        observed = SimpleNamespace(
+            presence="absent",
+            running=False,
+            exit_status=None,
+            identity_verified=True,
+            pane_present=False,
+            session_present=True,
+            pane_pid=None,
+            server_pid=receipt.server_pid,
+            observed_nonce=receipt.run_nonce,
+            reason="owned server has no terminal",
+        )
+        driver = backend._driver
+        assert isinstance(driver, FakeTmuxDriver)
+        with (
+            mock.patch.object(driver, "inspect", return_value=observed),
+            mock.patch.object(native, "_remove_socket_root") as remove_root,
+            mock.patch.object(native.os, "kill") as kill,
+        ):
+            with (
+                self.subTest(operation="attach"),
+                mock.patch.object(
+                    native.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0),
+                ) as attach,
+            ):
+                with self.assertRaises(RuntimeFailure):
+                    backend.request(Attach(Role.MAIN))
+                attach.assert_not_called()
+            reopened = tmux_backend.TmuxBackend(
+                launcher_path=self.launcher, resume_existing=True
+            )
+            with mock.patch.object(
+                reopened, "_driver_from_receipt", return_value=driver
+            ):
+                reopened.start(self.spec())
+                result = reopened.stop()
+        self.assertEqual(result.run_id._value, state["run_id"])
+        self.assertTrue(driver.closed)
+        self.assertFalse(self.state_path.exists())
+        remove_root.assert_called_once_with(receipt.socket_path.parent)
+        kill.assert_not_called()
+
+    def test_main_process_state_rejects_incomplete_or_inconsistent_cleanup(
+        self,
+    ) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        valid = {
+            "supervisor_pid": receipt.pane_pid,
+            "agent_pid": 70_003,
+            "process_group_id": 70_003,
+            "launch_nonce": "a" * 32,
+            "phase": "exited",
+            "returncode": 0,
+            "group_stopped": True,
+        }
+        cases = [
+            {key: value for key, value in valid.items() if key != missing}
+            for missing in valid
+        ]
+        cases.extend(
+            {**valid, **change}
+            for change in (
+                {"agent_pid": True},
+                {"supervisor_pid": 0},
+                {"process_group_id": 70_009},
+                {"process_group_id": None},
+                {"launch_nonce": ""},
+                {"returncode": False},
+                {"group_stopped": 1},
+                {"phase": "not-a-phase"},
+            )
+        )
+        original = self.state_path.read_bytes()
+        for process in cases:
+            with self.subTest(process=process):
+                state["native"]["main_process"] = process
+                with self.assertRaisesRegex(RuntimeValidationError, "Main process"):
+                    native.runtime_write_state(self.state_path, state)
+                self.assertEqual(self.state_path.read_bytes(), original)
+
+    def test_stop_rejects_a_truncated_main_cleanup_record_before_any_effect(
+        self,
+    ) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        state["native"]["main_process"] = {
+            "supervisor_pid": receipt.pane_pid,
+            "phase": "exited",
+            "group_stopped": True,
+        }
+        self.state_path.write_text(json.dumps(state), encoding="utf-8")
+        original = self.state_path.read_bytes()
+        driver = backend._driver
+        assert isinstance(driver, FakeTmuxDriver)
+        with (
+            mock.patch.object(native.os, "kill") as kill,
+            mock.patch.object(native, "_remove_socket_root") as remove_root,
+            self.assertRaises(RuntimeFailure),
+        ):
+            backend.stop()
+        self.assertFalse(driver.closed)
+        self.assertEqual(self.state_path.read_bytes(), original)
+        kill.assert_not_called()
+        remove_root.assert_not_called()
+
+    def test_stop_rejects_unproven_terminal_absence(self) -> None:
+        cases = (
+            ({"phase": "running"}, {}),
+            ({"group_stopped": False}, {}),
+            ({"supervisor_pid": 70_009}, {}),
+            ({}, {"pane_pid": 70_001}),
+            ({}, {"presence": "unknown", "pane_pid": 70_001}),
+            ({}, {"server_pid": 70_009}),
+            ({}, {"observed_nonce": "different-run"}),
+        )
+        for index, (main_changes, host_changes) in enumerate(cases):
+            with self.subTest(main=main_changes, host=host_changes):
+                self.state_path = (
+                    self.root
+                    / f"absence-{index}"
+                    / "agent-team-native-test"
+                    / "state.json"
+                )
+                backend = self.start_backend(self.spec())
+                state = native.runtime_read_state(self.state_path)
+                receipt = backend._receipt_from_state(state["native"])
+                state["native"]["main_process"] = {
+                    "supervisor_pid": receipt.pane_pid,
+                    "agent_pid": 70_003,
+                    "process_group_id": 70_003,
+                    "launch_nonce": "a" * 32,
+                    "phase": "exited",
+                    "returncode": 0,
+                    "group_stopped": True,
+                    **main_changes,
+                }
+                if main_changes.get("phase") == "running":
+                    state["native"]["main_process"].pop("returncode")
+                    state["native"]["main_process"].pop("group_stopped")
+                native.runtime_write_state(self.state_path, state)
+                fields = {
+                    "presence": "absent",
+                    "running": False,
+                    "exit_status": None,
+                    "identity_verified": True,
+                    "pane_present": False,
+                    "session_present": True,
+                    "pane_pid": None,
+                    "server_pid": receipt.server_pid,
+                    "observed_nonce": receipt.run_nonce,
+                    "reason": "owned server has no terminal",
+                    **host_changes,
+                }
+                driver = backend._driver
+                assert isinstance(driver, FakeTmuxDriver)
+                with (
+                    mock.patch.object(
+                        driver, "inspect", return_value=SimpleNamespace(**fields)
+                    ),
+                    mock.patch.object(native, "_remove_socket_root") as remove_root,
+                    mock.patch.object(native.os, "kill") as kill,
+                    self.assertRaises(RuntimeFailure),
+                ):
+                    backend.stop()
+                self.assertTrue(self.state_path.exists())
+                self.assertFalse(driver.closed)
+                remove_root.assert_not_called()
+                kill.assert_not_called()
+
     def test_stop_accepts_same_supervisor_cleanup_published_during_role_cancel(
         self,
     ) -> None:
         backend = self.start_backend(self.spec())
         state = native.runtime_read_state(self.state_path)
-        receipt = native._receipt_from_state(state["native"])
+        receipt = backend._receipt_from_state(state["native"])
         running = {
             "supervisor_pid": receipt.pane_pid,
             "agent_pid": 70_003,
             "process_group_id": 70_003,
-            "launch_nonce": "supervisor-nonce",
+            "launch_nonce": "a" * 32,
             "phase": "running",
         }
         state["native"]["main_process"] = {
             **running,
             "phase": "exited",
+            "returncode": 0,
             "group_stopped": True,
         }
         native.runtime_write_state(self.state_path, state)
         with mock.patch.object(native.os, "kill") as kill:
             backend._stop_supervisor(state, receipt, running)
             kill.assert_not_called()
-        state["native"]["main_process"]["launch_nonce"] = "different-supervisor"
+        state["native"]["main_process"]["launch_nonce"] = "b" * 32
         native.runtime_write_state(self.state_path, state)
         with (
             mock.patch.object(native.os, "kill") as kill,
@@ -1368,6 +1567,136 @@ class NativeBackendTest(unittest.TestCase):
         ):
             backend._stop_supervisor(state, receipt, running)
         kill.assert_not_called()
+
+    def test_stop_does_not_signal_a_reused_or_unidentified_supervisor_pid(self) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        running = {
+            "supervisor_pid": receipt.pane_pid,
+            "agent_pid": 70_003,
+            "process_group_id": 70_003,
+            "launch_nonce": "a" * 32,
+            "phase": "running",
+        }
+        state["native"]["supervisor_argv"] = [
+            sys.executable,
+            "-m",
+            "agent_team",
+            "_native-main",
+            "--state",
+            str(self.state_path),
+            "--run-id",
+            state["run_id"],
+        ]
+        for observed in (("/bin/other", "user-process"), None):
+            with self.subTest(observed=observed):
+                with (
+                    mock.patch.object(
+                        backend, "_supervisor_cleanup_confirmed", return_value=False
+                    ),
+                    mock.patch.object(
+                        native, "read_process_argv", return_value=observed
+                    ),
+                    mock.patch.object(native, "_pid_alive", return_value=False),
+                    mock.patch.object(native, "PROCESS_WAIT_SECONDS", 0),
+                    mock.patch.object(native.os, "kill") as kill,
+                    self.assertRaisesRegex(RuntimeFailure, "identity"),
+                ):
+                    backend._stop_supervisor(state, receipt, running)
+                kill.assert_not_called()
+
+    def test_stop_requires_a_supervisor_argv_bound_to_the_run(self) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        running = {
+            "supervisor_pid": receipt.pane_pid,
+            "agent_pid": 70_003,
+            "process_group_id": 70_003,
+            "launch_nonce": "a" * 32,
+            "phase": "running",
+        }
+        wrong_run = [*state["native"]["supervisor_argv"][:-1], "different-run"]
+        for saved in (None, wrong_run):
+            with self.subTest(saved=saved):
+                state["native"]["supervisor_argv"] = saved
+                with (
+                    mock.patch.object(
+                        backend, "_supervisor_cleanup_confirmed", return_value=False
+                    ),
+                    mock.patch.object(native, "read_process_argv") as read_argv,
+                    mock.patch.object(native.os, "kill") as kill,
+                    self.assertRaisesRegex(RuntimeFailure, "snapshot"),
+                ):
+                    backend._stop_supervisor(state, receipt, running)
+                read_argv.assert_not_called()
+                kill.assert_not_called()
+
+    def test_stop_accepts_cleanup_published_before_supervisor_identity_probe(
+        self,
+    ) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        running = {
+            "supervisor_pid": receipt.pane_pid,
+            "agent_pid": 70_003,
+            "process_group_id": 70_003,
+            "launch_nonce": "a" * 32,
+            "phase": "running",
+        }
+        with (
+            mock.patch.object(
+                backend, "_supervisor_cleanup_confirmed", side_effect=(False, True)
+            ),
+            mock.patch.object(native, "read_process_argv", return_value=None),
+            mock.patch.object(native.os, "kill") as kill,
+        ):
+            backend._stop_supervisor(state, receipt, running)
+        kill.assert_not_called()
+
+    def test_stop_compares_the_frozen_supervisor_argv_before_signal(self) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        receipt = backend._receipt_from_state(state["native"])
+        running = {
+            "supervisor_pid": receipt.pane_pid,
+            "agent_pid": 70_003,
+            "process_group_id": 70_003,
+            "launch_nonce": "a" * 32,
+            "phase": "running",
+        }
+        frozen = (
+            "/fixture/Python.app/Contents/MacOS/Python",
+            "-m",
+            "agent_team",
+            "_native-main",
+            "--state",
+            str(self.state_path),
+            "--run-id",
+            state["run_id"],
+        )
+        state["native"]["supervisor_argv"] = list(frozen)
+        with (
+            mock.patch.object(
+                backend, "_supervisor_cleanup_confirmed", side_effect=(False, True)
+            ),
+            mock.patch.object(
+                native, "read_process_argv", return_value=frozen
+            ) as read_argv,
+            mock.patch.object(native, "_pid_alive", return_value=False),
+            mock.patch.object(native.os, "kill") as kill,
+        ):
+            backend._stop_supervisor(state, receipt, running)
+        read_argv.assert_called_once_with(receipt.pane_pid)
+        self.assertEqual(
+            kill.call_args_list,
+            [
+                mock.call(receipt.pane_pid, 0),
+                mock.call(receipt.pane_pid, native.signal.SIGTERM),
+            ],
+        )
 
 
 if __name__ == "__main__":

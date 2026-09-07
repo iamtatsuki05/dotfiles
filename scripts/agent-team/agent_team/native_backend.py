@@ -1,6 +1,6 @@
-"""Native tmux backend for the small typed agent-team runtime.
+"""Native task progression independent of the Main terminal host.
 
-The tmux process is only a private host for Main.  ACP roles communicate
+The terminal process is only a private host for Main.  ACP roles communicate
 completion through :func:`publish_completion`; pane output is deliberately
 never interpreted as a lifecycle message.
 """
@@ -19,11 +19,12 @@ import tempfile
 import threading
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from types import FrameType
-from typing import Final, NoReturn, cast
+from typing import Final, Generic, NoReturn, cast
 
 from . import native_acp_dependencies
 from .adapters import (
@@ -74,6 +75,13 @@ from .contracts import (
 )
 from .harness_launch import LaunchValidationError, build_claude_argv
 from .locking import _LifecycleReservation
+from .native_terminal import (
+    NativeTerminalDriver,
+    NativeTerminalInspection,
+    NativeTerminalReceipt,
+    ReceiptT,
+    is_native_runtime,
+)
 from .process_identity import python_process_argv, read_process_argv
 from .runtime import (
     MAX_PROMPT_CHARS,
@@ -84,6 +92,7 @@ from .runtime import (
     build_acp_session_name,
     create_prompt_file,
     remove_prompt_file,
+    validate_native_main_process,
 )
 from .runtime import (
     read_state as runtime_read_state,
@@ -108,15 +117,8 @@ from .task_execution import (
     validate_task_assignment,
 )
 from .task_spec import TaskSpec, parse_task_specs
-from .tmux import (
-    CloseEvidence,
-    TmuxDriver,
-    TmuxInspection,
-    TmuxReceipt,
-)
 from .workspace_revision import snapshot_revision
 
-NATIVE_RUNTIME: Final = "tmux"
 NATIVE_PHASES: Final = frozenset({"starting", "running", "stopping"})
 ACP_ADAPTER_ID: Final = "claude-acp-0.70.0"
 ACP_ROLES: Final = frozenset({Role.PLANNER, Role.WORKER, Role.REVIEWER})
@@ -436,23 +438,9 @@ def _validate_profile(
     return role_specs, acp_bindings, argv
 
 
-def _receipt_from_state(native: Mapping[str, object]) -> TmuxReceipt:
-    raw = native.get("tmux_receipt")
-    try:
-        return TmuxReceipt.from_dict(raw)
-    except Exception as exc:
-        raise _runtime_error(exc, "native tmux receipt is invalid") from exc
-
-
-def _driver_from_receipt(receipt: TmuxReceipt) -> TmuxDriver:
-    try:
-        return TmuxDriver.from_receipt(receipt)
-    except Exception as exc:
-        raise _runtime_error(exc, "native tmux receipt cannot be resumed") from exc
-
-
-def _inspection_dict(observed: TmuxInspection) -> dict[str, object]:
+def _inspection_dict(observed: NativeTerminalInspection) -> dict[str, object]:
     return {
+        "presence": observed.presence,
         "running": observed.running,
         "exit_status": observed.exit_status,
         "identity_verified": observed.identity_verified,
@@ -463,6 +451,61 @@ def _inspection_dict(observed: TmuxInspection) -> dict[str, object]:
         "observed_nonce": observed.observed_nonce,
         "reason": observed.reason,
     }
+
+
+def _terminal_stop_is_owned(
+    receipt: NativeTerminalReceipt,
+    observed: NativeTerminalInspection,
+    main_process: Mapping[str, object],
+) -> bool:
+    try:
+        validate_native_main_process(main_process)
+    except RuntimeValidationError:
+        return False
+    if (
+        observed.identity_verified is not True
+        or main_process.get("supervisor_pid") != receipt.pane_pid
+    ):
+        return False
+    if observed.presence == "present":
+        return observed.pane_present is True and observed.pane_pid == receipt.pane_pid
+    if observed.presence == "absent":
+        return (
+            observed.pane_present is False
+            and observed.pane_pid is None
+            and observed.running is False
+            and observed.session_present is True
+            and observed.server_pid == receipt.server_pid
+            and observed.observed_nonce == receipt.run_nonce
+            and main_process.get("phase") == "exited"
+            and main_process.get("group_stopped") is True
+        )
+    return False
+
+
+def _validated_supervisor_argv(state: Mapping[str, object]) -> tuple[str, ...]:
+    raw = _native(state).get("supervisor_argv")
+    if not isinstance(raw, list) or len(raw) != 8:
+        raise RuntimeFailure(
+            ErrorCode.BACKEND_PROTOCOL_FAILURE,
+            "native supervisor argv snapshot is unavailable; state retained",
+        )
+    argv = tuple(_required_string(value, "supervisor argv") for value in raw)
+    expected_arguments = (
+        "-m",
+        "agent_team",
+        "_native-main",
+        "--state",
+        str(_state_path(state)),
+        "--run-id",
+        _required_string(state.get("run_id"), "run_id"),
+    )
+    if not Path(argv[0]).is_absolute() or argv[1:] != expected_arguments:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH,
+            "native supervisor argv snapshot does not match this run",
+        )
+    return argv
 
 
 def _native_result_fields(
@@ -549,23 +592,20 @@ def _clear_pending(state: dict[str, object]) -> None:
         state.pop(key, None)
 
 
-def _remove_socket_root(receipt: TmuxReceipt) -> None:
+def _remove_socket_root(root: Path) -> None:
     """Remove only the empty private directory allocated for this receipt."""
 
-    root = receipt.socket_path.parent
     if root.parent != Path("/tmp"):
         raise RuntimeFailure(
             ErrorCode.IDENTITY_MISMATCH,
-            "native tmux socket root does not match its receipt",
+            "native socket root does not match its receipt",
         )
     try:
         info = root.lstat()
     except FileNotFoundError:
         return
     except OSError as exc:
-        raise _runtime_error(
-            exc, "native tmux socket root cannot be inspected"
-        ) from exc
+        raise _runtime_error(exc, "native socket root cannot be inspected") from exc
     if (
         stat.S_ISLNK(info.st_mode)
         or not stat.S_ISDIR(info.st_mode)
@@ -574,12 +614,12 @@ def _remove_socket_root(receipt: TmuxReceipt) -> None:
     ):
         raise RuntimeFailure(
             ErrorCode.IDENTITY_MISMATCH,
-            "native tmux socket root ownership is unproven",
+            "native socket root ownership is unproven",
         )
     try:
         root.rmdir()
     except OSError as exc:
-        raise _runtime_error(exc, "native tmux socket root cleanup failed") from exc
+        raise _runtime_error(exc, "native socket root cleanup failed") from exc
 
 
 def _pid_alive(pid: int) -> bool:
@@ -878,7 +918,7 @@ def publish_completion(
     reservation.acquire()
     try:
         state = _read_state(_absolute(state_path))
-        if state.get("runtime") != NATIVE_RUNTIME:
+        if not is_native_runtime(state.get("runtime")):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "native state runtime does not match"
             )
@@ -1013,26 +1053,61 @@ def _assert_publisher(path: Path, role: Role, assignment: Mapping[str, object]) 
         )
 
 
-class TmuxBackend(BackendPort):
-    """Bind the typed team runtime contract to a private tmux server."""
+class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
+    """Enforce task progression using a concrete terminal ownership contract."""
 
     def __init__(
         self,
         *,
-        tmux_executable: str | Path = "tmux",
         launcher_path: Path | None = None,
         resume_existing: bool = False,
     ) -> None:
-        self._tmux_executable = tmux_executable
         self._launcher_path = _absolute(launcher_path or Path(sys.argv[0]))
         self._resume_existing = resume_existing
         self._state: dict[str, object] | None = None
-        self._driver: TmuxDriver | None = None
+        self._driver: NativeTerminalDriver[ReceiptT] | None = None
         self._runners: dict[str, subprocess.Popen[bytes]] = {}
         self.last_start_response: dict[str, object] | None = None
         self.last_status_response: dict[str, object] | None = None
         self.last_attach_response: dict[str, object] | None = None
         self.last_stop_response: dict[str, object] | None = None
+
+    @property
+    @abstractmethod
+    def runtime(self) -> str: ...
+
+    @property
+    def _receipt_key(self) -> str:
+        return f"{self.runtime}_receipt"
+
+    @abstractmethod
+    def _new_driver(
+        self, socket_root: Path, run_nonce: str, session_name: str
+    ) -> NativeTerminalDriver[ReceiptT]: ...
+
+    @abstractmethod
+    def _startup_socket_path(self, socket_root: Path, session_name: str) -> Path: ...
+
+    @abstractmethod
+    def _parse_receipt(self, value: object) -> ReceiptT: ...
+
+    @abstractmethod
+    def _restore_driver(self, receipt: ReceiptT) -> NativeTerminalDriver[ReceiptT]: ...
+
+    @abstractmethod
+    def _socket_root(self, receipt: ReceiptT) -> Path: ...
+
+    def _receipt_from_state(self, native: Mapping[str, object]) -> ReceiptT:
+        try:
+            return self._parse_receipt(native.get(self._receipt_key))
+        except Exception as exc:
+            raise _runtime_error(exc, "native terminal receipt is invalid") from exc
+
+    def _driver_from_receipt(self, receipt: ReceiptT) -> NativeTerminalDriver[ReceiptT]:
+        try:
+            return self._restore_driver(receipt)
+        except Exception as exc:
+            raise _runtime_error(exc, "native terminal cannot be resumed") from exc
 
     def start(self, spec: StartSpec) -> StartResult:
         self._ensure_supported_platform()
@@ -1259,21 +1334,31 @@ class TmuxBackend(BackendPort):
                     ErrorCode.IDENTITY_MISMATCH,
                     "native stop phase changed during cleanup",
                 )
-            driver = self._driver or _driver_from_receipt(_receipt_from_state(native))
-            current_receipt = _receipt_from_state(native)
+            driver = self._driver or self._driver_from_receipt(
+                self._receipt_from_state(native)
+            )
+            current_receipt = self._receipt_from_state(native)
             if current_receipt != receipt:
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
-                    "native tmux receipt changed during stop",
+                    "native receipt changed during stop",
                 )
             inspected = driver.inspect(current_receipt)
-            if (
-                not inspected.identity_verified
-                or inspected.pane_pid != current_receipt.pane_pid
+            stopped_main = native.get("main_process")
+            if not isinstance(stopped_main, dict) or not _terminal_stop_is_owned(
+                current_receipt, inspected, stopped_main
             ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
-                    "native tmux pane ownership is unproven during stop",
+                    "native pane ownership is unproven during stop",
+                )
+            if (
+                stopped_main.get("phase") != "exited"
+                or stopped_main.get("group_stopped") is not True
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "native Main process cleanup is unconfirmed during stop",
                 )
             closed = driver.close(current_receipt)
             if (
@@ -1282,16 +1367,16 @@ class TmuxBackend(BackendPort):
                 or not closed.server_terminated
                 or closed.evidence
                 not in {
-                    CloseEvidence.SERVER_TERMINATED,
-                    CloseEvidence.SESSION_TERMINATED,
+                    "server-terminated",
+                    "session-terminated",
                 }
                 or not closed.socket_removed
             ):
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                    "native tmux server termination is unproven",
+                    "native server termination is unproven",
                 )
-            _remove_socket_root(current_receipt)
+            _remove_socket_root(self._socket_root(current_receipt))
             roles = _required_mapping(current.get("roles"), "roles")
             if roles:
                 raise RuntimeFailure(
@@ -1339,14 +1424,25 @@ class TmuxBackend(BackendPort):
         run_id = _new_id()
         main_terminal = _new_id()
         run_nonce = secrets.token_hex(16)
+        session_name = f"agent-team-main-{run_nonce[:16]}"
+        supervisor_argv = (
+            sys.executable,
+            "-m",
+            "agent_team",
+            "_native-main",
+            "--state",
+            str(state_path),
+            "--run-id",
+            run_id,
+        )
         socket_root = Path(tempfile.mkdtemp(prefix="at-", dir="/tmp"))
         try:
             os.chmod(socket_root, 0o700)
         except OSError as exc:
-            raise _runtime_error(exc, "native tmux socket root setup failed") from exc
+            raise _runtime_error(exc, "native socket root setup failed") from exc
         state: dict[str, object] = {
             "version": 3,
-            "runtime": NATIVE_RUNTIME,
+            "runtime": self.runtime,
             "team_id": spec.team_id,
             "workspace": str(_canonical(spec.workspace)),
             "config_path": str(_canonical(spec.config_path)),
@@ -1366,7 +1462,10 @@ class TmuxBackend(BackendPort):
                 "phase": "starting",
                 "run_nonce": run_nonce,
                 "main_argv": list(main_argv),
-                "startup_socket_path": str(socket_root / "s"),
+                "supervisor_argv": list(python_process_argv(supervisor_argv)),
+                "startup_socket_path": str(
+                    self._startup_socket_path(socket_root, session_name)
+                ),
             },
         }
         _save_state(
@@ -1375,24 +1474,8 @@ class TmuxBackend(BackendPort):
             require_existing=False,
             reservation_held=True,
         )
-        session_name = f"agent-team-main-{run_nonce[:16]}"
         try:
-            driver = TmuxDriver(
-                self._tmux_executable,
-                socket_root / "s",
-                run_nonce,
-                session_name,
-            )
-            supervisor_argv = (
-                sys.executable,
-                "-m",
-                "agent_team",
-                "_native-main",
-                "--state",
-                str(state_path),
-                "--run-id",
-                run_id,
-            )
+            driver = self._new_driver(socket_root, run_nonce, session_name)
             receipt = driver.create(
                 supervisor_argv,
                 cwd=PACKAGE_ROOT,
@@ -1402,14 +1485,14 @@ class TmuxBackend(BackendPort):
             if receipt.run_nonce != run_nonce or receipt.session_name != session_name:
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
-                    "native tmux receipt identity does not match startup",
+                    "native receipt identity does not match startup",
                 )
         except Exception as exc:
-            # The state intentionally remains in ``starting``.  A lost tmux
+            # The state intentionally remains in ``starting``.  A lost terminal
             # create effect must not be converted into a clean restart.
             raise _runtime_error(exc, "native Main startup failed") from exc
         native = _native(state)
-        native["tmux_receipt"] = receipt.as_dict()
+        native[self._receipt_key] = receipt.as_dict()
         native["phase"] = "running"
         _save_state(
             state_path,
@@ -1446,19 +1529,31 @@ class TmuxBackend(BackendPort):
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE, "native phase is unknown"
             )
-        if "tmux_receipt" not in native and phase != "starting":
+        if self._receipt_key not in native and phase != "starting":
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "native Main startup is unresolved",
             )
-        if "tmux_receipt" in native:
-            receipt = _receipt_from_state(native)
-            driver = _driver_from_receipt(receipt)
+        if self._receipt_key in native:
+            receipt = self._receipt_from_state(native)
+            driver = self._driver_from_receipt(receipt)
             inspected = driver.inspect(receipt)
-            if not inspected.identity_verified:
+            if inspected.presence == "absent":
+                main_process = native.get("main_process")
+                owned = isinstance(main_process, dict) and _terminal_stop_is_owned(
+                    receipt, inspected, main_process
+                )
+            else:
+                owned = (
+                    inspected.identity_verified is True
+                    and inspected.presence == "present"
+                    and inspected.pane_present is True
+                    and inspected.pane_pid == receipt.pane_pid
+                )
+            if not owned:
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
-                    "native tmux pane ownership is unproven",
+                    "native pane ownership is unproven",
                 )
             self._driver = driver
         else:
@@ -1541,7 +1636,7 @@ class TmuxBackend(BackendPort):
                 ErrorCode.IDENTITY_MISMATCH,
                 "native state does not match requested team identity",
             )
-        if state.get("runtime") != NATIVE_RUNTIME:
+        if state.get("runtime") != self.runtime:
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "native state runtime does not match"
             )
@@ -1567,11 +1662,11 @@ class TmuxBackend(BackendPort):
             native = _native(state)
             phase = native.get("phase")
             status = phase if phase in NATIVE_PHASES else "unknown"
-            inspection: TmuxInspection | None = None
-            receipt: TmuxReceipt | None = None
-            if "tmux_receipt" in native:
-                receipt = _receipt_from_state(native)
-                driver = self._driver or _driver_from_receipt(receipt)
+            inspection: NativeTerminalInspection | None = None
+            receipt: ReceiptT | None = None
+            if self._receipt_key in native:
+                receipt = self._receipt_from_state(native)
+                driver = self._driver or self._driver_from_receipt(receipt)
                 self._driver = driver
                 inspection = driver.inspect(receipt)
                 if not inspection.identity_verified:
@@ -1599,7 +1694,7 @@ class TmuxBackend(BackendPort):
                 "roles": dict(_required_mapping(state.get("roles"), "roles")),
             }
             if inspection is not None:
-                response["tmux"] = _inspection_dict(inspection)
+                response[self.runtime] = _inspection_dict(inspection)
             self.last_status_response = response
             return StatusReceipt(status, team_id, RunRef(run_id))
         finally:
@@ -1621,14 +1716,18 @@ class TmuxBackend(BackendPort):
         try:
             state = self._reload_locked(path)
             native = _native(state)
-            receipt = _receipt_from_state(native)
-            driver = self._driver or _driver_from_receipt(receipt)
+            receipt = self._receipt_from_state(native)
+            driver = self._driver or self._driver_from_receipt(receipt)
             self._driver = driver
             inspected = driver.inspect(receipt)
-            if not inspected.identity_verified:
+            if (
+                not inspected.identity_verified
+                or inspected.presence != "present"
+                or inspected.pane_pid != receipt.pane_pid
+            ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
-                    "native Main tmux ownership is unproven",
+                    "native Main terminal ownership is unproven",
                 )
             argv = driver.attach_argv(receipt)
         except RuntimeFailure:
@@ -2423,7 +2522,7 @@ class TmuxBackend(BackendPort):
 
     def _prepare_stop_locked(
         self, path: Path
-    ) -> tuple[dict[str, object], TmuxReceipt, dict[str, object], Role | None]:
+    ) -> tuple[dict[str, object], ReceiptT, dict[str, object], Role | None]:
         state = self._reload_locked(path)
         if _verification_pending(state):
             raise RuntimeFailure(
@@ -2442,30 +2541,24 @@ class TmuxBackend(BackendPort):
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE, "native phase is unknown"
             )
-        receipt = _receipt_from_state(native)
-        driver = self._driver or _driver_from_receipt(receipt)
+        receipt = self._receipt_from_state(native)
+        driver = self._driver or self._driver_from_receipt(receipt)
         self._driver = driver
         inspected = driver.inspect(receipt)
-        if not inspected.identity_verified or inspected.pane_pid != receipt.pane_pid:
-            raise RuntimeFailure(
-                ErrorCode.IDENTITY_MISMATCH, "native tmux pane ownership is unproven"
-            )
         process = native.get("main_process")
         if not isinstance(process, dict):
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "native Main process receipt is unknown",
             )
+        if not _terminal_stop_is_owned(receipt, inspected, process):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH, "native terminal ownership is unproven"
+            )
         if process.get("phase") == "running" and inspected.running is not True:
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "native supervisor liveness is unconfirmed",
-            )
-        supervisor_pid = process.get("supervisor_pid")
-        if supervisor_pid != receipt.pane_pid:
-            raise RuntimeFailure(
-                ErrorCode.IDENTITY_MISMATCH,
-                "native supervisor PID does not match tmux pane",
             )
         if (
             process.get("phase") == "exited"
@@ -2507,7 +2600,7 @@ class TmuxBackend(BackendPort):
         while True:
             state = _read_state(path)
             native = _native(state)
-            if "tmux_receipt" not in native:
+            if self._receipt_key not in native:
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "native Main startup is unresolved; state and socket path retained",
@@ -2634,9 +2727,16 @@ class TmuxBackend(BackendPort):
     def _stop_supervisor(
         self,
         state: dict[str, object],
-        receipt: TmuxReceipt,
+        receipt: ReceiptT,
         process: Mapping[str, object],
     ) -> None:
+        try:
+            validate_native_main_process(process)
+        except RuntimeValidationError as exc:
+            raise RuntimeFailure(
+                ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                "native Main process receipt is invalid; state retained",
+            ) from exc
         if self._supervisor_cleanup_confirmed(state, process):
             return
         phase = process.get("phase")
@@ -2657,6 +2757,14 @@ class TmuxBackend(BackendPort):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
                 "native supervisor process identity is invalid",
+            )
+        expected_argv = _validated_supervisor_argv(state)
+        if read_process_argv(pid) != expected_argv:
+            if self._supervisor_cleanup_confirmed(state, process):
+                return
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "native supervisor process identity is unproven; state retained",
             )
         # native_main owns the Main child process group and handles this exact
         # supervisor signal.  Its receipt's process_group_id belongs to the
@@ -2734,8 +2842,8 @@ class TmuxBackend(BackendPort):
         if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
-                "native tmux runtime requires Linux or macOS process identity support",
+                "native runtime requires Linux or macOS process identity support",
             )
 
 
-__all__ = ("TmuxBackend", "publish_completion")
+__all__ = ("NativeBackend", "publish_completion")

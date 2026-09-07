@@ -13,7 +13,7 @@ package download、process起動、workspace書き込みは行いません。
 
 | Harness | 現在実行できるdirect profile | 既知のACP adapter | Static registry snapshot (not safety status) | 広く対応していない理由 |
 |---|---|---|---|---|
-| Claude | Main `orchestrator`、Planner/Reviewer `read-only` | Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`、native tmux: `@agentclientprotocol/sdk@1.3.0`を使うdirect public SDK | 検証済み | bundled OrcaのACPはread-onlyのまま。native tmuxには宣言済みTaskSpecに束縛するscoped Workerがあります。 |
+| Claude | Main `orchestrator`、Planner/Reviewer `read-only` | Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`、native tmux/Herdr/Zellij: `@agentclientprotocol/sdk@1.3.0`を使うdirect public SDK | 検証済み | bundled OrcaのACPはread-onlyのまま。全native terminal driverがTaskSpecに束縛するscoped Workerを共有します。 |
 | Codex | Main `orchestrator`、Planner/Reviewer `read-only`、Worker `workspace-write` | `codex-acp` | direct検証済み、ACP拒否 | ACPのpermission制御がinternal writeを止めないnegative test結果。 |
 | GitHub Copilot | Planner/Reviewer `read-only`（direct background、厳密な`1.0.81`） | native `copilot --acp`、acpx built-in `copilot` | 厳密なGitHub CLIを解決できた場合は検証済み | read-onlyのPlanner/Reviewerに限定。Workerは引き続き拒否。 |
 | Cursor | なし | native `cursor-agent acp`、acpx built-in `cursor` | 認識済み; direct=`not-run`; acp=`not-run` | historicalなauth観測は未検証。現在のpermission phaseは`not-run`。 |
@@ -26,14 +26,14 @@ package download、process起動、workspace書き込みは行いません。
 
 ACP adapterがインストールされていることやacpxが表示することだけでは、安全なrole用adapterで
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
-native tmuxのClaude ACPは別runtime profileです。version 3のtmux configから選んだread-only
+native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative configから選んだread-only
 Planner/Reviewerとscoped workspace-write Workerだけを使い、Worker dispatchには宣言済みTaskSpec
 との完全一致が必要です。unknown providerと認識済みだが拒否されたprofileは、Orca Task、terminal、
 ACP processを作る前に失敗します。別harnessへのfallbackはありません。
 
 OrcaのClaude ACP profileにはNode.js `22.13.0`以降も必要です。起動前にOrcaは選択したACP roleの
 `node`、`acpx`、`claude-agent-acp`だけを解決し、exact package manifestを確認したうえで、absoluteな
-pathとSHA-256 fingerprintを保存します。native tmuxは`node`、`claude-agent-acp@0.70.0`のentryと
+pathとSHA-256 fingerprintを保存します。native terminal runtimeは`node`、`claude-agent-acp@0.70.0`のentryと
 `dist/lib.js`、その依存の`@agentclientprotocol/sdk@1.3.0`の計4 fileを解決し、各absolute pathと
 SHA-256 fingerprintを保存します。acpxは選びません。導入済みの間接依存は信頼する前提であり、
 読み込まれる全fileの固定や、同じユーザー権限による悪意ある同時差し替えは保証しません。packageは`agent-team`の外で明示的に

@@ -845,7 +845,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("version must be integer 3", result.stderr)
 
-    def test_config_rejects_non_orca_runtime(self) -> None:
+    def test_config_rejects_unknown_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "project"
@@ -853,14 +853,16 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             config = self.make_config(root)
             config.write_text(
                 config.read_text(encoding="utf-8").replace(
-                    'runtime = "orca"', 'runtime = "herdr"'
+                    'runtime = "orca"', 'runtime = "not-registered"'
                 ),
                 encoding="utf-8",
             )
             result = self.run_launcher(config, workspace, "start", "--dry-run")
 
         self.assertEqual(result.returncode, 2)
-        self.assertIn("runtime must be 'orca'", result.stderr)
+        self.assertIn(
+            "runtime must be one of: herdr, orca, tmux, zellij", result.stderr
+        )
 
     def test_config_rejects_write_enabled_claude_worker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

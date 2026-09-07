@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
+from unittest import mock
 
+from agent_team import adapters
 from agent_team.contracts import RuntimeFailure
 from agent_team.task_spec import TaskSpec, VerificationSpec
 from agent_team.task_verification import run_verification
@@ -178,17 +183,63 @@ class TaskVerificationTest(unittest.TestCase):
             )
         )
 
-        started = time.monotonic()
-        result = run_verification(
-            task, self.workspace, snapshot_revision(self.workspace)
-        )
-        elapsed = time.monotonic() - started
+        revision = snapshot_revision(self.workspace)
+        processes: list[subprocess.Popen[bytes]] = []
+        real_popen = subprocess.Popen
 
-        self.assertFalse(result["passed"])
-        self.assertLess(elapsed, 4)
-        command = self._commands(result)[0]
-        self.assertIsNone(command["returncode"])
-        self.assertIsNotNone(command["error"])
+        def capture_popen(
+            args: Sequence[str],
+            *,
+            cwd: Path,
+            env: Mapping[str, str],
+            stdin: int | None,
+            stdout: int | None,
+            stderr: int | None,
+            shell: bool,
+            start_new_session: bool,
+        ) -> subprocess.Popen[bytes]:
+            self.assertIs(start_new_session, True)
+            process = real_popen(
+                args,
+                cwd=cwd,
+                env=env,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                shell=shell,
+                start_new_session=start_new_session,
+            )
+            processes.append(process)
+            return process
+
+        runner_subprocess = SimpleNamespace(
+            **{**vars(subprocess), "Popen": capture_popen}
+        )
+        try:
+            with mock.patch.object(adapters, "subprocess", runner_subprocess):
+                result = run_verification(task, self.workspace, revision)
+
+            self.assertFalse(result["passed"])
+            self.assertIs(result["cleanup_confirmed"], True)
+            command = self._commands(result)[0]
+            self.assertIsNone(command["returncode"])
+            self.assertIn("timed out after 1s", cast(str, command["error"]))
+            self.assertEqual(len(processes), 1)
+            process = processes[0]
+            self.assertIn(process.poll(), {-signal.SIGTERM, -signal.SIGKILL})
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(process.pid, 0)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                self.assertTrue(stream is not None and stream.closed)
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
 
 
 if __name__ == "__main__":

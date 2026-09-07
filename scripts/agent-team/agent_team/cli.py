@@ -55,6 +55,7 @@ from .harness_launch import (
     build_plan_role_command,
 )
 from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
+from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .registry import (
     CANONICAL_HARNESSES,
     adapter_id_for_profile,
@@ -94,7 +95,9 @@ from .workspace_revision import snapshot_revision
 
 if TYPE_CHECKING:
     from .backend import OrcaBackend
-    from .native_backend import TmuxBackend
+    from .herdr_backend import HerdrBackend
+    from .tmux_backend import TmuxBackend
+    from .zellij_backend import ZellijBackend
 
 SUPPORTED_TRANSPORTS: Final = frozenset({"direct", "acp"})
 SUPPORTED_PROVIDERS: Final = frozenset(CANONICAL_HARNESSES)
@@ -261,10 +264,12 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
             "v4 field 'teams' requires config version 4; v3 config is unchanged"
         )
     runtime = require_string(data, "runtime", "config")
-    if runtime not in {"orca", "tmux"}:
-        raise ConfigError("runtime must be 'orca' or 'tmux'")
-    if "tasks" in data and runtime != "tmux":
-        raise ConfigError("declared tasks require runtime='tmux'")
+    if runtime != "orca" and not is_native_runtime(runtime):
+        raise ConfigError(
+            "runtime must be one of: " + ", ".join(sorted({"orca", *NATIVE_RUNTIMES}))
+        )
+    if "tasks" in data and not is_native_runtime(runtime):
+        raise ConfigError("declared tasks require a native runtime")
     team_prefix = require_string(data, "team_prefix", "config")
     if re.fullmatch(r"[a-z][a-z0-9-]{0,23}", team_prefix) is None:
         raise ConfigError("team_prefix must match [a-z][a-z0-9-]{0,23}")
@@ -300,8 +305,8 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
         if runtime == "orca" or role in raw_roles
     }
     if "worker" in roles and roles["worker"].transport == "acp":
-        if runtime != "tmux":
-            raise ConfigError("scoped Claude ACP Worker requires runtime='tmux'")
+        if not is_native_runtime(runtime):
+            raise ConfigError("scoped Claude ACP Worker requires a native runtime")
         if "reviewer" not in roles:
             raise ConfigError("scoped Claude ACP Worker requires a Reviewer")
     try:
@@ -477,7 +482,7 @@ def _management_state(
 
 def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
     runtime = state.get("runtime")
-    if runtime not in {"orca", "tmux"}:
+    if runtime != "orca" and not is_native_runtime(runtime):
         raise ConfigError("saved state has an unsupported runtime")
     required: tuple[str, ...] = ("team_id", "workspace", "config_path", "state_path")
     if runtime == "orca":
@@ -531,7 +536,7 @@ def role_instructions(role: str, config: TeamConfig, state_path: Path) -> str:
     base = role_config.prompt_path.read_text(encoding="utf-8").rstrip()
     if role != "main":
         return base
-    if config.runtime == "tmux":
+    if is_native_runtime(config.runtime):
         return (
             f"{base}\n\n## native実行時の契約\n"
             f"利用可能なroleは{', '.join(config.roles) or 'なし'}です。"
@@ -1335,7 +1340,7 @@ def _acp_assignment(
         or not isinstance(spec.get("instructions"), str)
     ):
         raise ConfigError("ACP role does not satisfy the Claude read-only capability")
-    if state["runtime"] == "tmux":
+    if is_native_runtime(state["runtime"]):
         try:
             executables: AcpExecutables | NativeAcpExecutables = (
                 NativeAcpExecutables.from_dict(spec.get("acp_executables"))
@@ -1348,7 +1353,7 @@ def _acp_assignment(
     team_id = nested_string(state, ("team_id",), "agent-team state")
     write_policy = (
         validate_write_policy(state, assignment, spec)
-        if state["runtime"] == "tmux"
+        if is_native_runtime(state["runtime"])
         else None
     )
     if assignment.get("agent_command") != acp_agent_command(
@@ -1390,7 +1395,7 @@ def _native_completion_run_id(
         for value in (task_id, dispatch_id, terminal_handle, launch_nonce)
     ):
         return None
-    if state.get("runtime") != "tmux":
+    if not is_native_runtime(state.get("runtime")):
         return None
     state_state_path = state.get("state_path")
     if not isinstance(state_state_path, str):
@@ -1542,7 +1547,7 @@ def acp_run(
     except (ConfigError, OSError, TypeError, RuntimeValidationError) as exc:
         print(f"ACP runner validation failed: {exc}", file=sys.stderr)
         return 1
-    native = state.get("runtime") == "tmux"
+    native = is_native_runtime(state.get("runtime"))
     previous = (
         {
             number: signal.getsignal(number)
@@ -1637,7 +1642,7 @@ def _acp_run_turn(
         )
         write_policy = (
             validate_write_policy(state, assignment, spec)
-            if state["runtime"] == "tmux"
+            if is_native_runtime(state["runtime"])
             else None
         )
         agent_command = acp_agent_command(
@@ -1805,7 +1810,7 @@ def _acp_run_turn(
     if failure:
         print(failure, file=sys.stderr)
     outcome = "failed" if failure else "succeeded"
-    if state["runtime"] == "tmux":
+    if is_native_runtime(state["runtime"]):
         from .native_backend import MAX_RESULT_BODY_CHARS
 
         body = _native_acp_result_body(output, failure, maximum=MAX_RESULT_BODY_CHARS)
@@ -1816,7 +1821,7 @@ def _acp_run_turn(
         if failure:
             body += f"\nACP runner failure: {failure}"
     try:
-        if state["runtime"] == "tmux":
+        if is_native_runtime(state["runtime"]):
             from .native_backend import publish_completion
 
             publish_completion(
@@ -2109,7 +2114,7 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
     if "main" not in roles or (
-        plan.get("runtime") != "tmux" and set(roles) != set(ALL_ROLES)
+        not is_native_runtime(plan.get("runtime")) and set(roles) != set(ALL_ROLES)
     ):
         raise TypeError("launch plan does not contain the required roles")
     role_specs: dict[Role, RoleSpec] = {}
@@ -2175,8 +2180,9 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
 
 
 def _start_prerequisites(plan: dict[str, object]) -> None:
-    if plan.get("runtime") == "tmux":
-        require_binary("tmux")
+    runtime = plan.get("runtime")
+    if is_native_runtime(runtime):
+        require_binary(runtime)
     elif plan.get("runtime") == "orca":
         from .orca import orca_executable
 
@@ -2206,7 +2212,7 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         try:
             executables = (
                 NativeAcpExecutables.resolve()
-                if plan["runtime"] == "tmux"
+                if is_native_runtime(plan["runtime"])
                 else AcpExecutables.resolve()
             )
             node_version = subprocess.run(
@@ -2236,7 +2242,7 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
             r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?",
             node_version.stdout.strip(),
         )
-        minimum = (22, 0, 0) if plan["runtime"] == "tmux" else (22, 13, 0)
+        minimum = (22, 0, 0) if is_native_runtime(plan["runtime"]) else (22, 13, 0)
         if match is None or tuple(int(item) for item in match.groups()) < minimum:
             raise ConfigError(
                 "selected Node must be version "
@@ -2262,15 +2268,33 @@ def _ensure_orca_platform() -> None:
 
 def _runtime_engine(
     plan: dict[str, object], *, resume_existing: bool
-) -> tuple[WorkflowEngine, OrcaBackend | TmuxBackend]:
+) -> tuple[WorkflowEngine, OrcaBackend | TmuxBackend | HerdrBackend | ZellijBackend]:
     if plan.get("runtime") == "tmux":
-        from .native_backend import TmuxBackend
+        from .tmux_backend import TmuxBackend
 
         native = TmuxBackend(
             launcher_path=launcher_path() if not resume_existing else None,
             resume_existing=resume_existing,
         )
         return WorkflowEngine(native), native
+    if plan.get("runtime") == "herdr":
+        from .herdr_backend import HerdrBackend
+
+        herdr = HerdrBackend(
+            launcher_path=launcher_path() if not resume_existing else None,
+            resume_existing=resume_existing,
+        )
+        return WorkflowEngine(herdr), herdr
+    if plan.get("runtime") == "zellij":
+        from .zellij_backend import ZellijBackend
+
+        zellij = ZellijBackend(
+            launcher_path=launcher_path() if not resume_existing else None,
+            resume_existing=resume_existing,
+        )
+        return WorkflowEngine(zellij), zellij
+    if plan.get("runtime") != "orca":
+        raise ConfigError("launch plan has an unsupported runtime")
     from .backend import OrcaBackend, OrcaClient
 
     config_path = plan.get("config_path")
@@ -2511,7 +2535,7 @@ def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, obje
         raise ConfigError("AGENT_TEAM_STATE_PATH is required")
     path = Path(raw_path)
     state = read_state(path)
-    if state["runtime"] == "tmux":
+    if is_native_runtime(state["runtime"]):
         from .native_mcp import execute_tool
 
         return execute_tool(name, arguments, path)
