@@ -43,6 +43,7 @@ skills/
 | `eng-practices` | PR/CL のタイトル・説明、small PR への分割、reviewer コメントへの返答。 | PR description を書く段階でだけ読む。review の実施には使わず、出力形式は依頼文で決める。 |
 | `go-dev` | go.mod のバージョンに合わせた Go 実装・テスト・レビュー。テーブル駆動テスト、errgroup / context、-race 確認を含む。 | session で 1 回だけ読む。CI YAML や Go 以外のサービスは対象外。 |
 | `git-github-flow` | Git/GitHub 作業を確認・範囲内 write・readback で進める。owner/repo と login は remote から解決、PR は Draft + 明示 assignee / labels、CI gate 後だけ Ready、force-push 禁止。 | fork PR、review 投稿、履歴整理、gh-stack は references。 |
+| `issue-driven-development` | 既存Issueの仕様判断・実装・検証・レビュー・依頼されたPR提出まで進める。 | Issueの閲覧・起票だけ、PRレビューだけは対象外。Git/GitHub操作は `git-github-flow` が担当。 |
 | `goal-prompt-builder` | 依頼を、範囲・checkpoint・検証可能な停止条件を持つ Codex `/goal` prompt に変換する。 | `$goal-prompt-builder` で呼ぶ。本番・課金・権限判断を委ねる goal は拒否する。 |
 | `gws` | gws CLI の helper と低レベル API で Google Calendar / Drive / Gmail / Tasks を扱う。 | 読み取りは即実行、書き込みは dry-run か下書きで確認し、承認後に実行する。 |
 | `html-preview-review` | ユーザーが preview を求めたときだけ、検証済み結果を private な local HTML review board にして 1 つの presenter で表示する。 | OS ブラウザへの fallback 禁止。未表示は未達として報告する。 |

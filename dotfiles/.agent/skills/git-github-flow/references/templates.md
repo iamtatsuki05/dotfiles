@@ -75,7 +75,7 @@ Use the WHY / WHAT / VERIFICATION structure while keeping links and risk explici
 
 ## Verification
 
-- `<実行したコマンドまたは確認>`: <結果>
+- <受け入れ条件>: `<実行したコマンドまたは確認>` — <結果・未達/未検証事項>
 - <手動、表示、環境固有の確認>: <結果>
 
 ## Links
@@ -87,7 +87,8 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 
 ## Risks and remaining work
 
-- <既知のリスク、展開時の注意、後続Issue>
+- <既知のリスク、展開時の注意>
+- <別件の指摘>: <後続Issueの参照先、未起票、または見送る理由>
 ```
 
 ## Draft Pull Request
@@ -109,6 +110,7 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 
 - [ ] <残っている実装>
 - [ ] <残っている検証>
+- <別件の指摘があれば、後続Issueの参照先・未起票・見送る理由>
 
 ## Review focus
 
@@ -116,7 +118,7 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 
 ## Partial verification
 
-- `<コマンドまたは確認>`: <現時点の結果と制約>
+- <受け入れ条件>: `<コマンドまたは確認>` — <現時点の結果と制約>
 
 ## Links
 

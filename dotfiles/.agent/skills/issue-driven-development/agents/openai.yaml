@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue-Driven Development"
+  short_description: "Implement existing issues through verified PR delivery"
+  default_prompt: "Use $issue-driven-development to implement this issue and verify the requested deliverable."
