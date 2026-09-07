@@ -299,7 +299,9 @@ descendant_marker = Path({str(self.acp_descendant_marker)!r})
 args = sys.argv[1:]
 if args[:1] == ['--fixture-descendant']:
     marker = Path(args[1])
-    marker.write_text(str(os.getpid()), encoding='ascii')
+    pending = marker.with_name(marker.name + '.pending')
+    pending.write_text(str(os.getpid()), encoding='ascii')
+    pending.replace(marker)
 
     def stop_descendant(_signum, _frame):
         marker.unlink(missing_ok=True)
@@ -314,7 +316,9 @@ if args == ['--version']:
     print('v22.13.0')
     raise SystemExit(0)
 
-child_marker.write_text(str(os.getpid()), encoding='ascii')
+pending = child_marker.with_name(child_marker.name + '.pending')
+pending.write_text(str(os.getpid()), encoding='ascii')
+pending.replace(child_marker)
 child = None
 
 def record(value):
