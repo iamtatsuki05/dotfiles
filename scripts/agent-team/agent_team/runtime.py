@@ -15,6 +15,7 @@ from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .contracts import ErrorCode, RuntimeFailure
 from .locking import _LifecycleReservation
 from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
+from .native_controller import ControllerKeys, controller_keys
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .task_execution import validate_saved_tasks, validate_task_assignment
 from .task_spec import parse_task_specs
@@ -548,12 +549,26 @@ def _read_bounded_fd(fd: int, maximum: int) -> bytes:
     return bytes(data)
 
 
-def validate_native_main_process(value: object) -> None:
+def validate_native_controller_process(value: object, *, pid_key: str) -> None:
+    """Validate one native supervisor child receipt for its exact controller.
+
+    The receipt shape is shared by agent and program modes, but the child PID
+    field is deliberately mode-specific so a Main receipt cannot be reused as
+    a program coordinator receipt (or vice versa).
+    """
+
+    if not isinstance(pid_key, str) or pid_key not in {
+        "agent_pid",
+        "coordinator_pid",
+    }:
+        raise RuntimeValidationError("native controller process PID key is invalid")
     if not isinstance(value, Mapping):
-        raise RuntimeValidationError("native Main process receipt must be an object")
+        raise RuntimeValidationError(
+            "native controller process receipt must be an object"
+        )
     fields = {
         "supervisor_pid",
-        "agent_pid",
+        pid_key,
         "process_group_id",
         "launch_nonce",
         "phase",
@@ -562,30 +577,110 @@ def validate_native_main_process(value: object) -> None:
     if phase == "exited":
         fields.update({"returncode", "group_stopped"})
     elif phase != "running":
-        raise RuntimeValidationError("native Main process phase is invalid")
+        raise RuntimeValidationError("native controller process phase is invalid")
     if set(value) != fields:
-        raise RuntimeValidationError("native Main process receipt fields are invalid")
-    for key in ("supervisor_pid", "agent_pid"):
+        raise RuntimeValidationError(
+            "native controller process receipt fields are invalid"
+        )
+    for key in ("supervisor_pid", pid_key):
         pid = value[key]
         if type(pid) is not int or pid <= 1:
-            raise RuntimeValidationError(f"native Main process {key} is invalid")
-    if value["supervisor_pid"] == value["agent_pid"]:
-        raise RuntimeValidationError("native Main process must be a separate child")
+            raise RuntimeValidationError(f"native controller process {key} is invalid")
+    if value["supervisor_pid"] == value[pid_key]:
+        raise RuntimeValidationError(
+            "native controller process must be a separate child"
+        )
     nonce = value["launch_nonce"]
     if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
-        raise RuntimeValidationError("native Main process launch nonce is invalid")
+        raise RuntimeValidationError(
+            "native controller process launch nonce is invalid"
+        )
     group = value["process_group_id"]
-    if group is not None and (type(group) is not int or group != value["agent_pid"]):
-        raise RuntimeValidationError("native Main process group identity is invalid")
+    if group is not None and (type(group) is not int or group != value[pid_key]):
+        raise RuntimeValidationError(
+            "native controller process group identity is invalid"
+        )
     if phase == "running":
         if group is None:
-            raise RuntimeValidationError("running Main process group is unproven")
+            raise RuntimeValidationError(
+                "running native controller process group is unproven"
+            )
     elif (
         type(value["returncode"]) is not int
         or type(value["group_stopped"]) is not bool
         or (value["group_stopped"] and group is None)
     ):
-        raise RuntimeValidationError("native Main process exit evidence is invalid")
+        raise RuntimeValidationError(
+            "native controller process exit evidence is invalid"
+        )
+
+
+def validate_native_main_process(value: object) -> None:
+    """Preserve the public agent/Main receipt validator contract."""
+
+    try:
+        validate_native_controller_process(value, pid_key="agent_pid")
+    except RuntimeValidationError as exc:
+        # Existing callers and tests use the Main-specific diagnostic.
+        message = str(exc).replace("native controller", "native Main")
+        raise RuntimeValidationError(message) from exc
+
+
+def _validate_native_controller_state(
+    state: Mapping[str, object], keys: ControllerKeys
+) -> None:
+    """Validate lifecycle metadata after mode-specific key selection."""
+
+    if keys.terminal == "main_terminal":
+        if "coordinator_terminal" in state:
+            raise RuntimeValidationError(
+                "agent state must not contain coordinator_terminal"
+            )
+    else:
+        if "main_terminal" in state:
+            raise RuntimeValidationError("program state must not contain main_terminal")
+
+    terminal = state.get(keys.terminal)
+    if not isinstance(terminal, str) or not terminal:
+        raise RuntimeValidationError(f"native state is missing {keys.terminal}")
+    native = state.get("native")
+    if not isinstance(native, dict):
+        raise RuntimeValidationError("native state metadata is invalid")
+    opposite_argv = (
+        "main_argv" if keys.argv == "coordinator_argv" else "coordinator_argv"
+    )
+    opposite_process = (
+        "main_process"
+        if keys.process == "coordinator_process"
+        else "coordinator_process"
+    )
+    if opposite_argv in native or opposite_process in native:
+        raise RuntimeValidationError(
+            "native state contains lifecycle keys for another coordination mode"
+        )
+    if not isinstance(native.get("phase"), str) or native.get("phase") not in {
+        "starting",
+        "running",
+        "stopping",
+        "stopped",
+    }:
+        raise RuntimeValidationError("native state has an invalid lifecycle phase")
+    nonce = native.get("run_nonce")
+    if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
+        raise RuntimeValidationError("native state has an invalid run nonce")
+    argv = native.get(keys.argv)
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(arg, str) or "\0" in arg for arg in argv)
+        or not Path(argv[0]).is_absolute()
+    ):
+        raise RuntimeValidationError(f"native state has an invalid {keys.argv} command")
+    if keys.process in native:
+        if keys.pid == "agent_pid":
+            validate_native_main_process(native[keys.process])
+        else:
+            validate_native_controller_process(native[keys.process], pid_key=keys.pid)
 
 
 def _parse_named_graph(state: Mapping[str, object]) -> GraphSpec:
@@ -989,38 +1084,13 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
             )
         _validate_named_role_spec(node_id, node.kind.value, spec)
 
-    main_node = graph.main_node
-    if main_node is None:
-        if "main_terminal" in state:
-            raise RuntimeValidationError(
-                "program coordination must not fabricate a main terminal"
-            )
-        if "native" in state and not isinstance(state["native"], dict):
-            raise RuntimeValidationError("program state native metadata is invalid")
-    else:
-        main_terminal = state.get("main_terminal")
-        if not isinstance(main_terminal, str) or not main_terminal:
-            raise RuntimeValidationError("agent state is missing main_terminal")
-        native = state.get("native")
-        if (
-            not isinstance(native, dict)
-            or not isinstance(native.get("phase"), str)
-            or native.get("phase") not in {"starting", "running", "stopping", "stopped"}
-        ):
-            raise RuntimeValidationError("native state has an invalid lifecycle phase")
-        nonce = native.get("run_nonce")
-        if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
-            raise RuntimeValidationError("native state has an invalid run nonce")
-        main_argv = native.get("main_argv")
-        if (
-            not isinstance(main_argv, list)
-            or not main_argv
-            or any(not isinstance(arg, str) or "\0" in arg for arg in main_argv)
-            or not Path(main_argv[0]).is_absolute()
-        ):
-            raise RuntimeValidationError("native state has an invalid Main command")
-        if "main_process" in native:
-            validate_native_main_process(native["main_process"])
+    try:
+        keys = controller_keys(state)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeValidationError(
+            f"agent-team native controller identity is invalid: {exc}"
+        ) from exc
+    _validate_native_controller_state(state, keys)
 
     roles = state["roles"]
     assert isinstance(roles, dict)
@@ -1123,6 +1193,10 @@ def _validate_state_v3(path: Path, state: object) -> dict[str, object]:
             }
         ):
             raise RuntimeValidationError("native state has an invalid lifecycle phase")
+        if "coordinator_terminal" in state:
+            raise RuntimeValidationError(
+                "version-3 agent state must not contain coordinator_terminal"
+            )
         nonce = native.get("run_nonce")
         if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
             raise RuntimeValidationError("native state has an invalid run nonce")
@@ -1134,6 +1208,10 @@ def _validate_state_v3(path: Path, state: object) -> dict[str, object]:
             or not Path(main_argv[0]).is_absolute()
         ):
             raise RuntimeValidationError("native state has an invalid Main command")
+        if "coordinator_argv" in native or "coordinator_process" in native:
+            raise RuntimeValidationError(
+                "version-3 agent state contains program lifecycle keys"
+            )
         if "main_process" in native:
             validate_native_main_process(native["main_process"])
     for key in required:

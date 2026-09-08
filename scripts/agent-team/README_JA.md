@@ -5,8 +5,9 @@
 `agent-team`は、通常の`claude`や`codex`の設定を変えずに、選択した実行環境で
 プロジェクト単位のチームを起動します。既定の`runtime = "orca"`では、
 Planner → Worker → Reviewerの流れと、Task・メッセージ・端末・実行状態をOrcaが管理します。
-native runtimeの`tmux`、`herdr`、`zellij`では、同じdirect Claude Mainと任意のClaude ACP
-Planner、Worker、Reviewerを使います。native Workerはconfigに宣言したTaskSpecとscoped
+native runtimeの`tmux`、`herdr`、`zellij`では、agent teamはdirect Claude Main、version 5の
+`program`/`serial`はMain modelを置かないprogram coordinatorを使います。どちらも設定したClaude ACPの
+Planner、Worker、Reviewerを動かします。native Workerはconfigに宣言したTaskSpecとscoped
 Claude ACP policyを使い、terminal driverだけがruntimeごとに変わります。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
@@ -53,15 +54,16 @@ Task、Dispatch、processに影響する前に拒否します。
 nativeの質問応答は、選択したClaude ACP assignment内の追加通信です。roleのpermission、
 TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質問応答も有効にしません。
 完全検証済みの`0b3e5bc` milestoneは過去の証拠です。tmuxのbounded acceptanceと協調的な検証状況は
-[アーキテクチャ](docs/architecture_JA.md)に記載し、専任Mainなしの実行、残るgraph構成、明示的な並列実行、
-全harness、Codex認証、Orcaとnativeに共通する進行管理の要件とは分けて扱います。
+[アーキテクチャ](docs/architecture_JA.md)に記載します。version 5のnative `program`/`serial`はMainなしで接続していますが、
+実モデル試験は実装・review・検証の前にprovider利用上限で停止しました。並列実行、全harness、Codex認証、
+Orcaとnativeに共通する進行管理は別の実証gateとして残ります。
 
 Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
-現在はnativeの`agent`/`serial`構成で順次実行します。実モデルのtmux試験では、
-4件の独立したassignmentで2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの
-固定argv検証、公開コマンドによる停止まで確認しました。既定profileは上表のままで、
-この試験では5nodeすべてにClaude Fableを明示指定しています。programによる進行管理、
-並列実行、名前付きOrca構成、agent間の相談は、実行時にはまだ利用できません。
+nativeの`agent`/`serial`に加えて、Main roleを置かない`program`/`serial`も接続しています。実モデルのtmux試験では、
+4件の独立したassignmentで2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
+既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。並列実行と名前付きOrca構成は実行時に利用できません。
+名前付きnativeのReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
+回数上限に達している場合は、回答を保存してもtaskは未解決のままです。
 
 ## checkoutから実行する、またはprojectをinstallする
 
@@ -395,7 +397,9 @@ task_dispatch（PlannerまたはWorker）
 20,000文字以内、frameは512 KiB以内、1 assignmentは最大64 batchです。question Deliveryが保留中は
 `role_read`、`role_release`、別dispatch、`task_verify`を拒否し、消費前のsuccessful completionも拒否します。
 その間にstopした場合は明示的なcancellationとして扱い、provider、process group、socket、private cleanupが
-不明ならstateを保持します。Reviewerの`consult`とpost-review resumeは別の未完了gateです。
+不明ならstateを保持します。名前付きnativeの`agent`または`program`でReviewerが`consult`を返すと、`status`にopaqueな相談IDを表示し、
+`answer --consultation-id ID --body ...`でboundedな回答を保存します。review roundが残っていれば、元のwriterを再実行してからreviewをやり直します。
+上限到達後は回答を保存しても再dispatchを許可しません。回答だけで承認にはならず、回数もリセットしません。
 
 nativeの完了・停止証拠はfail-closedです。typed client-result artifact、clientのexit status、取得時のstdout parity、
 session identity、process groupの証明をすべてそろえる必要があります。cancellation Eventはcleanupを要求するための
@@ -415,13 +419,13 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
 
 - 未対応のruntime、provider、transport、permission、config version、state formatは、起動前に
   拒否します。別backendや別transportへ自動で切り替えません。
-- Orcaは4 role固定です。native runtimeはMainを必須とし、verified Claude ACPのread-only
-  Planner/Reviewerと、scoped Claude ACPのworkspace-write Workerを任意に追加できます。
-  native Workerの`task_dispatch`にはconfigの`[[tasks]]` entryとの一致が必要で、その他の未対応profileは
-  起動処理の効果が発生する前に拒否します。
+- Orcaは4 role固定です。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
+  Planner/Reviewerと、scoped Claude ACPのworkspace-write Workerを任意に追加できます。version 5の
+  native `agent`/`serial`はMainを使い、`program`/`serial`は保存済みcoordinatorを使います。
+  native Workerの`task_dispatch`にはconfigの`[[tasks]]` entryとの一致が必要で、その他の未対応profileは起動処理の効果が発生する前に拒否します。
 - nativeの`start`、`status`、`attach`、`stop`は選択した`TmuxBackend`、`HerdrBackend`、
-  `ZellijBackend`を共通`NativeBackend`から使います。`attach`できるのはMainだけです。
-  `native_main`が所有するMainのprocess groupを監督します。
+  `ZellijBackend`を共通`NativeBackend`から使います。`attach`はagent teamのMain、または`--coordinator`を指定した
+  program coordinatorへ接続します。`native_main`は所有するMain process groupまたは固定`_program-run` coordinator childを監督します。
 - native ACPの完了はterminal paneの文字列ではなく`publish_completion`で通知します。lifecycleの
   順序は`role_read` → `role_release` → `delivery_ack`です。nativeの`last_ack`は1つのreceipt
   markerを記録するだけで、Taskやユーザーのgoal全体の完了を意味しません。

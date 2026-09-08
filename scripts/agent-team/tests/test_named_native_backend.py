@@ -37,7 +37,7 @@ class NamedNativeBackendTest(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
 
-    def start(self):
+    def start(self, *, program=False):
         from agent_team.named_graph import Coordination, GraphEdge, GraphSpec, TaskRoute
 
         node = contracts.NodeRef
@@ -89,6 +89,16 @@ class NamedNativeBackendTest(unittest.TestCase):
                 if worker
                 else "claude-acp-0.70.0",
             )
+        if program:
+            graph = replace(
+                graph,
+                nodes=tuple(node for node in graph.nodes if node != self.main),
+                edges=tuple(edge for edge in graph.edges if edge.source != "lead"),
+                coordination=Coordination(
+                    "program", ("implementation-a", "implementation-b"), "serial", 1
+                ),
+            )
+            del specs[self.main]
         spec = replace(
             self.fixture.spec(),
             role_specs=specs,

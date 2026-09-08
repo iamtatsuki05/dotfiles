@@ -38,6 +38,7 @@ from agent_team.contracts import (
     TaskDispatch,
     TaskVerify,
 )
+from agent_team.named_graph import GraphSpec
 from agent_team.native_mcp import NativeMcpSession
 from agent_team.runtime import RuntimeValidationError
 from agent_team.task_spec import TaskSpec, VerificationSpec
@@ -1476,6 +1477,7 @@ class NativeBackendTest(unittest.TestCase):
         reviewer: bool = False,
         task_specs: tuple[TaskSpec, ...] = (),
         planner_spec: RoleSpec | None = None,
+        graph: GraphSpec | None = None,
     ) -> Iterator[tmux_backend.TmuxBackend]:
         executables = FakeExecutables()
         spec = replace(
@@ -1523,6 +1525,15 @@ class NativeBackendTest(unittest.TestCase):
                 ),
             },
         )
+        if graph is not None:
+            spec = replace(
+                spec,
+                graph=graph,
+                role_specs={
+                    graph.node(role.value): selected
+                    for role, selected in spec.role_specs.items()
+                },
+            )
         snapshot = {
             "adapter_id": "claude-acp-0.70.0",
             "revision": "@agentclientprotocol/sdk@1.3.0",

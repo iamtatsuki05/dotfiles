@@ -84,6 +84,52 @@ class NativeMainContractTest(unittest.TestCase):
             },
         }
 
+    def _program_state(
+        self, argv: list[str], *, phase: str = "running"
+    ) -> dict[str, object]:
+        return {
+            "version": 4,
+            "runtime": "tmux",
+            "team_id": "team-123",
+            "workspace": str(self.root),
+            "config_path": str(self.root / "config.toml"),
+            "state_path": str(self.state_path),
+            "launcher_path": str(self.root / "agent-team"),
+            "run_id": self.run_id,
+            "coordinator_terminal": "terminal-123",
+            "task_specs": [],
+            "graph": {
+                "nodes": [{"node_id": "worker", "kind": "worker"}],
+                "edges": [],
+                "coordination": {
+                    "mode": "program",
+                    "entry_nodes": ["worker"],
+                    "dispatch_mode": "serial",
+                    "max_active": 1,
+                },
+                "routes": [],
+            },
+            "role_specs": {
+                "worker": {
+                    "kind": "worker",
+                    "provider": "claude",
+                    "transport": "acp",
+                    "model": "claude-test",
+                    "effort": "medium",
+                    "permission": "workspace-write",
+                    "instructions": "worker instructions",
+                    "execution": "background",
+                    "adapter_id": "claude-acp-scoped-0.70.0",
+                }
+            },
+            "roles": {},
+            "native": {
+                "phase": phase,
+                "run_nonce": "nonce1234",
+                "coordinator_argv": argv,
+            },
+        }
+
     def _save_state(self, state: dict[str, object]) -> None:
         self.state_path.write_text(json.dumps(state), encoding="utf-8")
         self.state_path.chmod(0o600)
@@ -153,6 +199,83 @@ class NativeMainContractTest(unittest.TestCase):
         self.assertEqual(process["phase"], "exited")
         self.assertTrue(process["group_stopped"])
         self._wait_pid_gone(process["agent_pid"])
+
+    def test_program_runs_without_a_main_node_and_records_coordinator_exit(
+        self,
+    ) -> None:
+        marker = self.root / "program-ran"
+        state = self._program_state(
+            self._python_argv(
+                "from pathlib import Path; Path(__import__('sys').argv[1]).write_text('program')",
+                str(marker),
+            )
+        )
+        self._save_state(state)
+
+        self.assertEqual(native_main.run(self.state_path, self.run_id), 0)
+
+        self.assertEqual(marker.read_text(), "program")
+        native = self._read_state(self.state_path)["native"]
+        self.assertIsInstance(native, dict)
+        process = native["coordinator_process"]
+        self.assertEqual(process["phase"], "exited")
+        self.assertTrue(process["group_stopped"])
+        self.assertNotIn("agent_pid", process)
+        self._wait_pid_gone(process["coordinator_pid"])
+
+    def test_program_does_not_fallback_to_main_argv(self) -> None:
+        marker = self.root / "program-fallback"
+        state = self._program_state([])
+        state["native"]["main_argv"] = self._python_argv(
+            "from pathlib import Path; Path(__import__('sys').argv[1]).write_text('fallback')",
+            str(marker),
+        )
+        self._save_state(state)
+
+        self.assertEqual(native_main.run(self.state_path, self.run_id), 1)
+
+        self.assertFalse(marker.exists())
+        self.assertNotIn(
+            "coordinator_process", self._read_state(self.state_path)["native"]
+        )
+
+    def test_program_failed_receipt_cleanup_uses_coordinator_pid(self) -> None:
+        process = mock.Mock(spec=subprocess.Popen)
+        process.pid = 12_345
+        process.returncode = None
+        process.poll.side_effect = lambda: process.returncode
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="program", timeout=2.0),
+            -9,
+        ]
+
+        def kill() -> None:
+            process.returncode = -9
+
+        process.kill.side_effect = kill
+        self._save_state(self._program_state(self._python_argv("raise SystemExit(7)")))
+
+        with (
+            mock.patch.object(native_main.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                native_main.os,
+                "getpgid",
+                side_effect=OSError(errno.EPERM, "process group is unavailable"),
+            ),
+            mock.patch.object(native_main.os, "killpg") as killpg,
+        ):
+            result = native_main.run(self.state_path, self.run_id)
+
+        self.assertEqual(result, 1)
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        killpg.assert_not_called()
+        native = self._read_state(self.state_path)["native"]
+        receipt = native["coordinator_process"]
+        self.assertEqual(receipt["phase"], "exited")
+        self.assertEqual(receipt["coordinator_pid"], process.pid)
+        self.assertNotIn("agent_pid", receipt)
+        self.assertFalse(receipt["group_stopped"])
 
     def test_launch_waits_for_publication_lock_without_duplicate_process(self) -> None:
         self._save_state(self._state([str(self.root / "main")]))

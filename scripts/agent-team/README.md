@@ -6,8 +6,10 @@
 without changing ordinary `claude` or `codex` sessions. The bundled
 `runtime = "orca"` path provides the Planner → Worker → Reviewer workflow, with
 Orca owning Task, message, terminal, and lifecycle coordination. The experimental
-Native runtimes `tmux`, `herdr`, and `zellij` provide the same direct Claude
-Main plus optional Claude ACP Planner, Worker, and Reviewer roles. Native
+Native runtimes `tmux`, `herdr`, and `zellij` use direct Claude Main in
+agent teams, or a program coordinator without a Main model in version-5
+`program`/`serial` teams. Both use the selected Claude ACP Planner, Worker,
+and Reviewer roles. Native
 Worker assignments require a config-declared TaskSpec and use the scoped Claude
 ACP policy; only the terminal driver changes.
 Native Claude ACP assignments also have a bounded `AskUserQuestion` path over
@@ -63,17 +65,23 @@ Claude ACP assignment. It does not change role permissions, TaskSpec file
 scope, Bash or external-tool policy, and it does not enable question handling
 for Codex. The previous fully verified `0b3e5bc` milestone remains historical.
 The bounded tmux acceptance and the cooperative test status are recorded in
-[Architecture](docs/architecture.md); they do not complete the broader
-Mainless, remaining graph modes, parallel, all-harness, Codex-auth, or shared
-Orca/native progression requirements.
+[Architecture](docs/architecture.md). Version-5 native `program`/`serial`
+coordination is now connected without a Main role, but its real-model trial
+stopped at a provider usage limit before implementation, review, and
+verification. Parallel, all-harness, Codex-auth, and shared Orca/native
+progression requirements remain separate evidence gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
-routes in native `agent`/`serial` teams. A real tmux run completed two TaskSpecs
-through four distinct assignments, including questions, review, fixed-argv
-verification at one integrated revision, and public stop. The default profiles
-above remain unchanged; this acceptance selected Claude Fable explicitly for
-all five nodes. Program coordination, parallel execution, named Orca execution,
-and agent-to-agent consultation remain unavailable at runtime.
+routes in native `agent`/`serial` teams, and it connects native
+`program`/`serial` teams that have no Main role. A real tmux run completed two
+TaskSpecs through four distinct assignments, including questions, review,
+fixed-argv verification at one integrated revision, and public stop. The
+default profiles above remain unchanged; this acceptance selected Claude Fable
+explicitly for all five nodes. Parallel execution and named Orca execution
+remain unavailable at runtime. Named-native Reviewer consultation answers are
+available through a bounded opaque ID. Resuming requires the original writer
+and another review within the round limit; reaching the limit keeps the task
+unresolved even after an answer is saved.
 
 ## Run from a checkout or install the project
 
@@ -452,8 +460,12 @@ assignment accepts at most 64 batches. While the question Delivery is pending,
 `role_read`, `role_release`, another dispatch, and `task_verify` are rejected;
 successful completion is rejected until the question is consumed. Stopping
 there marks explicit cancellation and retains state when provider, process
-group, socket, or private cleanup is unproven. Reviewer `consult` and
-post-review resume remain a separate unfinished gate.
+group, socket, or private cleanup is unproven. In a named native `agent` or
+`program` team, Reviewer `consult` exposes an opaque consultation ID in
+`status`; `answer --consultation-id ID --body ...` saves the bounded answer.
+If review rounds remain, the original writer must run again before another
+review. At the limit, the answer is saved but redispatch stays blocked. The
+answer does not approve the review directly or reset its round limit.
 
 Native completion and stop evidence is fail-closed. A typed client-result
 artifact, the client exit status, stdout parity at retrieval, session identity,
@@ -479,13 +491,17 @@ cleanup result requires user consultation and remains retained.
 - Unsupported runtime, provider, transport, permission, config version, or state
   format fails before launch. The launcher never silently switches backends or
   transports.
-- Orca keeps its fixed four-role contract. Native runtimes require Main and allow
-  optional verified Claude ACP Planner/Reviewer roles plus a scoped Claude ACP
-  Worker. A native Worker `task_dispatch` requires a matching config-declared TaskSpec;
+- Orca keeps its fixed four-role contract. Version-3 native runtimes require
+  Main and allow optional verified Claude ACP Planner/Reviewer roles plus a
+  scoped Claude ACP Worker. Version-5 native `agent`/`serial` teams keep Main;
+  version-5 `program`/`serial` teams use the recorded coordinator instead. A
+  native Worker `task_dispatch` requires a matching config-declared TaskSpec;
   unsupported native profiles are rejected before startup effects.
 - Native `start`, `status`, `attach`, and `stop` use the shared `NativeBackend`
   with the selected `TmuxBackend`, `HerdrBackend`, or `ZellijBackend`; attach
-  is valid only for Main. `native_main` supervises the owned Main process group.
+  addresses Main for agent teams or the saved program coordinator with
+  `--coordinator`. `native_main` supervises the owned Main process group or
+  the fixed `_program-run` coordinator child.
 - Native ACP completion comes from `publish_completion`, not terminal pane text.
   The lifecycle order remains `role_read` → `role_release` → `delivery_ack`.
   Native `last_ack` stores one receipt marker and does not mean that a Task or

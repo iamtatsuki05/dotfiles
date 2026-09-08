@@ -472,7 +472,7 @@ class ConfigV5CliTest(unittest.TestCase):
             result, stdout, stderr = self.run_cli("start", "--team", "program")
         self.assertEqual(result, 1)
         self.assertEqual(stdout, "")
-        self.assertIn("coordination", stderr.lower())
+        self.assertIn("serial dispatch", stderr.lower())
         prerequisites.assert_not_called()
         runtime.assert_not_called()
 

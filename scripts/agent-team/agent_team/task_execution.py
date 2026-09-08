@@ -36,6 +36,7 @@ _VERIFICATION_COMMAND_KEYS = frozenset(
     }
 )
 _MAX_VERIFICATION_ERROR_CHARS = 512
+_MAX_CONSULTATION_ANSWER_CHARS = 16000
 _TASK_STATUSES = frozenset(
     {
         "running",
@@ -93,6 +94,131 @@ def _require_record_task(record: Mapping[str, object], task: TaskSpec) -> None:
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec cannot be replaced")
     if record.get("digest") != task_digest(task):
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec digest does not match")
+
+
+def _consultation_id(state: Mapping[str, object], record: Mapping[str, object]) -> str:
+    review = record.get("review_result")
+    evidence = review.get("task_evidence") if isinstance(review, Mapping) else None
+    if not isinstance(review, Mapping) or not isinstance(evidence, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "consultation review evidence is missing")
+    identity = [
+        state.get("run_id"),
+        record.get("digest"),
+        evidence.get("stage"),
+        review.get("dispatch_id"),
+    ]
+    if (
+        any(not isinstance(item, str) or not item for item in identity)
+        or evidence.get("stage") not in _REVIEW_STAGES
+        or evidence.get("decision") != "consult"
+    ):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "consultation review identity is invalid")
+    return (
+        "consult-"
+        + hashlib.sha256(
+            json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    )
+
+
+def _valid_consultation_body(body: object) -> bool:
+    return (
+        isinstance(body, str)
+        and bool(body.strip())
+        and len(body) <= _MAX_CONSULTATION_ANSWER_CHARS
+        and all(char.isprintable() or char in "\n\r\t" for char in body)
+    )
+
+
+def _validate_consultation_answer(
+    state: Mapping[str, object], record: Mapping[str, object]
+) -> None:
+    if "consultation_answer" not in record:
+        return
+    answer = record["consultation_answer"]
+    if not isinstance(answer, Mapping) or set(answer) != {
+        "consultation_id",
+        "body",
+        "body_sha256",
+    }:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved consultation answer is invalid")
+    body = answer.get("body")
+    if (
+        not _valid_consultation_body(body)
+        or answer.get("consultation_id") != _consultation_id(state, record)
+        or answer.get("body_sha256")
+        != hashlib.sha256(cast(str, body).encode("utf-8")).hexdigest()
+    ):
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH, "saved consultation answer binding is invalid"
+        )
+
+
+def task_consultation(
+    state: Mapping[str, object], record: Mapping[str, object]
+) -> dict[str, object] | None:
+    if record.get("status") != "consultation_required":
+        return None
+    consultation_id = _consultation_id(state, record)
+    _validate_consultation_answer(state, record)
+    review = cast(Mapping[str, object], record["review_result"])
+    evidence = cast(Mapping[str, object], review["task_evidence"])
+    return {
+        "consultation_id": consultation_id,
+        "stage": evidence["stage"],
+        "findings": evidence["findings"],
+        "answered": "consultation_answer" in record,
+    }
+
+
+def answer_task_consultation(
+    state: dict[str, object], consultation_id: str, body: str
+) -> dict[str, object]:
+    validate_saved_tasks(state)
+    if not _named_state(state):
+        _fail(
+            ErrorCode.INVALID_REQUEST, "consultation answers require a named task graph"
+        )
+    if (
+        not isinstance(consultation_id, str)
+        or not consultation_id
+        or not _valid_consultation_body(body)
+    ):
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "consultation answer requires an ID and bounded body",
+        )
+    for value in _mutable_tasks(state).values():
+        if not isinstance(value, dict):
+            continue
+        pending = task_consultation(state, value)
+        if pending is None or pending["consultation_id"] != consultation_id:
+            continue
+        answer = {
+            "consultation_id": consultation_id,
+            "body": body,
+            "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        }
+        if "consultation_answer" in value and value["consultation_answer"] != answer:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "consultation already has a different saved answer",
+            )
+        value["consultation_answer"] = answer
+        return value
+    _fail(
+        ErrorCode.MESSAGE_OR_DELIVERY_UNKNOWN,
+        "consultation does not match a pending review",
+    )
+
+
+def _consultation_answered(
+    state: Mapping[str, object], record: Mapping[str, object]
+) -> bool:
+    pending = task_consultation(state, record)
+    return pending is not None and pending["answered"] is True
 
 
 def _review_rounds(record: Mapping[str, object]) -> dict[str, int]:
@@ -156,13 +282,10 @@ def _named_context(
             ErrorCode.IDENTITY_MISMATCH,
             "saved named graph or TaskSpec catalog is invalid",
         ) from exc
-    if (
-        graph.coordination.mode != "agent"
-        or graph.coordination.dispatch_mode != "serial"
-    ):
+    if graph.coordination.dispatch_mode != "serial":
         _fail(
             ErrorCode.INVALID_REQUEST,
-            "named TaskSpec routing currently requires agent coordination and serial dispatch",
+            "named TaskSpec routing currently requires serial dispatch",
         )
 
     node_ids = {node.node_id for node in graph.nodes}
@@ -388,7 +511,10 @@ def _validate_named_record(
         "reviewing_plan",
         "plan_approved",
         "plan_changes_requested",
-    }:
+    } or (
+        is_plan_only(state, task.task_id)
+        and status in {"verifying", "completed", "verification_failed"}
+    ):
         expected_writer = _route_node(state, route, "plan_writer", required=True)
         expected_reviewer = _route_node(state, route, "plan_reviewer", required=True)
         assert expected_writer is not None and expected_reviewer is not None
@@ -532,6 +658,44 @@ def _validate_named_plan_revision(
     ).hexdigest()
     if revision != expected:
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved plan revision does not match result")
+
+
+def is_plan_only(state: Mapping[str, object], task_id: str) -> bool:
+    return (
+        _named_state(state)
+        and _named_route(state, task_id).implementation_writer is None
+    )
+
+
+def verification_revision(record: Mapping[str, object]) -> str:
+    if record.get("stage") == "plan":
+        return _require_sha256(
+            record.get("workspace_revision"), "approved workspace revision"
+        )
+    revision = record.get("revision")
+    if not isinstance(revision, str) or not revision:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "approved workspace revision is missing")
+    return revision
+
+
+def _validate_workspace_revision(
+    state: Mapping[str, object], task: TaskSpec, record: Mapping[str, object]
+) -> None:
+    revision = record.get("workspace_revision")
+    if not is_plan_only(state, task.task_id):
+        if "workspace_revision" in record:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "workspace_revision belongs only to a plan-only task",
+            )
+        return
+    if record.get("status") in {"running", "awaiting_plan_review"}:
+        if revision is not None:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH, "plan-only workspace revision is premature"
+            )
+    elif record.get("status") != "failed" or revision is not None:
+        _require_sha256(revision, "plan-only workspace revision")
 
 
 def _validate_named_review_evidence(
@@ -953,6 +1117,8 @@ def _parse_saved_task(
             )
         assert state is not None
         _validate_named_result_integrity(state, task, record)
+        _validate_consultation_answer(state, record)
+        _validate_workspace_revision(state, task, record)
     if status in {"completed", "verification_failed"}:
         _validate_verification(
             task,
@@ -1003,9 +1169,15 @@ def _validate_verification(
     status: str,
     require_complete: bool = True,
 ) -> Mapping[str, object]:
-    revision = record.get("revision")
-    if not isinstance(revision, str) or not revision:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "verified task revision is missing")
+    revision = verification_revision(record)
+    review_revision = record.get("revision")
+    stage = record.get("stage")
+    if (
+        not isinstance(review_revision, str)
+        or not review_revision
+        or stage not in _REVIEW_STAGES
+    ):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "verified task review binding is missing")
     task_evidence = record.get("task_evidence")
     if not isinstance(task_evidence, Mapping):
         _fail(
@@ -1015,8 +1187,8 @@ def _validate_verification(
         verdict = parse_review(
             json.dumps(dict(task_evidence), ensure_ascii=False),
             task=task,
-            stage="implementation",
-            revision=revision,
+            stage=stage,
+            revision=review_revision,
         )
     except RuntimeFailure as exc:
         raise RuntimeFailure(
@@ -1137,7 +1309,7 @@ def _require_verification_retry(
             "verification cleanup is unconfirmed; user consultation required",
         )
     rounds = _review_rounds(record)
-    if rounds["implementation"] >= max_rounds:
+    if rounds[cast(str, record["stage"])] >= max_rounds:
         _fail(
             ErrorCode.ORDER_VIOLATION,
             "maximum review rounds reached; user consultation required",
@@ -1163,7 +1335,11 @@ def _require_declared_task(state: Mapping[str, object], task: TaskSpec) -> None:
 
 
 def prepare_dispatch(
-    state: dict[str, object], request: TaskDispatch, *, revision: str | None = None
+    state: dict[str, object],
+    request: TaskDispatch,
+    *,
+    revision: str | None = None,
+    workspace_revision: str | None = None,
 ) -> tuple[dict[str, object], str]:
     """Validate and durably prepare one writer or reviewer assignment."""
 
@@ -1171,11 +1347,22 @@ def prepare_dispatch(
     if not isinstance(request, TaskDispatch) or not isinstance(request.task, TaskSpec):
         _fail(ErrorCode.INVALID_REQUEST, "TaskSpec is required")
     _require_declared_task(state, request.task)
+    _admit_program_dispatch(
+        state, request, revision=revision, workspace_revision=workspace_revision
+    )
     message = _require_message(request)
     tasks = _mutable_tasks(state)
     task = request.task
     current = tasks.get(task.task_id)
     named = _named_state(state)
+    final_plan_review = (
+        is_plan_only(state, task.task_id) and role_kind(request.role) is Role.REVIEWER
+    )
+    if workspace_revision is not None and not final_plan_review:
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "workspace_revision requires a plan-only reviewer",
+        )
 
     if current is None:
         new_writer_target: NodeRef | None
@@ -1289,6 +1476,13 @@ def prepare_dispatch(
                     ErrorCode.IDENTITY_MISMATCH, "plan revision does not match result"
                 )
             resolved_revision = saved_revision
+        if final_plan_review:
+            if workspace_revision is None:
+                _fail(
+                    ErrorCode.INVALID_REQUEST,
+                    "workspace revision is required for final plan review",
+                )
+            _require_sha256(workspace_revision, "final plan workspace revision")
         previous_body = _result_body(current)
         prompt = review_prompt(
             task,
@@ -1297,6 +1491,11 @@ def prepare_dispatch(
             result_body=previous_body,
             message=message,
         )
+        if final_plan_review:
+            prompt += (
+                "\n\nこの計画の最終レビューで確認するworkspace revision:\n"
+                + cast(str, workspace_revision)
+            )
         updated = dict(current)
         updated_rounds = dict(rounds)
         updated_rounds[stage] += 1
@@ -1310,6 +1509,9 @@ def prepare_dispatch(
         updated["stage"] = stage
         updated["review_source_dispatch_id"] = current.get("dispatch_id")
         updated["revision"] = resolved_revision
+        if final_plan_review:
+            updated["workspace_revision"] = workspace_revision
+        updated.pop("consultation_answer", None)
         tasks[task.task_id] = updated
         return updated, prompt
 
@@ -1328,9 +1530,32 @@ def prepare_dispatch(
                     ErrorCode.ORDER_VIOLATION,
                     "plan-only TaskSpec requires verification after plan approval",
                 )
+        elif status == "consultation_required":
+            if not _consultation_answered(state, current):
+                _fail(
+                    ErrorCode.ORDER_VIOLATION,
+                    "user consultation is required before another dispatch",
+                )
+            stage = cast(str, current["stage"])
+            if rounds[stage] >= max_rounds:
+                _fail(
+                    ErrorCode.ORDER_VIOLATION,
+                    "maximum review rounds reached; user consultation required",
+                )
+            writer_target = _route_node(
+                state,
+                route,
+                "plan_writer" if stage == "plan" else "implementation_writer",
+                required=True,
+            )
         elif status in {"implementation_changes_requested", "verification_failed"}:
             writer_target = _route_node(
-                state, route, "implementation_writer", required=True
+                state,
+                route,
+                "plan_writer"
+                if status == "verification_failed" and is_plan_only(state, task.task_id)
+                else "implementation_writer",
+                required=True,
             )
         else:
             writer_target = None
@@ -1381,6 +1606,8 @@ def prepare_dispatch(
         updated["writer_role"] = legacy_role.value
         updated["stage"] = "implementation" if legacy_role is Role.WORKER else "plan"
     updated["revision"] = None
+    if is_plan_only(state, task.task_id):
+        updated["workspace_revision"] = None
     prompt = _task_prompt(task, message)
     writer_result = current.get("writer_result")
     if isinstance(writer_result, Mapping) and isinstance(
@@ -1390,6 +1617,12 @@ def prepare_dispatch(
     if isinstance(current.get("task_evidence"), Mapping):
         prompt += "\n\n同じTaskSpecに対するレビュー判定:\n" + json.dumps(
             dict(current["task_evidence"]), ensure_ascii=False
+        )
+    if status == "consultation_required":
+        answer = cast(Mapping[str, object], current["consultation_answer"])
+        prompt += (
+            "\n\nこのレビュー相談に対するユーザーの回答（TaskSpecの制約は維持）:\n"
+            + cast(str, answer["body"])
         )
     tasks[task.task_id] = updated
     return updated, prompt
@@ -1430,6 +1663,21 @@ def validate_task_assignment(
                 ErrorCode.IDENTITY_MISMATCH,
                 "named TaskSpec assignment node does not match its saved dispatch",
             )
+        if (
+            is_plan_only(state, task.task_id)
+            and assignment_target.kind is Role.REVIEWER
+        ):
+            if assignment.get("task_workspace_revision") != verification_revision(
+                record
+            ):
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "plan-only assignment workspace revision is invalid",
+                )
+        elif "task_workspace_revision" in assignment:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH, "unexpected assignment workspace revision"
+            )
     return task
 
 
@@ -1447,6 +1695,305 @@ def validate_saved_tasks(state: Mapping[str, object]) -> None:
     for key, record in tasks.items():
         task = _parse_saved_task(key, record, max_rounds, state=state)
         _require_declared_task(state, task)
+    if _is_program(state):
+        program_wave(state)
+
+
+def _is_program(state: Mapping[str, object]) -> bool:
+    return _named_state(state) and _named_graph(state).coordination.mode == "program"
+
+
+def program_wave(state: Mapping[str, object]) -> Mapping[str, object]:
+    """Validate the bounded integration barrier, without duplicating task records."""
+
+    graph, catalog = _named_context(state)
+    if graph.coordination.mode != "program":
+        _fail(
+            ErrorCode.INVALID_REQUEST, "integration waves require program coordination"
+        )
+    wave = state.get("program_wave")
+    if not isinstance(wave, Mapping) or set(wave) != {"task_ids", "phase", "revision"}:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "program integration wave is missing or invalid",
+        )
+    ids = wave["task_ids"]
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or any(not isinstance(task_id, str) for task_id in ids)
+        or len(ids) != len(set(ids))
+        or ids != [task.task_id for task in catalog if task.task_id in ids]
+    ):
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "program wave members do not match declared tasks",
+        )
+    phase, revision = wave["phase"], wave["revision"]
+    if phase == "writers":
+        if revision is not None:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "writer wave cannot retain an approved revision",
+            )
+    elif phase in {"reviewers", "verification"}:
+        if (
+            not isinstance(revision, str)
+            or len(revision) != 64
+            or any(char not in "0123456789abcdef" for char in revision)
+        ):
+            _fail(ErrorCode.IDENTITY_MISMATCH, "integrated wave revision is invalid")
+    else:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "program wave phase is invalid")
+    records = state.get("tasks")
+    if not isinstance(records, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "program wave task records are missing")
+    for task in catalog:
+        if task.task_id not in ids:
+            continue
+        for dependency in task.dependencies:
+            prior = records.get(dependency)
+            if (
+                dependency in ids
+                or not isinstance(prior, Mapping)
+                or prior.get("status") != "completed"
+            ):
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "program wave contains an unresolved dependency",
+                )
+        record = records.get(task.task_id)
+        final_stage = "plan" if is_plan_only(state, task.task_id) else "implementation"
+        if (
+            phase == "writers"
+            and isinstance(record, Mapping)
+            and record.get("status")
+            in {
+                f"reviewing_{final_stage}",
+                f"{final_stage}_approved",
+                "verifying",
+                "completed",
+            }
+        ):
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "writer wave retains active implementation approval",
+            )
+        if phase != "writers":
+            if (
+                not isinstance(record, Mapping)
+                or record.get("stage") != final_stage
+                or record.get("status")
+                not in {
+                    f"awaiting_{final_stage}_review",
+                    f"reviewing_{final_stage}",
+                    f"{final_stage}_approved",
+                    f"{final_stage}_changes_requested",
+                    "consultation_required",
+                    "verifying",
+                    "completed",
+                    "verification_failed",
+                    "failed",
+                }
+            ):
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "integrated wave has an unfinished writer",
+                )
+            record_revision = record.get(
+                "workspace_revision" if final_stage == "plan" else "revision"
+            )
+            if record_revision not in {None, revision}:
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "task revision differs from its integration wave",
+                )
+            if phase == "verification" and record.get("status") not in {
+                f"{final_stage}_approved",
+                "verifying",
+                "completed",
+                "verification_failed",
+            }:
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "verification wave contains an unapproved task",
+                )
+    return wave
+
+
+def new_program_wave(state: Mapping[str, object]) -> dict[str, object]:
+    graph, catalog = _named_context(state)
+    if graph.coordination.mode != "program" or not catalog:
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "program coordination requires declared TaskSpecs",
+        )
+    records = state.get("tasks")
+    if not isinstance(records, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "program task records are missing")
+
+    def completed(task_id: str) -> bool:
+        record = records.get(task_id)
+        return isinstance(record, Mapping) and record.get("status") == "completed"
+
+    ids = [
+        task.task_id
+        for task in catalog
+        if not completed(task.task_id)
+        and all(completed(dependency) for dependency in task.dependencies)
+    ]
+    if not ids:
+        _fail(ErrorCode.ORDER_VIOLATION, "no incomplete program tasks are ready")
+    return {"task_ids": ids, "phase": "writers", "revision": None}
+
+
+def _admit_program_dispatch(
+    state: Mapping[str, object],
+    request: TaskDispatch,
+    *,
+    revision: str | None,
+    workspace_revision: str | None,
+) -> None:
+    if not _is_program(state):
+        return
+    wave = program_wave(state)
+    if request.task.task_id not in cast(list[str], wave["task_ids"]):
+        _fail(ErrorCode.ORDER_VIOLATION, "task is outside the current integration wave")
+    if role_kind(request.role) is Role.REVIEWER:
+        records = cast(Mapping[str, Mapping[str, object]], state["tasks"])
+        current = records.get(request.task.task_id)
+        stage = current.get("stage") if current is not None else None
+        final_plan = is_plan_only(state, request.task.task_id)
+        expected_phase = (
+            "writers" if stage == "plan" and not final_plan else "reviewers"
+        )
+        if wave["phase"] != expected_phase:
+            _fail(
+                ErrorCode.ORDER_VIOLATION, "review must follow its program wave barrier"
+            )
+        if (
+            expected_phase == "reviewers"
+            and (workspace_revision if final_plan else revision) != wave["revision"]
+        ):
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "review revision differs from the sealed wave",
+            )
+    elif wave["phase"] != "writers":
+        _fail(
+            ErrorCode.ORDER_VIOLATION,
+            "reopen the integration wave before starting a writer",
+        )
+
+
+def transition_program_wave(
+    state: dict[str, object], transition: str, *, revision: str | None = None
+) -> None:
+    """Apply one controller-owned barrier transition under the existing run lock."""
+
+    validate_saved_tasks(state)
+    wave = program_wave(state)
+    if state.get("roles") or state.get("pending_delivery_id") is not None:
+        _fail(
+            ErrorCode.BUSY,
+            "consume all assignments and deliveries before changing the wave",
+        )
+    records = _mutable_tasks(state)
+    members = [records.get(task_id) for task_id in cast(list[str], wave["task_ids"])]
+    if any(not isinstance(record, dict) for record in members):
+        _fail(ErrorCode.ORDER_VIOLATION, "wave writers are not finished")
+    selected = cast(list[dict[str, object]], members)
+    statuses = [record.get("status") for record in selected]
+    final_stages = [
+        "plan"
+        if is_plan_only(state, TaskSpec.from_dict(record["spec"]).task_id)
+        else "implementation"
+        for record in selected
+    ]
+    if transition == "seal_wave":
+        if wave["phase"] != "writers" or any(
+            status != f"awaiting_{stage}_review"
+            for status, stage in zip(statuses, final_stages, strict=True)
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "all wave writers must finish before integrated review",
+            )
+        next_wave = {**wave, "phase": "reviewers", "revision": revision}
+        program_wave({**state, "program_wave": next_wave})
+        state["program_wave"] = next_wave
+    elif transition == "verify_wave":
+        if wave["phase"] != "reviewers" or any(
+            status != f"{stage}_approved"
+            for status, stage in zip(statuses, final_stages, strict=True)
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "every wave task requires review approval before verification",
+            )
+        state["program_wave"] = {**wave, "phase": "verification"}
+    elif transition == "next_wave":
+        if wave["phase"] != "verification" or any(
+            status != "completed" for status in statuses
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "finish the current integration wave before admitting successors",
+            )
+        state["program_wave"] = new_program_wave(state)
+    elif transition == "reopen_wave":
+        if any(
+            record.get("status") == "consultation_required"
+            and not _consultation_answered(state, record)
+            for record in selected
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "resolve user consultation before reopening the wave",
+            )
+        if wave["phase"] not in {"reviewers", "verification"} or not any(
+            status
+            in {
+                "implementation_changes_requested",
+                "plan_changes_requested",
+                "verification_failed",
+                "consultation_required",
+            }
+            for status in statuses
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "reopening requires changes or failed verification",
+            )
+        max_rounds = _max_review_rounds(state)
+        if any(
+            _review_rounds(record)[stage] >= max_rounds
+            for record, stage in zip(selected, final_stages, strict=True)
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "maximum review rounds reached; wave remains unresolved",
+            )
+        for record, stage in zip(selected, final_stages, strict=True):
+            if record.get("status") in {f"{stage}_approved", "completed"}:
+                writer = _record_target(record, "writer_role")
+                writer_result = cast(Mapping[str, object], record["writer_result"])
+                _set_record_target(record, "role", writer)
+                record.update(
+                    status=f"awaiting_{stage}_review",
+                    revision=hashlib.sha256(
+                        cast(str, writer_result["body"]).encode("utf-8")
+                    ).hexdigest()
+                    if stage == "plan"
+                    else None,
+                    dispatch_id=writer_result["dispatch_id"],
+                    result=dict(writer_result),
+                )
+                if stage == "plan":
+                    record["workspace_revision"] = None
+        state["program_wave"] = {**wave, "phase": "writers", "revision": None}
+    else:
+        _fail(ErrorCode.INVALID_REQUEST, "unknown program wave transition")
 
 
 def _review_verdict(

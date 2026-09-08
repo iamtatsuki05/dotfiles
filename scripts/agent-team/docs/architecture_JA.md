@@ -35,10 +35,11 @@ flowchart TD
 
 `NativeBackend`はMain/ACP/task lifecycleを共有し、選択した`TmuxBackend`、`HerdrBackend`、
 `ZellijBackend`がterminal driverを提供します。`native_main`は所有する
-Mainのprocess groupを監督し、共有MCP framing layerは保存済みstateからOrcaまたはnative
+Mainまたはprogram coordinatorのprocess groupを監督し、共有MCP framing layerは保存済みstateからOrcaまたはnative
 backendを遅延選択します。native ACPのPlanner、Worker、Reviewerはlauncherが所有する
 background processとして動き、完了を`publish_completion`で通知します。terminal paneの文字列は
-lifecycle eventとして解釈しません。TTYへattachできるのはMainだけです。native pathでは、
+lifecycle eventとして解釈しません。agent teamではMainにattachし、Mainなしのprogram teamでは`attach --coordinator`を使います。
+ACP background roleにはattachできるTTYはありません。native pathでは、
 OrcaとCodexがない環境、空白を含むworkspace path、削除済みconfigを使ったmodelなしの
 start/status/stop smokeが成功しています。
 
@@ -50,13 +51,13 @@ Zellij driverは`0.44.1`でcompatibilityを確認した対象です。preflight�
 detached mode、persistent clientなし、`--max-panes 1`なしを使います。Main metadataを保持し、
 terminalを1つと既知のsuppressed `zellij:link` pluginだけを受け入れ、未知のpane/pluginはunknownのままにします。
 
-HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serial構成はversion 5で実行できます。
-今後の実装課題には、Mainなしの構成、明示的なparallel workflow、名前付きOrca構成、10 harnessの大半が残っています。これらの未実装部分を
-2つのsystemで分担すると、完了判定とcleanupの責任が曖昧になります。
+HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serialとprogram/serial構成はversion 5で接続しています。
+program構成にはMain roleを置かず、選択したterminal上で既存の`native_main` supervisorが固定argvの`_program-run` coordinatorを監督します。
+明示的なparallel workflow、名前付きOrca構成、10 harnessの大半は未完了です。2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
 
 native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
-HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。
-残るgraph構成、Mainなしの実行、並列処理、全ハーネスへの対応は、引き続き未完了です。
+HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。名前付きnativeのReviewer相談回答と
+serial program coordinatorもfocused testで接続しています。並列処理、名前付きOrca、全ハーネスへの対応は引き続き未完了です。
 
 ### 名前付きnodeとTaskSpecの担当指定
 
@@ -81,10 +82,33 @@ Fable/highを明示指定しました。Mainは設定一覧の先頭ではあり
 変わらないことを確認しました。入力configとpromptを削除した後の公開stopも成功し、独立した照合で所有process、
 process group、state、provider root、snapshot、fixture資源の不在を確認しています。
 
-これはnativeのagent/serial構成の受入結果です。programによる進行管理、並列assignmentの制御、
-名前付きOrca構成、`consults-to`による通信は未実装です。これらのgraph値は検証・描画できます。
-program・並列実行・名前付きOrca構成の起動は、依存関係の確認や資源の作成より前に拒否します。
-agent間で相談する操作は、まだ公開していません。
+これはnativeのagent/serial構成の受入結果です。nativeのprogram/serial進行管理も実装とfocused contract testへ接続しています。
+programはMain role、Main model、専用CLIを作らず、選択したterminalと保存済みcoordinator identityを使います。
+`program_wave`は宣言順と依存関係から`task_ids`、`phase`、`revision`を保持し、wave内の全writer完了、同じrevisionの全Reviewer承認、
+fixed argv検証の順に進みます。parallel assignmentと名前付きOrca構成は、dependency確認や資源作成より前に引き続き拒否します。
+
+Reviewerの相談は、名前付きnativeで独立した操作として扱います。`status`にはopaqueな相談ID、findings、task/stage、回答状態を表示し、
+`answer --consultation-id ID --body ...`で`agent`と`program`の両方へ回答できます。IDはrun、TaskSpec digest、review stage、正確なreview Dispatchに束縛し、
+本文は16,000文字以内です。同じ本文だけをidempotentに再送できます。本文置換と古いIDは拒否し、元のwriterの再dispatchとboundedな再reviewを要求します。
+review roundの上限到達後は回答を保存できても、再dispatchを許可しません。
+
+### native programの限定実機試験
+
+serial programの実機試験`b239945b-283e-403b-aba5-84ba984c8469`では、選択したtmux terminalと宣言済みの`write-sum`を使いました。
+taskは2問を返し、CLIで2件の`--message-id`回答を受理し、同じACP session
+`b43cc938-c08a-432d-99ec-f6a4c6c2a8bd`が`received`まで進みました。その後ClaudeがFableの利用上限で失敗しました。
+coordinatorはfailed resultを公開し、`read` → `release` → `ack`を処理して終了コード1で終了しました。実装、review、fixed argv検証には到達していません。
+したがって、これはlifecycleと失敗処理の試験であり、program全工程の成功受入ではありません。
+
+configとpromptを削除した後の公開`stop`はreturn code 0、0.406秒で完了しました。独立した`ps`とpathの確認では、所有PID、process group、
+private path、fixture、virtual environmentは残りませんでした。observer自身にcommand identity errorがあり、独立したtyped receipt fieldは保持できていません。
+cleanupの主張は、native clientが受理したresult、公開stopの結果、process/path確認に限定します。model切替とbilling変更は行わず、通常authのwrite経路も未検証です。
+利用上限後の実モデルread-only plan-only試験は実行していません。
+
+program contract focused runはPython 3.13と3.11で各169 test、skip 0でした。Claude SDK 1.3.0とCodex SDK 1.4.0のfixtureを使い、
+144 source hashが不変でした。別のmid full runは、相談回答とplan-only追加の前にPython両版でpackage 908、CLI 33、MCP 33、compact 8を通過しています。
+この結果を、追加後の最終的なlive evidenceとは扱いません。最終focused checkではRuff 132 fileとstrict mypy 54 source fileも通過し、
+freshなread-only reviewで重大な問題はありませんでした。これらは実装とcontractの検証であり、失敗した実機試験をprovider workflow成功へ変えるものではありません。
 
 ### 実モデルを使ったtmuxでの質問応答受入
 
@@ -125,7 +149,8 @@ Zellijでは一時名のランダム部分が`_`で始まる場合も検証し�
 | `agent_team/native_terminal.py` | 共通terminalのreceipt、inspection、presence、close protocolを定義する。 |
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | NativeBackendを選択したterminal driverへ束縛する。 |
 | `agent_team/herdr.py`, `zellij.py` | Herdrのversion 0.8.2/protocol 20のhandshakeと、0.44.1でcompatibilityを確認したZellijのidentity/cleanup contractを検証する。 |
-| `agent_team/native_main.py` | 所有するnative Mainのprocess groupを監督し、終了receiptを保存する。 |
+| `agent_team/native_main.py` | 所有するnative Mainのprocess group、またはprogram coordinator childを監督し、終了receiptを保存する。 |
+| `agent_team/native_program.py`, `program_policy.py` | Main modelや別task ledgerを作らず、保存済みnative `program` graphをserialのTaskSpec waveとして進める。 |
 | `agent_team/orca.py` | 固定Orca argv/envelope decoderを担当する。MCP role操作は持たない。 |
 | `agent_team/tmux.py` | nonceを付けたprivate tmux serverとMain paneの作成・検査を担当する。 |
 | `agent_team/locking.py` | teamごとのstable lifecycle reservationを担当する。backendをimportせず、stateの書き込みとruntime操作で共有する。 |
@@ -296,7 +321,9 @@ questionは同じassignmentの追加通信であり、既存のfile scope、Bash
 question中のstopはoutboxを明示的にcancellingへ進め、acknowledgeを偽装しません。provider、process group、
 socket、private rootのcleanupを確認できた場合だけassignmentとstateを削除します。cleanupが不明なら
 stateを保持して調査します。Mainが根拠を持って答えられるquestionと、ユーザーだけが決められるquestionは
-区別します。Reviewerの`decision=consult`とpost-review resumeは別の未完了gateです。
+区別します。名前付きnative Reviewerの`decision=consult`では、保存済みstatusにboundedなopaque相談IDとfindingsを出します。
+`answer --consultation-id ID --body ...`は現在のreview Dispatchへ回答を束縛し、同じ本文の再送だけをidempotentに受け付けます。
+本文置換と古いIDは拒否し、元のwriterを再実行してからReviewerの再判定を要求します。review roundはリセットせず、上限到達後の回答は再dispatchを許可しません。
 
 native clientは通常のstdoutを書く前に、private root固定の`client-result.json`を公開します。
 現在user所有のmode 0600、atomicかつ上書き不可で、1 MiB以下です。artifactはlaunch nonce、要求したmodel、
@@ -545,13 +572,14 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 代表的な証拠であり、すべてのharnessの証拠ではありません。確認したのはOS group/pathのcleanupだけで、
 明示的なACP session closeは確認していません。古いprocess groupベースのcleanup判定にも同じ限界があります。
 
-## 合意済み要件の未実装部分
+## 合意済み要件と残る実証
 
-以下は合意した範囲から除外した項目ではなく、残る実装要件です。Issue #8、#9、#11で追跡します。
+以下は合意した範囲から除外した項目ではなく、残る実装・実証項目です。Issue #8、#9、#11で追跡します。
 
 - 全10harnessで必要なprofileと実機証拠
-- Dedicated Mainlessの実行、残るgraph構成、明示的な並列task、Orcaとnativeの共有progression
-- Reviewerの`consult`後に再開する経路
+- 実装・review・fixed argv検証まで通る実モデルprogram run。下記の試験はprovider failureで停止しました
+- 実モデルのread-only plan-only run
+- 明示的なparallel task、名前付きOrca構成、Orcaとnativeの共有progression
 - crashやcleanup不明後の自動recovery
 
 ## 意図的な対象外

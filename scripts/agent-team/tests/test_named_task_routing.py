@@ -635,7 +635,9 @@ class NamedTaskRoutingTest(unittest.TestCase):
             _result(dispatch_id="plan-dispatch", target=planner, body="plan body"),
         )
         prepared, _prompt = prepare_dispatch(
-            saved, TaskDispatch(reviewer, current, "review investigation")
+            saved,
+            TaskDispatch(reviewer, current, "review investigation"),
+            workspace_revision="a" * 64,
         )
         prepared["dispatch_id"] = "review-dispatch"
         verdict = _review(

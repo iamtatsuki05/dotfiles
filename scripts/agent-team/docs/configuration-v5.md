@@ -3,9 +3,12 @@
 [日本語](configuration-v5_JA.md) · [Configuration](configuration.md) · [Architecture](architecture.md)
 
 Version 5 gives each node an ID, role kind, and its own settings, and binds each
-TaskSpec stage to exact writer/reviewer nodes. Native `agent`/`serial` teams can
-run. Program coordination, parallel execution, and named Orca execution remain
-unavailable; their graph values can be validated and rendered.
+TaskSpec stage to exact writer/reviewer nodes. Native `agent`/`serial` and
+`program`/`serial` teams can run. A program team has no Main role: the selected
+native terminal runs the coordinator under the existing `native_main` supervisor
+with the fixed `_program-run` argv. It does not create a separate Main role
+spec, model, or CLI. Parallel execution and named Orca execution remain
+rejected; their graph values can still be validated and rendered.
 
 The bundled version-3 defaults remain Main/Planner on Claude `fable` and
 Worker/Reviewer on direct Codex `gpt-6-astra`. The example here explicitly uses
@@ -35,7 +38,13 @@ has no Main and declares its entries explicitly. Every node must be reachable.
 Delegation and review edges must have no directed cycle. Review edges connect
 a Planner or Worker to a Reviewer; delegation cannot target Main. Consultation
 adds one-hop reachability but does not follow the target's outgoing edges.
-Agent-to-agent consultation has no runtime operation yet.
+
+For a native program run, coordinator identity is separate from Main identity.
+The saved state uses `coordinator_terminal`, `coordinator_argv`,
+`coordinator_process`, and `coordinator_pid`; these fields are not aliases for
+`main_terminal`, `main_argv`, or `main_process`. Only the recorded coordinator
+may advance a program wave. `status`, `stop`, and user answers remain available
+as explicit external operations.
 
 Each task uses the [TaskSpec fields](configuration.md#taskspec-catalog-is-optional-required-for-native-task-dispatch).
 Each route requires `task_id` and at least one complete pair:
@@ -173,9 +182,9 @@ implementation_writer = "worker-b"
 implementation_reviewer = "reviewer-b"
 ```
 
-## Inspect a Mainless variant
+## Run a Mainless serial program
 
-To derive a graph-only variant from the complete example:
+To derive a Mainless serial variant from the complete example:
 
 1. Remove the `main` node and its `role_spec`, plus both `main` delegation edges.
 2. Replace the coordination table with the snippet below.
@@ -189,9 +198,57 @@ dispatch_mode = "serial"
 max_active = 1
 ```
 
-This variant passes graph validation; real start rejects `program` mode.
-Changing `dispatch_mode` to `parallel` and choosing a positive `max_active`
-also produces a graph value, but parallel start is rejected.
+This variant passes graph validation and can start on a native terminal after
+the stated prerequisites are met. The coordinator follows declared TaskSpec
+order and dependencies, forms serial integration waves, and advances only
+after every writer in the wave has finished, every same-revision Reviewer has
+approved, and every declared fixed-argv verification has passed. A successor
+wave starts only after that barrier. Changing `dispatch_mode` to `parallel`
+and choosing a positive `max_active` still produces a graph value, but parallel
+start is rejected before dependency probes or resource creation.
+
+The coordinator uses the existing native supervisor; it does not add a Main
+model. Attach to that terminal with `--coordinator` when inspection is needed:
+
+```bash
+agent-team attach --config /path/to/config-v5.toml \
+  --cwd /workspace/example --team all-claude --coordinator
+agent-team status --state /path/to/state.json
+```
+
+Native ACP questions use the existing `message_id` path. Answer every message
+in the batch before the coordinator acknowledges the Delivery:
+
+```bash
+agent-team answer --state /path/to/state.json \
+  --message-id ID --body "answer"
+```
+
+Reviewer consultation is a separate named-native operation for `agent` and
+`program` teams. `status` exposes the opaque consultation ID, task/stage, review
+findings, and whether an answer is saved. The ID is bound to the run, TaskSpec digest,
+review stage, and exact review Dispatch. The body is limited to 16,000
+characters; replaying the same ID and body is idempotent, while a different
+body or an old ID is rejected. An answer does not approve the review directly:
+the original writer is dispatched again, a new bounded review is required, and
+the existing review-round limit remains in force. At the limit, the answer may
+be recorded but cannot authorize another dispatch.
+
+```bash
+agent-team answer --state /path/to/state.json \
+  --consultation-id ID --body "human decision"
+```
+
+Plan-only routes, which declare only `plan_writer` and `plan_reviewer`, keep the
+plan body digest in `record.revision` and the code snapshot reviewed by the
+plan reviewer in `workspace_revision`. These are different values. In a mixed
+wave, a plan review that unblocks an implementation writer occurs in the writer
+phase; the final plan-only review waits until all writers finish and uses the
+same sealed workspace revision as the implementation review. Fixed-argv
+verification uses that exact revision. A plan change returns to the exact
+Planner and preserves its round limit; it never synthesizes an implementation
+writer. The focused contract is tested, but a real-model plan-only run has not
+been completed.
 
 ## Select a team explicitly
 
@@ -207,9 +264,10 @@ agent-team start --config /path/to/config-v5.toml \
 `teams` lists every parsed team. `validate` can omit `--team` to check all teams.
 `graph` and version-5 `start` require `--team`; selection is exact, without
 aliases or case conversion. Graph formats are `json`, `ascii`, and `mermaid`.
-For the native agent/serial example, remove `--dry-run` to start after meeting
-the prerequisites. Program, parallel, and named Orca starts fail before
-dependency probes or resource creation. Inspection does not start providers.
+For the native agent/serial or program/serial example, remove `--dry-run` to
+start after meeting the prerequisites. Parallel and named Orca starts fail
+before dependency probes or resource creation. Inspection does not start
+providers.
 
 ## Use saved identity for management
 

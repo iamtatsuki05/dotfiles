@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import NoReturn
 
@@ -9,8 +10,10 @@ from .contracts import (
     AckReceipt,
     Assignment,
     Attach,
+    AttachCoordinator,
     AttachReceipt,
     BackendPort,
+    CoordinatorAttachReceipt,
     DeliveryAck,
     DeliveryRef,
     ErrorCode,
@@ -37,6 +40,7 @@ from .contracts import (
     Status,
     StatusReceipt,
     StopResult,
+    TaskConsultationReply,
     TaskDispatch,
     TaskGet,
     TaskStatusReceipt,
@@ -131,6 +135,22 @@ class WorkflowEngine(TeamRuntime):
             return result
         if isinstance(request, Attach):
             return self._attach(request)
+        if isinstance(request, AttachCoordinator):
+            result = self._backend.request(request)
+            if not isinstance(result, CoordinatorAttachReceipt):
+                self._protocol_failure(
+                    "backend returned an invalid coordinator receipt"
+                )
+            start = self._require_start()
+            if (
+                result.run_id != start.run_id
+                or result.terminal_id != start.coordinator_terminal_id
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "attach receipt does not match the started coordinator",
+                )
+            return result
         if isinstance(request, (RolePrompt, TaskDispatch)):
             return self._prompt(request)
         if isinstance(request, (TaskGet, TaskVerify)):
@@ -140,6 +160,40 @@ class WorkflowEngine(TeamRuntime):
                 or task_result.task_id != request.task_id
             ):
                 self._protocol_failure("backend returned an invalid task receipt")
+            return task_result
+        if isinstance(request, TaskConsultationReply):
+            if (
+                not isinstance(request.consultation_id, str)
+                or not request.consultation_id.strip()
+                or not isinstance(request.body, str)
+                or not request.body.strip()
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.INVALID_REQUEST,
+                    "consultation reply requires a non-empty ID and body",
+                )
+            task_result = self._backend.request(request)
+            if not isinstance(task_result, TaskStatusReceipt):
+                self._protocol_failure(
+                    "backend returned an invalid consultation receipt"
+                )
+            if not isinstance(task_result.record, Mapping):
+                self._protocol_failure(
+                    "consultation receipt has an invalid task record"
+                )
+            answer = task_result.record.get("consultation_answer")
+            if not isinstance(answer, Mapping):
+                self._protocol_failure(
+                    "consultation receipt is missing its answer evidence"
+                )
+            if (
+                answer.get("consultation_id") != request.consultation_id
+                or answer.get("body") != request.body
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "consultation receipt does not match the submitted answer",
+                )
             return task_result
         if isinstance(request, RoleWait):
             return self._wait(request)

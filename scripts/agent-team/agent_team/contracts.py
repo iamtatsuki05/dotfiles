@@ -302,8 +302,13 @@ class NormalizedEvent:
 class StartResult:
     team_id: str
     run_id: RunRef
-    main_terminal_id: TerminalRef
+    main_terminal_id: TerminalRef | None
     state_path: Path
+    coordinator_terminal_id: TerminalRef | None = None
+
+    def __post_init__(self) -> None:
+        if (self.main_terminal_id is None) == (self.coordinator_terminal_id is None):
+            raise ValueError("start requires exactly one controller terminal identity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +381,12 @@ class AttachReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class CoordinatorAttachReceipt:
+    terminal_id: TerminalRef
+    run_id: RunRef
+
+
+@dataclass(frozen=True, slots=True)
 class Status:
     pass
 
@@ -383,6 +394,11 @@ class Status:
 @dataclass(frozen=True, slots=True)
 class Attach:
     role: RoleTarget
+
+
+@dataclass(frozen=True, slots=True)
+class AttachCoordinator:
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,6 +427,12 @@ class TaskGet:
 @dataclass(frozen=True, slots=True)
 class TaskVerify:
     task_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskConsultationReply:
+    consultation_id: str
+    body: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,11 +466,13 @@ class DeliveryAck:
 RuntimeRequest: TypeAlias = (
     Status
     | Attach
+    | AttachCoordinator
     | RoleGet
     | RolePrompt
     | TaskDispatch
     | TaskGet
     | TaskVerify
+    | TaskConsultationReply
     | RoleWait
     | RoleRead
     | RoleRelease
@@ -467,6 +491,7 @@ BackendResult: TypeAlias = (
     | RoleStatusReceipt
     | TaskStatusReceipt
     | AttachReceipt
+    | CoordinatorAttachReceipt
 )
 RuntimeResult: TypeAlias = BackendResult
 

@@ -3,8 +3,9 @@
 [English](configuration-v5.md) · [設定](configuration_JA.md) · [アーキテクチャ](architecture_JA.md)
 
 Version 5では、各nodeにID、役割の種類、個別の設定を持たせ、TaskSpecの工程ごとに担当者を指定します。
-現在実行できるのはnativeの`agent`/`serial`構成です。programによる進行管理、並列実行、
-名前付きOrca構成は未対応ですが、graphとして検証・描画できます。
+nativeの`agent`/`serial`と`program`/`serial`構成を実行できます。program構成にはMain roleを置きません。
+選択したnative terminal上で既存の`native_main` supervisorが、固定argvの`_program-run` coordinatorを監督します。
+専用のMain role spec、model、CLIは作りません。並列実行と名前付きOrca構成は引き続き拒否しますが、graphの検証・描画はできます。
 
 同梱のversion 3設定は、Main/PlannerにClaude `fable`、Worker/Reviewerにdirect Codex
 `gpt-6-astra`を使うままです。このページの例では、全nodeにClaudeを明示指定します。
@@ -29,7 +30,11 @@ nameとlabelは空でない表示可能な文字列で、128文字以内です�
 agent構成にはMainを1つだけ置き、Mainだけを開始点にします。program構成にはMainを置かず、
 開始点を明示します。全nodeに到達できる必要があり、委譲とレビューの経路には有向閉路を認めません。
 レビューはPlannerまたはWorkerからReviewerへ接続し、Mainへの委譲は拒否します。
-相談先は1段だけ到達可能とみなし、その先の経路をたどりません。agent間で相談する実行操作は未実装です。
+相談先は1段だけ到達可能とみなし、その先の経路をたどりません。
+
+native programの保存stateでは、coordinatorを`coordinator_terminal`、`coordinator_argv`、
+`coordinator_process`、`coordinator_pid`で保持します。これはMainのterminal、argv、processの別名ではありません。
+記録済みcoordinatorだけがprogram waveを進め、`status`、`stop`、ユーザーの回答は明示した外部操作として残します。
 
 taskには[TaskSpecのfield](configuration_JA.md#taskspec-catalog-is-optional-required-for-native-task-dispatch)を使います。
 routeには`task_id`と、次の少なくとも一組を指定します。
@@ -163,9 +168,9 @@ implementation_writer = "worker-b"
 implementation_reviewer = "reviewer-b"
 ```
 
-## Mainなしの構成を検査する
+## Mainなしのserial programを実行する
 
-上の設定を次のように変更すると、graphの検査用にMainなしの構成を作れます。
+上の設定を次のように変更すると、実行可能なMainなしのserial program構成を作れます。
 
 1. `main` nodeとその`role_spec`、Mainからの委譲edge 2件を削除します。
 2. coordinationのtableを次の内容に置き換えます。
@@ -179,8 +184,42 @@ dispatch_mode = "serial"
 max_active = 1
 ```
 
-この構成はgraphの検証を通りますが、実際の起動は`program` modeのため拒否します。
-`dispatch_mode`を`parallel`にし、正の`max_active`を指定したgraphも検証できますが、並列起動は拒否します。
+この構成はgraphの検証を通り、前提条件を満たしたnative terminalで起動できます。coordinatorは宣言したTaskSpecの
+順序と依存関係からserialのintegration waveを作ります。wave内の全writerが終了し、同じrevisionのReviewerがすべて承認し、
+宣言済みfixed argvの検証が完了してから次のwaveへ進みます。`dispatch_mode`を`parallel`にし、正の`max_active`を指定したgraphも
+検証できますが、並列起動は依存関係の確認や資源作成より前に拒否します。
+
+coordinatorは既存のnative supervisorを使い、Main modelを追加しません。確認が必要な場合は`--coordinator`でterminalへattachします。
+
+```bash
+agent-team attach --config /path/to/config-v5.toml \
+  --cwd /workspace/example --team all-claude --coordinator
+agent-team status --state /path/to/state.json
+```
+
+native ACP questionは既存の`message_id`経路を使います。batch内の全questionへ回答してからcoordinatorがDeliveryをackします。
+
+```bash
+agent-team answer --state /path/to/state.json \
+  --message-id ID --body "回答"
+```
+
+Reviewerの相談は、名前付きnativeの`agent`と`program`で使える別の操作です。`status`にはopaqueな相談ID、task/stage、
+review findings、回答済みかどうかを表示します。IDはrun、TaskSpec digest、review stage、正確なreview Dispatchに束縛されます。
+回答本文は16,000文字以内で、同じIDと同じ本文の再送だけがidempotentです。異なる本文や古いIDは拒否します。
+回答だけで承認・完了にはせず、元のwriterを再dispatchし、boundedなreviewをもう一度行います。review roundの上限は維持し、
+上限到達後の回答は保存できても再dispatchを許可しません。
+
+```bash
+agent-team answer --state /path/to/state.json \
+  --consultation-id ID --body "人間の判断"
+```
+
+plan-only route（`plan_writer`と`plan_reviewer`だけを持つroute）では、plan本文のdigestを`record.revision`に、
+Reviewerが確認したコードのsnapshotを`workspace_revision`に保存します。両者を置き換えません。mixed waveでは、実装writerを
+進める計画reviewはwriters phaseで行い、finalのplan-only reviewは全writer完了後、implementation reviewと同じsealed workspace
+revisionに束縛します。fixed argvの検証も同じrevisionを使います。計画変更は元のPlannerへ戻り、review roundを維持します。
+focused contract testは通っていますが、実モデルのplan-only runは完了していません。
 
 ## teamを明示して選ぶ
 
@@ -195,8 +234,8 @@ agent-team start --config /path/to/config-v5.toml \
 
 `teams`は読み込んだ全teamを表示します。`validate`は`--team`を省略すると全teamを検証します。
 `graph`とversion 5の`start`には`--team`が必須で、別名や大文字・小文字の変換をせず完全一致で選びます。
-graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serial構成は、起動条件を満たした後で
-`--dry-run`を外すと起動します。program・並列・名前付きOrca構成の起動は、依存関係の確認や資源作成より前に拒否します。
+graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serialまたはprogram/serial構成は、起動条件を満たした後で
+`--dry-run`を外すと起動します。並列・名前付きOrca構成の起動は、依存関係の確認や資源作成より前に拒否します。
 検査コマンドはproviderを起動しません。
 
 ## 保存済みの識別情報で管理する

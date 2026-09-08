@@ -15,8 +15,9 @@ unsupported combinations fail before any role starts. See
 schema and pure inspection commands.
 For node-local settings, multiple Workers/Reviewers, and explicit TaskSpec
 routes, use [Version-5 configuration](configuration-v5.md). Native
-`agent`/`serial` execution is connected; program, parallel, and named Orca
-execution remain rejected. The reference below describes version 3.
+`agent`/`serial` and `program`/`serial` execution are connected in version 5;
+parallel and named Orca execution remain rejected. The version-3 reference
+below retains its fixed Main role and does not express a Mainless program graph.
 
 ## Start from the canonical config
 
@@ -413,7 +414,7 @@ The native task lifecycle uses the ten public tools:
 3. `task_get` returns the durable stage, review evidence, and verification evidence.
 4. A Planner or Worker result moves to `awaiting_plan_review` or `awaiting_implementation_review`.
 5. Reviewer output is exact JSON with `task_id`, `stage`, `revision`, `decision`, and `findings`.
-6. `approve` advances the stage; `request_changes` returns to the original writer; `consult` waits for the user.
+6. `approve` advances the stage; `request_changes` returns to the original writer; `consult` records a bounded user consultation for a named native graph.
 7. After implementation approval, `task_verify` runs every declared fixed argv command.
 
 If `role_wait` returns a native `question`, Main calls `message_reply` once for
@@ -428,8 +429,16 @@ most 20,000 characters, each frame is at most 512 KiB, and an assignment may
 receive at most 64 batches. Consumed receipts retain identities and hashes,
 while the protected outbox may retain raw question and answer text until the
 next question or terminal completion so publication failures can be recovered.
-A question does not implement Reviewer `consult` or post-review resume; that
-gate remains a separate unfinished requirement.
+A native ACP question is separate from Reviewer `consult`. For a named native
+version-5 `agent` or `program` team, `status` exposes the opaque consultation
+ID, findings, task/stage, and answer state, and
+`answer --consultation-id ID --body ...` stores the bounded human answer. The
+same ID and body may be replayed idempotently; a replacement or stale ID is
+rejected. If review rounds remain, the original writer must run again before
+another review. At the limit, the answer is saved but redispatch stays blocked.
+The answer is not an implicit approval and does not reset review-round limits. ACP questions continue to use
+`answer --message-id ID --body ...` and the program coordinator acknowledges
+only after every question in the batch is answered.
 
 Plan and implementation review rounds are counted separately and both obey
 `max_review_rounds`. Implementation review captures the workspace revision when
