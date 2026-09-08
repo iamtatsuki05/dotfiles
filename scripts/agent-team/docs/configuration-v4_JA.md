@@ -182,7 +182,9 @@ agent-team stop --config ~/.config/agent-team/teams.toml --team agent-team
 表示し、`--no-attach`も使えます。実際の`start`、`status`、`attach`、`stop`は既存の
 version-3 lifecycleを使います。planの`config_path`は参照先の起動設定を指すため、
 子roleも同じ設定を読みます。未対応のgraphは確認用に保持できますが、runtime resourceを
-作る前に起動を拒否します。任意graphの実行とroleの並列実行は未実装です。
+作る前に起動を拒否します。version 4は任意graphやroleの並列実行には対応しません。
+[Version 5](configuration-v5_JA.md)は別のschemaで、名前付きnodeを持つnativeのagent/serial構成を
+実行します。version 4の契約は変更しません。
 
 ## versionの境界
 
@@ -190,6 +192,7 @@ version 3のloaderとstate契約は変更しません。version 3 fileは既存�
 使い、v4のteam操作を受け付けない設計です。version 3 fileへtop-levelのv4 `teams`を
 追加した場合、CLIのversion境界で拒否されます。version間でfieldをcopyする処理や
 silent fallbackもありません。version 3の`start`、`status`、`attach`、`stop`では、
-従来のpathとfile sizeの扱いを維持します。`--team`を明示した場合だけbounded v4 loaderを
-選ぶため、version 3 fileの結果はversion 4 errorです。`--team`なしのversion 4 fileは
+従来のpathとfile sizeの扱いを維持します。`--team`を明示した場合はbounded loaderを選び、
+version 4 fileにはv4 schemaを使います。version 3 fileの結果は従来のversion 4 errorで、
+version 5 fileには明示的な名前付きnodeのschemaを使います。`--team`なしのversion 4 fileは
 従来のversion 3経路へ進み、resource作成前に`version must be integer 3`を返して停止します。

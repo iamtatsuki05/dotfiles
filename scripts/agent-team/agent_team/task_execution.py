@@ -7,7 +7,15 @@ import json
 from collections.abc import Mapping
 from typing import NoReturn, cast
 
-from .contracts import ErrorCode, Role, RuntimeFailure, TaskDispatch
+from .contracts import (
+    ErrorCode,
+    NodeRef,
+    Role,
+    RuntimeFailure,
+    TaskDispatch,
+    role_kind,
+)
+from .named_graph import GraphSpec, TaskRoute, validate_graph
 from .task_spec import TaskSpec, parse_task_specs
 
 _WRITER_ROLES = frozenset({Role.PLANNER, Role.WORKER})
@@ -105,6 +113,596 @@ def _result_body(record: Mapping[str, object]) -> str:
     if not isinstance(result, Mapping) or not isinstance(result.get("body"), str):
         _fail(ErrorCode.ORDER_VIOLATION, "review requires the previous result body")
     return cast(str, result["body"])
+
+
+def _named_state(state: Mapping[str, object]) -> bool:
+    """Return whether ``state`` uses the explicit named-graph contract."""
+
+    return state.get("version") == 4
+
+
+def _legacy_role(target: object) -> Role:
+    if isinstance(target, Role):
+        return target
+    _fail(ErrorCode.ORDER_VIOLATION, "legacy state requires a fixed Role target")
+    raise AssertionError("unreachable")
+
+
+def _named_context(
+    state: Mapping[str, object],
+) -> tuple[GraphSpec, tuple[TaskSpec, ...]]:
+    """Load and cross-check a version-4 graph and its TaskSpec catalog.
+
+    Legacy state3 callers bypass this path and retain the fixed Role-only
+    contract.
+    """
+
+    if not _named_state(state):
+        _fail(ErrorCode.INVALID_REQUEST, "named graph is not enabled for this state")
+    raw_graph = state.get("graph")
+    if not isinstance(raw_graph, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "named state graph is missing")
+    role_specs = state.get("role_specs")
+    if not isinstance(role_specs, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "named state role_specs are missing")
+    try:
+        graph = GraphSpec.from_dict(raw_graph)
+        catalog = parse_task_specs(state.get("task_specs"))
+        validate_graph(graph, catalog)
+    except RuntimeFailure:
+        raise
+    except (TypeError, ValueError, KeyError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH,
+            "saved named graph or TaskSpec catalog is invalid",
+        ) from exc
+    if (
+        graph.coordination.mode != "agent"
+        or graph.coordination.dispatch_mode != "serial"
+    ):
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "named TaskSpec routing currently requires agent coordination and serial dispatch",
+        )
+
+    node_ids = {node.node_id for node in graph.nodes}
+    if set(role_specs) != node_ids:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "saved role_specs do not match the named graph nodes",
+        )
+    for node in graph.nodes:
+        raw_spec = role_specs.get(node.node_id)
+        if not isinstance(raw_spec, Mapping) or raw_spec.get("kind") != node.kind.value:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                f"saved role spec kind does not match node {node.node_id}",
+            )
+    return graph, catalog
+
+
+def _named_graph(state: Mapping[str, object]) -> GraphSpec:
+    graph, _catalog = _named_context(state)
+    return graph
+
+
+def _named_node(state: Mapping[str, object], node_id: object) -> NodeRef:
+    graph = _named_graph(state)
+    if not isinstance(node_id, str) or not node_id:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "named node identity is missing")
+    try:
+        node = graph.node(node_id)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "named node is not in the saved graph"
+        ) from exc
+    if not isinstance(node, NodeRef):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved named node is invalid")
+    return node
+
+
+def _named_target(state: Mapping[str, object], target: object) -> NodeRef:
+    if not isinstance(target, NodeRef):
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "state version 4 requires an exact named node target",
+        )
+    node = _named_node(state, target.node_id)
+    if node != target:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "named node identity or kind does not match")
+    return node
+
+
+def _named_route(state: Mapping[str, object], task_id: str) -> TaskRoute:
+    graph = _named_graph(state)
+    try:
+        return graph.route(task_id)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH,
+            "TaskSpec has no exact named route",
+        ) from exc
+
+
+def _route_node(
+    state: Mapping[str, object], route: TaskRoute, field: str, *, required: bool
+) -> NodeRef | None:
+    if field == "plan_writer":
+        node_id = route.plan_writer
+    elif field == "plan_reviewer":
+        node_id = route.plan_reviewer
+    elif field == "implementation_writer":
+        node_id = route.implementation_writer
+    elif field == "implementation_reviewer":
+        node_id = route.implementation_reviewer
+    else:
+        _fail(ErrorCode.INVALID_REQUEST, "named route field is invalid")
+    if node_id is None:
+        if required:
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                f"named route has no {field} for this stage",
+            )
+        return None
+    return _named_node(state, node_id)
+
+
+def _require_named_writer_route(
+    state: Mapping[str, object],
+    task: TaskSpec,
+    target: object,
+    *,
+    initial: bool = False,
+) -> NodeRef:
+    node = _named_target(state, target)
+    route = _named_route(state, task.task_id)
+    if node.kind is Role.PLANNER:
+        expected = _route_node(state, route, "plan_writer", required=True)
+    elif node.kind is Role.WORKER:
+        expected = _route_node(state, route, "implementation_writer", required=True)
+    else:
+        _fail(ErrorCode.ORDER_VIOLATION, "only a named writer may receive a TaskSpec")
+    assert expected is not None
+    if initial and node.kind is Role.WORKER and route.plan_writer is not None:
+        _fail(
+            ErrorCode.ORDER_VIOLATION,
+            "named TaskSpec requires plan review before implementation",
+        )
+    if node != expected:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "TaskSpec writer does not match its exact named route",
+        )
+    return node
+
+
+def _require_named_reviewer_route(
+    state: Mapping[str, object], task: TaskSpec, stage: str, target: object
+) -> NodeRef:
+    node = _named_target(state, target)
+    if node.kind is not Role.REVIEWER:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "TaskSpec reviewer must be a reviewer node")
+    route = _named_route(state, task.task_id)
+    field = "plan_reviewer" if stage == "plan" else "implementation_reviewer"
+    expected = _route_node(state, route, field, required=True)
+    assert expected is not None
+    if node != expected:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "TaskSpec reviewer does not match its exact named route",
+        )
+    return node
+
+
+def _record_target(record: Mapping[str, object], field: str) -> NodeRef:
+    node_id = record.get(field)
+    kind_field = "writer_kind" if field == "writer_role" else f"{field}_kind"
+    raw_kind = record.get(kind_field)
+    if not isinstance(node_id, str) or not node_id:
+        _fail(ErrorCode.IDENTITY_MISMATCH, f"saved {field} identity is missing")
+    if not isinstance(raw_kind, str):
+        _fail(ErrorCode.IDENTITY_MISMATCH, f"saved {field} kind is missing")
+    try:
+        kind = Role(raw_kind)
+        return NodeRef(node_id=node_id, kind=kind)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, f"saved {field} identity is invalid"
+        ) from exc
+
+
+def _set_record_target(record: dict[str, object], field: str, target: NodeRef) -> None:
+    record[field] = target.node_id
+    kind_field = "writer_kind" if field == "writer_role" else f"{field}_kind"
+    record[kind_field] = target.kind.value
+
+
+def _result_target(
+    state: Mapping[str, object], result: Mapping[str, object]
+) -> NodeRef:
+    raw_id = result.get("role")
+    raw_kind = result.get("role_kind")
+    if not isinstance(raw_id, str) or not isinstance(raw_kind, str):
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "named task result requires role and role_kind",
+        )
+    try:
+        target = NodeRef(raw_id, Role(raw_kind))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "named task result identity is invalid"
+        ) from exc
+    return _named_target(state, target)
+
+
+def _validate_named_record(
+    state: Mapping[str, object], task: TaskSpec, record: Mapping[str, object]
+) -> None:
+    """Verify saved ID/kind fields and stage route before a state transition."""
+
+    role = _record_target(record, "role")
+    writer = _record_target(record, "writer_role")
+    role = _named_node(state, role.node_id)
+    saved_role = _record_target(record, "role")
+    if role != saved_role:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved role kind does not match the graph")
+    saved_writer = _record_target(record, "writer_role")
+    writer = _named_node(state, writer.node_id)
+    if writer != saved_writer:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "saved writer kind does not match the graph",
+        )
+
+    status = record.get("status")
+    stage = record.get("stage")
+    if stage not in _REVIEW_STAGES:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved named TaskSpec stage is invalid")
+    route = _named_route(state, task.task_id)
+
+    if status == "running":
+        if writer.kind not in _WRITER_ROLES or role != writer:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH, "saved running writer identity is invalid"
+            )
+        expected = _route_node(
+            state,
+            route,
+            "plan_writer" if writer.kind is Role.PLANNER else "implementation_writer",
+            required=True,
+        )
+        assert expected is not None
+        if writer != expected:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "saved writer is not the exact route target",
+            )
+        expected_stage = "plan" if writer.kind is Role.PLANNER else "implementation"
+        if stage != expected_stage:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved writer stage is invalid")
+        return
+
+    if status in {
+        "awaiting_plan_review",
+        "reviewing_plan",
+        "plan_approved",
+        "plan_changes_requested",
+    }:
+        expected_writer = _route_node(state, route, "plan_writer", required=True)
+        expected_reviewer = _route_node(state, route, "plan_reviewer", required=True)
+        assert expected_writer is not None and expected_reviewer is not None
+        expected_role = (
+            expected_writer if status == "awaiting_plan_review" else expected_reviewer
+        )
+        if writer != expected_writer or role != expected_role or stage != "plan":
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved plan route identity is invalid")
+        return
+
+    if status in {
+        "awaiting_implementation_review",
+        "reviewing_implementation",
+        "implementation_approved",
+        "implementation_changes_requested",
+        "verifying",
+        "completed",
+        "verification_failed",
+    }:
+        expected_writer = _route_node(
+            state, route, "implementation_writer", required=True
+        )
+        expected_reviewer = _route_node(
+            state, route, "implementation_reviewer", required=True
+        )
+        assert expected_writer is not None and expected_reviewer is not None
+        expected_role = (
+            expected_writer
+            if status == "awaiting_implementation_review"
+            else expected_reviewer
+        )
+        if (
+            writer != expected_writer
+            or role != expected_role
+            or stage != "implementation"
+        ):
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "saved implementation route identity is invalid",
+            )
+        return
+
+    if status == "consultation_required":
+        expected_reviewer = _route_node(
+            state,
+            route,
+            "plan_reviewer" if stage == "plan" else "implementation_reviewer",
+            required=True,
+        )
+        assert expected_reviewer is not None
+        expected_writer = _route_node(
+            state,
+            route,
+            "plan_writer" if stage == "plan" else "implementation_writer",
+            required=True,
+        )
+        assert expected_writer is not None
+        if role != expected_reviewer or writer != expected_writer:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "saved consultation route identity is invalid",
+            )
+        return
+
+    if status == "failed":
+        if stage in _REVIEW_STAGES:
+            expected_writer = _route_node(
+                state,
+                route,
+                "plan_writer" if stage == "plan" else "implementation_writer",
+                required=True,
+            )
+            expected_reviewer = _route_node(
+                state,
+                route,
+                "plan_reviewer" if stage == "plan" else "implementation_reviewer",
+                required=True,
+            )
+            assert expected_writer is not None and expected_reviewer is not None
+            if writer != expected_writer or role not in {
+                expected_writer,
+                expected_reviewer,
+            }:
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "saved failed route identity is invalid",
+                )
+        return
+
+    _fail(ErrorCode.IDENTITY_MISMATCH, "saved named TaskSpec status is invalid")
+
+
+def _validate_named_rounds(
+    record: Mapping[str, object], rounds: Mapping[str, int]
+) -> None:
+    status = record.get("status")
+    stage = record.get("stage")
+    if not isinstance(stage, str) or stage not in _REVIEW_STAGES:
+        return
+    consumed_statuses = {
+        "reviewing_plan",
+        "plan_approved",
+        "plan_changes_requested",
+        "reviewing_implementation",
+        "implementation_approved",
+        "implementation_changes_requested",
+        "consultation_required",
+        "verifying",
+        "completed",
+        "verification_failed",
+    }
+    evidence = record.get("task_evidence")
+    evidence_stage = evidence.get("stage") if isinstance(evidence, Mapping) else None
+    requires_round = status in consumed_statuses or evidence_stage == stage
+    if requires_round and rounds[stage] < 1:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            f"saved {stage} review round is inconsistent with its status",
+        )
+
+
+def _validate_named_plan_revision(
+    record: Mapping[str, object],
+) -> None:
+    stage = record.get("stage")
+    status = record.get("status")
+    if stage != "plan" or status in {"failed"}:
+        return
+    revision = record.get("revision")
+    if status == "running" and revision is None:
+        return
+    if not isinstance(revision, str) or not revision:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved plan revision is missing")
+    writer_result = record.get("writer_result")
+    if not isinstance(writer_result, Mapping) or not isinstance(
+        writer_result.get("body"), str
+    ):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved plan writer result is missing")
+    expected = hashlib.sha256(
+        cast(str, writer_result["body"]).encode("utf-8")
+    ).hexdigest()
+    if revision != expected:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved plan revision does not match result")
+
+
+def _validate_named_review_evidence(
+    state: Mapping[str, object],
+    task: TaskSpec,
+    record: Mapping[str, object],
+    *,
+    expected_decision: str,
+) -> None:
+    evidence = record.get("task_evidence")
+    review_result = record.get("review_result")
+    if not isinstance(evidence, Mapping) or not isinstance(review_result, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved review evidence is missing")
+    if review_result.get("task_evidence") != dict(evidence):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved review evidence is inconsistent")
+    if _result_target(state, review_result) != _record_target(record, "role"):
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH, "saved reviewer evidence identity is invalid"
+        )
+    stage = record.get("stage")
+    revision = record.get("revision")
+    if stage not in _REVIEW_STAGES or not isinstance(revision, str) or not revision:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH, "saved review evidence binding is incomplete"
+        )
+    try:
+        verdict = parse_review(
+            json.dumps(dict(evidence), ensure_ascii=False, separators=(",", ":")),
+            task=task,
+            stage=stage,
+            revision=revision,
+        )
+    except (TypeError, ValueError, RuntimeFailure) as exc:
+        if isinstance(exc, RuntimeFailure) and exc.code is ErrorCode.IDENTITY_MISMATCH:
+            raise
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "saved review evidence is invalid"
+        ) from exc
+    if verdict["decision"] != expected_decision:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH, "saved review decision does not match status"
+        )
+
+
+def _validate_named_result(
+    state: Mapping[str, object],
+    result: object,
+    expected_target: NodeRef,
+    *,
+    expected_dispatch: str | None = None,
+    expected_outcome: str = "succeeded",
+) -> tuple[str, str, str]:
+    if not isinstance(result, Mapping):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved task result is missing")
+    if _result_target(state, result) != expected_target:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved task result identity is invalid")
+    body = result.get("body")
+    outcome = result.get("outcome")
+    dispatch_id = result.get("dispatch_id")
+    if not isinstance(body, str) or not isinstance(outcome, str):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved task result fields are invalid")
+    if outcome != expected_outcome:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved task result outcome is invalid")
+    if not isinstance(dispatch_id, str) or not dispatch_id:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved task result dispatch is missing")
+    if expected_dispatch is not None and dispatch_id != expected_dispatch:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "saved task result dispatch is invalid")
+    return body, outcome, dispatch_id
+
+
+def _validate_named_result_integrity(
+    state: Mapping[str, object], task: TaskSpec, record: Mapping[str, object]
+) -> None:
+    status = record.get("status")
+    route = _named_route(state, task.task_id)
+    writer_field = (
+        "plan_writer" if record.get("stage") == "plan" else "implementation_writer"
+    )
+    expected_writer = _route_node(state, route, writer_field, required=True)
+    assert expected_writer is not None
+    writer_statuses = {
+        "awaiting_plan_review",
+        "reviewing_plan",
+        "awaiting_implementation_review",
+        "reviewing_implementation",
+    }
+    review_statuses = {
+        "plan_approved",
+        "plan_changes_requested",
+        "implementation_approved",
+        "implementation_changes_requested",
+        "consultation_required",
+        "verifying",
+        "completed",
+        "verification_failed",
+    }
+    if status in writer_statuses:
+        status_text = status
+        writer_dispatch = (
+            record.get("dispatch_id")
+            if status_text.startswith("awaiting_")
+            else record.get("review_source_dispatch_id")
+        )
+        if not isinstance(writer_dispatch, str) or not writer_dispatch:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved writer dispatch is missing")
+        writer_values = _validate_named_result(
+            state,
+            record.get("writer_result"),
+            expected_writer,
+            expected_dispatch=writer_dispatch,
+        )
+        result_values = _validate_named_result(
+            state,
+            record.get("result"),
+            expected_writer,
+            expected_dispatch=writer_dispatch,
+        )
+        if writer_values != result_values:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved writer result is inconsistent")
+        return
+    if status in review_statuses:
+        expected_reviewer = _route_node(
+            state,
+            route,
+            "plan_reviewer"
+            if record.get("stage") == "plan"
+            else "implementation_reviewer",
+            required=True,
+        )
+        assert expected_reviewer is not None
+        dispatch_id = record.get("dispatch_id")
+        if not isinstance(dispatch_id, str) or not dispatch_id:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved reviewer dispatch is missing")
+        writer_dispatch = record.get("review_source_dispatch_id")
+        if not isinstance(writer_dispatch, str) or not writer_dispatch:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved writer dispatch is missing")
+        writer_values = _validate_named_result(
+            state,
+            record.get("writer_result"),
+            expected_writer,
+            expected_dispatch=writer_dispatch,
+        )
+        review_values = _validate_named_result(
+            state,
+            record.get("review_result"),
+            expected_reviewer,
+            expected_dispatch=dispatch_id,
+        )
+        result_values = _validate_named_result(
+            state,
+            record.get("result"),
+            expected_reviewer,
+            expected_dispatch=dispatch_id,
+        )
+        if review_values != result_values:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved reviewer result is inconsistent")
+        if not writer_values[0]:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved writer result body is invalid")
+        return
+    if status == "failed":
+        role = _record_target(record, "role")
+        failed_dispatch = record.get("dispatch_id")
+        if not isinstance(failed_dispatch, str) or not failed_dispatch:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved failed dispatch is missing")
+        _validate_named_result(
+            state,
+            record.get("result"),
+            role,
+            expected_outcome="failed",
+            expected_dispatch=failed_dispatch,
+        )
 
 
 def _task_prompt(task: TaskSpec, message: str) -> str:
@@ -224,7 +822,13 @@ def parse_review(
     }
 
 
-def _parse_saved_task(task_id: object, record: object, max_rounds: int) -> TaskSpec:
+def _parse_saved_task(
+    task_id: object,
+    record: object,
+    max_rounds: int,
+    *,
+    state: Mapping[str, object] | None = None,
+) -> TaskSpec:
     if not isinstance(task_id, str) or not task_id or not isinstance(record, Mapping):
         _fail(ErrorCode.INVALID_REQUEST, "saved TaskSpec is invalid")
     task = TaskSpec.from_dict(record.get("spec"))
@@ -239,9 +843,8 @@ def _parse_saved_task(task_id: object, record: object, max_rounds: int) -> TaskS
     status = record.get("status")
     if status not in _TASK_STATUSES:
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec status is invalid")
+    named = state is not None and _named_state(state)
     role = record.get("role")
-    if role not in {item.value for item in Role}:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec role is invalid")
     rounds = _review_rounds(record)
     if any(value > max_rounds for value in rounds.values()):
         _fail(
@@ -249,45 +852,57 @@ def _parse_saved_task(task_id: object, record: object, max_rounds: int) -> TaskS
             "saved review rounds exceed the configured limit",
         )
     stage = record.get("stage")
-    if stage is not None and stage not in _REVIEW_STAGES:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec stage is invalid")
+    if named:
+        assert state is not None
+        _validate_named_record(state, task, record)
+    else:
+        role = record.get("role")
+        if role not in {item.value for item in Role}:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec role is invalid")
+        if stage is not None and stage not in _REVIEW_STAGES:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec stage is invalid")
+        writer_role = record.get("writer_role")
+        if writer_role is not None and writer_role not in {
+            Role.PLANNER.value,
+            Role.WORKER.value,
+        }:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec writer role is invalid")
+        expected_role: str | None = None
+        expected_stage: str | None = None
+        if status == "running":
+            expected_role = cast(str, writer_role) if writer_role is not None else role
+            expected_stage = (
+                "plan" if expected_role == Role.PLANNER.value else "implementation"
+            )
+        elif status == "awaiting_plan_review":
+            expected_role, expected_stage = Role.PLANNER.value, "plan"
+        elif status == "awaiting_implementation_review":
+            expected_role, expected_stage = Role.WORKER.value, "implementation"
+        elif status in {"reviewing_plan", "plan_approved", "plan_changes_requested"}:
+            expected_role, expected_stage = Role.REVIEWER.value, "plan"
+        elif status in {
+            "reviewing_implementation",
+            "implementation_approved",
+            "implementation_changes_requested",
+        }:
+            expected_role, expected_stage = Role.REVIEWER.value, "implementation"
+        elif status == "consultation_required":
+            expected_role = Role.REVIEWER.value
+        if expected_role is not None and role != expected_role:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec role does not match status"
+            )
+        if expected_stage is not None and stage != expected_stage:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "saved TaskSpec stage does not match status",
+            )
     revision = record.get("revision")
     if revision is not None and (not isinstance(revision, str) or not revision):
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec revision is invalid")
     result = record.get("result")
     if result is not None and not isinstance(result, Mapping):
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec result is invalid")
-    writer_role = record.get("writer_role")
-    if writer_role is not None and writer_role not in {
-        Role.PLANNER.value,
-        Role.WORKER.value,
-    }:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec writer role is invalid")
-    expected_role: str | None = None
-    expected_stage: str | None = None
-    if status == "running":
-        expected_role = cast(str, writer_role) if writer_role is not None else role
-        expected_stage = (
-            "plan" if expected_role == Role.PLANNER.value else "implementation"
-        )
-    elif status == "awaiting_plan_review":
-        expected_role, expected_stage = Role.PLANNER.value, "plan"
-    elif status == "awaiting_implementation_review":
-        expected_role, expected_stage = Role.WORKER.value, "implementation"
-    elif status in {"reviewing_plan", "plan_approved", "plan_changes_requested"}:
-        expected_role, expected_stage = Role.REVIEWER.value, "plan"
-    elif status in {
-        "reviewing_implementation",
-        "implementation_approved",
-        "implementation_changes_requested",
-    }:
-        expected_role, expected_stage = Role.REVIEWER.value, "implementation"
-    elif status == "consultation_required":
-        expected_role = Role.REVIEWER.value
-    if expected_role is not None and role != expected_role:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec role does not match status")
-    if expected_stage is not None and stage != expected_stage:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec stage does not match status")
     if status in {
         "awaiting_plan_review",
         "reviewing_plan",
@@ -315,6 +930,29 @@ def _parse_saved_task(task_id: object, record: object, max_rounds: int) -> TaskS
         "consultation_required",
     } and not isinstance(result, Mapping):
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec result is missing")
+    if named:
+        _validate_named_rounds(record, rounds)
+        _validate_named_plan_revision(record)
+        expected_decision = {
+            "plan_approved": "approve",
+            "plan_changes_requested": "request_changes",
+            "implementation_approved": "approve",
+            "implementation_changes_requested": "request_changes",
+            "consultation_required": "consult",
+            "verifying": "approve",
+            "completed": "approve",
+            "verification_failed": "approve",
+        }.get(cast(str, status))
+        if expected_decision is not None:
+            assert state is not None
+            _validate_named_review_evidence(
+                state,
+                task,
+                record,
+                expected_decision=expected_decision,
+            )
+        assert state is not None
+        _validate_named_result_integrity(state, task, record)
     if status in {"completed", "verification_failed"}:
         _validate_verification(
             task,
@@ -507,7 +1145,10 @@ def _require_verification_retry(
 
 
 def _require_declared_task(state: Mapping[str, object], task: TaskSpec) -> None:
-    declared = parse_task_specs(state.get("task_specs", []))
+    if _named_state(state):
+        _graph, declared = _named_context(state)
+    else:
+        declared = parse_task_specs(state.get("task_specs", []))
     match = next((item for item in declared if item.task_id == task.task_id), None)
     if match is None:
         _fail(
@@ -534,13 +1175,24 @@ def prepare_dispatch(
     tasks = _mutable_tasks(state)
     task = request.task
     current = tasks.get(task.task_id)
+    named = _named_state(state)
 
     if current is None:
-        if request.role not in _WRITER_ROLES:
-            _fail(
-                ErrorCode.ORDER_VIOLATION,
-                "a new TaskSpec may be assigned only to Planner or Worker",
+        new_writer_target: NodeRef | None
+        if named:
+            new_writer_target = _require_named_writer_route(
+                state, task, request.role, initial=True
             )
+            writer_kind = new_writer_target.kind
+        else:
+            legacy_role = _legacy_role(request.role)
+            if legacy_role not in _WRITER_ROLES:
+                _fail(
+                    ErrorCode.ORDER_VIOLATION,
+                    "a new TaskSpec may be assigned only to Planner or Worker",
+                )
+            new_writer_target = None
+            writer_kind = legacy_role
         for dependency in task.dependencies:
             prior = tasks.get(dependency)
             if not isinstance(prior, Mapping):
@@ -548,24 +1200,29 @@ def prepare_dispatch(
                     ErrorCode.ORDER_VIOLATION,
                     f"task dependency {dependency!r} is not completed",
                 )
-            _parse_saved_task(dependency, prior, max_rounds)
+            _parse_saved_task(dependency, prior, max_rounds, state=state)
             if prior.get("status") != "completed":
                 _fail(
                     ErrorCode.ORDER_VIOLATION,
                     f"task dependency {dependency!r} is not completed",
                 )
-        stage = "plan" if request.role is Role.PLANNER else "implementation"
+        stage = "plan" if writer_kind is Role.PLANNER else "implementation"
         record: dict[str, object] = {
             "spec": task.as_dict(),
             "digest": task_digest(task),
             "dispatch_id": None,
             "status": "running",
-            "role": request.role.value,
-            "writer_role": request.role.value,
             "stage": stage,
             "revision": None,
             "review_rounds": {"plan": 0, "implementation": 0},
         }
+        if named:
+            assert new_writer_target is not None
+            _set_record_target(record, "role", new_writer_target)
+            _set_record_target(record, "writer_role", new_writer_target)
+        else:
+            record["role"] = writer_kind.value
+            record["writer_role"] = writer_kind.value
         prompt = _task_prompt(task, message)
         tasks[task.task_id] = record
         return record, prompt
@@ -574,9 +1231,26 @@ def prepare_dispatch(
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec is invalid")
     _require_record_task(current, task)
     status = current.get("status")
+    if named and status == "running":
+        active_target = _record_target(current, "role")
+        requested_target = _named_target(state, request.role)
+        if active_target != requested_target:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "active TaskSpec assignment has a different named node",
+            )
+        _fail(ErrorCode.ORDER_VIOLATION, "TaskSpec writer is already running")
+
+    if named:
+        _validate_named_record(state, task, current)
     rounds = _review_rounds(current)
 
-    if request.role is Role.REVIEWER:
+    is_reviewer = (
+        role_kind(request.role) is Role.REVIEWER
+        if named
+        else _legacy_role(request.role) is Role.REVIEWER
+    )
+    if is_reviewer:
         if status not in {"awaiting_plan_review", "awaiting_implementation_review"}:
             if status == "consultation_required":
                 _fail(
@@ -588,6 +1262,12 @@ def prepare_dispatch(
                 "review requires an acknowledged plan or implementation result",
             )
         stage = "plan" if status == "awaiting_plan_review" else "implementation"
+        if named:
+            reviewer_target = _require_named_reviewer_route(
+                state, task, stage, request.role
+            )
+        else:
+            reviewer_target = None
         if rounds[stage] >= max_rounds:
             _fail(
                 ErrorCode.ORDER_VIOLATION,
@@ -622,17 +1302,66 @@ def prepare_dispatch(
         updated_rounds[stage] += 1
         updated["review_rounds"] = updated_rounds
         updated["status"] = f"reviewing_{stage}"
-        updated["role"] = Role.REVIEWER.value
+        if named:
+            assert reviewer_target is not None
+            _set_record_target(updated, "role", reviewer_target)
+        else:
+            updated["role"] = Role.REVIEWER.value
         updated["stage"] = stage
         updated["review_source_dispatch_id"] = current.get("dispatch_id")
         updated["revision"] = resolved_revision
         tasks[task.task_id] = updated
         return updated, prompt
 
-    expected_writer = _writer_status(status)
-    if status == "verification_failed":
+    if named:
+        writer_target: NodeRef | None
+        route = _named_route(state, task.task_id)
+        if status == "plan_approved" or status == "plan_changes_requested":
+            writer_target = _route_node(
+                state,
+                route,
+                "implementation_writer" if status == "plan_approved" else "plan_writer",
+                required=status == "plan_approved",
+            )
+            if writer_target is None:
+                _fail(
+                    ErrorCode.ORDER_VIOLATION,
+                    "plan-only TaskSpec requires verification after plan approval",
+                )
+        elif status in {"implementation_changes_requested", "verification_failed"}:
+            writer_target = _route_node(
+                state, route, "implementation_writer", required=True
+            )
+        else:
+            writer_target = None
+        if status == "verification_failed":
+            _require_verification_retry(task, current, max_rounds)
+        if writer_target is None:
+            if status == "consultation_required":
+                _fail(
+                    ErrorCode.ORDER_VIOLATION,
+                    "user consultation is required before another dispatch",
+                )
+            _fail(ErrorCode.ORDER_VIOLATION, "writer does not match the task stage")
+        _require_named_writer_route(state, task, request.role)
+        if writer_target != cast(NodeRef, request.role):
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "writer does not match the exact named route",
+            )
+        expected_writer: Role | NodeRef | None = writer_target
+    else:
+        expected_writer = _writer_status(status)
+    if status == "verification_failed" and not named:
         _require_verification_retry(task, current, max_rounds)
-    if expected_writer is None or request.role is not expected_writer:
+    if expected_writer is None:
+        if status == "consultation_required":
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "user consultation is required before another dispatch",
+            )
+        _fail(ErrorCode.ORDER_VIOLATION, "writer does not match the task stage")
+    if not named and _legacy_role(request.role) is not expected_writer:
         if status == "consultation_required":
             _fail(
                 ErrorCode.ORDER_VIOLATION,
@@ -641,9 +1370,16 @@ def prepare_dispatch(
         _fail(ErrorCode.ORDER_VIOLATION, "writer does not match the task stage")
     updated = dict(current)
     updated["status"] = "running"
-    updated["role"] = request.role.value
-    updated["writer_role"] = request.role.value
-    updated["stage"] = "implementation" if request.role is Role.WORKER else "plan"
+    if named:
+        target = cast(NodeRef, request.role)
+        _set_record_target(updated, "role", target)
+        _set_record_target(updated, "writer_role", target)
+        updated["stage"] = "implementation" if target.kind is Role.WORKER else "plan"
+    else:
+        legacy_role = _legacy_role(request.role)
+        updated["role"] = legacy_role.value
+        updated["writer_role"] = legacy_role.value
+        updated["stage"] = "implementation" if legacy_role is Role.WORKER else "plan"
     updated["revision"] = None
     prompt = _task_prompt(task, message)
     writer_result = current.get("writer_result")
@@ -681,11 +1417,26 @@ def validate_task_assignment(
         or record.get("status") not in _TASK_STATUSES
     ):
         _fail(ErrorCode.IDENTITY_MISMATCH, "TaskSpec does not match its saved dispatch")
+    if _named_state(state):
+        _validate_named_record(state, task, record)
+        if "role" not in assignment or "role_kind" not in assignment:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "named TaskSpec assignment requires role and role_kind",
+            )
+        assignment_target = _result_target(state, assignment)
+        if assignment_target != _record_target(record, "role"):
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "named TaskSpec assignment node does not match its saved dispatch",
+            )
     return task
 
 
 def validate_saved_tasks(state: Mapping[str, object]) -> None:
-    if "task_specs" in state:
+    if _named_state(state):
+        _named_context(state)
+    elif "task_specs" in state:
         parse_task_specs(state["task_specs"])
     if "tasks" not in state:
         return
@@ -694,7 +1445,7 @@ def validate_saved_tasks(state: Mapping[str, object]) -> None:
     if not isinstance(tasks, Mapping):
         _fail(ErrorCode.INVALID_REQUEST, "saved TaskSpecs are invalid")
     for key, record in tasks.items():
-        task = _parse_saved_task(key, record, max_rounds)
+        task = _parse_saved_task(key, record, max_rounds, state=state)
         _require_declared_task(state, task)
 
 
@@ -728,6 +1479,7 @@ def acknowledge_task(state: dict[str, object], result: Mapping[str, object]) -> 
 
     if "tasks" not in state:
         return
+    named = _named_state(state)
     _max_review_rounds(state)
     tasks = _mutable_tasks(state)
     dispatch_id = result.get("dispatch_id")
@@ -745,7 +1497,23 @@ def acknowledge_task(state: dict[str, object], result: Mapping[str, object]) -> 
         _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec is invalid")
     record = dict(current)
     status = record.get("status")
-    role = result.get("role")
+    task: TaskSpec | None = None
+    target: NodeRef | None = None
+    role: object
+    if named:
+        task = TaskSpec.from_dict(record.get("spec"))
+        if task.task_id != task_id:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "saved TaskSpec identity is invalid")
+        _validate_named_record(state, task, current)
+        target = _result_target(state, result)
+        if target != _record_target(record, "role"):
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "task result node does not match assignment",
+            )
+        role = target.node_id
+    else:
+        role = result.get("role")
     outcome = result.get("outcome")
     body = result.get("body")
     if (
@@ -754,9 +1522,13 @@ def acknowledge_task(state: dict[str, object], result: Mapping[str, object]) -> 
         or not isinstance(body, str)
     ):
         _fail(ErrorCode.BACKEND_PROTOCOL_FAILURE, "task result fields are invalid")
-    expected_role = record.get("role")
-    if role != expected_role:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "task result role does not match assignment")
+    if not named:
+        expected_role = record.get("role")
+        if role != expected_role:
+            _fail(
+                ErrorCode.IDENTITY_MISMATCH,
+                "task result role does not match assignment",
+            )
     if outcome not in {"succeeded", "failed"}:
         _fail(ErrorCode.BACKEND_PROTOCOL_FAILURE, "task result outcome is invalid")
     if status not in {"running", "reviewing_plan", "reviewing_implementation"}:
@@ -769,17 +1541,24 @@ def acknowledge_task(state: dict[str, object], result: Mapping[str, object]) -> 
         return
 
     if status == "running":
-        if role not in {Role.PLANNER.value, Role.WORKER.value}:
-            _fail(ErrorCode.IDENTITY_MISMATCH, "writer result role is invalid")
+        if named:
+            assert target is not None
+            if target.kind not in _WRITER_ROLES:
+                _fail(ErrorCode.IDENTITY_MISMATCH, "writer result node is invalid")
+            writer_kind = target.kind
+        else:
+            if role not in {Role.PLANNER.value, Role.WORKER.value}:
+                _fail(ErrorCode.IDENTITY_MISMATCH, "writer result role is invalid")
+            writer_kind = Role(role)
         record["status"] = (
             "awaiting_plan_review"
-            if role == Role.PLANNER.value
+            if writer_kind is Role.PLANNER
             else "awaiting_implementation_review"
         )
-        record["stage"] = "plan" if role == Role.PLANNER.value else "implementation"
+        record["stage"] = "plan" if writer_kind is Role.PLANNER else "implementation"
         record["revision"] = (
             hashlib.sha256(body.encode("utf-8")).hexdigest()
-            if role == Role.PLANNER.value
+            if writer_kind is Role.PLANNER
             else None
         )
         record["result"] = dict(result)
@@ -787,7 +1566,11 @@ def acknowledge_task(state: dict[str, object], result: Mapping[str, object]) -> 
         tasks[task_id] = record
         return
 
-    if role != Role.REVIEWER.value:
+    if named:
+        assert target is not None
+        if target.kind is not Role.REVIEWER:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "review result node is invalid")
+    elif role != Role.REVIEWER.value:
         _fail(ErrorCode.IDENTITY_MISMATCH, "review result role is invalid")
     verdict = _review_verdict(record, result)
     decision = verdict["decision"]

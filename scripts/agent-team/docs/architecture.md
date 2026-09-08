@@ -56,14 +56,53 @@ client and no `--max-panes 1`. It holds Main metadata and accepts one terminal
 plus the expected suppressed `zellij:link` plugin; unknown panes/plugins remain
 unknown.
 
-Arbitrary role graphs, no-Main configurations, explicit parallel workflows,
-and most of the ten harnesses remain unfinished. Giving two systems ownership
+Named agent/serial graphs are connected through version 5. No-Main
+configurations, explicit parallel workflows, named Orca graphs, and most of the
+ten harnesses remain unfinished. Giving two systems ownership
 of the same worker would make completion and cleanup ambiguous.
 
 Native Claude ACP questions stay within the existing Task/Dispatch assignment.
 Real-model question acceptance covers tmux; Herdr and Zellij have fake-provider
-contract coverage for this feature. These results do not complete the arbitrary
-graph, no-Main, parallel workflow, or all-harness requirements.
+contract coverage for this feature. These results do not complete the remaining
+graph modes, no-Main, parallel workflow, or all-harness requirements.
+
+### Named nodes and explicit TaskSpec routes
+
+[Version 5](configuration-v5.md) separates `NodeRef(node_id, kind)` from the
+fixed `Role` kinds. IDs identify nodes, assignments, resources, questions,
+results, and deliveries; kinds determine stage and permission rules. Each node
+has its own provider/model/effort/prompt/permission settings. Main uses exact
+node IDs in MCP requests, and task routes bind each plan or implementation
+stage to a particular writer/reviewer pair. A declared plan pair must be
+approved before implementation; a route without that pair can omit Planner.
+
+The configuration version is 5; named native state uses version 4. The graph
+and `role_specs` cover all configured nodes, while `roles` contains only active
+assignments. Native runtime Task UUIDs differ from logical `TaskSpec.task_id`;
+dispatch IDs bind their results to the right logical task. State readers,
+publishers, and task gates reject missing or mismatched IDs/kinds. Version-3
+state retains its own contract and is not migrated in place.
+
+Real tmux run `ea85a811-dd06-4bd3-a1d6-f6156f5670ef` used direct Claude Main
+`lead`, Workers `write-sum`/`write-product`, and Reviewers
+`review-sum`/`review-product`, all explicitly Fable/high. Main was not the first
+configured node. Both writers finished before either review began. The
+`write-sum` assignment asked two questions and resumed in the same ACP session
+after Main's answers and acknowledgment. Four distinct sessions produced typed
+success/cleanup receipts. Both tasks were approved and verified by their
+declared fixed argv at integrated revision
+`73f695e5defd84158855ea581793b125263b7cac884d336bbba34637e4647f07`.
+The observer confirmed only the two allowed fixture files changed, with the
+workspace HEAD/index and other manifest entries unchanged. Public stop worked
+after deleting the input config/prompts; independent checks found no owned
+processes, groups, state, provider roots, snapshots, or fixture resources.
+
+This is native agent/serial acceptance. Program coordination, parallel
+assignment admission, named Orca execution, and `consults-to` communication
+remain unfinished. Graph validation and rendering can describe these shapes.
+Program, parallel, and named Orca starts are rejected before dependencies are
+probed or resources are created; no agent-to-agent consultation operation is
+exposed.
 
 ### Bounded live question acceptance
 
@@ -110,6 +149,7 @@ for the current head are tracked in [PR #7](https://github.com/iamtatsuki05/dotf
 |---|---|
 | `config.toml` | Declares fixed roles, providers, transports, models, efforts, prompts, permissions, and native `[[tasks]]` entries. |
 | `agent_team/config_v4.py`, `topology.py` | Validate named team catalogs and render their graphs. Runnable catalog entries explicitly reference a matching version-3 launch configuration. |
+| `agent_team/config_roles.py`, `config_v5.py`, `named_graph.py` | Validate node-local role settings, exact graph identities and task routes; compile selected version-5 teams and render their graphs. |
 | `agent_team/cli.py` | Parses and validates config/arguments, selects `WorkflowEngine(OrcaBackend)` or the selected native terminal backend, renders compatibility JSON, and runs ACP turns. |
 | `agent_team/backend.py` | Owns the Orca `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
 | `agent_team/native_backend.py` | Owns the shared native `start`/`status`/`attach`/`stop` path, ACP assignments, completion publication, and cleanup checks. |
@@ -655,7 +695,7 @@ The following are remaining implementation goals, not exclusions from the
 agreed scope. They are tracked in Issues #8, #9, and #11.
 
 - The required profiles and real execution evidence for all ten harnesses
-- Dedicated Mainless execution, arbitrary role graphs, explicit parallel tasks,
+- Dedicated Mainless execution, the remaining graph modes, explicit parallel tasks,
   and the shared Orca/native progression work
 - Reviewer `consult` followed by post-review resume
 - Automatic recovery after crash or unproven cleanup

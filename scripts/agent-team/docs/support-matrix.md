@@ -51,10 +51,14 @@ An ACP adapter being installed or listed by acpx does not prove that the
 adapter is safe for a role. It is shown separately from the verified
 agent-team profile. Native tmux, Herdr, and Zellij Claude ACP are separate runtime profiles: their
 read-only Planner/Reviewer and scoped workspace-write Worker are selected only
-from a version-3 native config, and Worker dispatch requires an exact declared
+from a version-3 native config or a version-5 named agent/serial config, and Worker dispatch requires an exact declared
 TaskSpec. Unknown providers and recognized-but-rejected profiles fail before
 an Orca Task, terminal, or ACP process is created. There is no fallback to
 another harness.
+
+Version 5 changes node identity and task routing, not the harness safety
+dispositions in this matrix. Its bounded five-node Claude tmux acceptance is
+described in [Architecture](architecture.md).
 
 The Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
 Orca resolves only the selected ACP roles' `node`, `acpx`, and

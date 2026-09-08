@@ -1147,30 +1147,40 @@ class NativeBackendTest(unittest.TestCase):
                 return cls()
 
         task = self.task_spec()
+        planner = replace(
+            role_spec(
+                Role.PLANNER,
+                transport="acp",
+                permission="read-only",
+                execution="background",
+                executables=FakeCodexExecutables().as_dict(),
+            ),
+            **native.native_profile("codex", "planner"),
+            provider_snapshot={"test": "snapshot"},
+        )
         for failure in ("unconfirmed", "confirmed", "interrupt", "journal-write"):
             confirmed = failure == "confirmed"
             with self.subTest(failure=failure):
                 self.state_path = self.root / f"state-{failure}" / "state.json"
-                with self.planner_backend(task_specs=(task,)) as backend:
+                with (
+                    mock.patch.object(
+                        native.native_acp_dependencies,
+                        "CodexAcpExecutables",
+                        FakeCodexExecutables,
+                    ),
+                    mock.patch.object(
+                        native.native_acp_dependencies,
+                        "codex_adapter_snapshot",
+                        return_value={"test": "adapter"},
+                    ),
+                    mock.patch.object(codex_acp, "verify_snapshot"),
+                    self.planner_backend(
+                        task_specs=(task,), planner_spec=planner
+                    ) as backend,
+                ):
                     state = native.runtime_read_state(self.state_path)
-                    state["role_specs"]["planner"].update(
-                        native.native_profile("codex", "planner"),
-                        provider_snapshot={"test": "snapshot"},
-                    )
-                    native.runtime_write_state(self.state_path, state)
                     before = self.state_path.read_bytes()
                     with (
-                        mock.patch.object(
-                            native.native_acp_dependencies,
-                            "CodexAcpExecutables",
-                            FakeCodexExecutables,
-                        ),
-                        mock.patch.object(
-                            native.native_acp_dependencies,
-                            "codex_adapter_snapshot",
-                            return_value={"test": "adapter"},
-                        ),
-                        mock.patch.object(codex_acp, "verify_snapshot"),
                         mock.patch.object(
                             native,
                             "_save_state",
@@ -1465,6 +1475,7 @@ class NativeBackendTest(unittest.TestCase):
         worker: bool = False,
         reviewer: bool = False,
         task_specs: tuple[TaskSpec, ...] = (),
+        planner_spec: RoleSpec | None = None,
     ) -> Iterator[tmux_backend.TmuxBackend]:
         executables = FakeExecutables()
         spec = replace(
@@ -1472,7 +1483,9 @@ class NativeBackendTest(unittest.TestCase):
             task_specs=task_specs,
             role_specs={
                 Role.MAIN: role_spec(Role.MAIN),
-                Role.PLANNER: role_spec(
+                Role.PLANNER: planner_spec
+                if planner_spec is not None
+                else role_spec(
                     Role.PLANNER,
                     transport="acp",
                     permission="read-only",

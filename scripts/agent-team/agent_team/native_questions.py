@@ -22,6 +22,8 @@ IDENTITY_FIELDS: Final = (
     "terminal_handle",
     "launch_nonce",
 )
+NAMED_IDENTITY_FIELDS: Final = (*IDENTITY_FIELDS, "role_kind")
+_ACP_ROLE_KINDS: Final = frozenset({"planner", "worker", "reviewer"})
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _OUTBOX_FIELDS = frozenset(
     {
@@ -61,10 +63,58 @@ def _object(value: object, field: str) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def _identity(value: Mapping[str, object]) -> dict[str, str]:
-    return {
-        field: text(value.get(field), field, maximum=256) for field in IDENTITY_FIELDS
-    }
+def _identity_fields(value: Mapping[str, object], *, named: bool) -> tuple[str, ...]:
+    fields = NAMED_IDENTITY_FIELDS if named else IDENTITY_FIELDS
+    if not named and "role_kind" in value:
+        raise ValueError("native question v3 identity has an unexpected role_kind")
+    return fields
+
+
+def _identity(
+    value: Mapping[str, object], *, named: bool | None = None
+) -> dict[str, str]:
+    if named is None:
+        named = "role_kind" in value
+    fields = _identity_fields(value, named=named)
+    result = {field: text(value.get(field), field, maximum=256) for field in fields}
+    if named and result["role_kind"] not in _ACP_ROLE_KINDS:
+        raise ValueError("native question role_kind is invalid")
+    return result
+
+
+def _named_state(state: Mapping[str, object]) -> bool:
+    version = state.get("version")
+    if version == 3:
+        return False
+    if version == 4:
+        return True
+    raise ValueError("native question state version is invalid")
+
+
+def _trusted_identity(
+    question: Mapping[str, object], expected_identity: Mapping[str, object] | None
+) -> tuple[dict[str, str], bool]:
+    if expected_identity is None:
+        named = "role_kind" in question
+        return _identity(question, named=named), named
+    named = "role_kind" in expected_identity
+    expected = _identity(expected_identity, named=named)
+    observed = _identity(question, named=named)
+    if observed != expected:
+        raise ValueError("native question assignment identity changed")
+    return expected, named
+
+
+def _profile_matches(spec: Mapping[str, object], role_kind: str) -> bool:
+    if role_kind not in _ACP_ROLE_KINDS:
+        return False
+    try:
+        from .scoped_acp import native_profile
+
+        expected = native_profile(str(spec.get("provider")), role_kind)
+    except (RuntimeError, ValueError):
+        return False
+    return all(spec.get(key) == value for key, value in expected.items())
 
 
 def _strings(value: object, field: str, count: int) -> list[str]:
@@ -79,7 +129,8 @@ def _strings(value: object, field: str, count: int) -> list[str]:
 def validate_receipts(value: object, identity: Mapping[str, object]) -> None:
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_BATCHES:
         raise ValueError("native question receipts have invalid length")
-    expected = _identity(identity)
+    named = "role_kind" in identity
+    expected = _identity(identity, named=named)
     seen_calls: set[tuple[str, str]] = set()
     seen_deliveries: set[str] = set()
     seen_messages: set[str] = set()
@@ -87,14 +138,14 @@ def validate_receipts(value: object, identity: Mapping[str, object]) -> None:
     for item in value:
         receipt = _object(item, "receipt")
         if set(receipt) != {
-            *IDENTITY_FIELDS,
+            *_identity_fields(receipt, named=named),
             "session_id",
             "tool_call_id",
             "delivery_id",
             "messages",
         }:
             raise ValueError("native question receipt fields are invalid")
-        if _identity(receipt) != expected:
+        if _identity(receipt, named=named) != expected:
             raise ValueError("native question receipt assignment identity changed")
         session_id = text(receipt["session_id"], "session_id", maximum=256)
         tool_call_id = text(receipt["tool_call_id"], "tool_call_id", maximum=256)
@@ -124,23 +175,37 @@ def validate_receipts(value: object, identity: Mapping[str, object]) -> None:
 
 
 def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
+    named = _named_state(state)
     if "native_question" not in state:
         if state.get("pending_delivery_kind") == "question":
             raise ValueError("native question Delivery has no outbox")
         return None
     question = _object(state["native_question"], "outbox")
-    if set(question) != _OUTBOX_FIELDS:
+    outbox_fields = _OUTBOX_FIELDS | ({"role_kind"} if named else set())
+    if set(question) != outbox_fields:
         raise ValueError("native question outbox fields are invalid")
-    identity = _identity(question)
+    identity = _identity(question, named=named)
     role = identity["role"]
     specs = _object(state.get("role_specs"), "role specs")
     spec = _object(specs.get(role), "role spec")
     roles = _object(state.get("roles"), "assignments")
     assignment = _object(roles.get(role), "assignment")
+    if named:
+        if (
+            spec.get("kind") != identity["role_kind"]
+            or assignment.get("role") != role
+            or assignment.get("role_kind") != identity["role_kind"]
+        ):
+            raise ValueError("native question named assignment identity is invalid")
+        profile_kind = identity["role_kind"]
+    else:
+        if "kind" in spec or "role_kind" in assignment:
+            raise ValueError("native question v3 assignment is mixed with named state")
+        profile_kind = role
     if (
         spec.get("provider") != "claude"
         or spec.get("transport") != "acp"
-        or role not in {"planner", "worker", "reviewer"}
+        or not _profile_matches(spec, profile_kind)
         or len(roles) != 1
         or identity["run_id"] != state.get("run_id")
         or any(identity[key] != assignment.get(key) for key in IDENTITY_FIELDS[2:])
@@ -196,6 +261,8 @@ def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
     result = state.get("native_result")
     if result is not None:
         completion = _object(result, "pending completion")
+        if _identity(completion, named=named) != identity:
+            raise ValueError("native question completion identity is invalid")
         if completion.get("outcome") != "failed" or phase not in {
             "failed",
             "cancelling",
@@ -205,12 +272,12 @@ def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
             )
     receipts = assignment.get("question_receipts")
     if receipts is not None:
-        validate_receipts(
-            receipts, {**assignment, "role": role, "run_id": state.get("run_id")}
-        )
+        validate_receipts(receipts, identity)
         items = cast(list[dict[str, object]], receipts)
         already_received = (
-            items[-1] == receipt(question) if set(answers) == set(ids) else False
+            items[-1] == receipt(question, expected_identity=identity)
+            if set(answers) == set(ids)
+            else False
         )
         if (
             any(item["session_id"] != request.session_id for item in items)
@@ -237,12 +304,16 @@ def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
     return question
 
 
-def receipt(question: Mapping[str, object]) -> dict[str, object]:
+def receipt(
+    question: Mapping[str, object],
+    expected_identity: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    identity, _named = _trusted_identity(question, expected_identity)
     request = validate_question_request(question["request"])
     ids = _strings(question["message_ids"], "message_ids", len(request.questions))
     answers = _object(question["answers"], "answers")
     return {
-        **_identity(question),
+        **identity,
         "session_id": request.session_id,
         "tool_call_id": request.tool_call_id,
         "delivery_id": question["delivery_id"],
@@ -261,13 +332,91 @@ def receipt(question: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _result_identity(
+    state: Mapping[str, object],
+    result: Mapping[str, object],
+    roles: Mapping[str, object],
+    specs: Mapping[str, object],
+    *,
+    named: bool,
+) -> dict[str, str]:
+    role = result.get("role")
+    if not isinstance(role, str):
+        raise TypeError("native question result role is invalid")
+    spec = _object(specs.get(role), "role spec")
+    if named:
+        role_kind = text(spec.get("kind"), "role_kind", maximum=64)
+        if result.get("role_kind") != role_kind:
+            raise ValueError("native question result role kind changed")
+    elif "kind" in spec or "role_kind" in result:
+        raise ValueError("native question v3 result is mixed with named state")
+    assignment = roles.get(role)
+    if isinstance(assignment, Mapping):
+        identity = {
+            **assignment,
+            "role": role,
+            "run_id": state.get("run_id"),
+            **({"role_kind": spec.get("kind")} if named else {}),
+        }
+        trusted = _identity(identity, named=named)
+        if _identity(result, named=named) != trusted:
+            raise ValueError("native question result assignment identity changed")
+        return trusted
+    return _identity(result, named=named)
+
+
+def _reject_v3_named_fields(state: Mapping[str, object]) -> None:
+    specs = state.get("role_specs")
+    if isinstance(specs, Mapping) and any(
+        isinstance(spec, Mapping) and "kind" in spec for spec in specs.values()
+    ):
+        raise ValueError("native question v3 role spec has an unexpected kind")
+    roles = state.get("roles")
+    if isinstance(roles, Mapping):
+        for assignment in roles.values():
+            if isinstance(assignment, Mapping) and "role_kind" in assignment:
+                raise ValueError(
+                    "native question v3 assignment has an unexpected role_kind"
+                )
+    for field in ("native_result", "native_question"):
+        value = state.get(field)
+        if isinstance(value, Mapping) and "role_kind" in value:
+            raise ValueError(f"native question v3 {field} has an unexpected role_kind")
+
+
 def validate_state(state: Mapping[str, object]) -> None:
+    named = _named_state(state)
+    if not named:
+        _reject_v3_named_fields(state)
     outbox(state)
     roles = _object(state.get("roles"), "assignments")
     specs = _object(state.get("role_specs"), "role specs")
     for role, raw_assignment in roles.items():
         assignment = _object(raw_assignment, "assignment")
         spec = _object(specs.get(role), "role spec")
+        if named:
+            role_kind = text(spec.get("kind"), "role_kind", maximum=64)
+            if (
+                assignment.get("role") != role
+                or assignment.get("role_kind") != role_kind
+            ):
+                raise ValueError("native question assignment node identity is invalid")
+            trusted_identity = {
+                **assignment,
+                "role": role,
+                "role_kind": role_kind,
+                "run_id": state.get("run_id"),
+            }
+        else:
+            if "role_kind" in assignment or "kind" in spec:
+                raise ValueError(
+                    "native question v3 assignment is mixed with named state"
+                )
+            trusted_identity = {
+                **assignment,
+                "role": role,
+                "run_id": state.get("run_id"),
+            }
         if "question_socket" in assignment:
             root = Path(text(assignment.get("provider_private_root"), "private root"))
             if (
@@ -280,13 +429,11 @@ def validate_state(state: Mapping[str, object]) -> None:
         elif "scoped_question_client_sha256" in spec:
             raise ValueError("native question socket is missing from assignment")
         if "question_receipts" in assignment:
-            validate_receipts(
-                assignment["question_receipts"],
-                {**assignment, "role": role, "run_id": state.get("run_id")},
-            )
+            validate_receipts(assignment["question_receipts"], trusted_identity)
     result = state.get("native_result")
     if isinstance(result, Mapping) and "question_receipts" in result:
-        validate_receipts(result["question_receipts"], result)
+        identity = _result_identity(state, result, roles, specs, named=named)
+        validate_receipts(result["question_receipts"], identity)
     tasks = state.get("tasks")
     if isinstance(tasks, Mapping):
         for record in tasks.values():
@@ -295,4 +442,7 @@ def validate_state(state: Mapping[str, object]) -> None:
             for field in ("result", "writer_result", "review_result"):
                 result = record.get(field)
                 if isinstance(result, Mapping) and "question_receipts" in result:
-                    validate_receipts(result["question_receipts"], result)
+                    identity = _result_identity(
+                        state, result, roles, specs, named=named
+                    )
+                    validate_receipts(result["question_receipts"], identity)

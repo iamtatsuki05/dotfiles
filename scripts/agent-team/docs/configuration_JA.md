@@ -10,6 +10,9 @@ Worker、Reviewerを持つ実験的なnative subsetです。native Workerのassi
 `[[tasks]]` catalogにあるTaskSpecとの完全一致が必要です。必須値の欠落や未対応の組み合わせは、
 roleを起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
 [Version 4の設定](configuration-v4_JA.md)を参照してください。
+nodeごとの設定、複数のWorker/Reviewer、TaskSpecの担当指定には、
+[Version 5の設定](configuration-v5_JA.md)を使います。nativeの`agent`/`serial`構成は実行できますが、
+program・並列実行・名前付きOrca構成の起動は拒否します。以下はversion 3のリファレンスです。
 
 ## canonical configから始める
 
@@ -57,7 +60,9 @@ canonical PlannerはClaudeのread-only ACP roleで、canonical WorkerとReviewer
 
 ## 実験的なnative terminal runtimeを明示的に選ぶ
 
-native runtimeはcustomなversion 3 configでだけ指定します。Mainは必須で、direct
+この節では、`runtime = "tmux"`、`"herdr"`、`"zellij"`を使うcustomなversion 3 configを説明します。
+名前付きnodeを複数置く場合は、[Version 5](configuration-v5_JA.md)の設定と実行条件を使ってください。
+以下のversion 3 configではMainは必須で、direct
 Claude・permission `orchestrator`でなければなりません。PlannerとReviewerは省略するか、
 それぞれverified Claude ACP・permission `read-only`・pinned `claude-acp-0.70.0` adapterで
 定義できます。Workerはscoped Claude ACPの`workspace-write` profileとして選択できますが、

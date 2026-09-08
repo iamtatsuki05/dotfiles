@@ -6,6 +6,9 @@
 Agentの構成と、委譲・レビュー・エスカレーションの関係を表現します。
 Agentの起動、設定の読み込み、providerやOrcaの呼び出しは行いません。
 
+このmoduleはversion 4の一覧を表します。version 5では`agent_team.named_graph`を使い、
+graphの識別子とTaskSpecの担当を保持します。[Version 5の設定](configuration-v5_JA.md)を参照してください。
+
 ## データモデル
 
 Python 3.11の標準ライブラリだけを使います。

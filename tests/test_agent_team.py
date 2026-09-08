@@ -745,6 +745,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
 
     def test_acp_runner_requires_nonempty_bounded_prompt_stdout(self) -> None:
         state = {
+            "version": 3,
             "runtime": "orca",
             "team_id": "agent-team-test",
             "workspace": "/tmp/project",
@@ -772,6 +773,7 @@ class AgentTeamDryRunTest(AgentTeamTestCase):
             "effort": "high",
             "instructions": "planner",
         }
+        state["role_specs"] = {"planner": spec}
         for prompt_stdout in ("", "x" * (agent_team.MAX_ACP_OUTPUT_CHARS + 1)):
             with self.subTest(output_length=len(prompt_stdout)):
                 acpx_results = [

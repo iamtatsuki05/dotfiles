@@ -9,7 +9,7 @@ import shlex
 import stat
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .contracts import ErrorCode, RuntimeFailure
@@ -17,14 +17,21 @@ from .locking import _LifecycleReservation
 from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .task_execution import validate_saved_tasks, validate_task_assignment
+from .task_spec import parse_task_specs
+
+if TYPE_CHECKING:
+    from .contracts import NodeRef, RoleTarget
+    from .named_graph import GraphSpec
 
 ACP_ROLES: Final = frozenset({"planner", "worker", "reviewer"})
 ACP_PACKAGE: Final = "acpx@0.13.2"
 CLAUDE_ACP_PACKAGE: Final = "@agentclientprotocol/claude-agent-acp@0.70.0"
 STATE_VERSION: Final = 3
+NAMED_STATE_VERSION: Final = 4
 MAX_STATE_BYTES: Final = 2_000_000
 MAX_PROMPT_CHARS: Final = 100_000
 MAX_PROMPT_BYTES: Final = 400_000
+MAX_RESULT_BODY_CHARS: Final = 100_000
 ACP_ENV_KEYS: Final = frozenset(
     {"PATH", "HOME", "TMPDIR", "SHELL", "USER", "LOGNAME", "LANG"}
 )
@@ -56,6 +63,33 @@ class StatePublishError(RuntimeValidationError):
     """State replacement succeeded but directory durability is unconfirmed."""
 
 
+def _role_target_parts(role: str | RoleTarget) -> tuple[str, str | None]:
+    """Return the path identity and fixed kind for an ACP role target.
+
+    String callers intentionally retain the version-3 fixed-role contract.  A
+    named node must be represented by ``NodeRef`` so an arbitrary string cannot
+    silently become a new role identity.
+    """
+
+    from .contracts import NodeRef, Role
+
+    if isinstance(role, NodeRef):
+        role_id = role.node_id
+        kind = role.kind.value
+        if kind not in ACP_ROLES:
+            raise RuntimeValidationError("ACP role target kind is invalid")
+        return role_id, kind
+    if isinstance(role, Role):
+        role_id = role.value
+    elif isinstance(role, str):
+        role_id = role
+    else:
+        raise RuntimeValidationError("ACP role target is invalid")
+    if role_id not in ACP_ROLES:
+        raise RuntimeValidationError("ACP role target is invalid")
+    return role_id, None
+
+
 def _absolute(path: Path) -> Path:
     return path.expanduser().absolute()
 
@@ -64,15 +98,20 @@ def _canonical(path: Path) -> Path:
     return _absolute(path).resolve(strict=False)
 
 
-def _require_role_nonce(role: str, launch_nonce: str, context: str) -> None:
-    if role not in ACP_ROLES or not _LAUNCH_NONCE_RE.fullmatch(launch_nonce):
+def _require_role_nonce(role: str | RoleTarget, launch_nonce: str, context: str) -> str:
+    try:
+        role_id, _kind = _role_target_parts(role)
+    except RuntimeValidationError as exc:
+        raise RuntimeValidationError(f"{context} is invalid") from exc
+    if not _LAUNCH_NONCE_RE.fullmatch(launch_nonce):
         raise RuntimeValidationError(f"{context} is invalid")
+    return role_id
 
 
-def _require_identity(team_id: str, role: str, launch_nonce: str) -> None:
+def _require_identity(team_id: str, role: str | RoleTarget, launch_nonce: str) -> str:
     if not _TEAM_ID_RE.fullmatch(team_id):
         raise RuntimeValidationError("ACP launch identity is invalid")
-    _require_role_nonce(role, launch_nonce, "ACP launch identity")
+    return _require_role_nonce(role, launch_nonce, "ACP launch identity")
 
 
 def _validated_acp_executables(executables: AcpExecutables) -> AcpExecutables:
@@ -90,14 +129,14 @@ def _validated_acp_executables(executables: AcpExecutables) -> AcpExecutables:
 
 def build_acp_agent_command(
     team_id: str,
-    role: str,
+    role: str | RoleTarget,
     launch_nonce: str,
     *,
     executables: AcpExecutables | NativeAcpExecutables,
     write_policy: Path | None = None,
     questions: bool = False,
 ) -> str:
-    _require_identity(team_id, role, launch_nonce)
+    role_id = _require_identity(team_id, role, launch_nonce)
     if type(questions) is not bool or (
         questions and not isinstance(executables, NativeAcpExecutables)
     ):
@@ -113,7 +152,7 @@ def build_acp_agent_command(
             raise RuntimeValidationError(str(exc)) from exc
     else:
         executables = _validated_acp_executables(executables)
-    marker = f"agent-team/{team_id}/{role}/{launch_nonce}"
+    marker = f"agent-team/{team_id}/{role_id}/{launch_nonce}"
     argv = [
         "env",
         f"AGENT_TEAM_ACP_MARKER={marker}",
@@ -138,9 +177,9 @@ def build_acp_agent_command(
     return shlex.join(argv)
 
 
-def build_acp_session_name(role: str, launch_nonce: str) -> str:
-    _require_role_nonce(role, launch_nonce, "ACP session identity")
-    return f"agent-team-{role}-{launch_nonce}"
+def build_acp_session_name(role: str | RoleTarget, launch_nonce: str) -> str:
+    role_id = _require_role_nonce(role, launch_nonce, "ACP session identity")
+    return f"agent-team-{role_id}-{launch_nonce}"
 
 
 def _state_dir_stat(state_dir: Path) -> os.stat_result:
@@ -170,9 +209,9 @@ def _state_dir_stat(state_dir: Path) -> os.stat_result:
     return directory_stat
 
 
-def _prompt_path(state_dir: Path, role: str, launch_nonce: str) -> Path:
-    _require_role_nonce(role, launch_nonce, "prompt identity")
-    return _absolute(state_dir) / f"prompt-{role}-{launch_nonce}.md"
+def _prompt_path(state_dir: Path, role: str | RoleTarget, launch_nonce: str) -> Path:
+    role_id = _require_role_nonce(role, launch_nonce, "prompt identity")
+    return _absolute(state_dir) / f"prompt-{role_id}-{launch_nonce}.md"
 
 
 def _validate_prompt_stat(
@@ -192,7 +231,7 @@ def validate_prompt_file(
     path: Path,
     state_dir: Path,
     *,
-    role: str | None = None,
+    role: str | RoleTarget | None = None,
     launch_nonce: str | None = None,
 ) -> Path:
     state_dir = _absolute(state_dir)
@@ -237,7 +276,7 @@ def validate_prompt_file(
 
 
 def create_prompt_file(
-    state_dir: Path, role: str, launch_nonce: str, text: str
+    state_dir: Path, role: str | RoleTarget, launch_nonce: str, text: str
 ) -> Path:
     if not text:
         raise RuntimeValidationError("prompt must not be empty")
@@ -279,7 +318,7 @@ def read_prompt_file(
     path: Path,
     state_dir: Path,
     *,
-    role: str,
+    role: str | RoleTarget,
     launch_nonce: str,
 ) -> str:
     state_dir = _absolute(state_dir)
@@ -322,7 +361,7 @@ def remove_prompt_file(
     path: Path,
     state_dir: Path,
     *,
-    role: str,
+    role: str | RoleTarget,
     launch_nonce: str,
 ) -> None:
     candidate = validate_prompt_file(
@@ -338,7 +377,7 @@ def remove_prompt_file(
 
 def build_acp_runner_command(
     state: dict[str, object],
-    role: str,
+    role: str | RoleTarget,
     *,
     task_id: str,
     dispatch_id: str,
@@ -354,11 +393,12 @@ def build_acp_runner_command(
 
     launcher_path = state_string("launcher_path")
     state_path_value = state_string("state_path")
+    role_id = _require_role_nonce(role, launch_nonce, "ACP runner identity")
     return shlex.join(
         [
             launcher_path,
             "_acp-run",
-            role,
+            role_id,
             "--state",
             state_path_value,
             "--task-id",
@@ -377,7 +417,7 @@ def build_acp_runner_command(
 
 def build_background_runner_command(
     state: dict[str, object],
-    role: str,
+    role: str | RoleTarget,
     *,
     task_id: str,
     dispatch_id: str,
@@ -393,11 +433,12 @@ def build_background_runner_command(
             raise RuntimeValidationError(f"agent-team state is missing {key}")
         return value
 
+    role_id = _require_role_nonce(role, launch_nonce, "background runner identity")
     return shlex.join(
         [
             state_string("launcher_path"),
             "_background-run",
-            role,
+            role_id,
             "--state",
             state_string("state_path"),
             "--task-id",
@@ -547,7 +588,508 @@ def validate_native_main_process(value: object) -> None:
         raise RuntimeValidationError("native Main process exit evidence is invalid")
 
 
+def _parse_named_graph(state: Mapping[str, object]) -> GraphSpec:
+    from .named_graph import GraphSpec, validate_graph
+
+    raw_graph = state.get("graph")
+    try:
+        graph = GraphSpec.from_dict(raw_graph)
+        raw_tasks = state.get("task_specs", [])
+        task_specs = parse_task_specs(raw_tasks)
+        validate_graph(graph, task_specs)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeValidationError(
+            f"agent-team named graph is invalid: {exc}"
+        ) from exc
+    return graph
+
+
+def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
+    """Resolve one exact state identity without converting v3 into v4.
+
+    Version 3 keeps the fixed ``Role`` namespace.  Version 4 stores a parsed
+    graph and returns its ``NodeRef`` so the node ID and its fixed kind remain
+    coupled at every caller boundary.
+    """
+
+    if not isinstance(state, Mapping) or not isinstance(node_id, str) or not node_id:
+        raise RuntimeValidationError("agent-team state role identity is invalid")
+    version = state.get("version")
+    if version == STATE_VERSION:
+        if "graph" in state:
+            raise RuntimeValidationError("version-3 state must not contain a graph")
+        from .contracts import Role
+
+        try:
+            role = Role(node_id)
+        except ValueError as exc:
+            raise RuntimeValidationError(
+                "agent-team state role is not selected"
+            ) from exc
+        specs = state.get("role_specs")
+        if not isinstance(specs, Mapping) or node_id not in specs:
+            raise RuntimeValidationError("agent-team state role is not selected")
+        spec = specs[node_id]
+        if not isinstance(spec, Mapping) or "kind" in spec:
+            raise RuntimeValidationError(
+                "version-3 role spec is mixed with named state"
+            )
+        return role
+    if version != NAMED_STATE_VERSION:
+        raise RuntimeValidationError("agent-team state has an unsupported version")
+    if state.get("runtime") == "orca":
+        raise RuntimeValidationError("version-4 Orca state is not supported")
+    graph = _parse_named_graph(state)
+    try:
+        target = graph.node(node_id)
+    except KeyError as exc:
+        raise RuntimeValidationError("agent-team state role is not selected") from exc
+    specs = state.get("role_specs")
+    if not isinstance(specs, Mapping) or node_id not in specs:
+        raise RuntimeValidationError("agent-team state role is not selected")
+    spec = specs[node_id]
+    if not isinstance(spec, Mapping) or spec.get("kind") != target.kind.value:
+        raise RuntimeValidationError("named state role kind does not match its graph")
+    return target
+
+
+def _validate_named_role_spec(
+    node_id: str, node_kind: str, spec: Mapping[str, object]
+) -> None:
+    required = (
+        "kind",
+        "provider",
+        "transport",
+        "model",
+        "effort",
+        "permission",
+        "instructions",
+        "execution",
+    )
+    for key in required:
+        value = spec.get(key)
+        if not isinstance(value, str) or not value:
+            raise RuntimeValidationError(
+                f"agent-team state role spec is missing {node_id}.{key}"
+            )
+    if spec["kind"] != node_kind:
+        raise RuntimeValidationError(
+            f"agent-team state role spec kind does not match {node_id}"
+        )
+    if node_kind == "main":
+        expected = {
+            "provider": "claude",
+            "transport": "direct",
+            "permission": "orchestrator",
+            "execution": "tui_direct",
+        }
+        if any(spec.get(key) != value for key, value in expected.items()):
+            raise RuntimeValidationError(
+                f"agent-team state role spec profile does not match {node_id}"
+            )
+        if "adapter_id" in spec or "acp_executables" in spec:
+            raise RuntimeValidationError(
+                f"agent-team state Main role spec has an ACP binding: {node_id}"
+            )
+        return
+    try:
+        from .scoped_acp import native_profile
+
+        expected = native_profile(str(spec["provider"]), node_kind)
+    except RuntimeValidationError as exc:
+        raise RuntimeValidationError(str(exc)) from exc
+    if any(spec.get(key) != value for key, value in expected.items()):
+        raise RuntimeValidationError(
+            f"agent-team state role spec profile does not match {node_id}"
+        )
+
+
+def _validate_assignment_common(
+    state: Mapping[str, object],
+    role: str,
+    assignment: Mapping[str, object],
+    *,
+    ownership_key: str,
+) -> None:
+    try:
+        task = validate_task_assignment(state, assignment)
+        if task is not None:
+            tasks = state.get("tasks")
+            if not isinstance(tasks, Mapping) or task.task_id not in tasks:
+                raise RuntimeValidationError("TaskSpec assignment is not saved")
+            task_record = tasks[task.task_id]
+            if not isinstance(task_record, Mapping) or (
+                assignment.get("task_stage") != task_record.get("stage")
+                or assignment.get("task_revision") != task_record.get("revision")
+            ):
+                raise RuntimeValidationError(
+                    "TaskSpec stage or revision differs from assignment"
+                )
+    except (ValueError, RuntimeFailure) as exc:
+        raise RuntimeValidationError(str(exc)) from exc
+    for key in ("task_id", "dispatch_id", "terminal_handle"):
+        value = assignment.get(key)
+        if not isinstance(value, str) or not value:
+            raise RuntimeValidationError(
+                f"agent-team state role assignment is missing {role}.{key}"
+            )
+    if assignment.get(ownership_key) is not True:
+        raise RuntimeValidationError(
+            f"agent-team state role assignment has unknown ownership: {role}"
+        )
+    if not isinstance(assignment.get("completion_observed"), bool):
+        raise RuntimeValidationError(
+            f"agent-team state role assignment has invalid completion state: {role}"
+        )
+
+
+def _validate_background_assignment(
+    role: str,
+    spec: Mapping[str, object],
+    assignment: Mapping[str, object],
+) -> None:
+    if spec.get("execution") != "background":
+        return
+    for key in (
+        "execution",
+        "adapter_id",
+        "launch_nonce",
+        "prompt_path",
+        "provider_private_root",
+        "snapshot_root",
+    ):
+        value = assignment.get(key)
+        if not isinstance(value, str) or not value:
+            raise RuntimeValidationError(
+                f"agent-team state background assignment is missing {role}.{key}"
+            )
+    if assignment["execution"] != "background" or assignment["adapter_id"] != spec.get(
+        "adapter_id"
+    ):
+        raise RuntimeValidationError(
+            f"agent-team state background assignment identity does not match {role}"
+        )
+    snapshot = assignment.get("adapter_snapshot")
+    if not isinstance(snapshot, dict):
+        raise RuntimeValidationError(
+            f"agent-team state background assignment is missing {role}.adapter_snapshot"
+        )
+    for key in ("adapter_id", "revision", "executable", "version"):
+        value = snapshot.get(key)
+        if not isinstance(value, str) or not value:
+            raise RuntimeValidationError(
+                f"agent-team state adapter snapshot is missing {role}.{key}"
+            )
+    identity = snapshot.get("identity")
+    if not isinstance(identity, dict):
+        raise RuntimeValidationError(
+            f"agent-team state adapter snapshot has invalid {role}.identity"
+        )
+    for key in ("device", "inode", "size", "mtime_ns"):
+        if not isinstance(identity.get(key), int):
+            raise RuntimeValidationError(
+                f"agent-team state adapter snapshot has invalid {role}.{key}"
+            )
+    if not isinstance(identity.get("sha256"), str) or not identity["sha256"]:
+        raise RuntimeValidationError(
+            f"agent-team state adapter snapshot has invalid {role}.sha256"
+        )
+
+
+def _validate_named_native_result(
+    state: Mapping[str, object],
+    result: object,
+    node_by_id: Mapping[str, NodeRef],
+    role_specs: Mapping[str, object],
+    roles: Mapping[str, object],
+) -> None:
+    if not isinstance(result, dict):
+        raise RuntimeValidationError("named native result must be an object")
+    required = {
+        "role",
+        "role_kind",
+        "run_id",
+        "task_id",
+        "dispatch_id",
+        "terminal_handle",
+        "launch_nonce",
+        "outcome",
+        "body",
+        "cleanup_confirmed",
+        "delivery_id",
+    }
+    optional = {"logical_task_id", "task_evidence", "question_receipts"}
+    if set(result) - required - optional or not required.issubset(result):
+        raise RuntimeValidationError("named native result fields are invalid")
+
+    def result_string(field: str) -> str:
+        value = result.get(field)
+        if not isinstance(value, str) or not value:
+            raise RuntimeValidationError(f"named native result {field} is invalid")
+        return value
+
+    result_role = result_string("role")
+    result_kind = result_string("role_kind")
+    result_node = node_by_id.get(result_role)
+    result_spec = role_specs.get(result_role)
+    if (
+        result_node is None
+        or not isinstance(result_spec, Mapping)
+        or result_kind != result_node.kind.value
+        or result_spec.get("kind") != result_kind
+        or result.get("run_id") != state.get("run_id")
+    ):
+        raise RuntimeValidationError(
+            "named native result identity does not match its graph"
+        )
+    if result_kind not in ACP_ROLES:
+        raise RuntimeValidationError("named native result kind is invalid")
+    result_string("run_id")
+    result_string("task_id")
+    dispatch_id = result_string("dispatch_id")
+    result_string("terminal_handle")
+    launch_nonce = result_string("launch_nonce")
+    if not _LAUNCH_NONCE_RE.fullmatch(launch_nonce):
+        raise RuntimeValidationError("named native result launch nonce is invalid")
+    delivery_id = result_string("delivery_id")
+    outcome = result.get("outcome")
+    if not isinstance(outcome, str) or outcome not in {"succeeded", "failed"}:
+        raise RuntimeValidationError("named native result outcome is invalid")
+    body = result.get("body")
+    if not isinstance(body, str) or len(body) > MAX_RESULT_BODY_CHARS:
+        raise RuntimeValidationError("named native result body is invalid")
+    if type(result.get("cleanup_confirmed")) is not bool:
+        raise RuntimeValidationError(
+            "named native result cleanup confirmation is invalid"
+        )
+    logical_task_id = result.get("logical_task_id")
+    if logical_task_id is not None and (
+        not isinstance(logical_task_id, str) or not logical_task_id
+    ):
+        raise RuntimeValidationError(
+            "named native result logical TaskSpec ID is invalid"
+        )
+    if "task_evidence" in result and not isinstance(result["task_evidence"], Mapping):
+        raise RuntimeValidationError("named native result task evidence is invalid")
+
+    assignment = roles.get(result_role)
+    if roles and not isinstance(assignment, Mapping):
+        raise RuntimeValidationError(
+            "named native result does not belong to the active assignment"
+        )
+    if isinstance(assignment, Mapping) and (
+        assignment.get("role") != result_role
+        or assignment.get("role_kind") != result_kind
+        or any(
+            result.get(field) != assignment.get(field)
+            for field in (
+                "task_id",
+                "dispatch_id",
+                "terminal_handle",
+                "launch_nonce",
+            )
+        )
+    ):
+        raise RuntimeValidationError(
+            "named native result does not match its active assignment"
+        )
+
+    if isinstance(logical_task_id, str):
+        tasks = state.get("tasks")
+        if not isinstance(tasks, Mapping):
+            raise RuntimeValidationError("named native result TaskSpec is not saved")
+        task_record = tasks.get(logical_task_id)
+        if not isinstance(task_record, Mapping):
+            raise RuntimeValidationError("named native result TaskSpec is not saved")
+        if (
+            task_record.get("role") != result_role
+            or task_record.get("role_kind") != result_kind
+            or task_record.get("dispatch_id") != dispatch_id
+        ):
+            raise RuntimeValidationError(
+                "named native result TaskSpec identity changed"
+            )
+
+    pending_id = state.get("pending_delivery_id")
+    if pending_id is None and any(
+        field in state for field in ("pending_delivery_kind", "pending_delivery_stage")
+    ):
+        raise RuntimeValidationError("named native pending delivery is incomplete")
+    if pending_id is not None:
+        pending_kind = state.get("pending_delivery_kind")
+        pending_stage = state.get("pending_delivery_stage")
+        if not isinstance(pending_id, str) or not pending_id:
+            raise RuntimeValidationError("named native pending delivery is invalid")
+        if not isinstance(pending_kind, str) or pending_kind not in {
+            "worker_done",
+            "question",
+        }:
+            raise RuntimeValidationError(
+                "named native pending delivery kind is invalid"
+            )
+        if pending_kind == "worker_done" and (
+            pending_id != delivery_id
+            or not isinstance(pending_stage, str)
+            or pending_stage not in {"observed", "read", "released"}
+        ):
+            raise RuntimeValidationError(
+                "named native result does not match its pending delivery"
+            )
+
+
+def _validate_named_state(path: Path, state: object) -> dict[str, object]:
+    if not isinstance(state, dict):
+        raise RuntimeValidationError("agent-team state must be an object")
+    if state.get("version") != NAMED_STATE_VERSION:
+        raise RuntimeValidationError(
+            "agent-team state has an unsupported named version"
+        )
+    runtime = state.get("runtime")
+    if not is_native_runtime(runtime):
+        raise RuntimeValidationError("version-4 state requires a native runtime")
+    if "worktree_id" in state or "orca_socket" in state:
+        raise RuntimeValidationError("native state must not contain Orca metadata")
+
+    required = (
+        "version",
+        "runtime",
+        "team_id",
+        "workspace",
+        "config_path",
+        "state_path",
+        "launcher_path",
+        "run_id",
+        "graph",
+        "role_specs",
+        "roles",
+    )
+    for key in required:
+        value = state.get(key)
+        if key in {"graph", "role_specs", "roles"}:
+            if not isinstance(value, dict):
+                raise RuntimeValidationError(f"agent-team state is missing {key}")
+        elif key != "version" and (not isinstance(value, str) or not value):
+            raise RuntimeValidationError(f"agent-team state is missing {key}")
+    if _canonical(Path(str(state["state_path"]))) != _canonical(path):
+        raise RuntimeValidationError("agent-team state path does not match its file")
+
+    graph = _parse_named_graph(state)
+    node_by_id = {node.node_id: node for node in graph.nodes}
+    role_specs = state["role_specs"]
+    assert isinstance(role_specs, dict)
+    if set(role_specs) != set(node_by_id):
+        raise RuntimeValidationError(
+            "agent-team state role_specs do not match its graph"
+        )
+    for node_id, node in node_by_id.items():
+        spec = role_specs.get(node_id)
+        if not isinstance(spec, dict):
+            raise RuntimeValidationError(
+                f"agent-team state role spec is invalid: {node_id}"
+            )
+        _validate_named_role_spec(node_id, node.kind.value, spec)
+
+    main_node = graph.main_node
+    if main_node is None:
+        if "main_terminal" in state:
+            raise RuntimeValidationError(
+                "program coordination must not fabricate a main terminal"
+            )
+        if "native" in state and not isinstance(state["native"], dict):
+            raise RuntimeValidationError("program state native metadata is invalid")
+    else:
+        main_terminal = state.get("main_terminal")
+        if not isinstance(main_terminal, str) or not main_terminal:
+            raise RuntimeValidationError("agent state is missing main_terminal")
+        native = state.get("native")
+        if (
+            not isinstance(native, dict)
+            or not isinstance(native.get("phase"), str)
+            or native.get("phase") not in {"starting", "running", "stopping", "stopped"}
+        ):
+            raise RuntimeValidationError("native state has an invalid lifecycle phase")
+        nonce = native.get("run_nonce")
+        if not isinstance(nonce, str) or not _LAUNCH_NONCE_RE.fullmatch(nonce):
+            raise RuntimeValidationError("native state has an invalid run nonce")
+        main_argv = native.get("main_argv")
+        if (
+            not isinstance(main_argv, list)
+            or not main_argv
+            or any(not isinstance(arg, str) or "\0" in arg for arg in main_argv)
+            or not Path(main_argv[0]).is_absolute()
+        ):
+            raise RuntimeValidationError("native state has an invalid Main command")
+        if "main_process" in native:
+            validate_native_main_process(native["main_process"])
+
+    roles = state["roles"]
+    assert isinstance(roles, dict)
+    for node_id, assignment in roles.items():
+        assignment_node = node_by_id.get(node_id)
+        if assignment_node is None or not isinstance(assignment, dict):
+            raise RuntimeValidationError("agent-team state has invalid role assignment")
+        if (
+            assignment.get("role") != node_id
+            or assignment.get("role_kind") != assignment_node.kind.value
+        ):
+            raise RuntimeValidationError(
+                f"agent-team state role assignment identity does not match {node_id}"
+            )
+        _validate_assignment_common(
+            state,
+            node_id,
+            assignment,
+            ownership_key="launcher_owned_runner",
+        )
+        assignment_spec = role_specs[node_id]
+        assert isinstance(assignment_spec, Mapping)
+        _validate_background_assignment(
+            node_id,
+            assignment_spec,
+            assignment,
+        )
+
+    try:
+        validate_saved_tasks(state)
+    except (ValueError, RuntimeFailure) as exc:
+        raise RuntimeValidationError(str(exc)) from exc
+
+    native_result = state.get("native_result")
+    pending_id = state.get("pending_delivery_id")
+    pending_fields = ("pending_delivery_kind", "pending_delivery_stage")
+    if pending_id is None and any(field in state for field in pending_fields):
+        raise RuntimeValidationError("named native pending delivery is incomplete")
+    if (
+        pending_id is not None
+        and native_result is None
+        and state.get("pending_delivery_kind") != "question"
+    ):
+        raise RuntimeValidationError("named native pending completion has no result")
+    if "native_result" in state:
+        _validate_named_native_result(
+            state,
+            native_result,
+            node_by_id,
+            role_specs,
+            roles,
+        )
+
+    from .native_questions import validate_state as validate_questions
+
+    try:
+        validate_questions(state)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeValidationError(str(exc)) from exc
+    return state
+
+
 def validate_state_object(path: Path, state: object) -> dict[str, object]:
+    if isinstance(state, dict) and state.get("version") == NAMED_STATE_VERSION:
+        return _validate_named_state(path, state)
+    return _validate_state_v3(path, state)
+
+
+def _validate_state_v3(path: Path, state: object) -> dict[str, object]:
     path = _canonical(path)
     if not isinstance(state, dict):
         raise RuntimeValidationError("agent-team state must be an object")
@@ -609,6 +1151,10 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
     for role, spec in role_specs.items():
         if not isinstance(role, str) or not isinstance(spec, dict):
             raise RuntimeValidationError("agent-team state has invalid role_specs")
+        if "kind" in spec:
+            raise RuntimeValidationError(
+                "version-3 role spec is mixed with named state"
+            )
         for key in (
             "provider",
             "transport",
@@ -647,89 +1193,23 @@ def validate_state_object(path: Path, state: object) -> dict[str, object]:
     for role, assignment in roles.items():
         if role not in role_specs or not isinstance(assignment, dict):
             raise RuntimeValidationError("agent-team state has invalid role assignment")
-        try:
-            task = validate_task_assignment(state, assignment)
-            if task is not None:
-                task_record = state["tasks"][task.task_id]
-                if assignment.get("task_stage") != task_record.get(
-                    "stage"
-                ) or assignment.get("task_revision") != task_record.get("revision"):
-                    raise RuntimeValidationError(
-                        "TaskSpec stage or revision differs from assignment"
-                    )
-        except (ValueError, RuntimeFailure) as exc:
-            raise RuntimeValidationError(str(exc)) from exc
-        for key in (
-            "task_id",
-            "dispatch_id",
-            "terminal_handle",
-        ):
-            value = assignment.get(key)
-            if not isinstance(value, str) or not value:
-                raise RuntimeValidationError(
-                    f"agent-team state role assignment is missing {role}.{key}"
-                )
-        ownership_key = (
-            "launcher_owned_runner"
-            if is_native_runtime(runtime)
-            else "launcher_owned_terminal"
+        if "role_kind" in assignment:
+            raise RuntimeValidationError(
+                "version-3 role assignment is mixed with named state"
+            )
+        _validate_assignment_common(
+            state,
+            role,
+            assignment,
+            ownership_key=(
+                "launcher_owned_runner"
+                if is_native_runtime(runtime)
+                else "launcher_owned_terminal"
+            ),
         )
-        if assignment.get(ownership_key) is not True:
-            raise RuntimeValidationError(
-                f"agent-team state role assignment has unknown ownership: {role}"
-            )
-        if not isinstance(assignment.get("completion_observed"), bool):
-            raise RuntimeValidationError(
-                f"agent-team state role assignment has invalid completion state: {role}"
-            )
         spec = role_specs[role]
         assert isinstance(spec, dict)
-        if spec["execution"] == "background":
-            for key in (
-                "execution",
-                "adapter_id",
-                "launch_nonce",
-                "prompt_path",
-                "provider_private_root",
-                "snapshot_root",
-            ):
-                value = assignment.get(key)
-                if not isinstance(value, str) or not value:
-                    raise RuntimeValidationError(
-                        f"agent-team state background assignment is missing {role}.{key}"
-                    )
-            if (
-                assignment["execution"] != "background"
-                or assignment["adapter_id"] != spec["adapter_id"]
-            ):
-                raise RuntimeValidationError(
-                    f"agent-team state background assignment identity does not match {role}"
-                )
-            snapshot = assignment.get("adapter_snapshot")
-            if not isinstance(snapshot, dict):
-                raise RuntimeValidationError(
-                    f"agent-team state background assignment is missing {role}.adapter_snapshot"
-                )
-            for key in ("adapter_id", "revision", "executable", "version"):
-                value = snapshot.get(key)
-                if not isinstance(value, str) or not value:
-                    raise RuntimeValidationError(
-                        f"agent-team state adapter snapshot is missing {role}.{key}"
-                    )
-            identity = snapshot.get("identity")
-            if not isinstance(identity, dict):
-                raise RuntimeValidationError(
-                    f"agent-team state adapter snapshot has invalid {role}.identity"
-                )
-            for key in ("device", "inode", "size", "mtime_ns"):
-                if not isinstance(identity.get(key), int):
-                    raise RuntimeValidationError(
-                        f"agent-team state adapter snapshot has invalid {role}.{key}"
-                    )
-            if not isinstance(identity.get("sha256"), str) or not identity["sha256"]:
-                raise RuntimeValidationError(
-                    f"agent-team state adapter snapshot has invalid {role}.sha256"
-                )
+        _validate_background_assignment(role, spec, assignment)
     if is_native_runtime(runtime):
         from .native_questions import validate_state as validate_questions
 

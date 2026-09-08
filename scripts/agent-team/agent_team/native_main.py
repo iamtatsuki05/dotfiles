@@ -18,7 +18,7 @@ from .adapters import _process_group_exited, _wait_for_process_group_exit
 from .contracts import RuntimeFailure
 from .locking import _LifecycleReservation
 from .native_terminal import is_native_runtime
-from .runtime import RuntimeValidationError
+from .runtime import NAMED_STATE_VERSION, STATE_VERSION, RuntimeValidationError
 from .runtime import read_state as runtime_read_state
 from .runtime import write_state as runtime_write_state
 
@@ -50,8 +50,14 @@ def _required_text(value: object, context: str) -> str:
 
 
 def _run_id(state: dict[str, object], expected: str) -> None:
-    if state.get("version") != 3:
-        raise NativeMainError("agent-team native Main requires state version 3")
+    if state.get("version") not in {STATE_VERSION, NAMED_STATE_VERSION}:
+        raise NativeMainError("agent-team native Main state version is unsupported")
+    if state["version"] == NAMED_STATE_VERSION:
+        from .named_graph import GraphSpec
+
+        graph = GraphSpec.from_dict(state.get("graph"))
+        if graph.coordination.mode != "agent" or graph.main_node is None:
+            raise NativeMainError("native Main requires agent coordination")
     if state.get("run_id") != expected:
         raise NativeMainError("agent-team state run identity changed")
     if not is_native_runtime(state.get("runtime")):
