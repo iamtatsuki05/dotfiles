@@ -4,18 +4,24 @@
 
 Version 5 gives each node an ID, role kind, and its own settings, and binds each
 TaskSpec stage to exact writer/reviewer nodes. Native `agent`/`serial`,
-`program`/`serial`, and `program`/`parallel` teams can run. A program team
-has no Main role: the selected native terminal runs the coordinator under the
-existing `native_main` supervisor with the fixed `_program-run` argv. It does
-not create a separate Main role spec, model, or CLI. Native
-`program`/`parallel` uses state version 5 and per-assignment delivery records;
-Main-agent parallel and named Orca execution remain rejected. The
-implementation has focused contract coverage and bounded real-terminal/
-fake-provider coverage. Real-model parallel acceptance is pending.
+`agent`/`parallel`, `program`/`serial`, and `program`/`parallel` teams can run
+on the targeted native terminals (`tmux`, `herdr`, or `zellij`).
+`agent`/`parallel` is Main-coordinated: Main explicitly opens a batch of exact
+TaskSpec IDs and then dispatches members. `program`/`parallel` is a separate
+Mainless coordinator mode. A program team has no Main role: the selected native
+terminal runs the coordinator under the existing `native_main` supervisor with
+the fixed `_program-run` argv. It does not create a separate Main role spec,
+model, CLI, or scheduler. The two modes have separate state identities:
+`agent`/`parallel` uses `agent_batch`, while program modes use `program_wave`.
+Named Orca graphs remain outside the current evidence. The bounded live
+Main-parallel acceptance is recorded in [Architecture](architecture.md).
+Existing focused checks and bounded terminal/fake-provider records are
+historical, scoped evidence; real-model parallel acceptance remains pending.
 
 The bundled version-3 defaults remain Main/Planner on Claude `fable` and
-Worker/Reviewer on direct Codex `gpt-6-astra`. The example here explicitly uses
-Claude for every node. See [Architecture](architecture.md) for the
+Worker/Reviewer on direct Codex `gpt-6-astra`; version-5 examples may explicitly
+select other role settings without changing those defaults. The example here
+uses Claude for every node. See [Architecture](architecture.md) for the
 bounded real-terminal/fake-provider coverage, separate real-model evidence,
 and the limits of each.
 
@@ -208,13 +214,67 @@ the stated prerequisites are met. The coordinator follows declared TaskSpec
 order and dependencies, forms serial integration waves, and advances only
 after every writer in the wave has finished, every same-revision Reviewer has
 approved, and every declared fixed-argv verification has passed. A successor
-wave starts only after that barrier. To run the parallel program variant, use
-the same graph with the coordination table below.
+wave starts only after that barrier. The Mainless parallel variant is described
+in the `Run a Mainless parallel program` section below; it derives from this
+Mainless serial variant after the Main node has been removed.
+
+## Run a Main-coordinated parallel agent
+
+Derive this variant from the complete agent/serial example above. Keep the
+Main node, both disjoint Worker scopes, the two Reviewer edges, TaskSpecs, and
+routes. Replace only the coordination table:
+
+```toml
+[teams.all-claude.coordination]
+mode = "agent"
+entry_nodes = ["main"]
+dispatch_mode = "parallel"
+max_active = 2
+```
+
+This is a named Main/agent identity, not a program coordinator. The Main first
+calls `task_batch_open` with both declared IDs:
+
+```json
+{"task_ids":["write-sum","write-product"]}
+```
+
+The runtime accepts a non-empty, unique list in any input order, normalizes the
+stored `task_ids` to catalog order, and requires dependencies to be completed
+outside it. All selected tasks start without
+records. Main then uses `task_dispatch` for each route. Admission still checks
+`max_active`, exact node identity, and disjoint Worker `allowed_paths`; there is
+no scheduler or implicit task start. The additional `task_batch_open` tool is
+advertised only for this explicit native `agent`/`parallel` state and is added
+to Claude Main's `--tools` and `--allowedTools` lists only in that launch.
+
+The first final-review dispatch seals the batch only after all writers and
+Delivery have drained. Same-revision reviewers must all approve before the
+batch advances to fixed-argv verification, and verification must drain roles
+and Delivery. A mixed route keeps its intermediate plan review in the writers
+phase. A plan-only route stores the plan-body SHA-256 in `record.revision` and
+the final code snapshot in `workspace_revision`; these are separate values.
+For a retryable `changes_requested`, answered consultation, or confirmed
+`verification_failed` member, Main waits for the roles and Delivery to drain,
+confirms an answered consultation when applicable, and confirms remaining
+review rounds for every member. Main then calls `task_dispatch` for the
+original writer. That single request atomically reopens the exact batch peer
+set, including peers already `completed`, and dispatches the requested writer;
+peers are not auto-dispatched. There is no public reopen tool, and
+`task_batch_open` cannot reopen or replace an unfinished batch. Invalid
+TaskSpec, route, message, or
+review-limit requests have no state effect. Parallel `role_prompt` is
+unsupported, including read-only research; use a declared plan-only TaskSpec.
+The serial read-only `role_prompt` behavior is unchanged.
+
+The implementation and focused contract checks are available. The bounded live
+acceptance for this Main-parallel phase is recorded in [Architecture](architecture.md).
+Earlier program and fake-provider IDs remain historical evidence for their own scopes.
 
 ## Run a Mainless parallel program
 
-Adapt the serial example above by keeping both Worker-to-Reviewer edges,
-TaskSpecs, and routes, then use this coordination table:
+Starting from the Mainless serial variant above, keep both Worker-to-Reviewer
+edges, TaskSpecs, and routes, then use this coordination table:
 
 ```toml
 [teams.all-claude.coordination]
@@ -224,7 +284,8 @@ dispatch_mode = "parallel"
 max_active = 2
 ```
 
-The native coordinator admits independent assignments up to `max_active`. A
+The native coordinator admits independent assignments up to `max_active`; this
+is an explicit coordinator path, not a general-purpose scheduler. A
 candidate is rejected while its node is busy, the cap is full, or its Worker
 `allowed_paths` overlap an active Worker scope. A pending user question blocks
 its own assignment; an independent candidate may continue when admission still
@@ -232,8 +293,10 @@ allows it. `task_verify` remains run-global blocked until every active assignmen
 and Delivery is drained. State version 5 keeps each assignment's result, question, and
 Delivery stage separately. The canonical wave still seals after all writers
 finish, reviews the same integrated revision, and runs the declared fixed-argv
-verification before the next wave. Focused contract checks and bounded
-real-terminal/fake-provider cases cover this path; real-model parallel
+verification before the next wave. Focused contract checks and earlier bounded
+real-terminal/fake-provider cases cover this path; they are historical evidence
+for the program coordinator and do not replace the separate Main-parallel live
+acceptance recorded in [Architecture](architecture.md). Real-model parallel
 acceptance has not been run.
 
 The coordinator uses the existing native supervisor; it does not add a Main
@@ -293,9 +356,11 @@ agent-team start --config /path/to/config-v5.toml \
 `teams` lists every parsed team. `validate` can omit `--team` to check all teams.
 `graph` and version-5 `start` require `--team`; selection is exact, without
 aliases or case conversion. Graph formats are `json`, `ascii`, and `mermaid`.
-For the native agent/serial, program/serial, or program/parallel example,
-remove `--dry-run` to start after meeting the prerequisites. Agent/parallel
-and named Orca starts fail before dependency probes or resource creation.
+For the native agent/serial, agent/parallel, program/serial, or
+program/parallel example, remove `--dry-run` to start after meeting the
+prerequisites. Named Orca starts remain unsupported and fail before dependency
+probes or resource creation. An empty TaskSpec catalog also fails before
+dependency or profile checks for native `agent`/`parallel`.
 Inspection does not start providers.
 
 ## Use saved identity for management
@@ -311,7 +376,7 @@ defaulting to `~/.local/state/agent-team/`. Use `status`, `attach`, or `stop`
 with `--state` to manage that saved run without rereading its config.
 
 The config version is 5; named native serial state uses version 4, while native
-program/parallel state uses version 5. `role_specs` holds all nodes, while
+`agent`/`parallel` and `program`/`parallel` state use version 5. `role_specs` holds all nodes, while
 `roles` holds active assignments and their per-node delivery state. Older
 fixed-role state is not converted. See [Architecture](architecture.md) for
 identity checks and the question, completion, review, verification, and cleanup

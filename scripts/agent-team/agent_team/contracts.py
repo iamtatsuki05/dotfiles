@@ -374,6 +374,13 @@ class TaskStatusReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskBatchReceipt:
+    task_ids: tuple[str, ...]
+    phase: str
+    revision: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class AttachReceipt:
     role: RoleTarget
     terminal_id: TerminalRef
@@ -430,6 +437,11 @@ class TaskVerify:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskBatchOpen:
+    task_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TaskConsultationReply:
     consultation_id: str
     body: str
@@ -472,6 +484,7 @@ RuntimeRequest: TypeAlias = (
     | TaskDispatch
     | TaskGet
     | TaskVerify
+    | TaskBatchOpen
     | TaskConsultationReply
     | RoleWait
     | RoleRead
@@ -490,6 +503,7 @@ BackendResult: TypeAlias = (
     | StatusReceipt
     | RoleStatusReceipt
     | TaskStatusReceipt
+    | TaskBatchReceipt
     | AttachReceipt
     | CoordinatorAttachReceipt
 )

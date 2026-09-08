@@ -10,8 +10,12 @@ native runtimeの`tmux`、`herdr`、`zellij`では、agent teamはdirect Claude 
 どちらも設定したClaude ACPのPlanner、Worker、Reviewerを動かします。native Workerはconfigに宣言した
 TaskSpecとscoped Claude ACP policyを使い、terminal driverだけがruntimeごとに変わります。
 native `program`/`parallel`は`max_active`まで独立したassignmentを受け付け、nodeごとにDelivery stateを保存します。
-Main-agentのparallelと名前付きOrcaのparallelは引き続き拒否します。実装とfocused contract testに加え、
-boundedな実端末・fake providerのcoverageがあります。実モデルのparallel受入は未実施です。
+Version 5のnative `agent`/`parallel`では、Mainが名前付きnodeを明示的に調整できます。
+Mainはdispatchの前に`task_batch_open`で対象batchを明示的に開く必要があります。
+自動schedulerや暗黙のprogram modeはありません。実装とfocused contract testがあり、今回のMain parallel live受入は
+[アーキテクチャ](docs/architecture_JA.md)に記載します。名前付きOrcaのparallelは対象外です。
+既存のboundedな端末・fake providerおよび実モデルの記録は、アーキテクチャに記載した過去runの
+限定された証拠として扱います。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
@@ -29,7 +33,7 @@ HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契
   対応するprovider/transportの組み合わせを説明します。[Version 4の設定](docs/configuration-v4_JA.md)
   では、team名による選択、graphの確認、起動設定への参照を説明します。
   [Version 5の設定](docs/configuration-v5_JA.md)では、node ID、nodeごとの設定、
-  taskの担当、nativeのserial/parallel program実行を説明します。
+  taskの担当、nativeのagent/program serial・parallel実行を説明します。
 - [Harness対応matrix](docs/support-matrix_JA.md)は、認識済み・利用可能・実行可能・
   拒否を区別します。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
@@ -60,15 +64,16 @@ TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質
 [アーキテクチャ](docs/architecture_JA.md)に記載します。version 5のnative `program`/`serial`はMainなしで接続し、
 native `program`/`parallel`にも実装、focused contract test、boundedな実端末・fake providerのcoverageがあります。
 serialの実モデル試験は実装・review・検証の前にprovider利用上限で停止しました。実モデルのparallel受入、全harness、
-Codex認証、Orcaとnativeに共通する進行管理は別の実証gateとして残ります。
+Codex認証、Orcaとnativeに共通する進行管理は別の検証課題として残ります。
 
 Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
-nativeの`agent`/`serial`に加えて、Main roleを置かない`program`/`serial`と
-`program`/`parallel`も接続しています。実モデルのtmux試験では、4件の独立したassignmentで
+nativeの`agent`/`serial`とMainが調整する`agent`/`parallel`に加えて、Main roleを置かない
+`program`/`serial`と`program`/`parallel`も接続しています。agent parallelは明示的な`agent_batch`を、
+program parallelは`program_wave` coordinatorを使う別のstate identityです。実モデルのtmux試験では、4件の独立したassignmentで
 2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
 既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。この実モデルrunはnativeのagent/serial受入です。
 native parallelにはfocused contract testとboundedな端末coverageがありますが、実モデルのparallel受入は未実施です。
-Main-agentのparallelと名前付きOrca構成は実行時に利用できません。
+今回のMain parallel live受入は[アーキテクチャ](docs/architecture_JA.md)に記載します。名前付きOrca構成は実行時に利用できません。
 名前付きnativeのReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
 回数上限に達している場合は、回答を保存してもtaskは未解決のままです。
 
@@ -386,6 +391,30 @@ Mainが呼べる`task_dispatch`は、宣言済みentryと完全一致するTaskS
 read-onlyの`role_prompt`は使えますが、structured task dispatchは拒否します。Orcaは`tasks`
 fieldを拒否します。
 
+native `agent`/`parallel`では、読み取り専用の調査を含めて`role_prompt`を明示的に拒否します。
+parallelで調査する場合は、宣言済みのplan-only TaskSpecを使います。serialのread-only
+`role_prompt`は従来どおりです。Mainは最初に、任意順の宣言済み`task_id`の空でない一意な一覧を
+`task_batch_open`へ渡します。runtimeは一覧をcatalog順に正規化し、dependencyがbatchの外で
+completedになっていることを要求します。保存するdescriptorは正確に
+`{task_ids, phase, revision}`です。次のbatchへの置換は、前のbatchの全memberが`completed`で、
+全role、Delivery、verification cleanupがdrainされた後だけ可能です。自動schedulerや
+暗黙のtask作成はありません。
+
+最初のfinal review dispatchは、全writerとDeliveryがdrainした後にbatchをsealします。
+Reviewerは同じsealed workspace revisionを確認し、全final approval後に全roleとDeliveryを消費してから
+`task_verify`を呼びます。mixed batchでは中間のplan reviewをwriter phaseで行います。
+plan-onlyのfinal reviewでは、plan本文のSHA-256と`workspace_revision`を別々に保存します。
+`changes_requested`、回答済みconsultation、確認済み`verification_failed`のretryでは、
+全roleとDeliveryをdrainし、必要なconsultationへの回答と全memberの残りreview roundを確認してから、
+Mainが元のwriterへ`task_dispatch`を呼びます。その1回のrequestが、`completed`済みpeerを含む正確なpeer集合のreopenと
+要求したwriterのdispatchを原子的に行います。peerは自動dispatchしません。公開reopen toolはなく、
+`task_batch_open`で未完了batchをreopenまたは置換することもできません。
+不正なTaskSpec、route、message、review limit、dependencyの要求ではstateを変更しません。
+
+Claude Mainの追加tool `task_batch_open`は、native `agent`/`parallel`を選択した場合だけ、
+明示的な`--tools`と`--allowedTools`の両方へ追加します。default、serial、program、
+declaration-onlyのtool catalogには表示しません。
+
 実際の順序は次のとおりです。
 
 ```text
@@ -404,8 +433,8 @@ task_dispatch（PlannerまたはWorker）
 20,000文字以内、frameは512 KiB以内、1 assignmentは最大64 batchです。question Deliveryが保留中は、
 そのassignmentの`role_read`、`role_release`、別dispatchを拒否し、そのassignmentのsuccessful completionも拒否します。
 version 3/4のnative serial stateでは、questionが消費されるまでrun全体の次のdispatchも止まります。
-version 5のnative `program`/`parallel`では、`max_active`内でWorkerのwrite scopeが重ならない独立assignmentを
-継続できますが、`task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
+version 5のnative `agent`/`parallel`と`program`/`parallel`では、`max_active`内でWorkerのwrite scopeが重ならない独立assignmentを
+継続できますが、batch/coordinatorの検証barrierは全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
 その間にstopした場合は明示的なcancellationとして扱い、provider、process group、socket、private cleanupが
 不明ならstateを保持します。名前付きnativeの`agent`または`program`でReviewerが`consult`を返すと、`status`にopaqueな相談IDを表示し、
 `answer --consultation-id ID --body ...`でboundedな回答を保存します。review roundが残っていれば、元のwriterを再実行してからreviewをやり直します。
@@ -421,7 +450,8 @@ planとimplementationのreviewは`max_review_rounds`を別々に数えます。R
 `task_id`、`stage`、`revision`、`decision`、`findings`だけを持つexact JSONです。
 implementation reviewと`task_verify`は同じworkspace revisionに束縛されます。宣言済みの
 fixed argvが全件成功し、cleanupが確認できた場合だけ`completed`として報告します。
-[設定リファレンス](docs/configuration_JA.md#taskspec-catalog-is-optional-required-for-native-task-dispatch)に全fieldと10 toolをまとめています。
+[設定リファレンス](docs/configuration_JA.md#taskspec-catalog-is-optional-required-for-native-task-dispatch)に全fieldと、通常の10 toolをまとめています。
+native `agent`/`parallel`では11個目の`task_batch_open`を追加します。
 verificationがevidence付きで失敗してもcleanupが確認できれば、implementationのreview round上限内で
 Workerへretryできます。cleanupが不明な場合はユーザー判断が必要で、stateを保持します。
 
@@ -431,7 +461,7 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
   拒否します。別backendや別transportへ自動で切り替えません。
 - Orcaは4 role固定です。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
   Planner/Reviewerと、scoped Claude ACPのworkspace-write Workerを任意に追加できます。version 5の
-  native `agent`/`serial`はMainを使い、`program`/`serial`は保存済みcoordinatorを使います。
+  native `agent`/`serial`と`agent`/`parallel`はMainを使い、`program`/`serial`と`program`/`parallel`は保存済みcoordinatorを使います。
   native Workerの`task_dispatch`にはconfigの`[[tasks]]` entryとの一致が必要で、その他の未対応profileは起動処理の効果が発生する前に拒否します。
 - nativeの`start`、`status`、`attach`、`stop`は選択した`TmuxBackend`、`HerdrBackend`、
   `ZellijBackend`を共通`NativeBackend`から使います。`attach`はagent teamのMain、または`--coordinator`を指定した
@@ -439,7 +469,7 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
 - native ACPの完了はterminal paneの文字列ではなく`publish_completion`で通知します。lifecycleの
   順序は`role_read` → `role_release` → `delivery_ack`です。nativeの`last_ack`は1つのreceipt
   markerを記録するだけで、Taskやユーザーのgoal全体の完了を意味しません。
-- version 5のnative `program`/`parallel` stateは、activeなnodeごとにresult、question、
+- version 5のnative `agent`/`parallel`と`program`/`parallel` stateは、activeなnodeごとにresult、question、
   pending Deliveryのcontainerを持ちます。`max_active`、正確なnode identity、重ならないWorker write scopeで
   admissionを判定します。pending questionは自分のassignmentだけを止め、条件を満たす独立peerは継続できます。
   public `stop`は`native.phase=stopping`を保存し、安全なpeerをRead → Release → Ackの順でprivateにdrainします。

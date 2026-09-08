@@ -26,7 +26,9 @@ def role_schema(roles: tuple[str, ...] = ROLES) -> dict[str, object]:
     return {"type": "string", "enum": list(roles)}
 
 
-def tools(roles: tuple[str, ...] = ROLES) -> list[dict[str, object]]:
+def tools(
+    roles: tuple[str, ...] = ROLES, *, agent_parallel: bool = False
+) -> list[dict[str, object]]:
     role_only = {
         "type": "object",
         "properties": {"role": role_schema(roles)},
@@ -39,7 +41,7 @@ def tools(roles: tuple[str, ...] = ROLES) -> list[dict[str, object]]:
         "required": ["task_id"],
         "additionalProperties": False,
     }
-    return [
+    catalog: list[dict[str, object]] = [
         {
             "name": "task_get",
             "description": "タスクの工程、レビュー判定、検証証拠を取得します。",
@@ -147,6 +149,30 @@ def tools(roles: tuple[str, ...] = ROLES) -> list[dict[str, object]]:
             },
         },
     ]
+    if agent_parallel:
+        catalog.append(
+            {
+                "name": "task_batch_open",
+                "description": "agent/parallelのTaskを明示的に選択してbatchを開きます。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "task_ids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                            },
+                            "minItems": 1,
+                            "uniqueItems": True,
+                        }
+                    },
+                    "required": ["task_ids"],
+                    "additionalProperties": False,
+                },
+            }
+        )
+    return catalog
 
 
 def require_role(arguments: dict[str, object]) -> str:

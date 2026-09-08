@@ -13,10 +13,15 @@ and Reviewer roles. Native
 Worker assignments require a config-declared TaskSpec and use the scoped Claude
 ACP policy; only the terminal driver changes. Native `program`/`parallel` admits
 independent assignments up to `max_active` and stores delivery state per node.
-Main-agent parallel and named Orca parallel execution remain rejected. The
-implementation and focused contract checks are available. Bounded
-real-terminal/fake-provider coverage is recorded in Architecture; real-model
-parallel acceptance is pending.
+Version-5 native `agent`/`parallel` also supports Main-coordinated named nodes.
+Main must explicitly open each exact batch with `task_batch_open` before any
+dispatch. There is no automatic scheduler or implicit program mode. The
+implementation and focused contract checks are available; bounded live
+Main-parallel acceptance is recorded in [Architecture](docs/architecture.md).
+Named Orca
+parallel execution remains outside the supported target. Existing bounded
+terminal/fake-provider and real-model records remain historical, scoped
+evidence as described in Architecture.
 Native Claude ACP assignments also have a bounded `AskUserQuestion` path over
 the existing ACP form elicitation, using the same Task/Dispatch and a private
 question socket. The contract and current evidence are documented in
@@ -36,7 +41,8 @@ linked reference documents when changing the implementation or configuration.
   [Version-4 configuration](docs/configuration-v4.md)
   describes named team selection, graph inspection, and launch configuration links.
   [Version-5 configuration](docs/configuration-v5.md) connects exact node IDs,
-  node-local settings, task routes, and native serial/parallel program execution.
+  node-local settings, task routes, and native agent/program serial and
+  parallel execution.
 - [Harness support matrix](docs/support-matrix.md) separates recognized,
   available, runnable, and rejected harnesses.
 - [ACP boundary](docs/acp.md) explains adapter pins, authentication, and why
@@ -75,21 +81,24 @@ coordination is connected without a Main role, and native
 `program`/`parallel` has implementation, focused contract coverage, and bounded
 real-terminal/fake-provider acceptance.
 The existing real-model serial trial stopped at a provider usage limit before
-implementation, review, and verification. Real-model parallel acceptance,
-all-harness, Codex-auth, and shared Orca/native progression requirements remain
-separate evidence gates.
+implementation, review, and verification. Real-model parallel acceptance, all-harness coverage, Codex authentication,
+and shared Orca/native progression remain separate evidence gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
-routes in native `agent`/`serial` teams, and it connects native
-`program`/`serial` and `program`/`parallel` teams that have no Main role.
+routes in native `agent`/`serial` and Main-coordinated `agent`/`parallel`
+teams. It also connects native `program`/`serial` and `program`/`parallel`
+teams that have no Main role. These are separate state identities: agent
+parallel uses an explicit `agent_batch`; program parallel uses a
+`program_wave` coordinator.
 A real tmux run completed two TaskSpecs through four distinct assignments,
 including questions, review, fixed-argv verification at one integrated
 revision, and public stop. The default profiles above remain unchanged; this
 acceptance selected Claude Fable explicitly for all five nodes. The native
 parallel path has focused contract coverage and bounded terminal/fake-provider
 acceptance, but this real run was native agent/serial acceptance. Real-model
-parallel acceptance remains pending. Main-agent parallel and named Orca execution remain unavailable
-at runtime. Named-native Reviewer consultation answers are available through a
+parallel acceptance remains pending. The bounded Main-parallel live acceptance
+is recorded in [Architecture](docs/architecture.md). Named Orca execution
+remains unavailable at runtime. Named-native Reviewer consultation answers are available through a
 bounded opaque ID. Resuming requires the original writer and another review
 within the round limit; reaching the limit keeps the task unresolved even after
 an answer is saved.
@@ -449,6 +458,39 @@ dependencies, and dependency cycles before state or provider effects. If a
 native config has no `[[tasks]]`, read-only `role_prompt` remains available but
 structured task dispatch is rejected; Orca rejects the `tasks` field.
 
+For native `agent`/`parallel`, `role_prompt` is explicitly unsupported, including
+for read-only work. Use a declared plan-only TaskSpec when parallel research is
+needed; the serial read-only `role_prompt` path is unchanged. Main first calls
+`task_batch_open` with a non-empty, unique list of declared `task_id` values in
+any input order.
+The runtime normalizes that list to catalog order and requires every dependency
+to be completed outside the batch. The saved descriptor is exactly
+`{task_ids, phase, revision}`. A new batch can replace the previous one only
+after every previous member is `completed` and all roles, Delivery, and
+verification cleanup are drained. There is no automatic scheduler or implicit
+task creation.
+
+The first final-review dispatch seals the batch only after all writers and
+Delivery have drained. Reviewers inspect the same sealed workspace revision;
+then all final approvals and consumption of all roles and Delivery are required
+before `task_verify`. In a mixed batch, intermediate plan review stays in the writer
+phase. A plan-only final review stores the plan-body SHA-256 separately from
+the `workspace_revision`. For a retryable `changes_requested`, answered
+consultation, or confirmed `verification_failed` member, Main waits for the
+roles and Delivery to drain, confirms an answered consultation when applicable,
+and confirms remaining review rounds for every member. Main then calls
+`task_dispatch` for the original writer. That single request atomically reopens
+the exact peer set, including peers already `completed`, and dispatches the
+requested writer; peers are not auto-dispatched. There is no public reopen
+tool, and `task_batch_open` cannot reopen or replace an unfinished batch.
+Invalid TaskSpec, route, message, review-limit, or dependency requests leave
+the state unchanged.
+
+For Claude Main, the additional `task_batch_open` tool is added only when the
+selected native team is `agent`/`parallel`, and then only to the explicit
+`--tools` and `--allowedTools` lists. The default, serial, program, and
+declaration-only tool catalogs do not advertise it.
+
 The practical order is:
 
 ```text
@@ -471,10 +513,11 @@ assignment accepts at most 64 batches. While the question Delivery is pending,
 that assignment's `role_read`, `role_release`, and another dispatch for that
 assignment are rejected; its successful completion is rejected until the
 question is consumed. In version-3/4 native serial state, the pending question
-also blocks the next dispatch for the run. In version-5 native
-`program`/`parallel`, independent assignments may continue when they fit
-`max_active` and do not overlap Worker write scopes, but `task_verify` remains
-run-global blocked until every active assignment and Delivery is drained.
+also blocks the next dispatch for the run. In version-5 native `agent`/`parallel`
+and `program`/`parallel`, independent assignments may continue when they fit
+`max_active` and do not overlap Worker write scopes, but the batch/coordinator
+verification barrier remains blocked until every active assignment and Delivery
+is drained.
 Stopping there marks explicit cancellation and retains state when
 provider, process group, socket, or private cleanup is unproven. In a named
 native `agent` or `program` team, Reviewer `consult` exposes an opaque consultation ID in
@@ -497,7 +540,8 @@ Reviewer output is one exact JSON object with `task_id`, `stage`, `revision`,
 same workspace revision. `completed` is reported only after every declared
 fixed argv command passes and cleanup is confirmed. See
 [Configuration](docs/configuration.md#taskspec-catalog-is-optional-required-for-native-task-dispatch) for
-the complete field contract and all ten tools.
+the complete field contract and the default ten-tool catalog; native
+`agent`/`parallel` adds `task_batch_open` as the eleventh tool.
 If verification fails with complete evidence and confirmed cleanup, Worker may
 be retried within the implementation review-round limit. An unconfirmed
 cleanup result requires user consultation and remains retained.
@@ -509,8 +553,9 @@ cleanup result requires user consultation and remains retained.
   transports.
 - Orca keeps its fixed four-role contract. Version-3 native runtimes require
   Main and allow optional verified Claude ACP Planner/Reviewer roles plus a
-  scoped Claude ACP Worker. Version-5 native `agent`/`serial` teams keep Main;
-  version-5 `program`/`serial` teams use the recorded coordinator instead. A
+  scoped Claude ACP Worker. Version-5 native `agent`/`serial` and
+  `agent`/`parallel` teams keep Main; version-5 `program`/`serial` and
+  `program`/`parallel` teams use the recorded coordinator instead. A
   native Worker `task_dispatch` requires a matching config-declared TaskSpec;
   unsupported native profiles are rejected before startup effects.
 - Native `start`, `status`, `attach`, and `stop` use the shared `NativeBackend`
@@ -522,7 +567,7 @@ cleanup result requires user consultation and remains retained.
   The lifecycle order remains `role_read` → `role_release` → `delivery_ack`.
   Native `last_ack` stores one receipt marker and does not mean that a Task or
   the user's overall goal is complete.
-- Version-5 native `program`/`parallel` state keeps a result, question, and
+- Version-5 native `agent`/`parallel` and `program`/`parallel` state keep a result, question, and
   pending Delivery container for each active node. `max_active`, exact node
   identity, and non-overlapping Worker write scopes control admission. A pending
   user question blocks its own assignment but does not block an independent

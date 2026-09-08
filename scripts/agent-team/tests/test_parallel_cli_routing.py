@@ -134,7 +134,7 @@ class ParallelCliRoutingTest(unittest.TestCase):
             self.assertEqual(backend.start_spec.graph.coordination.max_active, 2)
             self.assertIsNone(backend.start_spec.graph.main_node)
 
-    def test_agent_parallel_plan_is_rejected_before_prerequisites_or_backend(
+    def test_agent_parallel_plan_reaches_selected_runtime_with_main_contract(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory(
@@ -144,16 +144,57 @@ class ParallelCliRoutingTest(unittest.TestCase):
                 Path(directory), team="build", agent_parallel=True
             )
             graph = GraphSpec.from_dict(plan["graph"])
-            self.assertEqual(graph.coordination.mode, "agent")
+            backend = config_support._RecordingBackend()
+            with (
+                mock.patch.object(cli, "_start_prerequisites") as prerequisites,
+                mock.patch.object(
+                    cli,
+                    "_runtime_engine",
+                    return_value=(WorkflowEngine(backend), backend),
+                ),
+            ):
+                response = cli.start_team(plan, attach=False)
+            prerequisites.assert_called_once_with(plan)
+            self.assertEqual(response["status"], "started")
+            self.assertEqual(backend.start_spec.graph, graph)
+            self.assertIsNotNone(graph.main_node)
             self.assertEqual(graph.coordination.dispatch_mode, "parallel")
+            instructions = plan["roles"][graph.main_node.node_id]["instructions"]
+            self.assertIn("task_batch_open", instructions)
+            main_argv = plan["roles"][graph.main_node.node_id]["argv"]
+            batch_tool = "mcp__agent_team__task_batch_open"
+            self.assertIn(
+                batch_tool, main_argv[main_argv.index("--tools") + 1].split(",")
+            )
+            self.assertIn(
+                batch_tool,
+                main_argv[
+                    main_argv.index("--allowedTools") + 1 : main_argv.index(
+                        "--permission-mode"
+                    )
+                ],
+            )
+            self.assertIn("全作成担当", instructions)
+            self.assertIn("質問中でも", instructions)
+            self.assertIn("同じ集合", instructions)
 
+    def test_empty_agent_parallel_catalog_is_rejected_before_prerequisites(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agent-team-empty-parallel-"
+        ) as directory:
+            plan = self._parallel_plan(
+                Path(directory), team="build", agent_parallel=True
+            )
+            plan["task_specs"] = []
+            plan["graph"]["routes"] = []
             with (
                 mock.patch.object(cli, "_start_prerequisites") as prerequisites,
                 mock.patch.object(cli, "_runtime_engine") as runtime,
-                self.assertRaises(cli.ConfigError),
+                self.assertRaisesRegex(cli.ConfigError, "parallel.*TaskSpecs"),
             ):
                 cli.start_team(plan, attach=False)
-
             prerequisites.assert_not_called()
             runtime.assert_not_called()
 

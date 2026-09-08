@@ -73,6 +73,8 @@ from .contracts import (
     Status,
     StatusReceipt,
     StopResult,
+    TaskBatchOpen,
+    TaskBatchReceipt,
     TaskConsultationReply,
     TaskDispatch,
     TaskGet,
@@ -134,9 +136,12 @@ from .scoped_acp import (
 from .task_execution import (
     acknowledge_task,
     answer_task_consultation,
+    is_agent_parallel,
     is_plan_only,
     new_program_wave,
+    open_agent_batch,
     parse_review,
+    prepare_agent_batch_verification,
     prepare_dispatch,
     program_wave,
     task_consultation,
@@ -385,12 +390,13 @@ def _validate_profile(
                 ErrorCode.INVALID_REQUEST, "node specs must match the selected graph"
             )
         if (
-            spec.graph.coordination.dispatch_mode == "parallel"
-            and spec.graph.coordination.mode != "program"
+            spec.graph.coordination.mode == "agent"
+            and spec.graph.coordination.dispatch_mode == "parallel"
+            and not spec.task_specs
         ):
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
-                "parallel native execution requires program coordination",
+                "agent parallel execution requires declared TaskSpecs",
             )
         main = spec.graph.main_node
         if spec.graph.coordination.mode == "program" and not spec.task_specs:
@@ -538,6 +544,10 @@ def _validate_profile(
                 instructions=cast(str, role_specs[role_id(main)]["instructions"]),
                 state_path=_absolute(spec.state_path),
                 mcp_server_path=launcher_path,
+                agent_parallel=(
+                    spec.graph is not None
+                    and spec.graph.coordination.dispatch_mode == "parallel"
+                ),
             )
         )
     except (LaunchValidationError, RuntimeValidationError) as exc:
@@ -1633,6 +1643,8 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             return self._attach(request)
         if isinstance(request, (RolePrompt, TaskDispatch)):
             return self._prompt(request)
+        if isinstance(request, TaskBatchOpen):
+            return self._task_batch_open(request)
         if isinstance(request, TaskGet):
             return self._task_get(request)
         if isinstance(request, TaskConsultationReply):
@@ -1769,6 +1781,23 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "task is unknown")
         return record
 
+    def _task_batch_open(self, request: TaskBatchOpen) -> TaskBatchReceipt:
+        path = _state_path(self._require_state())
+        reservation = _LifecycleReservation(path, create_parent=False)
+        reservation.acquire()
+        try:
+            state = self._reload_state(path)
+            _require_running(state)
+            batch = open_agent_batch(state, request.task_ids)
+            _save_state(path, state, require_existing=True, reservation_held=True)
+            return TaskBatchReceipt(
+                tuple(cast(list[str], batch["task_ids"])),
+                cast(str, batch["phase"]),
+                cast(str | None, batch["revision"]),
+            )
+        finally:
+            reservation.release()
+
     def _task_get(self, request: TaskGet) -> TaskStatusReceipt:
         path = _state_path(self._require_state())
         reservation = _LifecycleReservation(path, create_parent=False)
@@ -1867,6 +1896,8 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     ErrorCode.IDENTITY_MISMATCH, "approved workspace revision changed"
                 )
             with _verification_signals():
+                if is_agent_parallel(state):
+                    prepare_agent_batch_verification(state, request.task_id, revision)
                 record["status"] = "verifying"
                 _save_state(path, state, require_existing=True, reservation_held=True)
                 try:
@@ -1951,7 +1982,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "parallel native cleanup remains unconfirmed: "
-                    + ", ".join(str(item["role"]) for item in retained),
+                    + "; ".join(
+                        f"{item['role']}: {item['error']}" for item in retained
+                    ),
                 )
         else:
             if active_roles:
@@ -2575,6 +2608,8 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         try:
             state = self._progress_state(path)
             _require_running(state)
+            if is_agent_parallel(state):
+                state = copy.deepcopy(state)
             if state["version"] in {
                 NAMED_STATE_VERSION,
                 PARALLEL_STATE_VERSION,

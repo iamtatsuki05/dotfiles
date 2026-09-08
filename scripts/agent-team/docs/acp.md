@@ -71,6 +71,11 @@ restrict Write/Edit only. Read/Grep/Glob can read the workspace, subject to
 protected-path and link/file-type checks.
 TaskSpecs must match the catalog captured from `[[tasks]]` at startup, so Main
 cannot introduce another scope or verification command through a dispatch.
+For native `agent`/`parallel`, the empty-catalog path fails before dependency or
+profile checks, and `role_prompt` is rejected even for read-only research.
+Parallel research uses a declared plan-only TaskSpec. The serial read-only
+`role_prompt` path is unchanged. Dependency and profile bindings selected at
+startup remain fixed; no provider or transport fallback is introduced.
 See [configuration](configuration.md) for the schema and review/verification flow.
 Installed dependency trees remain trusted; entry-file fingerprints do not make
 the entire import closure hermetic or prevent hostile same-user filesystem races.
@@ -101,21 +106,39 @@ no raw question text. While a question Delivery is pending, that assignment's
 `role_read`, `role_release`, and another dispatch for that assignment are
 rejected, and its successful completion cannot be published. In version-3/4
 native serial state, the pending question also blocks the next dispatch for the
-run. In version-5 native `program`/`parallel`, an independent admitted
-assignment may continue within `max_active` when Worker scopes do not overlap,
-but `task_verify` remains run-global blocked until every active assignment and
-Delivery is drained. Stop marks
+run. In version-5 native `agent`/`parallel` and `program`/`parallel`, an
+independent admitted assignment may continue within `max_active` when Worker
+scopes do not overlap, but the batch/coordinator verification barrier remains
+blocked until every active assignment and Delivery is drained. Stop marks
 the question as cancelling and never fabricates an acknowledgment; unproven
 provider, process-group, socket, or private-root cleanup retains state.
 
-Version-5 native `program`/`parallel` state stores a result, question, and
+Version-5 native `agent`/`parallel` and `program`/`parallel` state stores a result, question, and
 pending Delivery container per active node. Completion follows
 `role_read` → `role_release` → `delivery_ack`, and a released assignment stays
 in state until its matching acknowledgment. The private Stop path sets
 `native.phase=stopping`, drains safe peers in that order, and retains any node
 with unknown identity, a missing typed result, or unproven cleanup while
-continuing safe peers. Focused contract checks and bounded real-terminal/
-fake-provider cases cover this path; real-model parallel acceptance is pending.
+continuing safe peers. Focused contract checks and earlier bounded
+real-terminal/fake-provider cases cover the program path. The bounded live
+Main-parallel acceptance is recorded in [Architecture](architecture.md), and
+real-model parallel acceptance is pending.
+
+In Main-coordinated `agent`/`parallel`, Main first calls `task_batch_open` with
+the exact declared IDs in any order; the saved IDs are catalog-ordered. The
+first final-review dispatch seals the batch after all writers and Delivery
+drain. All same-revision reviewers must approve, and all roles and Delivery
+must be consumed, before fixed-argv verification. A plan-only final review
+keeps the plan-body SHA-256 separate from `workspace_revision`. For a retryable
+member, an unanswered consultation blocks retry. After the answer is saved,
+all roles and Delivery are consumed, and all member review-round limits remain,
+Main calls `task_dispatch` for the
+original writer. That request atomically reopens the exact peer set, including
+completed peers, and dispatches the requested writer; peers are not
+auto-dispatched. There is no public reopen tool, and `task_batch_open` cannot
+reopen or replace an unfinished batch. The additional `task_batch_open` tool is
+present only in the explicit Claude Main `--tools` and `--allowedTools` lists
+for this mode.
 
 The real-model tmux run `dc101afd-87bf-4697-9bbb-0d1339d381a8` confirmed a full
 question round trip with Fable at high effort, Planner omitted, and the same

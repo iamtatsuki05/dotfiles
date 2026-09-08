@@ -61,6 +61,10 @@ PlannerとReviewerは`Read`、`Grep`、`Glob`を使えます。Workerはさら�
 Write/Editだけです。Read/Grep/Globは、保護pathやlink・file typeの検査を除き、workspace内を
 読めます。固定wrapperがこれらを検査します。TaskSpecは起動時の`[[tasks]]`と完全一致する
 必要があるため、Mainはdispatchで別の変更範囲や検証commandを追加できません。
+native `agent`/`parallel`では、catalogが空の場合にdependencyやprofile確認より前に失敗し、
+read-only調査を含む`role_prompt`も拒否します。parallelの調査には宣言済みplan-only TaskSpecを使います。
+serialのread-only `role_prompt`は変わりません。起動時に選択したdependency bindingとprofileは固定し、
+providerやtransportへのfallbackは行いません。
 schemaとレビュー・検証の流れは[設定リファレンス](configuration_JA.md)を参照してください。
 導入済みの依存package自体は信頼する前提です。entry fileのfingerprintは、読み込まれる
 全依存fileの固定や、同じユーザー権限の別プロセスによる悪意ある同時差し替えを保証しません。
@@ -83,17 +87,24 @@ hashだけを残します。protected outboxには、replace後のfsyncや`recor
 次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。receipt自体に
 raw本文は含めません。question Deliveryが保留中は、そのassignmentの`role_read`、`role_release`、
 別のdispatchを拒否し、そのassignmentのsuccessful completionもpublishできません。version 3/4のnative serial stateでは、
-questionが消費されるまでrun全体の次のdispatchも止まります。version 5のnative `program`/`parallel`では、
-Worker scopeが重ならず`max_active`内でadmissionを通る独立assignmentは継続できますが、
-`task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
+questionが消費されるまでrun全体の次のdispatchも止まります。version 5のnative `agent`/`parallel`と`program`/`parallel`では、
+Worker scopeが重ならず`max_active`内でadmissionを通る独立assignmentは継続できますが、batch/coordinatorの検証barrierは
+全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
 stopはquestionをcancellingへ進め、acknowledgeを偽装しません。provider、process group、socket、private rootのcleanupを
 確認できない場合はstateを保持します。
 
-version 5のnative `program`/`parallel` stateは、activeなnodeごとにresult、question、pending Deliveryのcontainerを保存します。
+version 5のnative `agent`/`parallel`と`program`/`parallel` stateは、activeなnodeごとにresult、question、pending Deliveryのcontainerを保存します。
 完了Deliveryは`role_read` → `role_release` → `delivery_ack`の順で処理し、release後のassignmentも一致するackまでstateに残します。
 private Stopは`native.phase=stopping`を保存して安全なpeerを同じ順でdrainし、identity不明、typed result不足、cleanup未確認のnodeを保持したまま
-安全なpeerを続けます。この経路はfocused contract testとboundedな実端末・fake providerのcaseで確認していますが、
-実モデルのparallel受入は未実施です。
+安全なpeerを続けます。このprogram経路はfocused contract testと過去のboundedな実端末・fake providerのcaseで確認しています。
+今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載し、実モデルのparallel受入は未実施です。
+
+Mainが調整する`agent`/`parallel`では、任意順の宣言済みIDを`task_batch_open`へ渡し、保存するIDはcatalog順に正規化します。
+最初のfinal review dispatchは全writerとDeliveryをdrainしてからbatchをsealし、同じrevisionの全Reviewer承認と全role/Deliveryの消費後にfixed argv検証へ進みます。
+plan-onlyのfinal reviewではplan本文SHA-256と`workspace_revision`を分けて保存します。未回答のconsultationがある間はretryできません。
+回答を保存し、全roleとDeliveryを消費し、全memberにreview roundが残る場合だけ、Mainが元のwriterへ`task_dispatch`を呼びます。そのrequestが`completed`済みpeerを含む
+正確なpeer集合のreopenと要求したwriterのdispatchを原子的に行います。peerを自動dispatchせず、公開reopen toolもありません。
+`task_batch_open`で未完了batchをreopenまたは置換することもできません。このtoolはClaude Mainの明示的な`--tools`と`--allowedTools`にだけ存在します。
 
 実モデルを使ったtmuxのrun `dc101afd-87bf-4697-9bbb-0d1339d381a8`では、Fable・effort `high`を使い、Plannerを省略して質問応答を一巡させました。
 Mainの回答と受領確認後、同じWorkerのACPセッションが再開し、Reviewer承認、同一リビジョンの固定コマンド検証、Task完了、公開`stop`まで確認しています。

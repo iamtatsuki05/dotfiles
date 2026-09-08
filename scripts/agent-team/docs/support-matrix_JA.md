@@ -38,6 +38,28 @@ Codexのquestion capabilityとquestion socketは無効で、公開Codex ACP prof
 [アーキテクチャ](architecture_JA.md)で管理しています。この説明は新しい`Verified` safety resultではなく実装状況を示します。
 完全検証済みの`0b3e5bc` milestoneは過去の証拠です。
 
+### native Main/agent parallelの状態
+
+Version 5のnative `agent`/`parallel`は、対象とする`tmux`、`herdr`、`zellij`でMainが名前付きnodeを
+調整するmodeです。Mainなしの`program`/`parallel` coordinatorとは別のidentityです。Mainはmemberをdispatchする前に、
+任意順の宣言済み`task_id`の空でない一意な一覧を`task_batch_open`へ渡します。runtimeは保存するIDをcatalog順へ正規化し、dependencyが
+batchの外でcompletedになっていることを確認して、`{task_ids, phase, revision}`を保存します。schedulerや
+program modeへの自動fallbackはありません。
+
+最初のfinal review dispatchは、全writerとDeliveryをdrainしてからbatchをsealします。全Reviewerは同じsealed workspace
+revisionを確認し、全final approvalと全role/Deliveryの消費後にfixed argv検証へ進みます。implementation routeの中間plan reviewは
+writer phaseで行います。plan-onlyのfinal reviewではplan本文のSHA-256を`record.revision`に、`workspace_revision`とは
+分けて保存します。`changes_requested`、回答済みconsultation、確認済み`verification_failed`のretryでは、全roleとDeliveryをdrainし、
+必要なconsultationへの回答と全memberの残りreview roundを確認してから、Mainが元のwriterへ`task_dispatch`を呼びます。そのrequestが
+`completed`済みpeerを含む正確なpeer集合のreopenと要求したwriterのdispatchを原子的に行います。peerは自動dispatchしません。
+公開reopen toolはなく、`task_batch_open`で未完了batchをreopenまたは置換することもできません。不正なTaskSpec、route、
+message、review limit、dependency inputではstateを変更しません。
+
+parallelの`role_prompt`はread-only調査も含めて拒否し、serialのread-only `role_prompt`は維持します。
+`task_batch_open`はこのmodeのClaude Main起動時に、明示的な`--tools`と`--allowedTools`へだけ追加します。
+今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。名前付きOrca、Orca/native shared progression、他harness、
+実Main Astra、実モデルparallel受入は未解決です。これは実装状況であり、新しい`Verified` safety resultではありません。
+
 ### native programの状態
 
 Version 5のnative `program`/`serial`と`program`/`parallel`は、新しいharness profileではなく進行管理modeです。
@@ -47,12 +69,12 @@ serial program stateはversion 4、parallel program stateはversion 5です。ve
 Delivery containerを保持し、`max_active`と重ならないWorker scopeでadmissionを制限します。pending questionは自分のassignmentだけを止め、
 条件を満たす独立peerは継続できます。完了DeliveryはRead → Release → Ackの順で処理します。
 question Deliveryはmessage_replyとdelivery_ackを使い、Stopは未回答questionをcancellingへ進めてacknowledgeを捏造しません。
-private parallel Stopはidentity不明またはcleanup未確認のnodeを保持したまま安全なpeerをdrainします。宣言済みTaskSpecはcanonical waveとして進み、successor waveを開始する前に、
+private parallel Stopはidentity不明またはcleanup未確認のnodeを保持したまま安全なpeerをdrainします。宣言済みTaskSpecは一般schedulerではなく、明示的なcoordinatorがcanonical waveとして進め、successor waveを開始する前に、
 同じsealed workspace revisionのreviewとfixed argv検証をそろえます。
 
 program contract focused testでは、serialとparallelのadmission、state、Delivery順序、wave遷移、private Stopを確認しています。
-boundedな実端末・fake providerのcoverageは[アーキテクチャ](architecture_JA.md)に記載しています。これは実providerや実モデルの安全判定ではなく、
-実モデルのparallel受入は未実施です。
+過去のboundedな実端末・fake providerのcoverageは[アーキテクチャ](architecture_JA.md)に記載しています。これは実providerや実モデルの安全判定ではなく、
+今回のMain parallel live受入とは別です。実モデルのparallel受入は未実施です。
 
 実機のserial program試験`b239945b-283e-403b-aba5-84ba984c8469`では、2問へ回答し、同じACP sessionで処理した後、ClaudeがFableの利用上限で失敗しました。
 実装、review、verificationには到達していません。公開stopと独立したprocess/path確認は成功しましたが、observerのcommand identity errorにより
@@ -62,15 +84,15 @@ boundedな実端末・fake providerのcoverageは[アーキテクチャ](archite
 
 ACP adapterがインストールされていることやacpxが表示することだけでは、安全なrole用adapterで
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
-native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative config、またはversion 5の名前付き`agent`/`serial`・`program`/`serial`・`program`/`parallel` configで選んだread-only
+native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative config、またはversion 5の名前付き`agent`/`serial`・`agent`/`parallel`・`program`/`serial`・`program`/`parallel` configで選んだread-only
 Planner/Reviewerとscoped workspace-write Workerだけを使い、Worker dispatchには宣言済みTaskSpec
 との完全一致が必要です。unknown providerと認識済みだが拒否されたprofileは、Orca Task、terminal、
 ACP processを作る前に失敗します。別harnessへのfallbackはありません。
 
-Version 5で変わるのはnodeの識別方法とtaskの担当指定に加え、native `program`/`serial`と`program`/`parallel` coordinatorです。
+Version 5で変わるのはnodeの識別方法とtaskの担当指定に加え、native Mainの`agent`/`parallel` pathと`program`/`serial`・`program`/`parallel` coordinatorです。
 このmatrixのharness安全判定は変わりません。Claudeを使う5nodeのtmux受入試験、serialの限定的なprogram試験、
-boundedな端末・fake providerのparallel coverageは[アーキテクチャ](architecture_JA.md)に記載しています。
-実モデルのparallel受入は未実施です。
+boundedな端末・fake providerのparallel coverageは過去runの証拠として[アーキテクチャ](architecture_JA.md)に記載しています。
+今回のMain parallel live受入は同文書に記載し、実モデルのparallel受入は未実施です。
 
 OrcaのClaude ACP profileにはNode.js `22.13.0`以降も必要です。起動前にOrcaは選択したACP roleの
 `node`、`acpx`、`claude-agent-acp`だけを解決し、exact package manifestを確認したうえで、absoluteな
