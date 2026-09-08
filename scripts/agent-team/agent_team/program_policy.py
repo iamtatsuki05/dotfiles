@@ -13,6 +13,7 @@ from typing import Literal, cast
 
 from .contracts import NodeRef, Role, RuntimeFailure
 from .named_graph import GraphSpec
+from .parallel_admission import admission_blocker
 from .task_execution import program_wave as canonical_program_wave
 from .task_execution import task_consultation
 from .task_spec import TaskSpec, parse_task_specs
@@ -94,7 +95,6 @@ class ProgramAction:
             if self.role is not None or self.message is not None:
                 raise ValueError("verify cannot target a role or carry a message")
         elif self.kind in {
-            "acknowledge",
             "seal_wave",
             "verify_wave",
             "next_wave",
@@ -104,6 +104,10 @@ class ProgramAction:
             for value in (self.task_id, self.role, self.stage, self.message)
         ):
             raise ValueError(f"{self.kind} cannot carry task data")
+        elif self.kind == "acknowledge" and any(
+            value is not None for value in (self.task_id, self.stage, self.message)
+        ):
+            raise ValueError("acknowledge can only carry an exact role")
         elif self.kind == "reopen_wave" and self.role is not None:
             raise ValueError("reopen_wave cannot target a role")
 
@@ -130,12 +134,25 @@ def _load(
     catalog = parse_task_specs(state.get("task_specs"))
     tasks = _mapping(state, "tasks")
     coordination = graph.coordination
-    if (
-        coordination.mode != "program"
-        or coordination.dispatch_mode != "serial"
-        or coordination.max_active != 1
-    ):
-        raise ValueError("program_serial_required")
+    version = state.get("version")
+    if version == 4:
+        if (
+            coordination.mode != "program"
+            or coordination.dispatch_mode != "serial"
+            or coordination.max_active != 1
+        ):
+            raise ValueError("program_serial_required")
+    elif version == 5:
+        if coordination.mode != "program" or coordination.dispatch_mode != "parallel":
+            raise ValueError("program_parallel_required")
+        if (
+            not isinstance(coordination.max_active, int)
+            or isinstance(coordination.max_active, bool)
+            or coordination.max_active < 1
+        ):
+            raise ValueError("program_parallel_cap_invalid")
+    else:
+        raise ValueError("program_state_version_invalid")
     return graph, catalog, tasks
 
 
@@ -163,6 +180,153 @@ def _active(
     if assignment.get("role") != node_id:
         raise ValueError("assignment_identity_mismatch")
     return _node(graph, assignment, "role"), assignment
+
+
+def _parallel_active(
+    state: Mapping[str, object],
+    graph: GraphSpec,
+    catalog: tuple[TaskSpec, ...],
+) -> tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...]:
+    """Validate and return every v5 assignment with its logical TaskSpec."""
+
+    roles = _mapping(state, "roles")
+    by_id = {task.task_id: task for task in catalog}
+    active: list[tuple[NodeRef, Mapping[str, object], TaskSpec]] = []
+    for node_id, raw in roles.items():
+        if not isinstance(node_id, str) or not isinstance(raw, Mapping):
+            raise TypeError("assignment_invalid")
+        assignment = cast(Mapping[str, object], raw)
+        if assignment.get("role") != node_id:
+            raise ValueError("assignment_identity_mismatch")
+        target = _node(graph, assignment, "role")
+        raw_spec = assignment.get("task_spec")
+        task = TaskSpec.from_dict(raw_spec)
+        declared = by_id.get(task.task_id)
+        if declared is None or declared != task:
+            raise ValueError("assignment_task_spec_mismatch")
+        active.append((target, assignment, task))
+    if len(active) > graph.coordination.max_active:
+        raise ValueError("parallel_active_cap_exceeded")
+    return tuple(active)
+
+
+def _parallel_delivery_actions(
+    tasks: Mapping[str, object],
+    active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
+) -> tuple[tuple[ProgramAction, ...], tuple[ProgramAction, ...]]:
+    """Return drain actions first and unanswered-question waits second."""
+
+    completions: list[ProgramAction] = []
+    answered_questions: list[ProgramAction] = []
+    unanswered_questions: list[ProgramAction] = []
+    for role, assignment, task in active:
+        pending_id = assignment.get("pending_delivery_id")
+        if pending_id is None:
+            result = assignment.get("native_result")
+            question = assignment.get("native_question")
+            if isinstance(question, Mapping) and question.get("phase") in {
+                "failed",
+                "cancelling",
+            }:
+                completions.append(
+                    ProgramAction(
+                        "reject",
+                        task_id=task.task_id,
+                        role=role,
+                        message="question_delivery_failed",
+                    )
+                )
+            elif result is not None or (
+                isinstance(question, Mapping) and question.get("phase") == "published"
+            ):
+                completions.append(
+                    ProgramAction(
+                        "wait",
+                        task_id=task.task_id,
+                        role=role,
+                        stage=_stage_for(role, _record(tasks, task.task_id)),
+                        message="delivery_observation_required",
+                    )
+                )
+            continue
+        if not isinstance(pending_id, str) or not pending_id:
+            raise ValueError("pending_delivery_invalid")
+        kind = assignment.get("pending_delivery_kind")
+        stage = assignment.get("pending_delivery_stage")
+        record = _record(tasks, task.task_id)
+        action_stage = _stage_for(role, record)
+        if kind == "worker_done":
+            if stage in {"observed", "read"}:
+                completions.append(
+                    ProgramAction(
+                        "wait",
+                        task_id=task.task_id,
+                        role=role,
+                        stage=action_stage,
+                        message="completion_drain_required",
+                    )
+                )
+            elif stage == "released":
+                completions.append(ProgramAction("acknowledge", role=role))
+            else:
+                raise ValueError("pending_completion_stage_invalid")
+            continue
+        if kind != "question" or stage != "observed":
+            raise ValueError("pending_delivery_unknown")
+        question = assignment.get("native_question")
+        if not isinstance(question, Mapping):
+            raise TypeError("question_outbox_missing")
+        if question.get("phase") in {"failed", "cancelling"}:
+            completions.append(
+                ProgramAction(
+                    "reject",
+                    task_id=task.task_id,
+                    role=role,
+                    message="question_delivery_failed",
+                )
+            )
+            continue
+        if question.get("delivery_id") != pending_id:
+            raise ValueError("question_delivery_mismatch")
+        ids = question.get("message_ids")
+        answers = question.get("answers")
+        if not isinstance(ids, (list, tuple)) or not isinstance(answers, Mapping):
+            raise TypeError("question_outbox_invalid")
+        if set(cast(Mapping[str, object], answers)) == set(ids):
+            answered_questions.append(ProgramAction("acknowledge", role=role))
+        else:
+            unanswered_questions.append(
+                ProgramAction(
+                    "wait_user",
+                    task_id=task.task_id,
+                    role=role,
+                    stage=action_stage,
+                    message="question_answer_required",
+                )
+            )
+    return tuple(completions + answered_questions), tuple(unanswered_questions)
+
+
+def _parallel_admit(
+    graph: GraphSpec,
+    catalog: tuple[TaskSpec, ...],
+    active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
+    target: NodeRef,
+    task: TaskSpec,
+) -> bool:
+    assignments = {role.node_id: dict(assignment) for role, assignment, _ in active}
+    return admission_blocker(graph, catalog, assignments, target, task) is None
+
+
+def _parallel_wait(
+    active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
+    *,
+    message: str = "active_assignment_drain_required",
+) -> ProgramAction | None:
+    if not active:
+        return None
+    role, _assignment, task = active[0]
+    return ProgramAction("wait", task_id=task.task_id, role=role, message=message)
 
 
 def _wave(
@@ -351,6 +515,275 @@ def _review(
             "pause", task_id=task.task_id, message="wave_revision_required"
         )
     return _dispatch(task, reviewer, "review")
+
+
+def _parallel_select(
+    state: Mapping[str, object],
+    graph: GraphSpec,
+    catalog: tuple[TaskSpec, ...],
+    tasks: Mapping[str, object],
+    wave: tuple[tuple[str, ...], ProgramWavePhase, str | None],
+    active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
+) -> ProgramAction:
+    """Select one v5 action while allowing independent assignments to overlap."""
+
+    max_rounds = state.get("max_review_rounds")
+    if (
+        not isinstance(max_rounds, int)
+        or isinstance(max_rounds, bool)
+        or max_rounds < 1
+    ):
+        return ProgramAction("reject", message="max_review_rounds_invalid")
+    task_ids, phase, revision = wave
+    by_id = {task.task_id: task for task in catalog}
+    try:
+        members = tuple(by_id[task_id] for task_id in task_ids)
+    except KeyError as exc:
+        raise ValueError("program_wave_task_unknown") from exc
+
+    if all(_status(_record(tasks, task.task_id)) == "completed" for task in members):
+        waiting = _parallel_wait(active)
+        if waiting is not None:
+            return waiting
+        if all(
+            _status(_record(tasks, task.task_id)) == "completed" for task in catalog
+        ):
+            return ProgramAction("complete")
+        return ProgramAction("next_wave")
+
+    active_ids = {task.task_id for _role, _assignment, task in active}
+    writer_candidates: list[
+        tuple[TaskSpec, NodeRef, Literal["plan", "implementation"]]
+    ] = []
+    review_candidates: list[tuple[TaskSpec, Mapping[str, object]]] = []
+    verify_candidates: list[tuple[TaskSpec, Mapping[str, object]]] = []
+    unanswered_consultations: list[ProgramAction] = []
+    transition_wait: ProgramAction | None = None
+    blocked_task: tuple[str, str] | None = None
+    reopen_task_id: str | None = None
+
+    for task in members:
+        record = _record(tasks, task.task_id)
+        status = _status(record)
+        if status == "failed":
+            return ProgramAction(
+                "pause", task_id=task.task_id, message="terminal_task_failure"
+            )
+        if status == "consultation_required":
+            if record is None:
+                return ProgramAction("reject", message="task_record_invalid")
+            pending = task_consultation(state, record)
+            if pending is None:
+                return ProgramAction("reject", message="consultation_state_invalid")
+            if pending["answered"] is not True:
+                unanswered_consultations.append(
+                    ProgramAction(
+                        "wait_user",
+                        task_id=task.task_id,
+                        stage="review",
+                        message="reviewer_consultation_required",
+                    )
+                )
+                continue
+            if phase != "writers":
+                if reopen_task_id is None:
+                    reopen_task_id = task.task_id
+                continue
+            stage = _text(record.get("stage"))
+            if _rounds(record, stage) >= max_rounds:
+                unanswered_consultations.append(
+                    ProgramAction(
+                        "wait_user", task_id=task.task_id, message="review_round_limit"
+                    )
+                )
+                continue
+
+        if status in {
+            "running",
+            "reviewing_plan",
+            "reviewing_implementation",
+            "verifying",
+        }:
+            if task.task_id not in active_ids and transition_wait is None:
+                transition_wait = ProgramAction(
+                    "wait", task_id=task.task_id, message="state_transition_pending"
+                )
+            continue
+
+        plan_node = _route_node(graph, task, "plan_writer")
+        implementation_node = _route_node(graph, task, "implementation_writer")
+        candidate: tuple[NodeRef, Literal["plan", "implementation"]] | None = None
+        if phase == "writers":
+            if status is None and _ready(task, tasks):
+                if plan_node is not None:
+                    candidate = (plan_node, "plan")
+                elif implementation_node is not None:
+                    candidate = (implementation_node, "implementation")
+            elif plan_node is not None and (
+                status == "plan_changes_requested"
+                or (status == "verification_failed" and implementation_node is None)
+            ):
+                candidate = (plan_node, "plan")
+            elif (
+                status
+                in {
+                    "plan_approved",
+                    "implementation_changes_requested",
+                    "verification_failed",
+                }
+                and implementation_node is not None
+            ):
+                candidate = (implementation_node, "implementation")
+            elif status == "consultation_required" and record is not None:
+                stage = _text(record.get("stage"))
+                writer = plan_node if stage == "plan" else implementation_node
+                if writer is not None:
+                    candidate = (
+                        writer,
+                        cast(Literal["plan", "implementation"], stage),
+                    )
+            if candidate is not None and task.task_id not in active_ids:
+                writer_candidates.append((task, candidate[0], candidate[1]))
+            if status == "awaiting_plan_review" and implementation_node is not None:
+                review_candidates.append((task, cast(Mapping[str, object], record)))
+        elif phase == "reviewers":
+            if status in {"awaiting_plan_review", "awaiting_implementation_review"}:
+                review_candidates.append((task, cast(Mapping[str, object], record)))
+            elif status in {"plan_approved", "implementation_approved"}:
+                verify_candidates.append((task, cast(Mapping[str, object], record)))
+            elif (
+                status
+                in {
+                    "plan_changes_requested",
+                    "implementation_changes_requested",
+                    "verification_failed",
+                }
+                and reopen_task_id is None
+            ):
+                reopen_task_id = task.task_id
+        else:
+            if status in {"plan_approved", "implementation_approved"}:
+                verify_candidates.append((task, cast(Mapping[str, object], record)))
+            elif (
+                status
+                in {
+                    "implementation_changes_requested",
+                    "plan_changes_requested",
+                    "verification_failed",
+                }
+                and reopen_task_id is None
+            ):
+                reopen_task_id = task.task_id
+
+    def admitted(task: TaskSpec, target: NodeRef, *, reason: str) -> bool:
+        if _parallel_admit(graph, catalog, active, target, task):
+            return True
+        nonlocal blocked_task
+        if blocked_task is None:
+            blocked_task = (task.task_id, reason)
+        return False
+
+    if phase == "writers":
+        for task, writer, stage in writer_candidates:
+            if admitted(task, writer, reason="parallel_admission_blocked"):
+                return _dispatch(task, writer, stage)
+        for task, record in review_candidates:
+            reviewer = _route_node(
+                graph,
+                task,
+                "plan_reviewer"
+                if _status(record) == "awaiting_plan_review"
+                else "implementation_reviewer",
+            )
+            if reviewer is not None and admitted(
+                task, reviewer, reason="review_admission_blocked"
+            ):
+                return _review(graph, task, record, max_rounds, revision)
+        final_stages = [
+            "plan"
+            if _route_node(graph, task, "implementation_writer") is None
+            else "implementation"
+            for task in members
+        ]
+        if all(
+            _status(_record(tasks, task.task_id)) == f"awaiting_{stage}_review"
+            for task, stage in zip(members, final_stages, strict=True)
+        ):
+            waiting = _parallel_wait(active)
+            if waiting is not None:
+                return waiting
+            return ProgramAction("seal_wave")
+    elif phase == "reviewers":
+        for task, record in review_candidates:
+            reviewer = _route_node(
+                graph,
+                task,
+                "plan_reviewer"
+                if _status(record) == "awaiting_plan_review"
+                else "implementation_reviewer",
+            )
+            if reviewer is not None and admitted(
+                task, reviewer, reason="review_admission_blocked"
+            ):
+                return _review(graph, task, record, max_rounds, revision)
+        if all(
+            _status(_record(tasks, task.task_id))
+            == (
+                "plan_approved"
+                if _route_node(graph, task, "implementation_writer") is None
+                else "implementation_approved"
+            )
+            for task in members
+        ):
+            waiting = _parallel_wait(active)
+            if waiting is not None:
+                return waiting
+            return ProgramAction("verify_wave")
+    else:
+        if verify_candidates:
+            waiting = _parallel_wait(active)
+            if waiting is not None:
+                return waiting
+            task, _record_value = verify_candidates[0]
+            return ProgramAction("verify", task_id=task.task_id, stage="verification")
+
+    if reopen_task_id is not None:
+        if unanswered_consultations:
+            return unanswered_consultations[0]
+        waiting = _parallel_wait(active)
+        if waiting is not None:
+            return waiting
+        return ProgramAction("reopen_wave", task_id=reopen_task_id)
+    if transition_wait is not None:
+        return transition_wait
+    if blocked_task is not None and active:
+        waiting = _parallel_wait(active, message=blocked_task[1])
+        if waiting is not None:
+            return waiting
+    if blocked_task is not None:
+        return ProgramAction("pause", task_id=blocked_task[0], message=blocked_task[1])
+    if unanswered_consultations:
+        return unanswered_consultations[0]
+    waiting = _parallel_wait(active)
+    if waiting is not None:
+        return waiting
+    blocked = next(
+        (
+            task
+            for task in members
+            if _record(tasks, task.task_id) is None and not _ready(task, tasks)
+        ),
+        None,
+    )
+    if blocked is not None:
+        return ProgramAction(
+            "pause", task_id=blocked.task_id, message="dependency_not_completed"
+        )
+    if phase == "verification" and all(
+        _status(_record(tasks, task.task_id)) == "completed" for task in members
+    ):
+        return ProgramAction("next_wave")
+    return ProgramAction("pause", message="wave_transition_required")
 
 
 def _select(
@@ -593,6 +1026,39 @@ def select_action(state: Mapping[str, object]) -> ProgramAction:
 
     try:
         graph, catalog, tasks = _load(state)
+        if state.get("version") == 5:
+            active_parallel = _parallel_active(state, graph, catalog)
+            drain, unanswered = _parallel_delivery_actions(tasks, active_parallel)
+            if drain:
+                return drain[0]
+            wave = _wave(state)
+            if wave is None:
+                return ProgramAction("reject", message="program_wave_required")
+            action = _parallel_select(
+                state, graph, catalog, tasks, wave, active_parallel
+            )
+            if unanswered and action.kind == "wait":
+                return unanswered[0]
+            if action.kind in {
+                "dispatch",
+                "wait",
+                "verify",
+                "seal_wave",
+                "reopen_wave",
+                "verify_wave",
+                "next_wave",
+                "complete",
+            }:
+                return action
+            if action.kind in {"pause", "reject"}:
+                if action.message == "wave_transition_required" and unanswered:
+                    return unanswered[0]
+                return action
+            if action.kind == "wait_user":
+                return action
+            if unanswered:
+                return unanswered[0]
+            return action
         active = _active(state, graph)
         pending = _pending(state, graph, tasks, active)
         if pending is not None:

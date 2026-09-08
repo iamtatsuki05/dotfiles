@@ -97,11 +97,25 @@ rejected. Consumed receipts retain assignment/session/delivery/tool-call IDs and
 question/answer hashes. The protected outbox may retain raw question and answer
 text until the next question or terminal completion so post-replace fsync or
 `recorded` publication failures can be recovered; the receipt itself contains
-no raw question text. While a question Delivery is pending, `role_read`,
-`role_release`, another dispatch, and `task_verify` are rejected, and successful
-completion cannot be published. Stop marks the question as cancelling and never
-fabricates an acknowledgment; unproven provider, process-group, socket, or
-private-root cleanup retains state.
+no raw question text. While a question Delivery is pending, that assignment's
+`role_read`, `role_release`, and another dispatch for that assignment are
+rejected, and its successful completion cannot be published. In version-3/4
+native serial state, the pending question also blocks the next dispatch for the
+run. In version-5 native `program`/`parallel`, an independent admitted
+assignment may continue within `max_active` when Worker scopes do not overlap,
+but `task_verify` remains run-global blocked until every active assignment and
+Delivery is drained. Stop marks
+the question as cancelling and never fabricates an acknowledgment; unproven
+provider, process-group, socket, or private-root cleanup retains state.
+
+Version-5 native `program`/`parallel` state stores a result, question, and
+pending Delivery container per active node. Completion follows
+`role_read` → `role_release` → `delivery_ack`, and a released assignment stays
+in state until its matching acknowledgment. The private Stop path sets
+`native.phase=stopping`, drains safe peers in that order, and retains any node
+with unknown identity, a missing typed result, or unproven cleanup while
+continuing safe peers. Focused contract checks and bounded real-terminal/
+fake-provider cases cover this path; real-model parallel acceptance is pending.
 
 The real-model tmux run `dc101afd-87bf-4697-9bbb-0d1339d381a8` confirmed a full
 question round trip with Fable at high effort, Planner omitted, and the same

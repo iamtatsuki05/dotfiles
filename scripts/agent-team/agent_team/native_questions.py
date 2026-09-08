@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final, cast
 
+from .native_delivery import DELIVERY_FIELDS, container, containers
 from .native_question_channel import (
     MAX_BATCHES,
     MAX_TEXT_CHARS,
@@ -43,6 +44,7 @@ _PENDING_FIELDS = (
     "pending_question_ids",
     "replied_question_ids",
 )
+_NESTED_DELIVERY_FIELDS: Final = frozenset({"pending_delivery"})
 
 
 def text(value: object, field: str, *, maximum: int = MAX_TEXT_CHARS) -> str:
@@ -86,7 +88,7 @@ def _named_state(state: Mapping[str, object]) -> bool:
     version = state.get("version")
     if version == 3:
         return False
-    if version == 4:
+    if version in {4, 5}:
         return True
     raise ValueError("native question state version is invalid")
 
@@ -174,22 +176,44 @@ def validate_receipts(value: object, identity: Mapping[str, object]) -> None:
                     raise ValueError("native question receipt digest is invalid")
 
 
-def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
+def outbox(
+    state: Mapping[str, object], node_id: str | None = None
+) -> dict[str, object] | None:
+    """Return the current question for one state container.
+
+    Versions 3 and 4 keep the serial delivery records at the state root.  A
+    version 5 state has one independent container per exact node ID; it is
+    deliberately never projected into a legacy root-shaped view.
+    """
+
     named = _named_state(state)
-    if "native_question" not in state:
-        if state.get("pending_delivery_kind") == "question":
+    parallel = state.get("version") == 5
+    if not parallel:
+        _reject_mixed_delivery_fields(state, parallel=False)
+    raw_container = container(state, node_id)
+    owner: Mapping[str, object] = raw_container
+    if parallel and _NESTED_DELIVERY_FIELDS.intersection(owner):
+        raise ValueError("parallel state contains an unsupported nested delivery")
+    if "native_question" not in owner:
+        if owner.get("pending_delivery_kind") == "question":
             raise ValueError("native question Delivery has no outbox")
         return None
-    question = _object(state["native_question"], "outbox")
+    question = _object(owner["native_question"], "outbox")
     outbox_fields = _OUTBOX_FIELDS | ({"role_kind"} if named else set())
     if set(question) != outbox_fields:
         raise ValueError("native question outbox fields are invalid")
     identity = _identity(question, named=named)
     role = identity["role"]
+    if parallel and role != node_id:
+        raise ValueError("native question target node identity changed")
     specs = _object(state.get("role_specs"), "role specs")
     spec = _object(specs.get(role), "role spec")
     roles = _object(state.get("roles"), "assignments")
-    assignment = _object(roles.get(role), "assignment")
+    assignment = (
+        _object(owner, "assignment")
+        if parallel
+        else _object(roles.get(role), "assignment")
+    )
     if named:
         if (
             spec.get("kind") != identity["role_kind"]
@@ -206,8 +230,9 @@ def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
         spec.get("provider") != "claude"
         or spec.get("transport") != "acp"
         or not _profile_matches(spec, profile_kind)
-        or len(roles) != 1
+        or (not parallel and len(roles) != 1)
         or identity["run_id"] != state.get("run_id")
+        or (parallel and assignment.get("role") != node_id)
         or any(identity[key] != assignment.get(key) for key in IDENTITY_FIELDS[2:])
         or assignment.get("completion_observed") is not False
     ):
@@ -238,19 +263,19 @@ def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
     native = _object(state.get("native"), "native lifecycle")
     if phase == "cancelling" and native.get("phase") != "stopping":
         raise ValueError("native question cancellation requires team stop")
-    pending = state.get("pending_delivery_id")
+    pending = owner.get("pending_delivery_id")
     if pending is not None:
         if (
             pending != delivery
-            or state.get("pending_delivery_kind") != "question"
-            or state.get("pending_delivery_stage") != "observed"
-            or state.get("pending_question_ids") != ids
-            or state.get("replied_question_ids")
+            or owner.get("pending_delivery_kind") != "question"
+            or owner.get("pending_delivery_stage") != "observed"
+            or owner.get("pending_question_ids") != ids
+            or owner.get("replied_question_ids")
             != [message_id for message_id in ids if message_id in answers]
             or phase not in {"observed", "failed", "cancelling"}
         ):
             raise ValueError("native question pending Delivery does not match outbox")
-    elif any(field in state for field in _PENDING_FIELDS):
+    elif any(field in owner for field in _PENDING_FIELDS):
         raise ValueError("native question pending Delivery fields are incomplete")
     if phase == "observed" and pending is None:
         raise ValueError("native question was not observed as a Delivery")
@@ -258,7 +283,7 @@ def outbox(state: Mapping[str, object]) -> dict[str, object] | None:
         raise ValueError("unobserved native question cannot have answers")
     if phase in {"acknowledged", "received", "recorded"} and set(answers) != set(ids):
         raise ValueError("native question requires every answer before acknowledgment")
-    result = state.get("native_result")
+    result = owner.get("native_result")
     if result is not None:
         completion = _object(result, "pending completion")
         if _identity(completion, named=named) != identity:
@@ -365,6 +390,31 @@ def _result_identity(
     return _identity(result, named=named)
 
 
+def _historical_result_identity(
+    state: Mapping[str, object],
+    result: Mapping[str, object],
+    specs: Mapping[str, object],
+    *,
+    named: bool,
+) -> dict[str, str]:
+    """Trust a task result's own assignment identity after it left ``roles``."""
+
+    role = result.get("role")
+    if not isinstance(role, str):
+        raise TypeError("native question historical result role is invalid")
+    spec = _object(specs.get(role), "role spec")
+    if named:
+        role_kind = text(spec.get("kind"), "role_kind", maximum=64)
+        if result.get("role_kind") != role_kind:
+            raise ValueError("native question historical result role kind changed")
+    elif "kind" in spec or "role_kind" in result:
+        raise ValueError("native question v3 result is mixed with named state")
+    identity = _identity(result, named=named)
+    if identity["run_id"] != state.get("run_id"):
+        raise ValueError("native question historical result run identity changed")
+    return identity
+
+
 def _reject_v3_named_fields(state: Mapping[str, object]) -> None:
     specs = state.get("role_specs")
     if isinstance(specs, Mapping) and any(
@@ -384,56 +434,132 @@ def _reject_v3_named_fields(state: Mapping[str, object]) -> None:
             raise ValueError(f"native question v3 {field} has an unexpected role_kind")
 
 
+def _reject_mixed_delivery_fields(
+    state: Mapping[str, object], *, parallel: bool
+) -> None:
+    """Reject a state that combines serial and per-assignment delivery shapes."""
+
+    if "pending_delivery" in state:
+        raise ValueError("native question state has an unsupported nested delivery")
+    roles = state.get("roles")
+    if not isinstance(roles, Mapping):
+        return
+    for assignment in roles.values():
+        if not isinstance(assignment, Mapping):
+            continue
+        fields = set(assignment)
+        if parallel:
+            if _NESTED_DELIVERY_FIELDS.intersection(fields):
+                raise ValueError(
+                    "parallel state contains an unsupported nested delivery"
+                )
+        elif DELIVERY_FIELDS.intersection(
+            fields
+        ) or _NESTED_DELIVERY_FIELDS.intersection(fields):
+            raise ValueError(
+                "serial state contains an unsupported per-assignment delivery"
+            )
+
+
 def validate_state(state: Mapping[str, object]) -> None:
     named = _named_state(state)
+    parallel = state.get("version") == 5
     if not named:
         _reject_v3_named_fields(state)
-    outbox(state)
+    _reject_mixed_delivery_fields(state, parallel=parallel)
+    containers(state)
     roles = _object(state.get("roles"), "assignments")
     specs = _object(state.get("role_specs"), "role specs")
-    for role, raw_assignment in roles.items():
-        assignment = _object(raw_assignment, "assignment")
+    current_questions: list[dict[str, object]] = []
+    if not parallel:
+        question = outbox(state)
+        if question is not None:
+            current_questions.append(question)
+    for role, raw_role_assignment in roles.items():
+        role_assignment = _object(raw_role_assignment, "assignment")
         spec = _object(specs.get(role), "role spec")
         if named:
             role_kind = text(spec.get("kind"), "role_kind", maximum=64)
             if (
-                assignment.get("role") != role
-                or assignment.get("role_kind") != role_kind
+                role_assignment.get("role") != role
+                or role_assignment.get("role_kind") != role_kind
             ):
                 raise ValueError("native question assignment node identity is invalid")
             trusted_identity = {
-                **assignment,
+                **role_assignment,
                 "role": role,
                 "role_kind": role_kind,
                 "run_id": state.get("run_id"),
             }
         else:
-            if "role_kind" in assignment or "kind" in spec:
+            if "role_kind" in role_assignment or "kind" in spec:
                 raise ValueError(
                     "native question v3 assignment is mixed with named state"
                 )
             trusted_identity = {
-                **assignment,
+                **role_assignment,
                 "role": role,
                 "run_id": state.get("run_id"),
             }
-        if "question_socket" in assignment:
-            root = Path(text(assignment.get("provider_private_root"), "private root"))
+        if parallel:
+            if role_kind not in _ACP_ROLE_KINDS:
+                raise ValueError("native question role_kind is invalid")
+            if "run_id" in role_assignment and role_assignment.get(
+                "run_id"
+            ) != state.get("run_id"):
+                raise ValueError("native question assignment run identity changed")
+            _identity(trusted_identity, named=True)
+            question = outbox(state, role)
+            if question is not None:
+                current_questions.append(question)
+        if "question_socket" in role_assignment:
+            root = Path(
+                text(role_assignment.get("provider_private_root"), "private root")
+            )
             if (
                 not root.is_absolute()
-                or assignment["question_socket"] != str(root / "q.sock")
+                or role_assignment["question_socket"] != str(root / "q.sock")
                 or spec.get("provider") != "claude"
                 or spec.get("transport") != "acp"
             ):
                 raise ValueError("native question socket does not match its assignment")
         elif "scoped_question_client_sha256" in spec:
             raise ValueError("native question socket is missing from assignment")
-        if "question_receipts" in assignment:
-            validate_receipts(assignment["question_receipts"], trusted_identity)
-    result = state.get("native_result")
-    if isinstance(result, Mapping) and "question_receipts" in result:
-        identity = _result_identity(state, result, roles, specs, named=named)
-        validate_receipts(result["question_receipts"], identity)
+        if "question_receipts" in role_assignment:
+            validate_receipts(role_assignment["question_receipts"], trusted_identity)
+        if parallel:
+            result = role_assignment.get("native_result")
+            if result is not None and not isinstance(result, Mapping):
+                raise ValueError("native question result must be an object")
+            if isinstance(result, Mapping):
+                if result.get("role") != role:
+                    raise ValueError(
+                        "native question result target node identity changed"
+                    )
+                identity = _result_identity(state, result, roles, specs, named=True)
+                if "question_receipts" in result:
+                    validate_receipts(result["question_receipts"], identity)
+    if not parallel:
+        result = state.get("native_result")
+        if isinstance(result, Mapping) and "question_receipts" in result:
+            identity = _result_identity(state, result, roles, specs, named=named)
+            validate_receipts(result["question_receipts"], identity)
+    if parallel:
+        delivery_ids: set[str] = set()
+        message_ids: set[str] = set()
+        for question in current_questions:
+            delivery_id = text(question["delivery_id"], "delivery_id", maximum=256)
+            if delivery_id in delivery_ids:
+                raise ValueError("native question delivery identity was reused")
+            delivery_ids.add(delivery_id)
+            for message_id in _strings(
+                question["message_ids"],
+                "message_ids",
+                len(validate_question_request(question["request"]).questions),
+            ):
+                if message_id in message_ids:
+                    raise ValueError("native question message identity was reused")
+                message_ids.add(message_id)
     tasks = state.get("tasks")
     if isinstance(tasks, Mapping):
         for record in tasks.values():
@@ -442,7 +568,7 @@ def validate_state(state: Mapping[str, object]) -> None:
             for field in ("result", "writer_result", "review_result"):
                 result = record.get(field)
                 if isinstance(result, Mapping) and "question_receipts" in result:
-                    identity = _result_identity(
-                        state, result, roles, specs, named=named
+                    identity = _historical_result_identity(
+                        state, result, specs, named=named
                     )
                     validate_receipts(result["question_receipts"], identity)

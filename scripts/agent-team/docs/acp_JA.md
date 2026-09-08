@@ -81,9 +81,19 @@ channel内部ではclient receiptの検証後に`received`を保存し、`record
 拒否します。消費済みreceiptにはassignment、session、delivery、tool-callのidentityとquestion/answerの
 hashだけを残します。protected outboxには、replace後のfsyncや`recorded`公開の失敗から復旧できるよう、
 次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。receipt自体に
-raw本文は含めません。question Deliveryが保留中は`role_read`、`role_release`、別のdispatch、`task_verify`を
-拒否し、successful completionもpublishできません。stopはquestionをcancellingへ進め、acknowledgeを
-偽装しません。provider、process group、socket、private rootのcleanupを確認できない場合はstateを保持します。
+raw本文は含めません。question Deliveryが保留中は、そのassignmentの`role_read`、`role_release`、
+別のdispatchを拒否し、そのassignmentのsuccessful completionもpublishできません。version 3/4のnative serial stateでは、
+questionが消費されるまでrun全体の次のdispatchも止まります。version 5のnative `program`/`parallel`では、
+Worker scopeが重ならず`max_active`内でadmissionを通る独立assignmentは継続できますが、
+`task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
+stopはquestionをcancellingへ進め、acknowledgeを偽装しません。provider、process group、socket、private rootのcleanupを
+確認できない場合はstateを保持します。
+
+version 5のnative `program`/`parallel` stateは、activeなnodeごとにresult、question、pending Deliveryのcontainerを保存します。
+完了Deliveryは`role_read` → `role_release` → `delivery_ack`の順で処理し、release後のassignmentも一致するackまでstateに残します。
+private Stopは`native.phase=stopping`を保存して安全なpeerを同じ順でdrainし、identity不明、typed result不足、cleanup未確認のnodeを保持したまま
+安全なpeerを続けます。この経路はfocused contract testとboundedな実端末・fake providerのcaseで確認していますが、
+実モデルのparallel受入は未実施です。
 
 実モデルを使ったtmuxのrun `dc101afd-87bf-4697-9bbb-0d1339d381a8`では、Fable・effort `high`を使い、Plannerを省略して質問応答を一巡させました。
 Mainの回答と受領確認後、同じWorkerのACPセッションが再開し、Reviewer承認、同一リビジョンの固定コマンド検証、Task完了、公開`stop`まで確認しています。

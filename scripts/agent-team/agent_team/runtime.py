@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import stat
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -29,6 +30,7 @@ ACP_PACKAGE: Final = "acpx@0.13.2"
 CLAUDE_ACP_PACKAGE: Final = "@agentclientprotocol/claude-agent-acp@0.70.0"
 STATE_VERSION: Final = 3
 NAMED_STATE_VERSION: Final = 4
+PARALLEL_STATE_VERSION: Final = 5
 MAX_STATE_BYTES: Final = 2_000_000
 MAX_PROMPT_CHARS: Final = 100_000
 MAX_PROMPT_BYTES: Final = 400_000
@@ -702,9 +704,10 @@ def _parse_named_graph(state: Mapping[str, object]) -> GraphSpec:
 def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
     """Resolve one exact state identity without converting v3 into v4.
 
-    Version 3 keeps the fixed ``Role`` namespace.  Version 4 stores a parsed
-    graph and returns its ``NodeRef`` so the node ID and its fixed kind remain
-    coupled at every caller boundary.
+    Version 3 keeps the fixed ``Role`` namespace.  Versions 4 and 5 store a
+    parsed graph and return its ``NodeRef`` so the node ID and its fixed kind
+    remain coupled at every caller boundary.  Version 5 is accepted only for
+    the explicit program/parallel graph; it is never projected into v4.
     """
 
     if not isinstance(state, Mapping) or not isinstance(node_id, str) or not node_id:
@@ -730,11 +733,20 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
                 "version-3 role spec is mixed with named state"
             )
         return role
-    if version != NAMED_STATE_VERSION:
+    if version not in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
         raise RuntimeValidationError("agent-team state has an unsupported version")
     if state.get("runtime") == "orca":
         raise RuntimeValidationError("version-4 Orca state is not supported")
     graph = _parse_named_graph(state)
+    if version == NAMED_STATE_VERSION and graph.coordination.dispatch_mode != "serial":
+        raise RuntimeValidationError("version-4 named state requires serial dispatch")
+    if version == PARALLEL_STATE_VERSION and (
+        graph.coordination.mode != "program"
+        or graph.coordination.dispatch_mode != "parallel"
+    ):
+        raise RuntimeValidationError(
+            "parallel state requires program parallel coordination"
+        )
     try:
         target = graph.node(node_id)
     except KeyError as exc:
@@ -838,6 +850,130 @@ def _validate_assignment_common(
         )
 
 
+_PARALLEL_ASSIGNMENT_IDENTITY_FIELDS: Final = (
+    "task_id",
+    "dispatch_id",
+    "terminal_handle",
+    "launch_nonce",
+    "session_name",
+    "prompt_path",
+    "provider_private_root",
+    "snapshot_root",
+    "question_socket",
+    "write_policy_path",
+)
+_PARALLEL_ASSIGNMENT_PROCESS_FIELDS: Final = (
+    "runner_pid",
+    "runner_process_group_id",
+)
+_PARALLEL_RESOURCE_PATH_FIELDS: Final = (
+    "provider_private_root",
+    "snapshot_root",
+    "prompt_path",
+    "question_socket",
+    "write_policy_path",
+)
+
+
+def _validate_parallel_assignment_ownership(
+    roles: Mapping[str, object],
+) -> None:
+    """Reject duplicate claims without inspecting or resolving filesystem paths."""
+
+    seen: dict[str, set[str | int]] = {
+        field: set()
+        for field in (
+            *_PARALLEL_ASSIGNMENT_IDENTITY_FIELDS,
+            *_PARALLEL_ASSIGNMENT_PROCESS_FIELDS,
+        )
+    }
+    for node_id, raw_assignment in roles.items():
+        if not isinstance(raw_assignment, Mapping):
+            continue
+        for field in _PARALLEL_ASSIGNMENT_IDENTITY_FIELDS:
+            value = raw_assignment.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value:
+                raise RuntimeValidationError(
+                    f"parallel assignment {node_id}.{field} is invalid"
+                )
+            if value in seen[field]:
+                raise RuntimeValidationError(
+                    f"parallel assignment {node_id}.{field} is already owned"
+                )
+            seen[field].add(value)
+        for field in _PARALLEL_ASSIGNMENT_PROCESS_FIELDS:
+            value = raw_assignment.get(field)
+            if value is None:
+                continue
+            if type(value) is not int or value <= 1:
+                raise RuntimeValidationError(
+                    f"parallel assignment {node_id}.{field} is invalid"
+                )
+            if value in seen[field]:
+                raise RuntimeValidationError(
+                    f"parallel assignment {node_id}.{field} is already owned"
+                )
+            seen[field].add(value)
+
+
+def _parallel_resource_path_parts(
+    value: object, *, node_id: str, field: str
+) -> tuple[str, ...]:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\0" in value
+        or not os.path.isabs(value)
+    ):
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id}.{field} path is invalid"
+        )
+    try:
+        canonical = Path(value).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id}.{field} path cannot be resolved"
+        ) from exc
+    normalized = unicodedata.normalize("NFC", str(canonical))
+    parts = tuple(part.casefold() for part in normalized.split("/") if part)
+    if not parts:
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id}.{field} path is invalid"
+        )
+    return parts
+
+
+def _parallel_resource_paths_overlap(
+    left: tuple[str, ...], right: tuple[str, ...]
+) -> bool:
+    shortest = min(len(left), len(right))
+    return left[:shortest] == right[:shortest]
+
+
+def _validate_parallel_resource_paths(roles: Mapping[str, object]) -> None:
+    claims: list[tuple[str, str, tuple[str, ...]]] = []
+    for node_id, raw_assignment in roles.items():
+        if not isinstance(raw_assignment, Mapping):
+            continue
+        for field in _PARALLEL_RESOURCE_PATH_FIELDS:
+            if field not in raw_assignment:
+                continue
+            parts = _parallel_resource_path_parts(
+                raw_assignment[field], node_id=node_id, field=field
+            )
+            for prior_node, prior_field, prior_parts in claims:
+                if prior_node != node_id and _parallel_resource_paths_overlap(
+                    prior_parts, parts
+                ):
+                    raise RuntimeValidationError(
+                        f"parallel assignment {node_id}.{field} resource overlaps "
+                        f"{prior_node}.{prior_field}"
+                    )
+            claims.append((node_id, field, parts))
+
+
 def _validate_background_assignment(
     role: str,
     spec: Mapping[str, object],
@@ -897,7 +1033,14 @@ def _validate_named_native_result(
     node_by_id: Mapping[str, NodeRef],
     role_specs: Mapping[str, object],
     roles: Mapping[str, object],
+    *,
+    delivery_container: Mapping[str, object] | None = None,
+    containing_node_id: str | None = None,
 ) -> None:
+    if (delivery_container is None) != (containing_node_id is None):
+        raise RuntimeValidationError(
+            "native result delivery container and node must be supplied together"
+        )
     if not isinstance(result, dict):
         raise RuntimeValidationError("named native result must be an object")
     required = {
@@ -924,6 +1067,10 @@ def _validate_named_native_result(
         return value
 
     result_role = result_string("role")
+    if containing_node_id is not None and result_role != containing_node_id:
+        raise RuntimeValidationError(
+            "named native result does not belong to its containing assignment"
+        )
     result_kind = result_string("role_kind")
     result_node = node_by_id.get(result_role)
     result_spec = role_specs.get(result_role)
@@ -967,7 +1114,9 @@ def _validate_named_native_result(
     if "task_evidence" in result and not isinstance(result["task_evidence"], Mapping):
         raise RuntimeValidationError("named native result task evidence is invalid")
 
-    assignment = roles.get(result_role)
+    assignment = (
+        delivery_container if delivery_container is not None else roles.get(result_role)
+    )
     if roles and not isinstance(assignment, Mapping):
         raise RuntimeValidationError(
             "named native result does not belong to the active assignment"
@@ -989,6 +1138,22 @@ def _validate_named_native_result(
             "named native result does not match its active assignment"
         )
 
+    task_spec = assignment.get("task_spec") if isinstance(assignment, Mapping) else None
+    task_spec_id = task_spec.get("task_id") if isinstance(task_spec, Mapping) else None
+    if (
+        delivery_container is not None
+        and isinstance(task_spec_id, str)
+        and (not isinstance(logical_task_id, str) or logical_task_id != task_spec_id)
+    ):
+        raise RuntimeValidationError(
+            "parallel native result TaskSpec identity is missing or changed"
+        )
+    if (
+        isinstance(task_spec_id, str)
+        and isinstance(logical_task_id, str)
+        and logical_task_id != task_spec_id
+    ):
+        raise RuntimeValidationError("named native result TaskSpec identity changed")
     if isinstance(logical_task_id, str):
         tasks = state.get("tasks")
         if not isinstance(tasks, Mapping):
@@ -1005,14 +1170,16 @@ def _validate_named_native_result(
                 "named native result TaskSpec identity changed"
             )
 
-    pending_id = state.get("pending_delivery_id")
+    delivery_owner = delivery_container if delivery_container is not None else state
+    pending_id = delivery_owner.get("pending_delivery_id")
     if pending_id is None and any(
-        field in state for field in ("pending_delivery_kind", "pending_delivery_stage")
+        field in delivery_owner
+        for field in ("pending_delivery_kind", "pending_delivery_stage")
     ):
         raise RuntimeValidationError("named native pending delivery is incomplete")
     if pending_id is not None:
-        pending_kind = state.get("pending_delivery_kind")
-        pending_stage = state.get("pending_delivery_stage")
+        pending_kind = delivery_owner.get("pending_delivery_kind")
+        pending_stage = delivery_owner.get("pending_delivery_stage")
         if not isinstance(pending_id, str) or not pending_id:
             raise RuntimeValidationError("named native pending delivery is invalid")
         if not isinstance(pending_kind, str) or pending_kind not in {
@@ -1030,18 +1197,84 @@ def _validate_named_native_result(
             raise RuntimeValidationError(
                 "named native result does not match its pending delivery"
             )
+        if (
+            pending_kind == "worker_done"
+            and pending_stage == "released"
+            and delivery_container is not None
+            and (
+                result.get("cleanup_confirmed") is not True
+                or not isinstance(assignment, Mapping)
+                or assignment.get("completion_observed") is not True
+            )
+        ):
+            raise RuntimeValidationError(
+                "released native result lacks cleanup or completion evidence"
+            )
+
+
+def _validate_parallel_delivery_container(
+    assignment: Mapping[str, object],
+    *,
+    node_id: str,
+) -> None:
+    if "native_result" in assignment and assignment["native_result"] is None:
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id} has a null native result"
+        )
+    pending_id = assignment.get("pending_delivery_id")
+    pending_fields = (
+        "pending_delivery_kind",
+        "pending_delivery_stage",
+        "pending_question_ids",
+        "replied_question_ids",
+    )
+    if pending_id is None and any(field in assignment for field in pending_fields):
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id} has incomplete pending delivery"
+        )
+    result = assignment.get("native_result")
+    if (
+        pending_id is not None
+        and result is None
+        and assignment.get("pending_delivery_kind") != "question"
+    ):
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id} pending completion has no result"
+        )
+    if (
+        assignment.get("pending_delivery_kind") == "worker_done"
+        and assignment.get("completion_observed") is not True
+    ):
+        raise RuntimeValidationError(
+            f"parallel assignment {node_id} pending completion is not observed"
+        )
+    if assignment.get("completion_observed") is True:
+        if result is None:
+            raise RuntimeValidationError(
+                f"parallel assignment {node_id} completion has no result"
+            )
+        if (
+            pending_id is None
+            or assignment.get("pending_delivery_kind") != "worker_done"
+            or assignment.get("pending_delivery_stage")
+            not in {"observed", "read", "released"}
+        ):
+            raise RuntimeValidationError(
+                f"parallel assignment {node_id} completion pending delivery is invalid"
+            )
 
 
 def _validate_named_state(path: Path, state: object) -> dict[str, object]:
     if not isinstance(state, dict):
         raise RuntimeValidationError("agent-team state must be an object")
-    if state.get("version") != NAMED_STATE_VERSION:
+    version = state.get("version")
+    if version not in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
         raise RuntimeValidationError(
             "agent-team state has an unsupported named version"
         )
     runtime = state.get("runtime")
     if not is_native_runtime(runtime):
-        raise RuntimeValidationError("version-4 state requires a native runtime")
+        raise RuntimeValidationError("named state requires a native runtime")
     if "worktree_id" in state or "orca_socket" in state:
         raise RuntimeValidationError("native state must not contain Orca metadata")
 
@@ -1069,6 +1302,15 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
         raise RuntimeValidationError("agent-team state path does not match its file")
 
     graph = _parse_named_graph(state)
+    if version == NAMED_STATE_VERSION and graph.coordination.dispatch_mode != "serial":
+        raise RuntimeValidationError("version-4 named state requires serial dispatch")
+    if version == PARALLEL_STATE_VERSION and (
+        graph.coordination.mode != "program"
+        or graph.coordination.dispatch_mode != "parallel"
+    ):
+        raise RuntimeValidationError(
+            "version-5 state requires program parallel coordination"
+        )
     node_by_id = {node.node_id: node for node in graph.nodes}
     role_specs = state["role_specs"]
     assert isinstance(role_specs, dict)
@@ -1118,31 +1360,75 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
             assignment_spec,
             assignment,
         )
+    if version == PARALLEL_STATE_VERSION:
+        if len(roles) > graph.coordination.max_active:
+            raise RuntimeValidationError(
+                "parallel assignments exceed coordination.max_active"
+            )
+        _validate_parallel_assignment_ownership(roles)
+        _validate_parallel_resource_paths(roles)
 
     try:
         validate_saved_tasks(state)
     except (ValueError, RuntimeFailure) as exc:
         raise RuntimeValidationError(str(exc)) from exc
 
-    native_result = state.get("native_result")
-    pending_id = state.get("pending_delivery_id")
-    pending_fields = ("pending_delivery_kind", "pending_delivery_stage")
-    if pending_id is None and any(field in state for field in pending_fields):
-        raise RuntimeValidationError("named native pending delivery is incomplete")
-    if (
-        pending_id is not None
-        and native_result is None
-        and state.get("pending_delivery_kind") != "question"
-    ):
-        raise RuntimeValidationError("named native pending completion has no result")
-    if "native_result" in state:
-        _validate_named_native_result(
-            state,
-            native_result,
-            node_by_id,
-            role_specs,
-            roles,
-        )
+    if version == PARALLEL_STATE_VERSION:
+        delivery_ids: set[str] = set()
+        for node_id, assignment in roles.items():
+            _validate_parallel_delivery_container(assignment, node_id=node_id)
+            result = assignment.get("native_result")
+            if result is not None:
+                _validate_named_native_result(
+                    state,
+                    result,
+                    node_by_id,
+                    role_specs,
+                    roles,
+                    delivery_container=assignment,
+                    containing_node_id=node_id,
+                )
+                if isinstance(result, Mapping) and isinstance(
+                    result.get("delivery_id"), str
+                ):
+                    delivery_id = result["delivery_id"]
+                    if delivery_id in delivery_ids:
+                        raise RuntimeValidationError(
+                            "parallel native delivery identity was reused"
+                        )
+                    delivery_ids.add(delivery_id)
+            question = assignment.get("native_question")
+            if isinstance(question, Mapping) and isinstance(
+                question.get("delivery_id"), str
+            ):
+                delivery_id = question["delivery_id"]
+                if delivery_id in delivery_ids:
+                    raise RuntimeValidationError(
+                        "parallel native delivery identity was reused"
+                    )
+                delivery_ids.add(delivery_id)
+    else:
+        native_result = state.get("native_result")
+        pending_id = state.get("pending_delivery_id")
+        pending_fields = ("pending_delivery_kind", "pending_delivery_stage")
+        if pending_id is None and any(field in state for field in pending_fields):
+            raise RuntimeValidationError("named native pending delivery is incomplete")
+        if (
+            pending_id is not None
+            and native_result is None
+            and state.get("pending_delivery_kind") != "question"
+        ):
+            raise RuntimeValidationError(
+                "named native pending completion has no result"
+            )
+        if "native_result" in state:
+            _validate_named_native_result(
+                state,
+                native_result,
+                node_by_id,
+                role_specs,
+                roles,
+            )
 
     from .native_questions import validate_state as validate_questions
 
@@ -1154,7 +1440,10 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
 
 
 def validate_state_object(path: Path, state: object) -> dict[str, object]:
-    if isinstance(state, dict) and state.get("version") == NAMED_STATE_VERSION:
+    if isinstance(state, dict) and state.get("version") in {
+        NAMED_STATE_VERSION,
+        PARALLEL_STATE_VERSION,
+    }:
         return _validate_named_state(path, state)
     return _validate_state_v3(path, state)
 
@@ -1409,40 +1698,51 @@ def write_state(
 
 def read_state(path: Path) -> dict[str, object]:
     path = _absolute(path)
-    try:
-        file_stat = path.lstat()
-    except OSError as exc:
-        raise RuntimeValidationError(f"agent-team is not running: {path}") from exc
-    if stat.S_ISLNK(file_stat.st_mode):
-        raise RuntimeValidationError(f"agent-team state must not be a symlink: {path}")
-    if not stat.S_ISREG(file_stat.st_mode):
-        raise RuntimeValidationError(f"agent-team state must be a regular file: {path}")
-    if file_stat.st_uid != os.getuid():
-        raise RuntimeValidationError(
-            f"agent-team state owner is not the current user: {path}"
-        )
-    if stat.S_IMODE(file_stat.st_mode) != 0o600:
-        raise RuntimeValidationError(f"agent-team state must have mode 0600: {path}")
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd: int | None = None
-    try:
-        fd = os.open(path, flags)
-        opened_stat = os.fstat(fd)
-        if (
-            opened_stat.st_dev != file_stat.st_dev
-            or opened_stat.st_ino != file_stat.st_ino
-        ):
-            raise RuntimeValidationError("agent-team state changed during open")
-        payload = _read_bounded_fd(fd, MAX_STATE_BYTES)
-    except OSError as exc:
-        raise RuntimeValidationError(
-            f"agent-team state is unavailable: {path}"
-        ) from exc
-    finally:
-        if fd is not None:
-            os.close(fd)
+    # Atomic publication can replace the inode between lstat and open.
+    for attempt in range(3):
+        try:
+            file_stat = path.lstat()
+        except OSError as exc:
+            raise RuntimeValidationError(f"agent-team is not running: {path}") from exc
+        if stat.S_ISLNK(file_stat.st_mode):
+            raise RuntimeValidationError(
+                f"agent-team state must not be a symlink: {path}"
+            )
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise RuntimeValidationError(
+                f"agent-team state must be a regular file: {path}"
+            )
+        if file_stat.st_uid != os.getuid():
+            raise RuntimeValidationError(
+                f"agent-team state owner is not the current user: {path}"
+            )
+        if stat.S_IMODE(file_stat.st_mode) != 0o600:
+            raise RuntimeValidationError(
+                f"agent-team state must have mode 0600: {path}"
+            )
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd: int | None = None
+        try:
+            fd = os.open(path, flags)
+            opened_stat = os.fstat(fd)
+            if (
+                opened_stat.st_dev != file_stat.st_dev
+                or opened_stat.st_ino != file_stat.st_ino
+            ):
+                if attempt < 2:
+                    continue
+                raise RuntimeValidationError("agent-team state changed during open")
+            payload = _read_bounded_fd(fd, MAX_STATE_BYTES)
+        except OSError as exc:
+            raise RuntimeValidationError(
+                f"agent-team state is unavailable: {path}"
+            ) from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+        break
     try:
         state = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

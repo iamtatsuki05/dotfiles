@@ -104,6 +104,7 @@ from .registry import (
 from .runtime import (
     MAX_RESULT_BODY_CHARS,
     NAMED_STATE_VERSION,
+    PARALLEL_STATE_VERSION,
     RuntimeValidationError,
     acp_environment,
     build_acp_agent_command,
@@ -434,7 +435,7 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
 
     raw_specs = state.get("role_specs")
     named_graph: GraphSpec | None = None
-    if state.get("version") == NAMED_STATE_VERSION:
+    if state.get("version") in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
         if runtime == "orca" or not isinstance(state.get("graph"), Mapping):
             raise ConfigError("named saved state requires a native graph")
         try:
@@ -1098,10 +1099,10 @@ def nested_string(
 def _state_role_target(
     state: Mapping[str, object], role: str | RoleTarget
 ) -> RoleTarget | str:
-    """Resolve a runner role against a validated version-3/version-4 state."""
+    """Resolve a runner role against its validated native state version."""
 
     version = state.get("version")
-    if version not in {3, NAMED_STATE_VERSION}:
+    if version not in {3, NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
         raise ConfigError("ACP role identity requires a supported saved state")
     if isinstance(role, (Role, NodeRef)):
         node_id = role_id(role)
@@ -2069,7 +2070,11 @@ def _acp_run_turn(
                     raise ValueError(
                         "native question session does not match the final ACP receipt"
                     )
-                question = current.get("native_question")
+                from .native_delivery import container
+
+                question = container(current, _role_id_string(selected_role)).get(
+                    "native_question"
+                )
                 if isinstance(question, dict):
                     if (
                         cast(dict[str, object], question["request"])["session_id"]
@@ -2733,8 +2738,11 @@ def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
         raise ConfigError(
             f"launch plan contains an invalid named graph: {exc}"
         ) from exc
-    if graph.coordination.dispatch_mode != "serial":
-        raise ConfigError("native named execution currently requires serial dispatch")
+    if (
+        graph.coordination.dispatch_mode == "parallel"
+        and graph.coordination.mode != "program"
+    ):
+        raise ConfigError("parallel native execution requires program coordination")
 
 
 def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
@@ -3263,7 +3271,7 @@ def _mcp_tools() -> list[dict[str, object]]:
     if not raw_path:
         return tools()
     state = read_state(Path(raw_path))
-    if state.get("version") != NAMED_STATE_VERSION:
+    if state.get("version") not in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
         return tools()
     raw_graph = state.get("graph")
     if not isinstance(raw_graph, Mapping):

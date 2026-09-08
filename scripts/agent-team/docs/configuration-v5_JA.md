@@ -3,13 +3,17 @@
 [English](configuration-v5.md) · [設定](configuration_JA.md) · [アーキテクチャ](architecture_JA.md)
 
 Version 5では、各nodeにID、役割の種類、個別の設定を持たせ、TaskSpecの工程ごとに担当者を指定します。
-nativeの`agent`/`serial`と`program`/`serial`構成を実行できます。program構成にはMain roleを置きません。
-選択したnative terminal上で既存の`native_main` supervisorが、固定argvの`_program-run` coordinatorを監督します。
-専用のMain role spec、model、CLIは作りません。並列実行と名前付きOrca構成は引き続き拒否しますが、graphの検証・描画はできます。
+nativeの`agent`/`serial`、`program`/`serial`、`program`/`parallel`構成を実行できます。
+program構成にはMain roleを置きません。選択したnative terminal上で既存の`native_main` supervisorが、
+固定argvの`_program-run` coordinatorを監督します。専用のMain role spec、model、CLIは作りません。
+native `program`/`parallel`はversion 5のstateとnodeごとのDelivery recordを使います。
+Main-agentのparallelと名前付きOrca構成は引き続き拒否します。実装にはfocused contract testとboundedな
+実端末・fake providerのcoverageがあります。実モデルのparallel受入は未実施です。
 
 同梱のversion 3設定は、Main/PlannerにClaude `fable`、Worker/Reviewerにdirect Codex
 `gpt-6-astra`を使うままです。このページの例では、全nodeにClaudeを明示指定します。
-実モデルで確認した範囲と限界は、[アーキテクチャ](architecture_JA.md)を参照してください。
+実端末・模擬providerの検証と実モデルの検証それぞれの範囲と限界は、
+[アーキテクチャ](architecture_JA.md)を参照してください。
 
 ## nodeとgraphのfieldを指定する
 
@@ -24,7 +28,8 @@ nativeの`agent`/`serial`と`program`/`serial`構成を実行できます。prog
 
 team IDは`[a-z][a-z0-9-]{0,23}`、node IDは`[a-z][a-z0-9-]{0,63}`に一致させます。
 nameとlabelは空でない表示可能な文字列で、128文字以内です。`max_review_rounds`と`max_active`は
-正の整数で、順次実行では`max_active = 1`にします。booleanを整数としては受け付けません。
+正の整数で、順次実行では`max_active = 1`にします。parallelのprogram実行では正の`max_active`を上限にします。
+booleanを整数としては受け付けません。
 未知のfieldも拒否します。promptのpathはconfigのあるdirectoryから解決し、その内側の既存ファイルを指定します。
 
 agent構成にはMainを1つだけ置き、Mainだけを開始点にします。program構成にはMainを置かず、
@@ -186,8 +191,27 @@ max_active = 1
 
 この構成はgraphの検証を通り、前提条件を満たしたnative terminalで起動できます。coordinatorは宣言したTaskSpecの
 順序と依存関係からserialのintegration waveを作ります。wave内の全writerが終了し、同じrevisionのReviewerがすべて承認し、
-宣言済みfixed argvの検証が完了してから次のwaveへ進みます。`dispatch_mode`を`parallel`にし、正の`max_active`を指定したgraphも
-検証できますが、並列起動は依存関係の確認や資源作成より前に拒否します。
+宣言済みfixed argvの検証が完了してから次のwaveへ進みます。parallelのprogram構成は、次のcoordination tableを使います。
+
+## Mainなしのparallel programを実行する
+
+上のserial例で、WorkerからReviewerへのedge、TaskSpec、routeを残したまま、coordinationを次のようにします。
+
+```toml
+[teams.all-claude.coordination]
+mode = "program"
+entry_nodes = ["worker-a", "worker-b"]
+dispatch_mode = "parallel"
+max_active = 2
+```
+
+native coordinatorは`max_active`まで独立したassignmentを受け付けます。nodeが使用中、上限到達中、
+またはWorkerの`allowed_paths`がactive Workerのscopeと重なる場合はadmissionを拒否します。
+pending user questionは自分のassignmentだけを止め、条件を満たす独立candidateは継続できます。
+`task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
+version 5 stateはassignmentごとにresult、question、Delivery stageを保持します。canonical waveは全writer完了後にsealし、
+同じ統合revisionをreviewし、宣言したfixed argvを検証してから次のwaveへ進みます。focused contract testとboundedな
+実端末・fake providerのcaseでこの経路を確認していますが、実モデルのparallel受入は実施していません。
 
 coordinatorは既存のnative supervisorを使い、Main modelを追加しません。確認が必要な場合は`--coordinator`でterminalへattachします。
 
@@ -234,8 +258,9 @@ agent-team start --config /path/to/config-v5.toml \
 
 `teams`は読み込んだ全teamを表示します。`validate`は`--team`を省略すると全teamを検証します。
 `graph`とversion 5の`start`には`--team`が必須で、別名や大文字・小文字の変換をせず完全一致で選びます。
-graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serialまたはprogram/serial構成は、起動条件を満たした後で
-`--dry-run`を外すと起動します。並列・名前付きOrca構成の起動は、依存関係の確認や資源作成より前に拒否します。
+graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serial、program/serial、
+program/parallel構成は、起動条件を満たした後で`--dry-run`を外すと起動します。agent/parallelと名前付きOrca構成の起動は、
+依存関係の確認や資源作成より前に拒否します。
 検査コマンドはproviderを起動しません。
 
 ## 保存済みの識別情報で管理する
@@ -248,6 +273,7 @@ stateは`$XDG_STATE_HOME/agent-team/<derived-team-id>/state.json`に保存し、
 既定の保存先は`~/.local/state/agent-team/`です。`status`、`attach`、`stop`に`--state`を渡すと、
 configを再読込せず、その保存済みrunを管理できます。
 
-configはversion 5、名前付きnative stateはversion 4です。`role_specs`は全nodeを、
-`roles`は実行中のassignmentだけを保持します。従来の固定role stateは変換しません。
+configはversion 5、名前付きnativeのserial stateはversion 4、program/parallel stateはversion 5です。
+`role_specs`は全nodeを、`roles`は実行中のassignmentとnodeごとのDelivery stateを保持します。
+従来の固定role stateは変換しません。
 識別子の照合、質問、完了通知、レビュー、検証、後始末の契約は、[アーキテクチャ](architecture_JA.md)を参照してください。

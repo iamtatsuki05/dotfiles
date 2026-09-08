@@ -8,10 +8,15 @@ without changing ordinary `claude` or `codex` sessions. The bundled
 Orca owning Task, message, terminal, and lifecycle coordination. The experimental
 Native runtimes `tmux`, `herdr`, and `zellij` use direct Claude Main in
 agent teams, or a program coordinator without a Main model in version-5
-`program`/`serial` teams. Both use the selected Claude ACP Planner, Worker,
+`program`/`serial` and `program`/`parallel` teams. Both use the selected Claude ACP Planner, Worker,
 and Reviewer roles. Native
 Worker assignments require a config-declared TaskSpec and use the scoped Claude
-ACP policy; only the terminal driver changes.
+ACP policy; only the terminal driver changes. Native `program`/`parallel` admits
+independent assignments up to `max_active` and stores delivery state per node.
+Main-agent parallel and named Orca parallel execution remain rejected. The
+implementation and focused contract checks are available. Bounded
+real-terminal/fake-provider coverage is recorded in Architecture; real-model
+parallel acceptance is pending.
 Native Claude ACP assignments also have a bounded `AskUserQuestion` path over
 the existing ACP form elicitation, using the same Task/Dispatch and a private
 question socket. The contract and current evidence are documented in
@@ -31,7 +36,7 @@ linked reference documents when changing the implementation or configuration.
   [Version-4 configuration](docs/configuration-v4.md)
   describes named team selection, graph inspection, and launch configuration links.
   [Version-5 configuration](docs/configuration-v5.md) connects exact node IDs,
-  node-local settings, and task routes to native serial execution.
+  node-local settings, task routes, and native serial/parallel program execution.
 - [Harness support matrix](docs/support-matrix.md) separates recognized,
   available, runnable, and rejected harnesses.
 - [ACP boundary](docs/acp.md) explains adapter pins, authentication, and why
@@ -66,22 +71,28 @@ scope, Bash or external-tool policy, and it does not enable question handling
 for Codex. The previous fully verified `0b3e5bc` milestone remains historical.
 The bounded tmux acceptance and the cooperative test status are recorded in
 [Architecture](docs/architecture.md). Version-5 native `program`/`serial`
-coordination is now connected without a Main role, but its real-model trial
-stopped at a provider usage limit before implementation, review, and
-verification. Parallel, all-harness, Codex-auth, and shared Orca/native
-progression requirements remain separate evidence gates.
+coordination is connected without a Main role, and native
+`program`/`parallel` has implementation, focused contract coverage, and bounded
+real-terminal/fake-provider acceptance.
+The existing real-model serial trial stopped at a provider usage limit before
+implementation, review, and verification. Real-model parallel acceptance,
+all-harness, Codex-auth, and shared Orca/native progression requirements remain
+separate evidence gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
 routes in native `agent`/`serial` teams, and it connects native
-`program`/`serial` teams that have no Main role. A real tmux run completed two
-TaskSpecs through four distinct assignments, including questions, review,
-fixed-argv verification at one integrated revision, and public stop. The
-default profiles above remain unchanged; this acceptance selected Claude Fable
-explicitly for all five nodes. Parallel execution and named Orca execution
-remain unavailable at runtime. Named-native Reviewer consultation answers are
-available through a bounded opaque ID. Resuming requires the original writer
-and another review within the round limit; reaching the limit keeps the task
-unresolved even after an answer is saved.
+`program`/`serial` and `program`/`parallel` teams that have no Main role.
+A real tmux run completed two TaskSpecs through four distinct assignments,
+including questions, review, fixed-argv verification at one integrated
+revision, and public stop. The default profiles above remain unchanged; this
+acceptance selected Claude Fable explicitly for all five nodes. The native
+parallel path has focused contract coverage and bounded terminal/fake-provider
+acceptance, but this real run was native agent/serial acceptance. Real-model
+parallel acceptance remains pending. Main-agent parallel and named Orca execution remain unavailable
+at runtime. Named-native Reviewer consultation answers are available through a
+bounded opaque ID. Resuming requires the original writer and another review
+within the round limit; reaching the limit keeps the task unresolved even after
+an answer is saved.
 
 ## Run from a checkout or install the project
 
@@ -457,11 +468,16 @@ session resumes. Retrying the same ID with the same body is idempotent;
 different text is rejected. A batch has one to four questions, each question or
 answer is at most 20,000 characters, each frame is at most 512 KiB, and one
 assignment accepts at most 64 batches. While the question Delivery is pending,
-`role_read`, `role_release`, another dispatch, and `task_verify` are rejected;
-successful completion is rejected until the question is consumed. Stopping
-there marks explicit cancellation and retains state when provider, process
-group, socket, or private cleanup is unproven. In a named native `agent` or
-`program` team, Reviewer `consult` exposes an opaque consultation ID in
+that assignment's `role_read`, `role_release`, and another dispatch for that
+assignment are rejected; its successful completion is rejected until the
+question is consumed. In version-3/4 native serial state, the pending question
+also blocks the next dispatch for the run. In version-5 native
+`program`/`parallel`, independent assignments may continue when they fit
+`max_active` and do not overlap Worker write scopes, but `task_verify` remains
+run-global blocked until every active assignment and Delivery is drained.
+Stopping there marks explicit cancellation and retains state when
+provider, process group, socket, or private cleanup is unproven. In a named
+native `agent` or `program` team, Reviewer `consult` exposes an opaque consultation ID in
 `status`; `answer --consultation-id ID --body ...` saves the bounded answer.
 If review rounds remain, the original writer must run again before another
 review. At the limit, the answer is saved but redispatch stays blocked. The
@@ -506,6 +522,13 @@ cleanup result requires user consultation and remains retained.
   The lifecycle order remains `role_read` → `role_release` → `delivery_ack`.
   Native `last_ack` stores one receipt marker and does not mean that a Task or
   the user's overall goal is complete.
+- Version-5 native `program`/`parallel` state keeps a result, question, and
+  pending Delivery container for each active node. `max_active`, exact node
+  identity, and non-overlapping Worker write scopes control admission. A pending
+  user question blocks its own assignment but does not block an independent
+  admitted peer. Public `stop` sets `native.phase=stopping` and privately
+  drains safe peers in Read → Release → Ack order; unknown identity, missing
+  typed results, or unproven cleanup retain that node while safe peers continue.
 - Native Claude questions use the existing `AskUserQuestion` form elicitation
   through the pinned ACP 0.70.0 / SDK 1.3.0 path. Consumed receipts retain
   identities and hashes. The protected outbox may retain raw question and

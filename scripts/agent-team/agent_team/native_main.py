@@ -19,7 +19,12 @@ from .contracts import RuntimeFailure
 from .locking import _LifecycleReservation
 from .native_controller import ControllerKeys, controller_keys
 from .native_terminal import is_native_runtime
-from .runtime import NAMED_STATE_VERSION, STATE_VERSION, RuntimeValidationError
+from .runtime import (
+    NAMED_STATE_VERSION,
+    PARALLEL_STATE_VERSION,
+    STATE_VERSION,
+    RuntimeValidationError,
+)
 from .runtime import read_state as runtime_read_state
 from .runtime import write_state as runtime_write_state
 
@@ -51,7 +56,11 @@ def _required_text(value: object, context: str) -> str:
 
 
 def _run_id(state: dict[str, object], expected: str) -> None:
-    if state.get("version") not in {STATE_VERSION, NAMED_STATE_VERSION}:
+    if state.get("version") not in {
+        STATE_VERSION,
+        NAMED_STATE_VERSION,
+        PARALLEL_STATE_VERSION,
+    }:
         raise NativeMainError("agent-team native Main state version is unsupported")
     try:
         controller_keys(state)

@@ -244,7 +244,7 @@ def _result_body(record: Mapping[str, object]) -> str:
 def _named_state(state: Mapping[str, object]) -> bool:
     """Return whether ``state`` uses the explicit named-graph contract."""
 
-    return state.get("version") == 4
+    return state.get("version") in {4, 5}
 
 
 def _legacy_role(target: object) -> Role:
@@ -257,7 +257,7 @@ def _legacy_role(target: object) -> Role:
 def _named_context(
     state: Mapping[str, object],
 ) -> tuple[GraphSpec, tuple[TaskSpec, ...]]:
-    """Load and cross-check a version-4 graph and its TaskSpec catalog.
+    """Load and cross-check a named graph and its TaskSpec catalog.
 
     Legacy state3 callers bypass this path and retain the fixed Role-only
     contract.
@@ -282,10 +282,19 @@ def _named_context(
             ErrorCode.IDENTITY_MISMATCH,
             "saved named graph or TaskSpec catalog is invalid",
         ) from exc
-    if graph.coordination.dispatch_mode != "serial":
+    if state.get("version") == 4 and graph.coordination.dispatch_mode != "serial":
         _fail(
             ErrorCode.INVALID_REQUEST,
             "named TaskSpec routing currently requires serial dispatch",
+        )
+
+    if state.get("version") == 5 and (
+        graph.coordination.mode != "program"
+        or graph.coordination.dispatch_mode != "parallel"
+    ):
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "parallel TaskSpec state requires program parallel coordination",
         )
 
     node_ids = {node.node_id for node in graph.nodes}

@@ -6,9 +6,12 @@
 プロジェクト単位のチームを起動します。既定の`runtime = "orca"`では、
 Planner → Worker → Reviewerの流れと、Task・メッセージ・端末・実行状態をOrcaが管理します。
 native runtimeの`tmux`、`herdr`、`zellij`では、agent teamはdirect Claude Main、version 5の
-`program`/`serial`はMain modelを置かないprogram coordinatorを使います。どちらも設定したClaude ACPの
-Planner、Worker、Reviewerを動かします。native Workerはconfigに宣言したTaskSpecとscoped
-Claude ACP policyを使い、terminal driverだけがruntimeごとに変わります。
+`program`/`serial`と`program`/`parallel`はMain modelを置かないprogram coordinatorを使います。
+どちらも設定したClaude ACPのPlanner、Worker、Reviewerを動かします。native Workerはconfigに宣言した
+TaskSpecとscoped Claude ACP policyを使い、terminal driverだけがruntimeごとに変わります。
+native `program`/`parallel`は`max_active`まで独立したassignmentを受け付け、nodeごとにDelivery stateを保存します。
+Main-agentのparallelと名前付きOrcaのparallelは引き続き拒否します。実装とfocused contract testに加え、
+boundedな実端末・fake providerのcoverageがあります。実モデルのparallel受入は未実施です。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
@@ -26,7 +29,7 @@ HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契
   対応するprovider/transportの組み合わせを説明します。[Version 4の設定](docs/configuration-v4_JA.md)
   では、team名による選択、graphの確認、起動設定への参照を説明します。
   [Version 5の設定](docs/configuration-v5_JA.md)では、node ID、nodeごとの設定、
-  taskの担当を指定してnativeで順次実行する方法を説明します。
+  taskの担当、nativeのserial/parallel program実行を説明します。
 - [Harness対応matrix](docs/support-matrix_JA.md)は、認識済み・利用可能・実行可能・
   拒否を区別します。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
@@ -54,14 +57,18 @@ Task、Dispatch、processに影響する前に拒否します。
 nativeの質問応答は、選択したClaude ACP assignment内の追加通信です。roleのpermission、
 TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質問応答も有効にしません。
 完全検証済みの`0b3e5bc` milestoneは過去の証拠です。tmuxのbounded acceptanceと協調的な検証状況は
-[アーキテクチャ](docs/architecture_JA.md)に記載します。version 5のnative `program`/`serial`はMainなしで接続していますが、
-実モデル試験は実装・review・検証の前にprovider利用上限で停止しました。並列実行、全harness、Codex認証、
-Orcaとnativeに共通する進行管理は別の実証gateとして残ります。
+[アーキテクチャ](docs/architecture_JA.md)に記載します。version 5のnative `program`/`serial`はMainなしで接続し、
+native `program`/`parallel`にも実装、focused contract test、boundedな実端末・fake providerのcoverageがあります。
+serialの実モデル試験は実装・review・検証の前にprovider利用上限で停止しました。実モデルのparallel受入、全harness、
+Codex認証、Orcaとnativeに共通する進行管理は別の実証gateとして残ります。
 
 Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
-nativeの`agent`/`serial`に加えて、Main roleを置かない`program`/`serial`も接続しています。実モデルのtmux試験では、
-4件の独立したassignmentで2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
-既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。並列実行と名前付きOrca構成は実行時に利用できません。
+nativeの`agent`/`serial`に加えて、Main roleを置かない`program`/`serial`と
+`program`/`parallel`も接続しています。実モデルのtmux試験では、4件の独立したassignmentで
+2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
+既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。この実モデルrunはnativeのagent/serial受入です。
+native parallelにはfocused contract testとboundedな端末coverageがありますが、実モデルのparallel受入は未実施です。
+Main-agentのparallelと名前付きOrca構成は実行時に利用できません。
 名前付きnativeのReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
 回数上限に達している場合は、回答を保存してもtaskは未解決のままです。
 
@@ -394,8 +401,11 @@ task_dispatch（PlannerまたはWorker）
 その後に`delivery_ack`を呼びます。回答を先に保存し、assignmentのprivateな`q.sock`へ送り、Nodeの
 `received`、Pythonのdurableな消費記録、`recorded`の順に確認してから同じACP sessionを再開します。
 同じIDと同じ本文の再送はidempotentですが、異なる本文は拒否します。1 batchは1〜4問、各question/answerは
-20,000文字以内、frameは512 KiB以内、1 assignmentは最大64 batchです。question Deliveryが保留中は
-`role_read`、`role_release`、別dispatch、`task_verify`を拒否し、消費前のsuccessful completionも拒否します。
+20,000文字以内、frameは512 KiB以内、1 assignmentは最大64 batchです。question Deliveryが保留中は、
+そのassignmentの`role_read`、`role_release`、別dispatchを拒否し、そのassignmentのsuccessful completionも拒否します。
+version 3/4のnative serial stateでは、questionが消費されるまでrun全体の次のdispatchも止まります。
+version 5のnative `program`/`parallel`では、`max_active`内でWorkerのwrite scopeが重ならない独立assignmentを
+継続できますが、`task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
 その間にstopした場合は明示的なcancellationとして扱い、provider、process group、socket、private cleanupが
 不明ならstateを保持します。名前付きnativeの`agent`または`program`でReviewerが`consult`を返すと、`status`にopaqueな相談IDを表示し、
 `answer --consultation-id ID --body ...`でboundedな回答を保存します。review roundが残っていれば、元のwriterを再実行してからreviewをやり直します。
@@ -429,6 +439,11 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
 - native ACPの完了はterminal paneの文字列ではなく`publish_completion`で通知します。lifecycleの
   順序は`role_read` → `role_release` → `delivery_ack`です。nativeの`last_ack`は1つのreceipt
   markerを記録するだけで、Taskやユーザーのgoal全体の完了を意味しません。
+- version 5のnative `program`/`parallel` stateは、activeなnodeごとにresult、question、
+  pending Deliveryのcontainerを持ちます。`max_active`、正確なnode identity、重ならないWorker write scopeで
+  admissionを判定します。pending questionは自分のassignmentだけを止め、条件を満たす独立peerは継続できます。
+  public `stop`は`native.phase=stopping`を保存し、安全なpeerをRead → Release → Ackの順でprivateにdrainします。
+  identity不明、typed result不足、cleanup未確認のnodeは保持したまま、安全なpeerの処理を続けます。
 - native Claudeのquestionは、pinned ACP 0.70.0 / SDK 1.3.0の既存`AskUserQuestion` form elicitationを
   使います。消費済みreceiptにはidentityとhashだけを残します。protected outboxには、公開失敗から
   復旧できるよう、次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。

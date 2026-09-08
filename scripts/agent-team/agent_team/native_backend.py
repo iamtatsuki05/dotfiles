@@ -27,7 +27,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Final, Generic, NoReturn, cast
 
-from . import native_acp_dependencies, native_questions
+from . import native_acp_dependencies, native_delivery, native_questions
 from .adapters import (
     ExecutionError,
     _process_group_exited,
@@ -86,7 +86,7 @@ from .contracts import (
 )
 from .harness_launch import LaunchValidationError, build_claude_argv
 from .locking import _LifecycleReservation
-from .named_graph import validate_graph
+from .named_graph import GraphSpec, validate_graph
 from .native_controller import controller_keys
 from .native_question_channel import validate_question_request
 from .native_terminal import (
@@ -96,11 +96,13 @@ from .native_terminal import (
     ReceiptT,
     is_native_runtime,
 )
+from .parallel_admission import admission_blocker
 from .process_identity import python_process_argv, read_process_argv
 from .runtime import (
     MAX_PROMPT_CHARS,
     MAX_RESULT_BODY_CHARS,
     NAMED_STATE_VERSION,
+    PARALLEL_STATE_VERSION,
     RuntimeValidationError,
     StatePublishError,
     acp_environment,
@@ -382,10 +384,13 @@ def _validate_profile(
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "node specs must match the selected graph"
             )
-        if spec.graph.coordination.dispatch_mode != "serial":
+        if (
+            spec.graph.coordination.dispatch_mode == "parallel"
+            and spec.graph.coordination.mode != "program"
+        ):
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
-                "native named execution currently requires serial dispatch",
+                "parallel native execution requires program coordination",
             )
         main = spec.graph.main_node
         if spec.graph.coordination.mode == "program" and not spec.task_specs:
@@ -1085,6 +1090,53 @@ def _publisher_assignment(
     return assignment
 
 
+def _delivery_state(
+    state: Mapping[str, object], node_id: str | None = None
+) -> dict[str, object]:
+    if state.get("version") == PARALLEL_STATE_VERSION:
+        if not isinstance(node_id, str):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "parallel delivery requires a node identity",
+            )
+        try:
+            target = resolve_state_role(state, node_id)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH, "native node is not selected"
+            ) from exc
+        _assignment(state, target)
+    return _required_mapping(native_delivery.container(state, node_id), "delivery")
+
+
+def _delivery_for_id(
+    state: Mapping[str, object], identity: str, *, message: bool = False
+) -> tuple[str | None, dict[str, object]]:
+    matches = [
+        (node, _required_mapping(value, "delivery"))
+        for node, value in native_delivery.containers(state)
+        if (
+            identity in cast(list[str], value.get(PENDING_QUESTION_IDS, []))
+            if message
+            else value.get(PENDING_DELIVERY_ID) == identity
+        )
+    ]
+    if len(matches) != 1:
+        raise RuntimeFailure(
+            ErrorCode.MESSAGE_OR_DELIVERY_UNKNOWN,
+            "identity does not match one native pending observation",
+        )
+    return matches[0]
+
+
+def _state_version(spec: StartSpec) -> int:
+    if spec.graph is None:
+        return 3
+    if spec.graph.coordination.dispatch_mode == "parallel":
+        return PARALLEL_STATE_VERSION
+    return NAMED_STATE_VERSION
+
+
 def publish_completion(
     state_path: Path,
     *,
@@ -1131,16 +1183,20 @@ def publish_completion(
         if _native(state)["phase"] == "stopping":
             outcome = "failed"
             task_evidence = None
-        question = native_questions.outbox(state)
+        delivery = _delivery_state(state, role)
+        question = native_questions.outbox(state, role)
         if question is not None:
             if question["phase"] == "recorded" and cleanup_confirmed:
-                state.pop("native_question")
+                delivery.pop("native_question")
             elif outcome == "succeeded":
                 raise RuntimeFailure(
                     ErrorCode.ORDER_VIOLATION,
                     "native question must be answered, acknowledged, and received before completion",
                 )
-            else:
+            elif not (
+                state["version"] == PARALLEL_STATE_VERSION
+                and question["phase"] == "failed"
+            ):
                 stopping = _native(state)["phase"] == "stopping"
                 question["phase"] = "cancelling" if stopping else "failed"
                 question["error"] = (
@@ -1191,7 +1247,7 @@ def publish_completion(
                 ErrorCode.INVALID_REQUEST,
                 "task evidence requires a successful structured review",
             )
-        existing = state.get("native_result")
+        existing = delivery.get("native_result")
         if existing is not None:
             existing_fields = _native_result_fields(
                 existing,
@@ -1211,7 +1267,7 @@ def publish_completion(
                     "native completion was already published",
                 )
             return outcome
-        state["native_result"] = {
+        delivery["native_result"] = {
             "role": role,
             **_named_identity(state, role),
             "run_id": run_id,
@@ -1263,7 +1319,7 @@ def _read_question_state(
     path: Path, identity: Mapping[str, str]
 ) -> tuple[dict[str, object], dict[str, object]]:
     state = _read_state(_absolute(path))
-    named = state["version"] == NAMED_STATE_VERSION
+    named = state["version"] in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
     fields = (
         native_questions.NAMED_IDENTITY_FIELDS
         if named
@@ -1311,9 +1367,9 @@ def _question_state(
 
 
 def _matching_question(
-    state: Mapping[str, object], request: Mapping[str, object]
+    state: Mapping[str, object], request: Mapping[str, object], node_id: str
 ) -> dict[str, object]:
-    question = native_questions.outbox(state)
+    question = native_questions.outbox(state, node_id)
     if question is None or question["request"] != request:
         raise RuntimeFailure(
             ErrorCode.IDENTITY_MISMATCH,
@@ -1328,11 +1384,12 @@ def publish_question(
     """Publish a client request through the same ownership gate as completion."""
     with _question_state(state_path, identity) as (state, _assignment_value):
         _require_running(state)
-        previous_question = native_questions.outbox(state)
+        delivery = _delivery_state(state, identity["role"])
+        previous_question = native_questions.outbox(state, identity["role"])
         if (
             (previous_question is not None and previous_question["phase"] != "recorded")
-            or state.get("native_result") is not None
-            or state.get(PENDING_DELIVERY_ID) is not None
+            or delivery.get("native_result") is not None
+            or delivery.get(PENDING_DELIVERY_ID) is not None
         ):
             raise RuntimeFailure(
                 ErrorCode.ORDER_VIOLATION,
@@ -1342,7 +1399,7 @@ def publish_question(
             parsed = validate_question_request(dict(request))
         except ValueError as exc:
             raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
-        state["native_question"] = {
+        delivery["native_question"] = {
             **identity,
             **_named_identity(state, identity["role"]),
             "phase": "published",
@@ -1362,7 +1419,7 @@ def question_answers(
     # Atomic state replacement lets polling read without contending with Main.
     state, _assignment_value = _read_question_state(state_path, identity)
     _require_running(state)
-    question = _matching_question(state, request)
+    question = _matching_question(state, request, identity["role"])
     if question["phase"] in {"failed", "cancelling"}:
         raise RuntimeFailure(
             ErrorCode.BACKEND_PROTOCOL_FAILURE,
@@ -1385,7 +1442,7 @@ def confirm_question(
     """Record client receipt while retaining the outbox across publication failure."""
     with _question_state(state_path, identity) as (state, assignment):
         _require_running(state)
-        question = _matching_question(state, request)
+        question = _matching_question(state, request, identity["role"])
         if question["phase"] != "acknowledged":
             raise RuntimeFailure(
                 ErrorCode.ORDER_VIOLATION, "native question was not acknowledged"
@@ -1407,7 +1464,7 @@ def record_question_sent(
     """Confirm that the channel sent the recorded frame before releasing its outbox."""
     with _question_state(state_path, identity) as (state, _assignment_value):
         _require_running(state)
-        question = _matching_question(state, request)
+        question = _matching_question(state, request, identity["role"])
         if question["phase"] != "received":
             raise RuntimeFailure(
                 ErrorCode.ORDER_VIOLATION, "native question client receipt is missing"
@@ -1421,13 +1478,15 @@ def fail_question(
 ) -> None:
     """Keep an interrupted outbox inspectable; this does not acknowledge it."""
     with _question_state(state_path, identity) as (state, _assignment_value):
-        question = native_questions.outbox(state)
+        question = native_questions.outbox(state, identity["role"])
         if question is None:
             return
         if request is not None and question["request"] != request:
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "failed native question identity changed"
             )
+        if state["version"] == PARALLEL_STATE_VERSION and question["phase"] == "failed":
+            return
         if _native(state)["phase"] == "stopping":
             question["phase"] = "cancelling"
             question["error"] = None
@@ -1655,6 +1714,27 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         self._require_program_owner(state)
         return state
 
+    @staticmethod
+    def _require_delivery_phase(state: Mapping[str, object], *, stopping: bool) -> None:
+        if stopping:
+            if (
+                state.get("version") != PARALLEL_STATE_VERSION
+                or _native(state)["phase"] != "stopping"
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.ORDER_VIOLATION,
+                    "Stop delivery drain requires a stopping parallel state",
+                )
+        else:
+            _require_running(state)
+
+    def _delivery_progress_state(
+        self, path: Path, *, stopping: bool
+    ) -> dict[str, object]:
+        state = self._reload_state(path) if stopping else self._progress_state(path)
+        self._require_delivery_phase(state, stopping=stopping)
+        return state
+
     def program_transition(self, transition: str) -> None:
         path = _state_path(self._require_state())
         reservation = _LifecycleReservation(path, create_parent=False)
@@ -1841,7 +1921,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state, receipt, main_process, active_role = self._prepare_stop_locked(
+            state, receipt, main_process, active_roles = self._prepare_stop_locked(
                 path, inspected_state, inspection
             )
         finally:
@@ -1850,9 +1930,33 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         # Cancellation and supervisor waits intentionally happen outside the
         # lifecycle reservation.  ACP/native publishers must be able to finish
         # their final state write while a stop is waiting for a process group.
-        if active_role is not None:
-            self._cancel_runner(state, active_role)
-        self._stop_supervisor(state, receipt, main_process)
+        if state["version"] == PARALLEL_STATE_VERSION:
+            retained: list[dict[str, object]] = []
+            drained: list[dict[str, object]] = []
+            for target in active_roles:
+                try:
+                    drained.append(self._drain_stopping_assignment(path, target))
+                except (RuntimeFailure, OSError) as exc:
+                    retained.append({"role": role_id(target), "error": str(exc)})
+            try:
+                self._stop_supervisor(state, receipt, main_process)
+            except (RuntimeFailure, OSError) as exc:
+                retained.append({"role": "coordinator", "error": str(exc)})
+            self.last_stop_response = {
+                "status": "cleanup_pending" if retained else "drained",
+                "drained": drained,
+                "retained": retained,
+            }
+            if retained:
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "parallel native cleanup remains unconfirmed: "
+                    + ", ".join(str(item["role"]) for item in retained),
+                )
+        else:
+            if active_roles:
+                self._cancel_runner(state, active_roles[0])
+            self._stop_supervisor(state, receipt, main_process)
 
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
@@ -1928,6 +2032,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 "status": "stopped",
                 "team_id": result.team_id,
                 "run_id": result.run_id._value,
+                **(
+                    {"drained": drained, "retained": []}
+                    if state["version"] == PARALLEL_STATE_VERSION
+                    else {}
+                ),
             }
             self._state = None
             self._driver = None
@@ -1959,7 +2068,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         run_nonce = secrets.token_hex(16)
         keys = controller_keys(
             {
-                "version": NAMED_STATE_VERSION if spec.graph is not None else 3,
+                "version": _state_version(spec),
                 **({"graph": spec.graph.as_dict()} if spec.graph is not None else {}),
             }
         )
@@ -1997,7 +2106,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         except OSError as exc:
             raise _runtime_error(exc, "native socket root setup failed") from exc
         state: dict[str, object] = {
-            "version": NAMED_STATE_VERSION if spec.graph is not None else 3,
+            "version": _state_version(spec),
             **({"graph": spec.graph.as_dict()} if spec.graph is not None else {}),
             "runtime": self.runtime,
             "team_id": spec.team_id,
@@ -2242,7 +2351,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 ErrorCode.IDENTITY_MISMATCH, "native state runtime does not match"
             )
         expected_graph = spec.graph.as_dict() if spec.graph is not None else None
-        expected_version = NAMED_STATE_VERSION if spec.graph is not None else 3
+        expected_version = _state_version(spec)
         if (
             state.get("graph") != expected_graph
             or state.get("version") != expected_version
@@ -2296,8 +2405,12 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         team_id = _required_string(state.get("team_id"), "team_id")
         if native.get("codex_inspection_cleanup") is not None:
             status = "unknown"
-        question = native_questions.outbox(state)
-        if question is not None and question["phase"] == "failed":
+        questions = [
+            question
+            for node_id, _value in native_delivery.containers(state)
+            if (question := native_questions.outbox(state, node_id)) is not None
+        ]
+        if any(question["phase"] == "failed" for question in questions):
             status = "unknown"
         run_id = _required_string(state.get("run_id"), "run_id")
         response: dict[str, object] = {
@@ -2310,38 +2423,37 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             ),
             "native": dict(native),
             "roles": dict(_required_mapping(state.get("roles"), "roles")),
-            **(
-                {
-                    "question": {
-                        "phase": question["phase"],
-                        "role": question["role"],
-                        "delivery_id": question["delivery_id"],
-                        "answered": len(cast(dict[str, str], question["answers"])),
-                        "total": len(cast(list[str], question["message_ids"])),
-                        "messages": [
-                            {
-                                "message_id": message_id,
-                                "body": field.body,
-                                "answered": message_id
-                                in cast(dict[str, str], question["answers"]),
-                            }
-                            for message_id, field in zip(
-                                cast(list[str], question["message_ids"]),
-                                validate_question_request(
-                                    question["request"]
-                                ).questions,
-                                strict=True,
-                            )
-                        ],
-                    }
-                }
-                if question is not None
-                else {}
-            ),
         }
+        summaries = [
+            {
+                "phase": question["phase"],
+                "role": question["role"],
+                "delivery_id": question["delivery_id"],
+                "answered": len(cast(dict[str, str], question["answers"])),
+                "total": len(cast(list[str], question["message_ids"])),
+                "messages": [
+                    {
+                        "message_id": message_id,
+                        "body": field.body,
+                        "answered": message_id
+                        in cast(dict[str, str], question["answers"]),
+                    }
+                    for message_id, field in zip(
+                        cast(list[str], question["message_ids"]),
+                        validate_question_request(question["request"]).questions,
+                        strict=True,
+                    )
+                ],
+            }
+            for question in questions
+        ]
+        if state["version"] == PARALLEL_STATE_VERSION:
+            response["questions"] = summaries
+        elif summaries:
+            response["question"] = summaries[0]
         if inspection is not None:
             response[self.runtime] = _inspection_dict(inspection)
-        if state.get("version") == 4:
+        if state.get("version") in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
             response["consultations"] = [
                 {"task_id": task_id, **pending}
                 for task_id, record in _required_mapping(
@@ -2463,9 +2575,10 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         try:
             state = self._progress_state(path)
             _require_running(state)
-            if state["version"] == NAMED_STATE_VERSION or isinstance(
-                request.role, NodeRef
-            ):
+            if state["version"] in {
+                NAMED_STATE_VERSION,
+                PARALLEL_STATE_VERSION,
+            } or isinstance(request.role, NodeRef):
                 _require_target(state, request.role)
             if _verification_pending(state):
                 raise RuntimeFailure(
@@ -2473,7 +2586,25 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     "verification cleanup must be confirmed before starting a role",
                 )
             roles = _required_mapping(state.get("roles"), "roles")
-            if roles:
+            if state["version"] == PARALLEL_STATE_VERSION:
+                if not isinstance(request, TaskDispatch) or not isinstance(
+                    request.role, NodeRef
+                ):
+                    raise RuntimeFailure(
+                        ErrorCode.INVALID_REQUEST,
+                        "parallel execution requires a named TaskDispatch",
+                    )
+                graph = GraphSpec.from_dict(state["graph"])
+                blocker = admission_blocker(
+                    graph,
+                    parse_task_specs(state["task_specs"]),
+                    cast(Mapping[str, Mapping[str, object]], roles),
+                    request.role,
+                    request.task,
+                )
+                if blocker is not None:
+                    raise RuntimeFailure(ErrorCode.BUSY, blocker)
+            elif roles:
                 raise RuntimeFailure(
                     ErrorCode.BUSY, "another native role is already active"
                 )
@@ -2960,7 +3091,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     return False
                 time.sleep(min(PROCESS_POLL_SECONDS, remaining))
 
-    def _wait(self, request: RoleWait) -> WaitReceipt:
+    def _wait(self, request: RoleWait, *, stopping: bool = False) -> WaitReceipt:
         if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
@@ -2974,8 +3105,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         deadline = time.monotonic() + request.timeout_ms / 1_000
         while True:
             state = _read_state(path)
-            _require_running(state)
-            if state.get(PENDING_DELIVERY_ID) is not None:
+            delivery = _delivery_state(state, role_id(request.role))
+            self._require_delivery_phase(state, stopping=stopping)
+            if delivery.get(PENDING_DELIVERY_ID) is not None:
                 raise RuntimeFailure(
                     ErrorCode.ORDER_VIOLATION,
                     "acknowledge the pending Delivery before waiting again",
@@ -2985,7 +3117,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 assignment, role=request.role, state=state
             )
             run_id = _required_string(state.get("run_id"), "run_id")
-            question = native_questions.outbox(state)
+            question = native_questions.outbox(state, role_id(request.role))
             if question is not None:
                 if question["phase"] == "failed":
                     raise RuntimeFailure(
@@ -2995,12 +3127,19 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 if question["phase"] == "published":
                     reservation = _LifecycleReservation(path, create_parent=False)
                     if not self._reserve_wait(reservation, deadline):
-                        _require_running(_read_state(path))
+                        self._require_delivery_phase(
+                            _read_state(path), stopping=stopping
+                        )
                         return WaitReceipt(None, ())
                     try:
-                        current = self._progress_state(path)
-                        _require_running(current)
-                        current_question = native_questions.outbox(current)
+                        current = self._delivery_progress_state(path, stopping=stopping)
+                        current_delivery_state = _delivery_state(
+                            current, role_id(request.role)
+                        )
+                        self._require_delivery_phase(current, stopping=stopping)
+                        current_question = native_questions.outbox(
+                            current, role_id(request.role)
+                        )
                         if current_question is None or current_question != question:
                             raise RuntimeFailure(
                                 ErrorCode.IDENTITY_MISMATCH,
@@ -3009,11 +3148,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         current_question["phase"] = "observed"
                         delivery_id = cast(str, current_question["delivery_id"])
                         ids = cast(list[str], current_question["message_ids"])
-                        current[PENDING_DELIVERY_ID] = delivery_id
-                        current[PENDING_DELIVERY_KIND] = "question"
-                        current[PENDING_DELIVERY_STAGE] = "observed"
-                        current[PENDING_QUESTION_IDS] = list(ids)
-                        current[REPLIED_QUESTION_IDS] = []
+                        current_delivery_state[PENDING_DELIVERY_ID] = delivery_id
+                        current_delivery_state[PENDING_DELIVERY_KIND] = "question"
+                        current_delivery_state[PENDING_DELIVERY_STAGE] = "observed"
+                        current_delivery_state[PENDING_QUESTION_IDS] = list(ids)
+                        current_delivery_state[REPLIED_QUESTION_IDS] = []
                         _save_state(
                             path, current, require_existing=True, reservation_held=True
                         )
@@ -3038,7 +3177,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         return WaitReceipt(DeliveryRef(delivery_id), events)
                     finally:
                         reservation.release()
-            result = state.get("native_result")
+            result = delivery.get("native_result")
             if result is not None:
                 _delivery_id, _outcome, _cleanup, _body = _native_result_fields(
                     result,
@@ -3051,12 +3190,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 )
                 reservation = _LifecycleReservation(path, create_parent=False)
                 if not self._reserve_wait(reservation, deadline):
-                    _require_running(_read_state(path))
+                    self._require_delivery_phase(_read_state(path), stopping=stopping)
                     return WaitReceipt(None, ())
                 try:
-                    current = self._progress_state(path)
-                    _require_running(current)
-                    if current.get(PENDING_DELIVERY_ID) is not None:
+                    current = self._delivery_progress_state(path, stopping=stopping)
+                    current_delivery_state = _delivery_state(
+                        current, role_id(request.role)
+                    )
+                    self._require_delivery_phase(current, stopping=stopping)
+                    if current_delivery_state.get(PENDING_DELIVERY_ID) is not None:
                         raise RuntimeFailure(
                             ErrorCode.ORDER_VIOLATION,
                             "acknowledge the pending Delivery before waiting again",
@@ -3077,7 +3219,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                             ErrorCode.IDENTITY_MISMATCH,
                             "native assignment changed while waiting",
                         )
-                    current_result = current.get("native_result")
+                    current_result = current_delivery_state.get("native_result")
                     (
                         current_delivery,
                         current_outcome,
@@ -3093,11 +3235,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         launch_nonce=launch_nonce,
                     )
                     current_assignment["completion_observed"] = True
-                    current[PENDING_DELIVERY_ID] = current_delivery
-                    current[PENDING_DELIVERY_KIND] = "worker_done"
-                    current[PENDING_DELIVERY_STAGE] = "observed"
-                    current[PENDING_QUESTION_IDS] = []
-                    current[REPLIED_QUESTION_IDS] = []
+                    current_delivery_state[PENDING_DELIVERY_ID] = current_delivery
+                    current_delivery_state[PENDING_DELIVERY_KIND] = "worker_done"
+                    current_delivery_state[PENDING_DELIVERY_STAGE] = "observed"
+                    current_delivery_state[PENDING_QUESTION_IDS] = []
+                    current_delivery_state[REPLIED_QUESTION_IDS] = []
                     _save_state(
                         path, current, require_existing=True, reservation_held=True
                     )
@@ -3120,6 +3262,23 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             if (runner is not None and runner.poll() is not None) or (
                 runner is None and self._saved_runner_status(assignment) == "exited"
             ):
+                # The runner may publish after the lock-free read and before exit.
+                refreshed = _read_state(path)
+                self._require_delivery_phase(refreshed, stopping=stopping)
+                refreshed_result = _delivery_state(
+                    refreshed, role_id(request.role)
+                ).get("native_result")
+                if refreshed_result is not None:
+                    _native_result_fields(
+                        refreshed_result,
+                        role=request.role,
+                        run_id=run_id,
+                        task_id=task_id,
+                        dispatch_id=dispatch_id,
+                        terminal_handle=terminal,
+                        launch_nonce=launch_nonce,
+                    )
+                    continue
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "native ACP runner exited without publishing completion",
@@ -3129,7 +3288,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 return WaitReceipt(None, ())
             time.sleep(min(PROCESS_POLL_SECONDS, remaining))
 
-    def _read(self, request: RoleRead) -> ReadReceipt:
+    def _read(self, request: RoleRead, *, stopping: bool = False) -> ReadReceipt:
         if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
@@ -3143,8 +3302,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._progress_state(path)
-            _require_running(state)
+            state = self._delivery_progress_state(path, stopping=stopping)
+            delivery = _delivery_state(state, role_id(request.role))
+            self._require_delivery_phase(state, stopping=stopping)
             assignment = _assignment(state, request.role)
             task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
                 assignment, role=request.role, state=state
@@ -3152,15 +3312,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             _validate_runner_argv(path, request.role, assignment)
             if (
                 assignment.get("completion_observed") is not True
-                or state.get(PENDING_DELIVERY_KIND) != "worker_done"
-                or state.get(PENDING_DELIVERY_STAGE) != "observed"
+                or delivery.get(PENDING_DELIVERY_KIND) != "worker_done"
+                or delivery.get(PENDING_DELIVERY_STAGE) != "observed"
             ):
                 raise RuntimeFailure(
                     ErrorCode.COMPLETION_NOT_OBSERVED,
                     "matching native worker_done has not been observed",
                 )
             run_id = _required_string(state.get("run_id"), "run_id")
-            result = state.get("native_result")
+            result = delivery.get("native_result")
             delivery_id, _outcome, _cleanup, body = _native_result_fields(
                 result,
                 role=request.role,
@@ -3170,20 +3330,22 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 terminal_handle=terminal,
                 launch_nonce=launch_nonce,
             )
-            if state.get(PENDING_DELIVERY_ID) != delivery_id:
+            if delivery.get(PENDING_DELIVERY_ID) != delivery_id:
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
                     "native Delivery identity does not match result",
                 )
             lines = body.splitlines()
             output = "\n".join(lines[: request.lines])
-            state[PENDING_DELIVERY_STAGE] = "read"
+            delivery[PENDING_DELIVERY_STAGE] = "read"
             _save_state(path, state, require_existing=True, reservation_held=True)
             return ReadReceipt(output)
         finally:
             reservation.release()
 
-    def _release(self, request: RoleRelease) -> ReleaseReceipt:
+    def _release(
+        self, request: RoleRelease, *, stopping: bool = False
+    ) -> ReleaseReceipt:
         if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
@@ -3193,8 +3355,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._progress_state(path)
-            _require_running(state)
+            state = self._delivery_progress_state(path, stopping=stopping)
+            delivery = _delivery_state(state, role_id(request.role))
+            self._require_delivery_phase(state, stopping=stopping)
             assignment = _assignment(state, request.role)
             task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
                 assignment, role=request.role, state=state
@@ -3202,15 +3365,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             _validate_runner_argv(path, request.role, assignment)
             if (
                 assignment.get("completion_observed") is not True
-                or state.get(PENDING_DELIVERY_KIND) != "worker_done"
-                or state.get(PENDING_DELIVERY_STAGE) != "read"
+                or delivery.get(PENDING_DELIVERY_KIND) != "worker_done"
+                or delivery.get(PENDING_DELIVERY_STAGE) != "read"
             ):
                 raise RuntimeFailure(
                     ErrorCode.ORDER_VIOLATION,
                     "native role release requires read after worker_done",
                 )
             run_id = _required_string(state.get("run_id"), "run_id")
-            result = state.get("native_result")
+            result = delivery.get("native_result")
             _delivery, _outcome, cleanup_confirmed, _body = _native_result_fields(
                 result,
                 role=request.role,
@@ -3228,7 +3391,58 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         finally:
             reservation.release()
 
-        process = self._runners.get(role_id(request.role))
+        self._wait_runner_exit(assignment, request.role)
+
+        reservation = _LifecycleReservation(path, create_parent=False)
+        reservation.acquire()
+        try:
+            state = self._delivery_progress_state(path, stopping=stopping)
+            delivery = _delivery_state(state, role_id(request.role))
+            self._require_delivery_phase(state, stopping=stopping)
+            assignment = _assignment(state, request.role)
+            task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
+                assignment, role=request.role, state=state
+            )
+            if delivery.get(PENDING_DELIVERY_STAGE) != "read":
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "native release order changed during cleanup",
+                )
+            run_id = _required_string(state.get("run_id"), "run_id")
+            _delivery, _outcome, cleanup_confirmed, _body = _native_result_fields(
+                delivery.get("native_result"),
+                role=request.role,
+                run_id=run_id,
+                task_id=task_id,
+                dispatch_id=dispatch_id,
+                terminal_handle=terminal,
+                launch_nonce=launch_nonce,
+            )
+            if not cleanup_confirmed:
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "native ACP cleanup is unconfirmed; assignment is retained",
+                )
+            self._cleanup_assignment(assignment, path, request.role)
+            roles = _required_mapping(state.get("roles"), "roles")
+            if state["version"] != PARALLEL_STATE_VERSION:
+                del roles[role_id(request.role)]
+            delivery[PENDING_DELIVERY_STAGE] = "released"
+            _save_state(path, state, require_existing=True, reservation_held=True)
+            self._runners.pop(role_id(request.role), None)
+            self._state = state
+            return ReleaseReceipt("released")
+        finally:
+            reservation.release()
+
+    def _wait_runner_exit(
+        self, assignment: Mapping[str, object], role: RoleTarget
+    ) -> None:
+        process = self._runners.get(role_id(role))
+        if process is not None and process.pid != assignment.get("runner_pid"):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH, "native ACP runner PID changed"
+            )
         if process is not None:
             try:
                 process.wait(timeout=PROCESS_WAIT_SECONDS)
@@ -3244,46 +3458,6 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 pgid, timeout_seconds=PROCESS_WAIT_SECONDS
             ):
                 raise RuntimeFailure(ErrorCode.BUSY, "native ACP runner has not exited")
-
-        reservation = _LifecycleReservation(path, create_parent=False)
-        reservation.acquire()
-        try:
-            state = self._progress_state(path)
-            _require_running(state)
-            assignment = _assignment(state, request.role)
-            task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
-                assignment, role=request.role, state=state
-            )
-            if state.get(PENDING_DELIVERY_STAGE) != "read":
-                raise RuntimeFailure(
-                    ErrorCode.IDENTITY_MISMATCH,
-                    "native release order changed during cleanup",
-                )
-            run_id = _required_string(state.get("run_id"), "run_id")
-            _delivery, _outcome, cleanup_confirmed, _body = _native_result_fields(
-                state.get("native_result"),
-                role=request.role,
-                run_id=run_id,
-                task_id=task_id,
-                dispatch_id=dispatch_id,
-                terminal_handle=terminal,
-                launch_nonce=launch_nonce,
-            )
-            if not cleanup_confirmed:
-                raise RuntimeFailure(
-                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                    "native ACP cleanup is unconfirmed; assignment is retained",
-                )
-            self._cleanup_assignment(assignment, path, request.role)
-            roles = _required_mapping(state.get("roles"), "roles")
-            del roles[role_id(request.role)]
-            state[PENDING_DELIVERY_STAGE] = "released"
-            _save_state(path, state, require_existing=True, reservation_held=True)
-            self._runners.pop(role_id(request.role), None)
-            self._state = state
-            return ReleaseReceipt("released")
-        finally:
-            reservation.release()
 
     def _cleanup_assignment(
         self, assignment: Mapping[str, object], path: Path, role: RoleTarget
@@ -3320,7 +3494,10 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         try:
             state = self._reload_state(path)
             _require_running(state)
-            question = native_questions.outbox(state)
+            node_id, delivery = _delivery_for_id(
+                state, request.message_id._value, message=True
+            )
+            question = native_questions.outbox(state, node_id)
             if question is None or question["phase"] != "observed":
                 raise RuntimeFailure(
                     ErrorCode.MESSAGE_OR_DELIVERY_UNKNOWN,
@@ -3346,28 +3523,29 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     )
                 return ReplyReceipt(True)
             answers[message_id] = body
-            state[REPLIED_QUESTION_IDS] = [item for item in ids if item in answers]
+            delivery[REPLIED_QUESTION_IDS] = [item for item in ids if item in answers]
             _save_state(path, state, require_existing=True, reservation_held=True)
             return ReplyReceipt(True)
         finally:
             reservation.release()
 
-    def _ack(self, request: DeliveryAck) -> AckReceipt:
+    def _ack(self, request: DeliveryAck, *, stopping: bool = False) -> AckReceipt:
         previous = self._require_state()
         path = _state_path(previous)
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._progress_state(path)
-            _require_running(state)
-            pending = state.get(PENDING_DELIVERY_ID)
+            state = self._delivery_progress_state(path, stopping=stopping)
+            self._require_delivery_phase(state, stopping=stopping)
+            node_id, delivery = _delivery_for_id(state, request.delivery_id._value)
+            pending = delivery.get(PENDING_DELIVERY_ID)
             if pending != request.delivery_id._value:
                 raise RuntimeFailure(
                     ErrorCode.MESSAGE_OR_DELIVERY_UNKNOWN,
                     "Delivery does not match native pending observation",
                 )
-            if state.get(PENDING_DELIVERY_KIND) == "question":
-                question = native_questions.outbox(state)
+            if delivery.get(PENDING_DELIVERY_KIND) == "question":
+                question = native_questions.outbox(state, node_id)
                 if (
                     question is None
                     or question["phase"] != "observed"
@@ -3380,28 +3558,39 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     )
                 question["phase"] = "acknowledged"
                 _native(state)["last_ack"] = request.delivery_id._value
-                _clear_pending(state)
+                _clear_pending(delivery)
                 _save_state(path, state, require_existing=True, reservation_held=True)
                 return AckReceipt(True)
             if (
-                state.get(PENDING_DELIVERY_KIND) != "worker_done"
-                or state.get(PENDING_DELIVERY_STAGE) != "released"
+                delivery.get(PENDING_DELIVERY_KIND) != "worker_done"
+                or delivery.get(PENDING_DELIVERY_STAGE) != "released"
             ):
                 raise RuntimeFailure(
                     ErrorCode.ORDER_VIOLATION,
                     "release the completed native role before acknowledging its Delivery",
                 )
+            if state["version"] == PARALLEL_STATE_VERSION:
+                assert node_id is not None
+                role = resolve_state_role(state, node_id)
+                assignment = _assignment(state, role)
+                _assignment_identity(assignment, role=role, state=state)
+                _validate_runner_argv(path, role, assignment)
+                # Released resources no longer belong to a possibly recycled PID.
+                _runner_identity_is_owned(assignment, verify_process=False)
             roles = _required_mapping(state.get("roles"), "roles")
-            if roles:
+            if roles and state["version"] != PARALLEL_STATE_VERSION:
                 raise RuntimeFailure(
                     ErrorCode.BUSY, "native role cleanup is still pending"
                 )
             _native(state)["last_ack"] = request.delivery_id._value
-            result = state.get("native_result")
+            result = delivery.get("native_result")
             if isinstance(result, Mapping) and "logical_task_id" in result:
                 acknowledge_task(state, result)
-            _clear_pending(state)
-            state.pop("native_result", None)
+            _clear_pending(delivery)
+            delivery.pop("native_result", None)
+            if state["version"] == PARALLEL_STATE_VERSION:
+                assert node_id is not None
+                del roles[node_id]
             _save_state(path, state, require_existing=True, reservation_held=True)
             self._state = state
             return AckReceipt(True)
@@ -3419,18 +3608,19 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation.acquire()
         try:
             state = self._reload_state(path)
+            delivery = _delivery_state(state, role_id(request.role))
             assignment = _assignment(state, request.role)
             status = (
-                "completed" if state.get("native_result") is not None else "running"
+                "completed" if delivery.get("native_result") is not None else "running"
             )
             runner = self._runners.get(role_id(request.role))
             if (
                 runner is not None
                 and runner.poll() is not None
-                and state.get("native_result") is None
+                and delivery.get("native_result") is None
             ):
                 status = "exited"
-            elif runner is None and state.get("native_result") is None:
+            elif runner is None and delivery.get("native_result") is None:
                 status = self._saved_runner_status(assignment)
             return RoleStatusReceipt(request.role, status)
         finally:
@@ -3449,7 +3639,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         path: Path,
         inspected_state: Mapping[str, object],
         inspected: NativeTerminalInspection,
-    ) -> tuple[dict[str, object], ReceiptT, dict[str, object], RoleTarget | None]:
+    ) -> tuple[dict[str, object], ReceiptT, dict[str, object], tuple[RoleTarget, ...]]:
         state = self._reload_state(path)
         self._assert_inspection_current(inspected_state, state)
         _require_codex_inspection_cleanup(state)
@@ -3458,15 +3648,20 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 ErrorCode.BUSY,
                 "verification process cleanup is unconfirmed; task state is retained",
             )
-        pending = state.get(PENDING_DELIVERY_ID)
-        question = native_questions.outbox(state)
-        if pending is not None and (
-            state.get(PENDING_DELIVERY_KIND) != "question" or question is None
-        ):
-            raise RuntimeFailure(
-                ErrorCode.BUSY,
-                "acknowledge the pending Delivery before stopping native team",
-            )
+        questions = [
+            question
+            for node_id, _value in native_delivery.containers(state)
+            if (question := native_questions.outbox(state, node_id)) is not None
+        ]
+        if state["version"] != PARALLEL_STATE_VERSION:
+            pending = state.get(PENDING_DELIVERY_ID)
+            if pending is not None and (
+                state.get(PENDING_DELIVERY_KIND) != "question" or not questions
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.BUSY,
+                    "acknowledge the pending Delivery before stopping native team",
+                )
         native = _native(state)
         phase = native.get("phase")
         if phase not in {"starting", "running", "stopping"}:
@@ -3500,32 +3695,30 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 "native Main process cleanup is unconfirmed",
             )
         native["phase"] = "stopping"
-        if question is not None:
+        for question in questions:
+            if (
+                state["version"] == PARALLEL_STATE_VERSION
+                and question["phase"] == "failed"
+            ):
+                continue
             question["phase"] = "cancelling"
             question["error"] = None
         _save_state(path, state, require_existing=True, reservation_held=True)
         roles = _required_mapping(state.get("roles"), "roles")
-        active_role: RoleTarget | None = None
-        if roles:
-            if len(roles) != 1:
-                raise RuntimeFailure(
-                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                    "native role ownership is ambiguous",
-                )
-            raw_role = next(iter(roles))
-            try:
-                active_role = resolve_state_role(state, raw_role)
-            except ValueError as exc:
-                raise RuntimeFailure(
-                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                    "native role ownership is invalid",
-                ) from exc
-            if role_kind(active_role) not in ACP_ROLES:
+        active_roles: list[RoleTarget] = []
+        if len(roles) > 1 and state["version"] != PARALLEL_STATE_VERSION:
+            raise RuntimeFailure(
+                ErrorCode.BACKEND_PROTOCOL_FAILURE, "native role ownership is ambiguous"
+            )
+        for raw_role in roles:
+            target = resolve_state_role(state, raw_role)
+            if role_kind(target) not in ACP_ROLES:
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "native role ownership is invalid",
                 )
-        return state, receipt, process, active_role
+            active_roles.append(target)
+        return state, receipt, process, tuple(active_roles)
 
     def _wait_for_main_process_receipt(self, path: Path) -> None:
         """Wait outside the lifecycle reservation for native_main to publish."""
@@ -3554,8 +3747,98 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 )
             time.sleep(PROCESS_POLL_SECONDS)
 
-    def _cancel_runner(self, state: dict[str, object], role: RoleTarget) -> None:
+    def _drain_stopping_assignment(
+        self, path: Path, role: RoleTarget
+    ) -> dict[str, object]:
+        state = self._delivery_progress_state(path, stopping=True)
+        assignment = _assignment(state, role)
+        identity = _assignment_identity(assignment, role=role, state=state)
+        container = _delivery_state(state, role_id(role))
+        _validate_runner_argv(path, role, assignment)
+        _runner_identity_is_owned(
+            assignment,
+            verify_process=container.get(PENDING_DELIVERY_STAGE) != "released",
+        )
+        cancelled = container.get("native_result") is None
+        if cancelled:
+            self._cancel_runner(state, role, retain_delivery=True)
+            state = self._delivery_progress_state(path, stopping=True)
+            container = _delivery_state(state, role_id(role))
+        result = _required_mapping(container.get("native_result"), "stopping result")
+        if native_questions.outbox(state, role_id(role)) is not None:
+            if (
+                result.get("outcome") != "failed"
+                or result.get("cleanup_confirmed") is not True
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "cancelled question cleanup is unconfirmed; assignment retained",
+                )
+            _validate_runner_argv(path, role, assignment)
+            self._wait_runner_exit(assignment, role)
+            _pid, pgid = _runner_identity_is_owned(assignment, verify_process=False)
+            if _process_group_alive(pgid):
+                raise RuntimeFailure(
+                    ErrorCode.BUSY, "cancelled question runner group remains live"
+                )
+            reservation = _LifecycleReservation(path, create_parent=False)
+            reservation.acquire()
+            try:
+                current = self._delivery_progress_state(path, stopping=True)
+                current_assignment = _assignment(current, role)
+                current_delivery = _delivery_state(current, role_id(role))
+                if (
+                    _assignment_identity(current_assignment, role=role, state=current)
+                    != identity
+                    or current_delivery.get("native_result") != result
+                ):
+                    raise RuntimeFailure(
+                        ErrorCode.IDENTITY_MISMATCH,
+                        "cancelled question assignment changed before cleanup",
+                    )
+                current_delivery.pop("native_question", None)
+                if current_delivery.get(PENDING_DELIVERY_KIND) == "question":
+                    _clear_pending(current_delivery)
+                _save_state(path, current, require_existing=True, reservation_held=True)
+            finally:
+                reservation.release()
+        state = self._delivery_progress_state(path, stopping=True)
+        delivery = _delivery_state(state, role_id(role))
+        if delivery.get(PENDING_DELIVERY_ID) is None:
+            self._wait(RoleWait(role, 1000), stopping=True)
+            state = self._delivery_progress_state(path, stopping=True)
+            delivery = _delivery_state(state, role_id(role))
+        if delivery.get(PENDING_DELIVERY_STAGE) == "observed":
+            self._read(RoleRead(role, MAX_RESULT_BODY_CHARS), stopping=True)
+            state = self._delivery_progress_state(path, stopping=True)
+            delivery = _delivery_state(state, role_id(role))
+        if delivery.get(PENDING_DELIVERY_STAGE) == "read":
+            self._release(RoleRelease(role), stopping=True)
+            state = self._delivery_progress_state(path, stopping=True)
+            delivery = _delivery_state(state, role_id(role))
+        delivery_id = _required_string(
+            delivery.get(PENDING_DELIVERY_ID), "stopping delivery identity"
+        )
+        self._ack(DeliveryAck(DeliveryRef(delivery_id)), stopping=True)
+        return {
+            "role": role_id(role),
+            "task_id": identity[0],
+            "dispatch_id": identity[1],
+            "delivery_id": delivery_id,
+            "outcome": result["outcome"],
+            "cancelled": cancelled,
+        }
+
+    def _cancel_runner(
+        self,
+        state: dict[str, object],
+        role: RoleTarget,
+        *,
+        retain_delivery: bool = False,
+    ) -> None:
         path = _state_path(state)
+        if retain_delivery:
+            self._require_delivery_phase(state, stopping=True)
         assignment = _assignment(state, role)
         _validate_runner_argv(path, role, assignment)
         process = self._runners.get(role_id(role))
@@ -3605,7 +3888,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 "native ACP assignment changed during cancellation",
             )
         _validate_runner_argv(path, role, current_assignment)
-        result = current.get("native_result")
+        result = _delivery_state(current, role_id(role)).get("native_result")
         if result is None:
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
@@ -3626,6 +3909,8 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "native ACP cancellation cleanup is unconfirmed; assignment retained",
             )
+        if retain_delivery:
+            return
         self._cleanup_assignment(current_assignment, path, role)
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()

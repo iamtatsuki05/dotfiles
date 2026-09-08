@@ -451,7 +451,7 @@ class ConfigV5CliTest(unittest.TestCase):
             {"version": 5, "valid": True, "teams": ["build"]},
         )
 
-    def test_program_parallel_is_inspectable_but_real_start_is_rejected_before_effects(
+    def test_program_parallel_plan_reaches_the_selected_runtime(
         self,
     ) -> None:
         result, stdout, stderr = self.run_cli("start", "--team", "program", "--dry-run")
@@ -465,16 +465,24 @@ class ConfigV5CliTest(unittest.TestCase):
         )
         self.assertNotIn("lead", plan["roles"])
 
+        backend = _RecordingBackend()
         with (
             mock.patch.object(cli, "_start_prerequisites") as prerequisites,
-            mock.patch.object(cli, "_runtime_engine") as runtime,
+            mock.patch.object(
+                cli, "_runtime_engine", return_value=(WorkflowEngine(backend), backend)
+            ) as runtime,
         ):
             result, stdout, stderr = self.run_cli("start", "--team", "program")
-        self.assertEqual(result, 1)
-        self.assertEqual(stdout, "")
-        self.assertIn("serial dispatch", stderr.lower())
-        prerequisites.assert_not_called()
-        runtime.assert_not_called()
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(json.loads(stdout)["status"], "started")
+        prerequisites.assert_called_once()
+        runtime.assert_called_once()
+        assert backend.start_spec is not None
+        assert backend.start_spec.graph is not None
+        self.assertEqual(
+            backend.start_spec.graph.coordination.dispatch_mode, "parallel"
+        )
+        self.assertIsNone(backend.start_spec.graph.main_node)
 
     def test_orca_named_real_start_reports_unconnected_mode_without_fallback(
         self,
