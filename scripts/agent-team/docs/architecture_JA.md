@@ -60,15 +60,15 @@ HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契
 
 ### 実モデルを使ったtmuxでの質問応答受入
 
-run `cf7ebe69-3a95-4f25-975c-d9b04269f025`では、Main、Worker、ReviewerにFable・effort `high`を使い、Plannerを省略しました。
+run `dc101afd-87bf-4697-9bbb-0d1339d381a8`では、Main、Worker、ReviewerにFable・effort `high`を使い、Plannerを省略しました。
 MainがWorkerの質問2件に回答して受領確認すると、同じWorkerのACPセッションが再開しました。
-Reviewerの承認後、同じリビジョン`535c5158e4c53e15ddc8a77629b203105b99ee1288bcb23cfbfdb0bc41a4b514`で宣言済みの固定コマンドが成功し、83.475秒でTaskが完了しました。
-変更は許可された計算用ファイルだけです。設定とプロンプトを削除してから公開`stop`を実行し、1.526秒で停止しました。
+Reviewerの承認後、同じリビジョン`983bcea3d92dcdd37212f3ba72f6e54092f2323aa1170a11da67cbbe98dc900e`で宣言済みの固定コマンドが成功し、86.762秒でTaskが完了しました。
+変更は許可された計算用ファイルだけです。設定とプロンプトを削除してから公開`stop`を実行し、1.513秒で停止しました。
 担当2件の型付き結果からACPセッションの終了を確認し、所有するプロセス、グループ、パス、状態、試験用ファイル、隔離環境が
-残っていないことを独立に照合しました。この試験には、協調的な停止方式へ修正した実装を使っています。
+残っていないことを独立に照合しました。この試験には、協調的な停止と通知待機時のロック競合を修正した実装を使っています。
 
-別のrun `77ff52c4-0973-400d-a4fb-106ca8233632`では、質問2件を未回答・未受領確認のまま、公開コマンドで停止しました。
-停止は1.500秒で完了し、型付きACP記録の`cleanup_confirmed=true`、対応するセッション、クライアントの終了コードを検証できました。
+別のrun `e808db06-50b0-4744-a24d-0ebf7408b63d`では、質問2件を未回答・未受領確認のまま、公開コマンドで停止しました。
+停止は1.435秒で完了し、型付きACP記録の`cleanup_confirmed=true`、対応するセッション、クライアントの終了コードを検証できました。
 観測した所有プロセス7件とプロセスグループ3件がすべて終了し、状態、一時パス、試験用ファイル、隔離環境、プロセスからの参照が
 残っていないことも独立に照合しました。試験に使ったwheelは実装63ファイルと一致し、Python 3.11のインストール確認では
 `dotfiles-agent-team`だけを含む環境で基本操作が通りました。
@@ -259,6 +259,10 @@ questionのDeliveryが保留中は、`role_read`、`role_release`、別のdispat
 questionは同じassignmentの追加通信であり、既存のfile scope、Bash policy、その他のexternal-tool policyを
 広げません。ACP clientが消費するまでは、successful completionも拒否します。通常の完了経路は引き続き
 `role_wait(worker_done)` → `role_read` → `role_release` → `delivery_ack`です。
+
+`role_wait`は、自身の待機期限内で質問・完了通知の保存ロックを待ちます。
+ロック取得後に状態と通知の識別子を再確認します。期限切れでは通知を観測・受領確認せず、
+保存済みの停止状態や不正なロックは引き続きエラーとして返します。
 
 question中のstopはoutboxを明示的にcancellingへ進め、acknowledgeを偽装しません。provider、process group、
 socket、private rootのcleanupを確認できた場合だけassignmentとstateを削除します。cleanupが不明なら

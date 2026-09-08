@@ -484,6 +484,243 @@ class NativeBackendTest(unittest.TestCase):
                 finally:
                     reservation.release()
 
+    def test_wait_observes_published_event_before_publisher_unlock(self):
+        for event_kind in ("question", "worker_done"):
+            with self.subTest(event_kind=event_kind):
+                self.state_path = self.root / event_kind / "state.json"
+                task = self.task_spec()
+                with self.planner_backend(task_specs=(task,)) as backend:
+                    self.dispatch_task(backend, Role.PLANNER, task)
+                    identity = self.question_identity()
+                    saved = threading.Event()
+                    release = threading.Event()
+                    contended = threading.Event()
+                    save_state = native._save_state
+                    acquire = native._LifecycleReservation.acquire
+
+                    def save_before_unlock(
+                        *args,
+                        save_state=save_state,
+                        saved=saved,
+                        release=release,
+                        **kwargs,
+                    ):
+                        save_state(*args, **kwargs)
+                        saved.set()
+                        if not release.wait(2):
+                            raise TimeoutError("probe publisher was not released")
+
+                    def observe_contention(
+                        reservation, acquire=acquire, contended=contended
+                    ):
+                        try:
+                            acquire(reservation)
+                        except RuntimeFailure as exc:
+                            if exc.code is ErrorCode.TEAM_ALREADY_RUNNING:
+                                contended.set()
+                            raise
+
+                    with (
+                        mock.patch.object(native, "_assert_publisher"),
+                        mock.patch.object(native, "_save_state", save_before_unlock),
+                        mock.patch.object(
+                            native._LifecycleReservation, "acquire", observe_contention
+                        ),
+                        ThreadPoolExecutor(max_workers=2) as executor,
+                    ):
+                        if event_kind == "question":
+                            publisher = executor.submit(
+                                native.publish_question,
+                                self.state_path,
+                                request=self.question_request(),
+                                **identity,
+                            )
+                        else:
+                            publisher = executor.submit(
+                                native.publish_completion,
+                                self.state_path,
+                                outcome="succeeded",
+                                body="finished",
+                                cleanup_confirmed=True,
+                                **identity,
+                            )
+                        try:
+                            self.assertTrue(saved.wait(1))
+                            waiter = executor.submit(
+                                backend.request, RoleWait(Role.PLANNER, 1000)
+                            )
+                            self.assertTrue(contended.wait(1))
+                        finally:
+                            release.set()
+                        publisher.result(2)
+                        result = waiter.result(2)
+                    self.assertEqual(result.events[0].kind.value, event_kind)
+                    final = native.runtime_read_state(self.state_path)
+                    self.assertEqual(
+                        final[native.PENDING_DELIVERY_ID], result.delivery_id._value
+                    )
+
+    def test_wait_contention_timeout_preserves_unobserved_publication(self) -> None:
+        for event_kind in ("question", "worker_done"):
+            with self.subTest(event_kind=event_kind):
+                self.state_path = self.root / event_kind / "state.json"
+                task = self.task_spec()
+                with self.planner_backend(task_specs=(task,)) as backend:
+                    self.dispatch_task(backend, Role.PLANNER, task)
+                    if event_kind == "question":
+                        self.publish_question(self.question_request())
+                    else:
+                        with mock.patch.object(native, "_assert_publisher"):
+                            native.publish_completion(
+                                self.state_path,
+                                **self.question_identity(),
+                                outcome="succeeded",
+                                body="finished",
+                                cleanup_confirmed=True,
+                            )
+                    before = self.state_path.read_bytes()
+                    holder = native._LifecycleReservation(self.state_path)
+                    holder.acquire()
+                    try:
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            waited = executor.submit(
+                                backend.request, RoleWait(Role.PLANNER, 30)
+                            )
+                            result = waited.result(timeout=1)
+                    finally:
+                        holder.release()
+                    self.assertIsNone(result.delivery_id)
+                    self.assertEqual(result.events, ())
+                    self.assertEqual(self.state_path.read_bytes(), before)
+                    retry = backend.request(RoleWait(Role.PLANNER, 1_000))
+                    self.assertEqual(retry.events[0].kind.value, event_kind)
+
+    def test_wait_deadline_preserves_timeout_and_error_boundaries(self) -> None:
+        for boundary in ("late_unlock", "stopping", "unsafe_lock"):
+            with self.subTest(boundary=boundary):
+                self.state_path = self.root / boundary / "state.json"
+                task = self.task_spec()
+                with self.planner_backend(task_specs=(task,)) as backend:
+                    self.dispatch_task(backend, Role.PLANNER, task)
+                    self.publish_question(self.question_request())
+                    holder = native._LifecycleReservation(self.state_path)
+                    holder.acquire()
+                    clock = SimpleNamespace(now=0.0)
+                    expected = [self.state_path.read_bytes()]
+
+                    def pass_deadline(
+                        _seconds,
+                        boundary=boundary,
+                        holder=holder,
+                        clock=clock,
+                        expected=expected,
+                    ):
+                        clock.now = 2.0
+                        if boundary == "stopping":
+                            current = native.runtime_read_state(self.state_path)
+                            current["native"]["phase"] = "stopping"
+                            native._save_state(
+                                self.state_path,
+                                current,
+                                require_existing=True,
+                                reservation_held=True,
+                            )
+                            expected[0] = self.state_path.read_bytes()
+                        elif boundary == "unsafe_lock":
+                            holder._lock_path.chmod(0o644)
+                        else:
+                            holder.release()
+
+                    try:
+                        with (
+                            mock.patch.object(
+                                native.time, "monotonic", lambda clock=clock: clock.now
+                            ),
+                            mock.patch.object(native.time, "sleep", pass_deadline),
+                        ):
+                            if boundary != "late_unlock":
+                                with self.assertRaises(RuntimeFailure) as failure:
+                                    backend.request(RoleWait(Role.PLANNER, 1_000))
+                                expected_code = (
+                                    ErrorCode.BUSY
+                                    if boundary == "stopping"
+                                    else ErrorCode.BACKEND_PROTOCOL_FAILURE
+                                )
+                                self.assertIs(failure.exception.code, expected_code)
+                            else:
+                                result = backend.request(RoleWait(Role.PLANNER, 1_000))
+                                self.assertIsNone(result.delivery_id)
+                                self.assertEqual(result.events, ())
+                    finally:
+                        holder.release()
+                        holder._lock_path.chmod(0o600)
+                    self.assertEqual(self.state_path.read_bytes(), expected[0])
+
+    def test_wait_rejects_unsafe_lock_without_retry_or_state_change(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.publish_question(self.question_request())
+            before = self.state_path.read_bytes()
+            reservation = native._LifecycleReservation(self.state_path)
+            reservation._lock_path.chmod(0o644)
+            try:
+                with (
+                    mock.patch.object(native.time, "sleep") as sleep,
+                    self.assertRaises(RuntimeFailure) as failure,
+                ):
+                    backend.request(RoleWait(Role.PLANNER, 1_000))
+                self.assertIs(
+                    failure.exception.code, ErrorCode.BACKEND_PROTOCOL_FAILURE
+                )
+                sleep.assert_not_called()
+                self.assertEqual(self.state_path.read_bytes(), before)
+            finally:
+                reservation._lock_path.chmod(0o600)
+
+    def test_wait_rechecks_stopping_state_after_reservation_contention(self) -> None:
+        task = self.task_spec()
+        with self.planner_backend(task_specs=(task,)) as backend:
+            self.dispatch_task(backend, Role.PLANNER, task)
+            self.publish_question(self.question_request())
+            holder = native._LifecycleReservation(self.state_path)
+            holder.acquire()
+            contended = threading.Event()
+            acquire = native._LifecycleReservation.acquire
+
+            def observe_contention(reservation):
+                try:
+                    acquire(reservation)
+                except RuntimeFailure as exc:
+                    if exc.code is ErrorCode.TEAM_ALREADY_RUNNING:
+                        contended.set()
+                    raise
+
+            with (
+                mock.patch.object(
+                    native._LifecycleReservation, "acquire", observe_contention
+                ),
+                ThreadPoolExecutor(max_workers=1) as executor,
+            ):
+                future = executor.submit(backend.request, RoleWait(Role.PLANNER, 1_000))
+                try:
+                    self.assertTrue(contended.wait(timeout=1))
+                    current = native.runtime_read_state(self.state_path)
+                    current["native"]["phase"] = "stopping"
+                    native._save_state(
+                        self.state_path,
+                        current,
+                        require_existing=True,
+                        reservation_held=True,
+                    )
+                    stopped = self.state_path.read_bytes()
+                finally:
+                    holder.release()
+                with self.assertRaises(RuntimeFailure) as failure:
+                    future.result(timeout=2)
+                self.assertIs(failure.exception.code, ErrorCode.BUSY)
+            self.assertEqual(self.state_path.read_bytes(), stopped)
+
     def test_internal_question_and_completion_survive_short_main_reservation(
         self,
     ) -> None:

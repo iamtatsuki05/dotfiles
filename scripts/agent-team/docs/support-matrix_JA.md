@@ -33,7 +33,7 @@ Claude 0.70.0/SDK 1.3.0向けの制限付き`AskUserQuestion` → ACP form elici
 Codexのquestion capabilityとquestion socketは無効で、公開Codex ACP profileも拒否したままです。
 
 実装にはbatch/order、failure、identity、stopを対象にしたfocused/mock coverageと、同じsession継続・fixed argv検証完了までを含む
-協調的な停止方式に修正した後の実モデルtmux受入run（`cf7ebe69-3a95-4f25-975c-d9b04269f025`）があります。Herdr/Zellijの実モデルquestion受入は
+協調的な停止方式に修正した後の実モデルtmux受入run（`dc101afd-87bf-4697-9bbb-0d1339d381a8`）があります。Herdr/Zellijの実モデルquestion受入は
 主張しません。現在の証拠、未確認のpending stop 2件、最終検証の状態は
 [アーキテクチャ](architecture_JA.md)で管理しています。この説明は新しい`Verified` safety resultではなく実装状況を示します。
 完全検証済みの`0b3e5bc` milestoneは過去の証拠です。

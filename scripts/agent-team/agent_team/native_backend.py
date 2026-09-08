@@ -2557,6 +2557,23 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             completion_identity=identity,
         )
 
+    @staticmethod
+    def _reserve_wait(reservation: _LifecycleReservation, deadline: float) -> bool:
+        while True:
+            try:
+                reservation.acquire()
+                if time.monotonic() >= deadline:
+                    reservation.release()
+                    return False
+                return True
+            except RuntimeFailure as exc:
+                if exc.code is not ErrorCode.TEAM_ALREADY_RUNNING:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                time.sleep(min(PROCESS_POLL_SECONDS, remaining))
+
     def _wait(self, request: RoleWait) -> WaitReceipt:
         if request.role not in ACP_ROLES:
             raise RuntimeFailure(
@@ -2591,7 +2608,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     )
                 if question["phase"] == "published":
                     reservation = _LifecycleReservation(path, create_parent=False)
-                    reservation.acquire()
+                    if not self._reserve_wait(reservation, deadline):
+                        _require_running(_read_state(path))
+                        return WaitReceipt(None, ())
                     try:
                         current = self._reload_state(path)
                         _require_running(current)
@@ -2645,7 +2664,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     launch_nonce=launch_nonce,
                 )
                 reservation = _LifecycleReservation(path, create_parent=False)
-                reservation.acquire()
+                if not self._reserve_wait(reservation, deadline):
+                    _require_running(_read_state(path))
+                    return WaitReceipt(None, ())
                 try:
                     current = self._reload_state(path)
                     _require_running(current)

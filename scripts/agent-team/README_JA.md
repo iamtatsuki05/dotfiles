@@ -177,7 +177,7 @@ Herdrの初回はtextとEnterを同時にpasteしたもののtextが貼付欄に
 cancelに関する代表的な証拠であり、すべてのharnessの証拠ではありません。確認したのはOS group/pathのcleanupだけで、
 明示的なACP session closeは確認していません。古いprocess groupベースのcleanup判定にも同じ限界があります。
 
-実Claudeを使ったtmuxの質問応答試験では、run `cf7ebe69-3a95-4f25-975c-d9b04269f025`を完了しました。
+実Claudeを使ったtmuxの質問応答試験では、run `dc101afd-87bf-4697-9bbb-0d1339d381a8`を完了しました。
 Claude Code 2.1.263、Node 22.23.2、Claude ACP 0.70.0、SDK 1.3.0、Claude SDK 0.3.232を使い、
 Main、Worker、Reviewerは`fable`/`high`、Plannerは省略しました。Mainが質問2件に回答して受領確認した後、同じWorkerの
 ACPセッションを再開し、Reviewer承認と同一リビジョンの固定コマンド検証を経てTaskが完了しました。

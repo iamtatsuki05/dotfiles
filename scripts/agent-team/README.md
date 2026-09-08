@@ -213,7 +213,7 @@ established OS group/path cleanup only and did not prove an explicit ACP
 session close; the old process-group-based cleanup promotion has the same
 limitation.
 
-The real Claude tmux question run `cf7ebe69-3a95-4f25-975c-d9b04269f025` completed
+The real Claude tmux question run `dc101afd-87bf-4697-9bbb-0d1339d381a8` completed
 with Claude Code 2.1.263, Node 22.23.2, Claude ACP 0.70.0, SDK 1.3.0,
 Claude SDK 0.3.232, and `fable`/`high` for Main, Worker, and Reviewer, with
 Planner omitted. Main answered and acknowledged two questions, the same Worker

@@ -103,7 +103,7 @@ completion cannot be published. Stop marks the question as cancelling and never
 fabricates an acknowledgment; unproven provider, process-group, socket, or
 private-root cleanup retains state.
 
-The real-model tmux run `cf7ebe69-3a95-4f25-975c-d9b04269f025` confirmed a full
+The real-model tmux run `dc101afd-87bf-4697-9bbb-0d1339d381a8` confirmed a full
 question round trip with Fable at high effort, Planner omitted, and the same
 Worker ACP session. Main's answers and acknowledgment were followed by Reviewer
 approval, fixed-argv verification of the same revision, Task completion, and
