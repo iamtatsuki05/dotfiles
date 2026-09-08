@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import unittest
 from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest import mock
 
 import test_named_native_backend as named_support
 
-from agent_team import cli
+from agent_team import cli, process_identity
 from agent_team import native_backend as native
 from agent_team.contracts import (
     AttachCoordinator,
@@ -73,15 +74,11 @@ class ProgramNativeBackendTest(unittest.TestCase):
                 ),
             )
         )
-        stack.enter_context(mock.patch.object(native.os, "getpid", return_value=61002))
-        stack.enter_context(mock.patch.object(native.os, "getppid", return_value=70001))
-        stack.enter_context(
-            mock.patch.object(
-                native.os,
-                "getpgid",
-                side_effect=lambda pid: 61002 if pid == 61002 else 77001,
-            )
-        )
+        owner_os = SimpleNamespace(**vars(native.os))
+        owner_os.getpid = lambda: 61002
+        owner_os.getppid = lambda: 70001
+        owner_os.getpgid = lambda pid: 61002 if pid == 61002 else 77001
+        stack.enter_context(mock.patch.object(native, "os", owner_os))
         return stack
 
     def test_program_start_has_only_coordinator_identity_and_no_main_launch(self):
@@ -103,6 +100,19 @@ class ProgramNativeBackendTest(unittest.TestCase):
         )
         self.backend.request(Status())
         self.assertNotIn("main_terminal", self.backend.last_status_response)
+
+    def test_owner_fixture_preserves_current_python_process_identity(self):
+        self.start()
+        self.publish_owner()
+        current_pid = process_identity.os.getpid()
+        launch = [process_identity.sys.executable, "-m", "agent_team", "argument"]
+        expected_argv = process_identity.python_process_argv(launch)
+        with self.owner():
+            self.assertEqual(native.os.getpid(), 61002)
+            self.assertEqual(process_identity.os.getpid(), current_pid)
+            self.assertEqual(
+                process_identity.python_process_argv(launch), expected_argv
+            )
 
     def test_external_progress_operations_fail_before_effects(self):
         self.start()
