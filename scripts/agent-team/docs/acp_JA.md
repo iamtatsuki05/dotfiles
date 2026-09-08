@@ -85,7 +85,7 @@ raw本文は含めません。question Deliveryが保留中は`role_read`、`rol
 拒否し、successful completionもpublishできません。stopはquestionをcancellingへ進め、acknowledgeを
 偽装しません。provider、process group、socket、private rootのcleanupを確認できない場合はstateを保持します。
 
-実モデルを使ったtmuxのrun `cf7ebe69-3a95-4f25-975c-d9b04269f025`では、Fable・effort `high`を使い、Plannerを省略して質問応答を一巡させました。
+実モデルを使ったtmuxのrun `dc101afd-87bf-4697-9bbb-0d1339d381a8`では、Fable・effort `high`を使い、Plannerを省略して質問応答を一巡させました。
 Mainの回答と受領確認後、同じWorkerのACPセッションが再開し、Reviewer承認、同一リビジョンの固定コマンド検証、Task完了、公開`stop`まで確認しています。
 別のrunでは、未回答の質問を待つ間の停止と、型付きACP終了記録も検証しました。
 [アーキテクチャ](architecture_JA.md)に両試験、保持している過去の失敗、Herdr/Zellijの確認範囲を記載しています。

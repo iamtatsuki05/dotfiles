@@ -38,7 +38,7 @@ rejected.
 
 The implementation has focused/mock coverage for batch and order handling,
 failure, identity, and stop, plus the real-model tmux acceptance run
-`cf7ebe69-3a95-4f25-975c-d9b04269f025` after the cooperative cancellation
+`dc101afd-87bf-4697-9bbb-0d1339d381a8` after the cooperative cancellation
 changes, with same-session continuation
 and completed fixed-argv verification. Herdr/Zellij real-model question
 acceptance is not claimed. The current evidence, two unconfirmed pending-stop

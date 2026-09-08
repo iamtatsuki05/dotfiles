@@ -67,19 +67,19 @@ graph, no-Main, parallel workflow, or all-harness requirements.
 
 ### Bounded live question acceptance
 
-The real-model tmux run `cf7ebe69-3a95-4f25-975c-d9b04269f025` used Fable at high effort
+The real-model tmux run `dc101afd-87bf-4697-9bbb-0d1339d381a8` used Fable at high effort
 for Main, Worker, and Reviewer, with Planner omitted. Main answered and
 acknowledged a batch of two Worker questions; the same Worker ACP session
-continued. Reviewer approved revision `535c5158e4c53e15ddc8a77629b203105b99ee1288bcb23cfbfdb0bc41a4b514`,
+continued. Reviewer approved revision `983bcea3d92dcdd37212f3ba72f6e54092f2323aa1170a11da67cbbe98dc900e`,
 the declared fixed-argv verification passed on that revision, and the Task
-completed in 83.475 seconds. Only the declared calculator file changed. Public
-stop completed in 1.526 seconds after config and prompt deletion; the two
+completed in 86.762 seconds. Only the declared calculator file changed. Public
+stop completed in 1.513 seconds after config and prompt deletion; the two
 assignment result artifacts confirmed ACP session cleanup, and independent
 checks found no owned processes, groups, paths, state, fixture, or environment.
-This acceptance used the cooperative cancellation implementation.
+This acceptance used the cooperative cancellation and publication-wait fixes.
 
-A separate run, `77ff52c4-0973-400d-a4fb-106ca8233632`, held two questions unanswered
-and unacknowledged, then stopped through the public command in 1.500 seconds.
+A separate run, `e808db06-50b0-4744-a24d-0ebf7408b63d`, held two questions unanswered
+and unacknowledged, then stopped through the public command in 1.435 seconds.
 The typed ACP receipt reported `cleanup_confirmed=true`, and native-result
 validation confirmed the bound session and client exit status. Independent
 checks found all seven observed owned processes and three process groups gone,
@@ -305,6 +305,11 @@ same assignment; it does not widen the existing file scope, Bash policy, or
 other external-tool policy. A successful completion is also rejected until the
 question has been consumed by the ACP client. The normal completion path stays
 `role_wait(worker_done)` → `role_read` → `role_release` → `delivery_ack`.
+
+`role_wait` waits for question/completion publication locks within its own
+deadline. It rechecks the state and notification identity after acquiring the
+lock. An expired wait does not observe or acknowledge a notification; a saved
+stop or an invalid lock remains an error.
 
 Stopping during a question marks the outbox as explicitly cancelling. It does
 not fabricate an acknowledgment. The assignment and state are removed only
