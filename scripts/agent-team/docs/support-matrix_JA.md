@@ -38,15 +38,32 @@ Codexのquestion capabilityとquestion socketは無効で、公開Codex ACP prof
 [アーキテクチャ](architecture_JA.md)で管理しています。この説明は新しい`Verified` safety resultではなく実装状況を示します。
 完全検証済みの`0b3e5bc` milestoneは過去の証拠です。
 
+### native program/serialの状態
+
+Version 5のnative `program`/`serial`は、新しいharness profileではなく進行管理modeです。Main roleとMain modelは作りません。
+選択したterminal上で既存の`native_main` supervisorが固定argvの`_program-run` coordinatorを監督し、stateには
+`coordinator_terminal`、`coordinator_argv`、`coordinator_process`、`coordinator_pid`をMainのfieldと分けて保存します。
+宣言済みTaskSpecはserialのintegration waveとして進み、successor waveを開始する前に、同じsealed workspace revisionのreviewとfixed argv検証をそろえます。
+
+program contract focused suiteはPython 3.13と3.11で各169 test、skip 0でした。Claude用SDK fixtureは
+`@agentclientprotocol/sdk@1.3.0`、Codex用aliasはSDK `1.4.0`を使い、144 source hashが不変でした。
+これは実装のcontract evidenceであり、実providerの安全判定ではありません。
+
+実機のserial program試験`b239945b-283e-403b-aba5-84ba984c8469`では、2問へ回答し、同じACP sessionで処理した後、ClaudeがFableの利用上限で失敗しました。
+実装、review、verificationには到達していません。公開stopと独立したprocess/path確認は成功しましたが、observerのcommand identity errorにより
+独立typed receipt fieldは保持できませんでした。このrunで主張するcleanup evidenceは、native client result、stop結果、process/path確認に限ります。
+並列dispatch、名前付きOrca、全10 harness、model切替、billing変更、通常authのwrite経路は実証していません。
+
 ACP adapterがインストールされていることやacpxが表示することだけでは、安全なrole用adapterで
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
-native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative config、またはversion 5の名前付きagent/serial configで選んだread-only
+native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative config、またはversion 5の名前付き`agent`/`serial`・`program`/`serial` configで選んだread-only
 Planner/Reviewerとscoped workspace-write Workerだけを使い、Worker dispatchには宣言済みTaskSpec
 との完全一致が必要です。unknown providerと認識済みだが拒否されたprofileは、Orca Task、terminal、
 ACP processを作る前に失敗します。別harnessへのfallbackはありません。
 
-Version 5で変わるのはnodeの識別方法とtaskの担当指定であり、このmatrixのharness安全判定は変わりません。
-Claudeを使う5nodeのtmux受入試験は、[アーキテクチャ](architecture_JA.md)に記載しています。
+Version 5で変わるのはnodeの識別方法とtaskの担当指定に加え、native `program`/`serial` coordinatorです。
+このmatrixのharness安全判定は変わりません。Claudeを使う5nodeのtmux受入試験と限定的なprogram試験は、
+[アーキテクチャ](architecture_JA.md)に記載しています。
 
 OrcaのClaude ACP profileにはNode.js `22.13.0`以降も必要です。起動前にOrcaは選択したACP roleの
 `node`、`acpx`、`claude-agent-acp`だけを解決し、exact package manifestを確認したうえで、absoluteな

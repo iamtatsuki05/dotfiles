@@ -75,8 +75,19 @@ class ManagementSnapshotTest(unittest.TestCase):
             observed_specs = []
 
             def fake_manage(
-                command: str, plan: dict[str, object], role: str | None
+                command: str,
+                plan: dict[str, object],
+                role: str | None,
+                *,
+                coordinator: bool = False,
+                message_id: str | None = None,
+                consultation_id: str | None = None,
+                body: str | None = None,
             ) -> dict[str, object]:
+                self.assertFalse(coordinator)
+                self.assertIsNone(message_id)
+                self.assertIsNone(consultation_id)
+                self.assertIsNone(body)
                 observed.append((command, plan, role))
                 observed_specs.append(cli._start_spec(plan, attach=False))
                 return {"status": "ok"}
@@ -185,8 +196,19 @@ class ManagementSnapshotTest(unittest.TestCase):
             observed: list[dict[str, object]] = []
 
             def fake_manage(
-                _command: str, plan: dict[str, object], _role: str | None
+                _command: str,
+                plan: dict[str, object],
+                _role: str | None,
+                *,
+                coordinator: bool = False,
+                message_id: str | None = None,
+                consultation_id: str | None = None,
+                body: str | None = None,
             ) -> dict[str, object]:
+                self.assertFalse(coordinator)
+                self.assertIsNone(message_id)
+                self.assertIsNone(consultation_id)
+                self.assertIsNone(body)
                 observed.append(plan)
                 return {"status": "ok"}
 

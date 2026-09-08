@@ -38,11 +38,13 @@ from .contracts import (
     AckReceipt,
     Assignment,
     Attach,
+    AttachCoordinator,
     AttachReceipt,
     BackendPort,
     BackendRequest,
     BackendResult,
     CompletionIdentity,
+    CoordinatorAttachReceipt,
     DeliveryAck,
     DeliveryRef,
     DispatchRef,
@@ -71,6 +73,7 @@ from .contracts import (
     Status,
     StatusReceipt,
     StopResult,
+    TaskConsultationReply,
     TaskDispatch,
     TaskGet,
     TaskRef,
@@ -84,6 +87,7 @@ from .contracts import (
 from .harness_launch import LaunchValidationError, build_claude_argv
 from .locking import _LifecycleReservation
 from .named_graph import validate_graph
+from .native_controller import controller_keys
 from .native_question_channel import validate_question_request
 from .native_terminal import (
     NativeTerminalDriver,
@@ -105,7 +109,7 @@ from .runtime import (
     create_prompt_file,
     remove_prompt_file,
     resolve_state_role,
-    validate_native_main_process,
+    validate_native_controller_process,
 )
 from .runtime import (
     read_state as runtime_read_state,
@@ -127,9 +131,16 @@ from .scoped_acp import (
 )
 from .task_execution import (
     acknowledge_task,
+    answer_task_consultation,
+    is_plan_only,
+    new_program_wave,
     parse_review,
     prepare_dispatch,
+    program_wave,
+    task_consultation,
+    transition_program_wave,
     validate_task_assignment,
+    verification_revision,
 )
 from .task_spec import TaskSpec, parse_task_specs
 from .workspace_revision import snapshot_revision
@@ -371,22 +382,24 @@ def _validate_profile(
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "node specs must match the selected graph"
             )
-        if (
-            spec.graph.coordination.mode != "agent"
-            or spec.graph.coordination.dispatch_mode != "serial"
-        ):
+        if spec.graph.coordination.dispatch_mode != "serial":
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
-                "native named execution currently requires agent coordination and serial dispatch",
+                "native named execution currently requires serial dispatch",
             )
         main = spec.graph.main_node
+        if spec.graph.coordination.mode == "program" and not spec.task_specs:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "program coordination requires declared TaskSpecs",
+            )
     else:
         if any(not isinstance(role, Role) for role in raw_specs):
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "named nodes require an explicit graph"
             )
         main = Role.MAIN if Role.MAIN in raw_specs else None
-    if main is None:
+    if main is None and spec.graph is None:
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST,
             "native runtime requires a Main role",
@@ -508,7 +521,7 @@ def _validate_profile(
                     )
         role_specs[role_id(role)] = normalized
 
-    if not preflight:
+    if not preflight or main is None:
         return role_specs, acp_bindings, []
     try:
         argv = list(
@@ -567,9 +580,11 @@ def _terminal_stop_is_owned(
     receipt: NativeTerminalReceipt,
     observed: NativeTerminalInspection,
     main_process: Mapping[str, object],
+    *,
+    pid_key: str = "agent_pid",
 ) -> bool:
     try:
-        validate_native_main_process(main_process)
+        validate_native_controller_process(main_process, pid_key=pid_key)
     except RuntimeValidationError:
         return False
     if (
@@ -1156,9 +1171,17 @@ def publish_completion(
                 stage=stage,
                 revision=revision,
             )
+            workspace_revision = (
+                assignment.get("task_workspace_revision")
+                if is_plan_only(state, task.task_id)
+                else revision
+                if stage == "implementation"
+                else None
+            )
             if (
-                stage == "implementation"
-                and snapshot_revision(Path(str(state["workspace"]))) != revision
+                workspace_revision is not None
+                and snapshot_revision(Path(str(state["workspace"])))
+                != workspace_revision
             ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH, "reviewed workspace revision changed"
@@ -1430,6 +1453,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         self._state: dict[str, object] | None = None
         self._driver: NativeTerminalDriver[ReceiptT] | None = None
         self._runners: dict[str, subprocess.Popen[bytes]] = {}
+        self._program_owner: dict[str, object] | None = None
         self.last_start_response: dict[str, object] | None = None
         self.last_status_response: dict[str, object] | None = None
         self.last_attach_response: dict[str, object] | None = None
@@ -1526,19 +1550,34 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 reservation.release()
         if spec.attach:
             main = spec.graph.main_node if spec.graph is not None else Role.MAIN
-            assert main is not None
-            self.request(Attach(main))
+            self.request(Attach(main) if main is not None else AttachCoordinator())
         return result
 
     def request(self, request: BackendRequest) -> BackendResult:
+        if isinstance(
+            request,
+            (
+                RolePrompt,
+                TaskDispatch,
+                TaskVerify,
+                RoleWait,
+                RoleRead,
+                RoleRelease,
+                DeliveryAck,
+            ),
+        ):
+            state = self._require_state()
+            self._require_program_owner(_read_state(_state_path(state)))
         if isinstance(request, Status):
             return self._status()
-        if isinstance(request, Attach):
+        if isinstance(request, (Attach, AttachCoordinator)):
             return self._attach(request)
         if isinstance(request, (RolePrompt, TaskDispatch)):
             return self._prompt(request)
         if isinstance(request, TaskGet):
             return self._task_get(request)
+        if isinstance(request, TaskConsultationReply):
+            return self._task_consultation_reply(request)
         if isinstance(request, TaskVerify):
             return self._task_verify(request)
         if isinstance(request, RoleWait):
@@ -1557,6 +1596,91 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             ErrorCode.INVALID_REQUEST, "unsupported native runtime request"
         )
 
+    def _require_program_owner(self, state: Mapping[str, object]) -> None:
+        keys = controller_keys(state)
+        if keys.pid != "coordinator_pid":
+            return
+        process = _native(state).get(keys.process)
+        if not isinstance(process, dict):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "program coordinator process receipt is unavailable",
+            )
+        pid = os.getpid()
+        native = _native(state)
+        argv = native.get(keys.argv)
+        expected = (
+            "-m",
+            "agent_team",
+            "_program-run",
+            "--state",
+            str(_state_path(state)),
+            "--run-id",
+            _required_string(state.get("run_id"), "run_id"),
+        )
+        if not isinstance(argv, list) or tuple(argv[1:]) != expected:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "program coordinator command identity changed",
+            )
+        try:
+            owned = (
+                process.get("phase") == "running"
+                and process.get(keys.pid) == pid
+                and process.get("process_group_id") == pid
+                and os.getpgid(pid) == pid
+                and process.get("supervisor_pid") == os.getppid()
+                and process.get("supervisor_pid")
+                == self._receipt_from_state(_native(state)).pane_pid
+                and read_process_argv(pid) == tuple(argv)
+                and read_process_argv(os.getppid()) == _validated_supervisor_argv(state)
+            )
+        except OSError:
+            owned = False
+        identity = {
+            key: process.get(key)
+            for key in ("supervisor_pid", keys.pid, "process_group_id", "launch_nonce")
+        }
+        if not owned or (
+            self._program_owner is not None and identity != self._program_owner
+        ):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "only the recorded program coordinator may advance tasks",
+            )
+        self._program_owner = identity
+
+    def _progress_state(self, path: Path) -> dict[str, object]:
+        state = self._reload_state(path)
+        self._require_program_owner(state)
+        return state
+
+    def program_transition(self, transition: str) -> None:
+        path = _state_path(self._require_state())
+        reservation = _LifecycleReservation(path, create_parent=False)
+        reservation.acquire()
+        try:
+            state = self._progress_state(path)
+            _require_running(state)
+            revision = (
+                snapshot_revision(Path(str(state["workspace"])))
+                if transition == "seal_wave"
+                else None
+            )
+            transition_program_wave(state, transition, revision=revision)
+            _save_state(path, state, require_existing=True, reservation_held=True)
+        finally:
+            reservation.release()
+
+    def program_snapshot(self) -> dict[str, object]:
+        state = self._progress_state(_state_path(self._require_state()))
+        _require_running(state)
+        if controller_keys(state).pid != "coordinator_pid":
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "this team has no program coordinator"
+            )
+        return copy.deepcopy(state)
+
     @staticmethod
     def _task_record(state: dict[str, object], task_id: str) -> dict[str, object]:
         tasks = state.get("tasks")
@@ -1572,9 +1696,37 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         try:
             state = self._reload_state(path)
             record = self._task_record(state, request.task_id)
+            consultation = task_consultation(state, record)
             return TaskStatusReceipt(
-                request.task_id, str(record["status"]), dict(record)
+                request.task_id,
+                str(record["status"]),
+                {
+                    **record,
+                    **(
+                        {"consultation": consultation}
+                        if consultation is not None
+                        else {}
+                    ),
+                },
             )
+        finally:
+            reservation.release()
+
+    def _task_consultation_reply(
+        self, request: TaskConsultationReply
+    ) -> TaskStatusReceipt:
+        path = _state_path(self._require_state())
+        reservation = _LifecycleReservation(path, create_parent=False)
+        reservation.acquire()
+        try:
+            state = self._reload_state(path)
+            _require_running(state)
+            record = answer_task_consultation(
+                state, request.consultation_id, request.body
+            )
+            _save_state(path, state, require_existing=True, reservation_held=True)
+            task = TaskSpec.from_dict(record["spec"])
+            return TaskStatusReceipt(task.task_id, str(record["status"]), dict(record))
         finally:
             reservation.release()
 
@@ -1585,7 +1737,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._reload_state(path)
+            state = self._progress_state(path)
             _require_running(state)
             if _verification_pending(state):
                 raise RuntimeFailure(
@@ -1593,10 +1745,24 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     "verification cleanup must be confirmed before executing another task",
                 )
             record = self._task_record(state, request.task_id)
-            if record.get("status") != "implementation_approved":
+            final_stage = (
+                "plan" if is_plan_only(state, request.task_id) else "implementation"
+            )
+            if controller_keys(state).pid == "coordinator_pid":
+                wave = program_wave(state)
+                if (
+                    wave["phase"] != "verification"
+                    or request.task_id not in cast(list[str], wave["task_ids"])
+                    or verification_revision(record) != wave["revision"]
+                ):
+                    raise RuntimeFailure(
+                        ErrorCode.ORDER_VIOLATION,
+                        "verification requires the sealed, approved program wave",
+                    )
+            if record.get("status") != f"{final_stage}_approved":
                 raise RuntimeFailure(
                     ErrorCode.ORDER_VIOLATION,
-                    "verification requires implementation review approval",
+                    f"verification requires {final_stage} review approval",
                 )
             if state.get("roles") or state.get(PENDING_DELIVERY_ID) is not None:
                 raise RuntimeFailure(
@@ -1604,20 +1770,16 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     "consume the active role and Delivery before verification",
                 )
             task = TaskSpec.from_dict(record["spec"])
-            revision = record.get("revision")
-            if not isinstance(revision, str):
-                raise RuntimeFailure(
-                    ErrorCode.IDENTITY_MISMATCH, "approved revision is missing"
-                )
+            revision = verification_revision(record)
             verdict = parse_review(
                 json.dumps(record.get("task_evidence")),
                 task=task,
-                stage="implementation",
-                revision=revision,
+                stage=final_stage,
+                revision=str(record["revision"]),
             )
             if verdict["decision"] != "approve":
                 raise RuntimeFailure(
-                    ErrorCode.ORDER_VIOLATION, "implementation approval is missing"
+                    ErrorCode.ORDER_VIOLATION, "final review approval is missing"
                 )
             workspace = Path(str(state["workspace"]))
             if snapshot_revision(workspace) != revision:
@@ -1712,9 +1874,12 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     "native receipt changed during stop",
                 )
             inspected = driver.inspect(current_receipt)
-            stopped_main = native.get("main_process")
+            stopped_main = native.get(controller_keys(state).process)
             if not isinstance(stopped_main, dict) or not _terminal_stop_is_owned(
-                current_receipt, inspected, stopped_main
+                current_receipt,
+                inspected,
+                stopped_main,
+                pid_key=controller_keys(current).pid,
             ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
@@ -1790,9 +1955,32 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 "native agent-team state directory contains unknown entries",
             )
         run_id = _new_id()
-        main_terminal = _new_id()
+        controller_terminal = _new_id()
         run_nonce = secrets.token_hex(16)
-        session_name = f"agent-team-main-{run_nonce[:16]}"
+        keys = controller_keys(
+            {
+                "version": NAMED_STATE_VERSION if spec.graph is not None else 3,
+                **({"graph": spec.graph.as_dict()} if spec.graph is not None else {}),
+            }
+        )
+        program = keys.pid == "coordinator_pid"
+        controller_name = "coordinator" if program else "main"
+        session_name = f"agent-team-{controller_name}-{run_nonce[:16]}"
+        if program:
+            main_argv = list(
+                python_process_argv(
+                    (
+                        sys.executable,
+                        "-m",
+                        "agent_team",
+                        "_program-run",
+                        "--state",
+                        str(state_path),
+                        "--run-id",
+                        run_id,
+                    )
+                )
+            )
         supervisor_argv = (
             sys.executable,
             "-m",
@@ -1818,7 +2006,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             "state_path": str(state_path),
             "launcher_path": str(self._launcher_path),
             "run_id": run_id,
-            "main_terminal": main_terminal,
+            keys.terminal: controller_terminal,
             "role_specs": role_specs,
             "task_specs": [task.as_dict() for task in spec.task_specs],
             "roles": {},
@@ -1830,13 +2018,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             "native": {
                 "phase": "starting",
                 "run_nonce": run_nonce,
-                "main_argv": list(main_argv),
+                keys.argv: list(main_argv),
                 "supervisor_argv": list(python_process_argv(supervisor_argv)),
                 "startup_socket_path": str(
                     self._startup_socket_path(socket_root, session_name)
                 ),
             },
         }
+        if program:
+            state["program_wave"] = new_program_wave(state)
         _save_state(
             state_path,
             state,
@@ -1849,7 +2039,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 supervisor_argv,
                 cwd=PACKAGE_ROOT,
                 env=acp_environment(),
-                title=f"{spec.team_id}-main",
+                title=f"{spec.team_id}-{controller_name}",
             )
             if receipt.run_nonce != run_nonce or receipt.session_name != session_name:
                 raise RuntimeFailure(
@@ -1874,15 +2064,18 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         result = StartResult(
             team_id=spec.team_id,
             run_id=RunRef(run_id),
-            main_terminal_id=TerminalRef(main_terminal),
+            main_terminal_id=None if program else TerminalRef(controller_terminal),
             state_path=spec.state_path,
+            coordinator_terminal_id=TerminalRef(controller_terminal)
+            if program
+            else None,
         )
         self.last_start_response = {
             "status": "running",
             "team_id": spec.team_id,
             "workspace": str(_canonical(spec.workspace)),
             "run_id": run_id,
-            "main_terminal": main_terminal,
+            keys.terminal: controller_terminal,
             "state_path": str(spec.state_path),
         }
         return result
@@ -1915,9 +2108,12 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             state = current
             native = _native(state)
             if inspected.presence == "absent":
-                main_process = native.get("main_process")
+                main_process = native.get(controller_keys(state).process)
                 owned = isinstance(main_process, dict) and _terminal_stop_is_owned(
-                    receipt, inspected, main_process
+                    receipt,
+                    inspected,
+                    main_process,
+                    pid_key=controller_keys(state).pid,
                 )
             else:
                 owned = (
@@ -1935,20 +2131,24 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         else:
             self._driver = None
         self._state = state
+        keys = controller_keys(state)
+        terminal = TerminalRef(
+            _required_string(state.get(keys.terminal), keys.terminal)
+        )
+        program = keys.pid == "coordinator_pid"
         result = StartResult(
             team_id=spec.team_id,
             run_id=RunRef(_required_string(state.get("run_id"), "run_id")),
-            main_terminal_id=TerminalRef(
-                _required_string(state.get("main_terminal"), "main_terminal")
-            ),
+            main_terminal_id=None if program else terminal,
             state_path=spec.state_path,
+            coordinator_terminal_id=terminal if program else None,
         )
         self.last_start_response = {
             "status": "running" if phase == "running" else "starting",
             "team_id": spec.team_id,
             "workspace": _required_string(state.get("workspace"), "workspace"),
             "run_id": result.run_id._value,
-            "main_terminal": result.main_terminal_id._value,
+            keys.terminal: terminal._value,
             "state_path": str(spec.state_path),
         }
         return result
@@ -1961,10 +2161,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         if (
             any(
                 before.get(key) != current.get(key)
-                for key in ("run_id", "main_terminal")
+                for key in ("run_id", "main_terminal", "coordinator_terminal")
             )
             or old_native.get("phase") != new_native.get("phase")
-            or old_native.get("main_process") != new_native.get("main_process")
+            or old_native.get(controller_keys(before).process)
+            != new_native.get(controller_keys(current).process)
             or old_native.get(self._receipt_key) != new_native.get(self._receipt_key)
         ):
             raise RuntimeFailure(
@@ -1981,6 +2182,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             "team_id",
             "run_id",
             "main_terminal",
+            "coordinator_terminal",
             "task_specs",
             "graph",
             "role_specs",
@@ -2082,7 +2284,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             if not inspection.identity_verified:
                 status = "unknown"
             elif phase == "running" and inspection.running is False:
-                process = native.get("main_process")
+                process = native.get(controller_keys(state).process)
                 if (
                     isinstance(process, Mapping)
                     and process.get("phase") == "exited"
@@ -2102,8 +2304,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             "status": status,
             "team_id": team_id,
             "run_id": run_id,
-            "main_terminal": _required_string(
-                state.get("main_terminal"), "main_terminal"
+            controller_keys(state).terminal: _required_string(
+                state.get(controller_keys(state).terminal),
+                controller_keys(state).terminal,
             ),
             "native": dict(native),
             "roles": dict(_required_mapping(state.get("roles"), "roles")),
@@ -2115,6 +2318,21 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         "delivery_id": question["delivery_id"],
                         "answered": len(cast(dict[str, str], question["answers"])),
                         "total": len(cast(list[str], question["message_ids"])),
+                        "messages": [
+                            {
+                                "message_id": message_id,
+                                "body": field.body,
+                                "answered": message_id
+                                in cast(dict[str, str], question["answers"]),
+                            }
+                            for message_id, field in zip(
+                                cast(list[str], question["message_ids"]),
+                                validate_question_request(
+                                    question["request"]
+                                ).questions,
+                                strict=True,
+                            )
+                        ],
                     }
                 }
                 if question is not None
@@ -2123,11 +2341,22 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         }
         if inspection is not None:
             response[self.runtime] = _inspection_dict(inspection)
+        if state.get("version") == 4:
+            response["consultations"] = [
+                {"task_id": task_id, **pending}
+                for task_id, record in _required_mapping(
+                    state.get("tasks"), "tasks"
+                ).items()
+                if isinstance(record, Mapping)
+                and (pending := task_consultation(state, record)) is not None
+            ]
         self.last_status_response = response
         return StatusReceipt(status, team_id, RunRef(run_id))
 
-    def _attach(self, request: Attach) -> AttachReceipt:
-        if role_kind(request.role) is not Role.MAIN:
+    def _attach(
+        self, request: Attach | AttachCoordinator
+    ) -> AttachReceipt | CoordinatorAttachReceipt:
+        if isinstance(request, Attach) and role_kind(request.role) is not Role.MAIN:
             state = self._require_state()
             if role_id(request.role) in _role_specs(state):
                 raise RuntimeFailure(
@@ -2139,7 +2368,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         path = _state_path(previous)
         try:
             state = self._reload_state(path)
-            _require_target(state, request.role)
+            keys = controller_keys(state)
+            if isinstance(request, AttachCoordinator):
+                if keys.pid != "coordinator_pid":
+                    raise RuntimeFailure(
+                        ErrorCode.INVALID_REQUEST,
+                        "this team has no program coordinator",
+                    )
+            else:
+                _require_target(state, request.role)
             native = _native(state)
             receipt = self._receipt_from_state(native)
             driver = self._driver or self._driver_from_receipt(receipt)
@@ -2171,14 +2408,22 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 ErrorCode.BACKEND_PROTOCOL_FAILURE, "native Main attach failed"
             )
         run_id = _required_string(state.get("run_id"), "run_id")
-        terminal = _required_string(state.get("main_terminal"), "main_terminal")
+        terminal = _required_string(state.get(keys.terminal), keys.terminal)
         self.last_attach_response = {
             "status": "focused",
-            "role": role_id(request.role),
-            **_named_identity(state, role_id(request.role)),
+            **(
+                {"coordinator_terminal": terminal}
+                if isinstance(request, AttachCoordinator)
+                else {
+                    "role": role_id(request.role),
+                    **_named_identity(state, role_id(request.role)),
+                }
+            ),
             "terminal": terminal,
             "argv": list(argv),
         }
+        if isinstance(request, AttachCoordinator):
+            return CoordinatorAttachReceipt(TerminalRef(terminal), RunRef(run_id))
         return AttachReceipt(request.role, TerminalRef(terminal), RunRef(run_id))
 
     def _prompt(self, request: RolePrompt | TaskDispatch) -> Assignment:
@@ -2216,7 +2461,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         release_read: int | None = None
         release_write: int | None = None
         try:
-            state = self._reload_state(path)
+            state = self._progress_state(path)
             _require_running(state)
             if state["version"] == NAMED_STATE_VERSION or isinstance(
                 request.role, NodeRef
@@ -2240,6 +2485,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             task_record = None
             if isinstance(request, TaskDispatch):
                 revision = None
+                workspace_revision = None
                 tasks = state.get("tasks")
                 prior_task = (
                     tasks.get(request.task.task_id)
@@ -2252,7 +2498,18 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     and prior_task.get("status") == "awaiting_implementation_review"
                 ):
                     revision = snapshot_revision(Path(str(state["workspace"])))
-                task_record, text = prepare_dispatch(state, request, revision=revision)
+                elif role_kind(request.role) is Role.REVIEWER and is_plan_only(
+                    state, request.task.task_id
+                ):
+                    workspace_revision = snapshot_revision(
+                        Path(str(state["workspace"]))
+                    )
+                task_record, text = prepare_dispatch(
+                    state,
+                    request,
+                    revision=revision,
+                    workspace_revision=workspace_revision,
+                )
                 if len(text) > MAX_PROMPT_CHARS:
                     raise RuntimeFailure(
                         ErrorCode.INVALID_REQUEST,
@@ -2344,7 +2601,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 from . import codex_acp
 
                 # The journal must be durable before inspection can spawn a child.
-                inspection_state = self._reload_state(path)
+                inspection_state = self._progress_state(path)
                 _native(inspection_state)["codex_inspection_cleanup"] = {
                     "role": role_id(request.role),
                     "provider_private_root": str(private_root),
@@ -2489,6 +2746,12 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 task_record["dispatch_id"] = dispatch_id
                 assignment["task_stage"] = task_record["stage"]
                 assignment["task_revision"] = task_record["revision"]
+                if role_kind(request.role) is Role.REVIEWER and is_plan_only(
+                    state, request.task.task_id
+                ):
+                    assignment["task_workspace_revision"] = task_record[
+                        "workspace_revision"
+                    ]
             if write_policy is not None:
                 assignment["write_policy_path"] = str(write_policy)
                 assignment["write_policy_sha256"] = policy_digest
@@ -2735,7 +2998,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         _require_running(_read_state(path))
                         return WaitReceipt(None, ())
                     try:
-                        current = self._reload_state(path)
+                        current = self._progress_state(path)
                         _require_running(current)
                         current_question = native_questions.outbox(current)
                         if current_question is None or current_question != question:
@@ -2791,7 +3054,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     _require_running(_read_state(path))
                     return WaitReceipt(None, ())
                 try:
-                    current = self._reload_state(path)
+                    current = self._progress_state(path)
                     _require_running(current)
                     if current.get(PENDING_DELIVERY_ID) is not None:
                         raise RuntimeFailure(
@@ -2880,7 +3143,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._reload_state(path)
+            state = self._progress_state(path)
             _require_running(state)
             assignment = _assignment(state, request.role)
             task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
@@ -2930,7 +3193,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._reload_state(path)
+            state = self._progress_state(path)
             _require_running(state)
             assignment = _assignment(state, request.role)
             task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
@@ -2985,7 +3248,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._reload_state(path)
+            state = self._progress_state(path)
             _require_running(state)
             assignment = _assignment(state, request.role)
             task_id, dispatch_id, terminal, launch_nonce = _assignment_identity(
@@ -3095,7 +3358,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
-            state = self._reload_state(path)
+            state = self._progress_state(path)
             _require_running(state)
             pending = state.get(PENDING_DELIVERY_ID)
             if pending != request.delivery_id._value:
@@ -3211,13 +3474,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 ErrorCode.BACKEND_PROTOCOL_FAILURE, "native phase is unknown"
             )
         receipt = self._receipt_from_state(native)
-        process = native.get("main_process")
+        process = native.get(controller_keys(state).process)
         if not isinstance(process, dict):
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "native Main process receipt is unknown",
             )
-        if not _terminal_stop_is_owned(receipt, inspected, process):
+        if not _terminal_stop_is_owned(
+            receipt, inspected, process, pid_key=controller_keys(state).pid
+        ):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "native terminal ownership is unproven"
             )
@@ -3274,7 +3539,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "native Main startup is unresolved; state and socket path retained",
                 )
-            if isinstance(native.get("main_process"), dict):
+            if isinstance(native.get(controller_keys(state).process), dict):
                 self._state = state
                 return
             if native.get("phase") not in {"running", "stopping"}:
@@ -3402,7 +3667,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         process: Mapping[str, object],
     ) -> None:
         try:
-            validate_native_main_process(process)
+            validate_native_controller_process(
+                process, pid_key=controller_keys(state).pid
+            )
         except RuntimeValidationError as exc:
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
@@ -3480,14 +3747,14 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         self, state: Mapping[str, object], process: Mapping[str, object]
     ) -> bool:
         current = _read_state(_state_path(state))
-        saved = _native(current).get("main_process")
+        saved = _native(current).get(controller_keys(current).process)
         if not isinstance(saved, Mapping):
             return False
         if any(
             saved.get(key) != process.get(key)
             for key in (
                 "supervisor_pid",
-                "agent_pid",
+                controller_keys(state).pid,
                 "process_group_id",
                 "launch_nonce",
             )

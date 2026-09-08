@@ -47,7 +47,7 @@ def tools(roles: tuple[str, ...] = ROLES) -> list[dict[str, object]]:
         },
         {
             "name": "task_verify",
-            "description": "実装レビュー承認後、同じコードの版に宣言済みの固定argvで検証を実行します。全件成功した場合だけタスクを完了にします。",
+            "description": "最終レビュー承認後、同じコードの版に宣言済みの固定argvで検証を実行します。全件成功した場合だけタスクを完了にします。",
             "inputSchema": task_only,
         },
         {

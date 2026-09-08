@@ -17,6 +17,7 @@ from typing import Any, Final
 from .adapters import _process_group_exited, _wait_for_process_group_exit
 from .contracts import RuntimeFailure
 from .locking import _LifecycleReservation
+from .native_controller import ControllerKeys, controller_keys
 from .native_terminal import is_native_runtime
 from .runtime import NAMED_STATE_VERSION, STATE_VERSION, RuntimeValidationError
 from .runtime import read_state as runtime_read_state
@@ -52,12 +53,10 @@ def _required_text(value: object, context: str) -> str:
 def _run_id(state: dict[str, object], expected: str) -> None:
     if state.get("version") not in {STATE_VERSION, NAMED_STATE_VERSION}:
         raise NativeMainError("agent-team native Main state version is unsupported")
-    if state["version"] == NAMED_STATE_VERSION:
-        from .named_graph import GraphSpec
-
-        graph = GraphSpec.from_dict(state.get("graph"))
-        if graph.coordination.mode != "agent" or graph.main_node is None:
-            raise NativeMainError("native Main requires agent coordination")
+    try:
+        controller_keys(state)
+    except (TypeError, ValueError) as exc:
+        raise NativeMainError("native controller state identity is invalid") from exc
     if state.get("run_id") != expected:
         raise NativeMainError("agent-team state run identity changed")
     if not is_native_runtime(state.get("runtime")):
@@ -75,15 +74,19 @@ def _native_state(state: dict[str, object]) -> dict[str, object]:
     return native
 
 
-def _frozen_argv(native: dict[str, object]) -> tuple[str, ...]:
-    raw_argv = native.get("main_argv")
+def _frozen_argv(native: dict[str, object], keys: ControllerKeys) -> tuple[str, ...]:
+    raw_argv = native.get(keys.argv)
     if not isinstance(raw_argv, list) or not raw_argv:
-        raise NativeMainError("agent-team native Main argv is invalid")
+        raise NativeMainError(
+            f"agent-team native controller argv is invalid: {keys.argv}"
+        )
     argv: list[str] = []
     for index, raw in enumerate(raw_argv):
-        argv.append(_required_text(raw, f"argv[{index}]"))
+        argv.append(_required_text(raw, f"{keys.argv}[{index}]"))
     if not Path(argv[0]).is_absolute():
-        raise NativeMainError("agent-team native Main executable path must be absolute")
+        raise NativeMainError(
+            "agent-team native controller executable path must be absolute"
+        )
     return tuple(argv)
 
 
@@ -129,10 +132,15 @@ def _new_launch_nonce() -> str:
     return secrets.token_hex(16)
 
 
-def _running_record(supervisor_pid: int, child: _ChildProcess) -> dict[str, object]:
+def _running_record(
+    supervisor_pid: int,
+    child: _ChildProcess,
+    *,
+    pid_key: str = "agent_pid",
+) -> dict[str, object]:
     return {
         "supervisor_pid": supervisor_pid,
-        "agent_pid": child.agent_pid,
+        pid_key: child.agent_pid,
         "process_group_id": child.process_group_id,
         "launch_nonce": child.launch_nonce,
         "phase": "running",
@@ -183,8 +191,9 @@ def _launch_if_ready(
     supervisor_pid: int,
     *,
     is_cancelled: Callable[[], bool],
+    keys: ControllerKeys | None = None,
 ) -> tuple[_ChildProcess | None, bool]:
-    """Launch and record Main while the lifecycle reservation is held."""
+    """Launch and record the selected controller while the lock is held."""
 
     if is_cancelled():
         return None, False
@@ -196,14 +205,16 @@ def _launch_if_ready(
 
     child: _ChildProcess | None = None
     published = False
+    selected_keys = keys
     try:
         state = _read_current_state(state_path, run_id)
+        selected_keys = selected_keys or controller_keys(state)
         native = _native_state(state)
         if native["phase"] != "running":
             return None, False
-        if native.get("main_process") is not None:
+        if native.get(selected_keys.process) is not None:
             return None, False
-        argv = _frozen_argv(native)
+        argv = _frozen_argv(native, selected_keys)
         workspace = _workspace(state)
         launch_nonce = _new_launch_nonce()
         if is_cancelled():
@@ -247,7 +258,9 @@ def _launch_if_ready(
             launch_nonce=launch_nonce,
         )
         next_native = dict(native)
-        next_native["main_process"] = _running_record(supervisor_pid, child)
+        next_native[selected_keys.process] = _running_record(
+            supervisor_pid, child, pid_key=selected_keys.pid
+        )
         runtime_write_state(
             state_path,
             _replace_native(state, next_native),
@@ -281,6 +294,7 @@ def _launch_if_ready(
                 returncode,
                 False,
                 allow_missing_running_record=True,
+                keys=selected_keys,
             )
             return None, False
         group_stopped = _stop_process_group(child, signal.SIGTERM)
@@ -294,6 +308,7 @@ def _launch_if_ready(
             child,
             returncode,
             group_stopped,
+            keys=selected_keys,
         )
         return None, False
     return child, published
@@ -365,8 +380,8 @@ def _publish_exited(
     group_stopped: bool,
     *,
     allow_missing_running_record: bool = False,
+    keys: ControllerKeys | None = None,
 ) -> bool:
-    expected = _running_record(supervisor_pid, child)
     reservation = _LifecycleReservation(state_path, create_parent=False)
     try:
         reservation.acquire_for_publication()
@@ -374,18 +389,20 @@ def _publish_exited(
         return False
     try:
         state = _read_current_state(state_path, run_id)
+        selected_keys = keys or controller_keys(state)
+        expected = _running_record(supervisor_pid, child, pid_key=selected_keys.pid)
         native = _native_state(state)
         if allow_missing_running_record:
-            if native.get("main_process") is not None:
+            if native.get(selected_keys.process) is not None:
                 return False
-        elif not _same_running_record(native.get("main_process"), expected):
+        elif not _same_running_record(native.get(selected_keys.process), expected):
             return False
         exited = dict(expected)
         exited["phase"] = "exited"
         exited["returncode"] = returncode
         exited["group_stopped"] = group_stopped
         next_native = dict(native)
-        next_native["main_process"] = exited
+        next_native[selected_keys.process] = exited
         runtime_write_state(
             state_path,
             _replace_native(state, next_native),
@@ -441,11 +458,13 @@ def run(state_path: Path, run_id: str) -> int:
         ready = _load_ready_state(state_path, run_id)
         if ready is None or pending_signal is not None:
             return 1
+        keys = controller_keys(ready)
         child, published = _launch_if_ready(
             state_path,
             run_id,
             os.getpid(),
             is_cancelled=lambda: pending_signal is not None,
+            keys=keys,
         )
         if child is None or not published:
             return 1
@@ -504,6 +523,7 @@ def run(state_path: Path, run_id: str) -> int:
             child,
             returncode,
             group_stopped,
+            keys=keys,
         )
         if not published_exit or not group_stopped:
             return 1

@@ -11,8 +11,9 @@ Worker、Reviewerを持つ実験的なnative subsetです。native Workerのassi
 roleを起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
 [Version 4の設定](configuration-v4_JA.md)を参照してください。
 nodeごとの設定、複数のWorker/Reviewer、TaskSpecの担当指定には、
-[Version 5の設定](configuration-v5_JA.md)を使います。nativeの`agent`/`serial`構成は実行できますが、
-program・並列実行・名前付きOrca構成の起動は拒否します。以下はversion 3のリファレンスです。
+[Version 5の設定](configuration-v5_JA.md)を使います。version 5ではnativeの`agent`/`serial`と
+`program`/`serial`構成が接続しています。並列実行と名前付きOrca構成は引き続き拒否します。以下は
+固定Main roleを持つversion 3のリファレンスで、Mainなしのprogram graphは表現しません。
 
 ## canonical configから始める
 
@@ -365,7 +366,7 @@ native task lifecycleの順序は次のとおりです。
 3. `task_get`で保存済みstage、review evidence、verification evidenceを確認します。
 4. Planner/Workerの成功は`awaiting_plan_review`または`awaiting_implementation_review`になります。
 5. Reviewerは`task_id`、`stage`、`revision`、`decision`、`findings`だけのexact JSONを返します。
-6. `approve`は次のstageへ進み、`request_changes`は元のwriterへ戻り、`consult`はuser判断で停止します。
+6. `approve`は次のstageへ進み、`request_changes`は元のwriterへ戻り、`consult`は名前付きnative graphのuser相談を保存します。
 7. implementation approval後に`task_verify`が宣言済みfixed argvを実行します。
 
 `role_wait`がnativeの`question`を返した場合、Mainは各eventの`message_id`へ`message_reply`を送り、
@@ -374,8 +375,12 @@ clientは`received` receiptを返し、Pythonがhashだけのreceiptを保存し
 `recorded`を送り、同じACP sessionを続けます。同じmessage IDと同じ本文の再送はidempotentですが、異なる本文は拒否します。
 1 batchは1〜4問、各question/answerは20,000文字以内、各frameは512 KiB以内、1 assignmentは最大64
 batchです。消費済みreceiptにはidentityとhashだけを残します。protected outboxには、公開失敗から復旧できるよう、
-次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。このquestion pathは
-Reviewerの`consult`やpost-review resumeを実装したものではなく、別の未完了要件です。
+次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。native ACP questionはReviewerの`consult`とは別の経路です。
+名前付きnativeのversion 5 `agent`または`program`では、`status`にopaqueな相談ID、findings、task/stage、回答状態を表示し、
+`answer --consultation-id ID --body ...`でboundedな人間の回答を保存します。同じIDと本文の再送はidempotentですが、本文の置換や古いIDは拒否します。
+review roundが残っていれば、元のwriterを再実行してからreviewをやり直します。上限到達後は回答を保存しても再dispatchを許可しません。
+回答だけで承認にはならず、review roundもリセットしません。
+ACP questionは引き続き`answer --message-id ID --body ...`を使い、program coordinatorはbatch内の全questionへの回答後にだけackします。
 
 planとimplementationのreview roundは別々に数え、どちらも`max_review_rounds`に従います。
 implementation reviewはReviewer assignment準備時のworkspace revisionに束縛されます。

@@ -65,14 +65,20 @@ from .config_v5 import (
 )
 from .contracts import (
     Attach,
+    AttachCoordinator,
     ErrorCode,
+    MessageRef,
+    MessageReply,
     NodeRef,
+    ReplyReceipt,
     Role,
     RoleSpec,
     RoleTarget,
     RuntimeFailure,
     StartSpec,
     Status,
+    TaskConsultationReply,
+    TaskStatusReceipt,
     role_id,
     role_kind,
 )
@@ -123,7 +129,7 @@ from .runtime import (
     write_state as runtime_write_state,
 )
 from .scoped_acp import client_argv, native_profile, validate_write_policy
-from .task_execution import parse_review
+from .task_execution import is_plan_only, parse_review
 from .task_spec import TaskSpec, parse_task_specs
 from .workflow import WorkflowEngine
 from .workspace_revision import snapshot_revision
@@ -2113,7 +2119,16 @@ def _acp_run_turn(
             task_evidence = parse_review(
                 output, task=task, stage=stage, revision=revision
             )
-            if stage == "implementation" and snapshot_revision(workspace) != revision:
+            if is_plan_only(state, task.task_id):
+                workspace_revision = assignment.get("task_workspace_revision")
+                if not isinstance(workspace_revision, str):
+                    raise ConfigError("plan-only workspace revision is missing")
+            else:
+                workspace_revision = revision if stage == "implementation" else None
+            if (
+                workspace_revision is not None
+                and snapshot_revision(workspace) != workspace_revision
+            ):
                 raise ConfigError("reviewed workspace revision changed")
         except (ValueError, RuntimeError, RuntimeFailure) as exc:
             task_evidence = None
@@ -2718,13 +2733,8 @@ def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
         raise ConfigError(
             f"launch plan contains an invalid named graph: {exc}"
         ) from exc
-    if (
-        graph.coordination.mode != "agent"
-        or graph.coordination.dispatch_mode != "serial"
-    ):
-        raise ConfigError(
-            "native named execution currently requires agent coordination and serial dispatch"
-        )
+    if graph.coordination.dispatch_mode != "serial":
+        raise ConfigError("native named execution currently requires serial dispatch")
 
 
 def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
@@ -2743,24 +2753,109 @@ def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
 
 
 def manage_team(
-    command: str, plan: dict[str, object], role: str | None
+    command: str,
+    plan: dict[str, object],
+    role: str | None,
+    *,
+    coordinator: bool = False,
+    message_id: str | None = None,
+    consultation_id: str | None = None,
+    body: str | None = None,
 ) -> dict[str, object]:
+    if command == "answer":
+        invalid_message_id = message_id is not None and (
+            not isinstance(message_id, str) or not message_id.strip()
+        )
+        invalid_consultation_id = consultation_id is not None and (
+            not isinstance(consultation_id, str) or not consultation_id.strip()
+        )
+        if invalid_message_id or invalid_consultation_id:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "answer IDs must be non-empty strings"
+            )
+        has_message_id = isinstance(message_id, str) and bool(message_id.strip())
+        has_consultation_id = isinstance(consultation_id, str) and bool(
+            consultation_id.strip()
+        )
+        if has_message_id == has_consultation_id:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "answer requires exactly one of message_id or consultation_id",
+            )
+        if not isinstance(body, str) or not body.strip():
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "answer requires a non-empty body"
+            )
+        if has_consultation_id and not is_native_runtime(plan.get("runtime")):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "consultation answers require a named native backend",
+            )
     _ensure_orca_platform()
     start_spec = _start_spec(plan, attach=False)
+    if command == "answer" and consultation_id is not None and start_spec.graph is None:
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST, "consultation answers require a named task graph"
+        )
     selected_role: RoleTarget | None = None
+    if coordinator and (
+        start_spec.graph is None or start_spec.graph.coordination.mode != "program"
+    ):
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST, "this operation requires a program coordinator"
+        )
+    if (
+        command == "answer"
+        and consultation_id is None
+        and (
+            start_spec.graph is None or start_spec.graph.coordination.mode != "program"
+        )
+    ):
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST,
+            "message answers require a program coordinator",
+        )
     if command == "attach":
-        if role is None:
-            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "attach requires a role")
-        selected_role = _role_target_for_plan(plan, role)
+        if coordinator == (role is not None):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "attach requires a role or --coordinator"
+            )
+        if role is not None:
+            selected_role = _role_target_for_plan(plan, role)
     engine, backend = _runtime_engine(plan, resume_existing=True)
     engine.start(start_spec)
     if command == "status":
         engine.request(Status())
         response = backend.last_status_response
     elif command == "attach":
-        assert selected_role is not None
-        engine.request(Attach(selected_role))
+        if coordinator:
+            engine.request(AttachCoordinator())
+        else:
+            assert selected_role is not None
+            engine.request(Attach(selected_role))
         response = backend.last_attach_response
+    elif command == "answer":
+        assert body is not None
+        if consultation_id is not None:
+            replied = engine.request(TaskConsultationReply(consultation_id, body))
+            if not isinstance(replied, TaskStatusReceipt):
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "consultation receipt is invalid",
+                )
+            response = {
+                "status": "answered",
+                "consultation_id": consultation_id,
+                "task_id": replied.task_id,
+            }
+        else:
+            assert message_id is not None
+            replied = backend.request(MessageReply(MessageRef(message_id), body))
+            if not isinstance(replied, ReplyReceipt) or not replied.replied:
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE, "answer receipt is invalid"
+                )
+            response = {"status": "answered", "message_id": message_id}
     elif command == "stop":
         engine.stop()
         response = backend.last_stop_response
@@ -2799,7 +2894,15 @@ def _run_runtime_command(args: argparse.Namespace, plan: dict[str, object]) -> i
         if args.command == "start":
             result = start_team(plan, attach=not args.no_attach)
         else:
-            result = manage_team(args.command, plan, getattr(args, "role", None))
+            result = manage_team(
+                args.command,
+                plan,
+                getattr(args, "role", None),
+                coordinator=getattr(args, "coordinator", False),
+                message_id=getattr(args, "message_id", None),
+                consultation_id=getattr(args, "consultation_id", None),
+                body=getattr(args, "body", None),
+            )
     except RuntimeFailure as exc:
         print(f"ERROR: {_runtime_failure_message(exc)}", file=sys.stderr)
         return 1
@@ -2898,17 +3001,22 @@ def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
         "task_getで状態を確認し、awaiting_plan_reviewならplan_reviewer、"
         "awaiting_implementation_reviewならimplementation_reviewerへ依頼します。"
         "レビューはJSONのdecision（approve、request_changes、consult）で判定されます。"
-        "plan_approvedならimplementation_writer、plan_changes_requestedならplan_writer、"
+        "plan_approvedでimplementation_writerがある場合はその担当へ進み、plan_changes_requestedならplan_writer、"
         "implementation_changes_requestedならimplementation_writerへ同じTaskSpecを渡します。"
         "前段の結果とレビュー証拠は保存され、次の担当へ渡されます。"
         "別のreviewerへ切り替えたり別task_idで同じ作業を登録したりして上限を回避しません。\n"
-        "implementation_approvedの後はtask_verifyを呼びます。プログラムが、Reviewerが"
+        "implementation_approved、または実装担当を持たない計画のみのrouteがplan_approvedに"
+        "なった後はtask_verifyを呼びます。計画のみでも本文のハッシュとコードの版は別に保存されます。プログラムが、Reviewerが"
         "承認した同じコードの版に対し、宣言済みの固定argvで検証します。"
         "verification_failedなら保存された失敗証拠に従い、許可範囲内の修正を"
-        "implementation_writerへ依頼します。Reviewer承認や担当の成功通知だけでは"
+        "implementation_writer（計画のみならplan_writer）へ依頼します。Reviewer承認や担当の成功通知だけでは"
         "タスク全体の完了を報告できません。task_getのstatusがcompletedになった場合だけ"
         "完了として報告してください。consultation_required、failed、回数上限、"
         "停止やcleanupの未確認は未完了です。\n"
+        "consultation_requiredではtask_getのconsultationから相談IDと指摘をユーザーに提示し、"
+        "agent-team answer --state STATE --consultation-id ID --body ANSWERで実際の回答を"
+        "登録してもらいます。回答を捏造してはいけません。answeredがtrueなら上限内で"
+        "元のstageの作成担当へ戻し、再レビューを受けます。回答はTaskSpecや権限を変更しません。\n"
         f"レビュー上限は、計画・実装それぞれ初回を含め{team.max_review_rounds}回です。"
         "role_promptはTaskSpecを使わない読み取り専用の調査に限ります。"
         "実行時が未対応と返した工程・接続を自己判断で代替してはいけません。"
@@ -3083,7 +3191,8 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--state", type=resolve_cli_path)
     status.add_argument("--team", action="append")
     attach = subparsers.add_parser("attach", help="focus one role in Orca")
-    attach.add_argument("role")
+    attach.add_argument("role", nargs="?")
+    attach.add_argument("--coordinator", action="store_true")
     add_context_arguments(attach, management=True)
     attach.add_argument("--state", type=resolve_cli_path)
     attach.add_argument("--team", action="append")
@@ -3091,6 +3200,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_context_arguments(stop, management=True)
     stop.add_argument("--state", type=resolve_cli_path)
     stop.add_argument("--team", action="append")
+    answer = subparsers.add_parser("answer", help="answer one pending task question")
+    add_context_arguments(answer, management=True)
+    answer.add_argument("--state", type=resolve_cli_path)
+    answer.add_argument("--team", action="append")
+    answer_ids = answer.add_mutually_exclusive_group(required=True)
+    answer_ids.add_argument("--message-id")
+    answer_ids.add_argument("--consultation-id")
+    answer.add_argument("--body", required=True)
     harnesses = subparsers.add_parser(
         "harnesses", help="show recognized harnesses and static availability"
     )
@@ -3125,6 +3242,9 @@ def build_parser() -> argparse.ArgumentParser:
     native_main = subparsers.add_parser("_native-main", help=argparse.SUPPRESS)
     native_main.add_argument("--state", type=Path, required=True)
     native_main.add_argument("--run-id", required=True)
+    program = subparsers.add_parser("_program-run", help=argparse.SUPPRESS)
+    program.add_argument("--state", type=resolve_cli_path, required=True)
+    program.add_argument("--run-id", required=True)
     subparsers.add_parser("_mcp-server", help=argparse.SUPPRESS)
     return parser
 
@@ -3182,6 +3302,10 @@ def main(argv: list[str] | None = None) -> int:
         from .native_main import run
 
         return run(args.state, args.run_id)
+    if args.command == "_program-run":
+        from . import native_program
+
+        return native_program.run(args.state, args.run_id)
     if args.command == "harnesses":
         rows = status_rows()
         if args.as_json:
@@ -3242,7 +3366,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         team_values = getattr(args, "team", None)
         state_argument = getattr(args, "state", None)
-        if args.command in {"status", "attach", "stop"}:
+        if args.command in {"status", "attach", "stop", "answer"}:
             plan = _management_plan_from_state(
                 _management_state(
                     state_argument, args.cwd, config_path=args.config, team=team_values

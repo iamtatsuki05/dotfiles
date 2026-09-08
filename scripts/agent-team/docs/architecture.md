@@ -39,10 +39,13 @@ flowchart TD
 
 `NativeBackend` owns the common Main/ACP/task lifecycle, while the selected
 `TmuxBackend`, `HerdrBackend`, or `ZellijBackend` supplies the terminal driver.
-`native_main` supervises the owned Main process group. Native ACP Planner,
+`native_main` supervises the owned Main or program coordinator process group.
+Native ACP Planner,
 Worker, and Reviewer turns run as launcher-owned background processes. They
 publish completion through `publish_completion`; terminal pane text or provider
-status is never interpreted as a lifecycle event. Only Main can be attached.
+status is never interpreted as a lifecycle event. Agent teams attach to Main;
+Mainless program teams use `attach --coordinator`. ACP background roles do not
+provide an attachable TTY.
 
 The Herdr driver was verified with exact version 0.8.2 and protocol 20. It owns
 a private headless server and uses a normal-shell bootstrap without faking
@@ -56,15 +59,19 @@ client and no `--max-panes 1`. It holds Main metadata and accepts one terminal
 plus the expected suppressed `zellij:link` plugin; unknown panes/plugins remain
 unknown.
 
-Named agent/serial graphs are connected through version 5. No-Main
-configurations, explicit parallel workflows, named Orca graphs, and most of the
-ten harnesses remain unfinished. Giving two systems ownership
-of the same worker would make completion and cleanup ambiguous.
+Named agent/serial and program/serial graphs are connected through version 5.
+Program mode has no Main role and does not create a second task ledger. The
+selected terminal hosts the existing `native_main` supervisor, which supervises
+the fixed `_program-run` coordinator argv. Parallel workflows, named Orca
+graphs, and most of the ten harnesses remain unfinished. Giving two systems
+ownership of the same worker would make completion and cleanup ambiguous.
 
 Native Claude ACP questions stay within the existing Task/Dispatch assignment.
 Real-model question acceptance covers tmux; Herdr and Zellij have fake-provider
-contract coverage for this feature. These results do not complete the remaining
-graph modes, no-Main, parallel workflow, or all-harness requirements.
+contract coverage for this feature. The named-native Reviewer consultation
+answer path and serial program coordinator are connected by focused tests, but
+these results do not complete parallel workflow, named Orca, or all-harness
+requirements.
 
 ### Named nodes and explicit TaskSpec routes
 
@@ -97,12 +104,56 @@ workspace HEAD/index and other manifest entries unchanged. Public stop worked
 after deleting the input config/prompts; independent checks found no owned
 processes, groups, state, provider roots, snapshots, or fixture resources.
 
-This is native agent/serial acceptance. Program coordination, parallel
-assignment admission, named Orca execution, and `consults-to` communication
-remain unfinished. Graph validation and rendering can describe these shapes.
-Program, parallel, and named Orca starts are rejected before dependencies are
-probed or resources are created; no agent-to-agent consultation operation is
-exposed.
+This is native agent/serial acceptance. Native program/serial coordination is
+also connected in the implementation and has focused contract coverage. A
+program run uses the selected terminal and the recorded coordinator identity;
+it does not invent a Main role, Main model, or separate CLI. Program wave state
+keeps declared `task_ids`, `phase`, and `revision`, and advances in declaration
+and dependency order. All writers finish before the wave is sealed; all
+same-revision reviewers must approve before fixed-argv verification, and only
+then can the successor wave begin. Parallel assignment admission and named
+Orca execution are still rejected before dependency probes or resource
+creation.
+
+Reviewer consultation is a separate named-native operation. `status` exposes
+the opaque consultation ID, findings, task/stage, and answer state. The CLI
+accepts `answer --consultation-id ID --body ...` for both named `agent` and
+`program` teams. The ID is bound to the run, TaskSpec digest, review stage, and
+exact review Dispatch. The body is limited to 16,000 characters. An answer is
+idempotent only for the same body, and must redispatch the original writer
+followed by another bounded review; it is never an implicit approval. At the
+review-round limit, it may be recorded but cannot authorize another dispatch.
+
+### Bounded native program trial
+
+The real serial program trial `b239945b-283e-403b-aba5-84ba984c8469` used the
+selected tmux terminal and the declared `write-sum` task. The task asked two
+questions; two CLI `--message-id` answers were accepted, and the same ACP
+session `b43cc938-c08a-432d-99ec-f6a4c6c2a8bd` reached `received`. Claude then
+reported a Fable usage-limit failure. The coordinator published the failed
+result, completed its `read` → `release` → `ack` handling, and exited with code
+1. Implementation, review, and fixed-argv verification were not reached, so
+this is a lifecycle/failure trial and not a successful end-to-end program
+acceptance.
+
+After the config and prompts were removed, public `stop` returned code 0 in
+0.406 seconds. Independent `ps` and path checks found no owned PID, process
+group, private path, fixture, or virtual environment. The observer itself
+reported a command-identity error, so independent typed receipt fields were not
+retained; the cleanup claim is limited to the native client accepted result,
+the public stop result, and those process/path checks. No model switch or
+billing change was made, and normal-auth write coverage was not verified. A
+real-model read-only plan-only trial was not run after the usage-limit failure.
+
+The focused program-contract run passed 169 tests on both Python 3.13 and 3.11
+with zero skips, using the Claude SDK 1.3.0 and Codex SDK 1.4.0 fixtures; 144
+source hashes were unchanged. A separate mid full run passed package 908,
+CLI 33, MCP 33, and compact 8 on both Python versions before the consultation
+and plan-only additions, so it is not final live evidence for those additions.
+The final focused checks also passed Ruff over 132 files and strict mypy over
+54 source files. A fresh read-only review found no major issue. These checks
+validate the implementation and contracts; they do not turn the failed live
+trial into a successful provider run.
 
 ### Bounded live question acceptance
 
@@ -156,7 +207,8 @@ for the current head are tracked in [PR #7](https://github.com/iamtatsuki05/dotf
 | `agent_team/native_terminal.py` | Defines the shared terminal receipt, inspection, presence, and close protocol. |
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | Bind NativeBackend to the selected terminal driver. |
 | `agent_team/herdr.py`, `zellij.py` | Verify the exact Herdr 0.8.2/protocol-20 handshake and the Zellij driver identity/cleanup contract tested with 0.44.1. |
-| `agent_team/native_main.py` | Supervises the owned native Main process group and publishes its exit receipt. |
+| `agent_team/native_main.py` | Supervises the owned native Main process group or the program coordinator child and publishes its exit receipt. |
+| `agent_team/native_program.py`, `program_policy.py` | Drive a saved native `program` graph through serial TaskSpec waves without a Main model or a second task ledger. |
 | `agent_team/orca.py` | Owns the fixed Orca argv/envelope decoder. It does not own MCP role operations. |
 | `agent_team/tmux.py` | Creates and inspects one private, nonce-tagged tmux server and its Main pane. |
 | `agent_team/locking.py` | Owns the stable per-team lifecycle reservation, shared by state writes and runtime operations without importing a backend. |
@@ -355,8 +407,13 @@ Stopping during a question marks the outbox as explicitly cancelling. It does
 not fabricate an acknowledgment. The assignment and state are removed only
 after provider, process-group, socket, and private-root cleanup are proven;
 unknown cleanup preserves the state for inspection. A Main answerable question
-is separate from a question that only the user can decide. Reviewer
-`decision=consult` and post-review resume remain a separate unfinished gate.
+is separate from a question that only the user can decide. For a named-native
+Reviewer `decision=consult`, the saved status exposes a bounded opaque
+consultation ID and the actual findings. `answer --consultation-id ID --body ...`
+stores one answer bound to the current review Dispatch; same-body replay is
+idempotent, replacement and stale IDs are rejected, and the original writer
+must run again before another Reviewer decision. Review-round limits are not
+reset; an answer at the limit cannot authorize another dispatch.
 
 The native client publishes a fixed private-root `client-result.json` before
 writing ordinary stdout. It is a current-user-owned mode-0600 file, created
@@ -452,6 +509,17 @@ approval, no active role or Delivery, and the same revision. It runs every
 declared argv with `shell=False`, checks the revision before and after commands,
 and stores bounded errors plus stdout/stderr SHA-256 hashes. The task becomes
 `completed` only when all commands pass and cleanup is confirmed.
+
+Program waves use the same gates across all tasks in a declared integration
+wave. A plan review may unblock its implementation writer during the writers
+phase. A plan-only route (a route with only `plan_writer` and `plan_reviewer`)
+keeps the plan body SHA-256 in `record.revision` and stores the code snapshot
+reviewed by the final plan Reviewer in `workspace_revision`. In a mixed wave,
+the final plan-only review waits until every writer finishes and is sealed to
+the same workspace revision as the implementation review. Fixed-argv
+verification uses that exact revision. A plan retry returns to the exact
+Planner, preserves the plan review round, and never synthesizes an
+implementation writer.
 
 ## Lifecycle advances only on matching identities
 
@@ -689,15 +757,17 @@ The earlier 2.1.112 rejection was `claude_code_version_too_old`; the same
 The ambient `claude.ai` login path worked without an API key, but the
 provider's subscription billing ledger is not verified.
 
-## Agreed requirements remain unfinished
+## Agreed requirements and remaining evidence
 
-The following are remaining implementation goals, not exclusions from the
-agreed scope. They are tracked in Issues #8, #9, and #11.
+The following are remaining implementation and evidence goals, not exclusions
+from the agreed scope. They are tracked in Issues #8, #9, and #11.
 
 - The required profiles and real execution evidence for all ten harnesses
-- Dedicated Mainless execution, the remaining graph modes, explicit parallel tasks,
-  and the shared Orca/native progression work
-- Reviewer `consult` followed by post-review resume
+- Successful real-model program execution through implementation, review, and
+  fixed-argv verification; the bounded trial above stopped at provider failure
+- A real-model read-only plan-only run
+- Explicit parallel tasks, named Orca execution, and shared Orca/native
+  progression
 - Automatic recovery after crash or unproven cleanup
 
 ## Intentional exclusions
