@@ -1,4 +1,4 @@
-"""Pure admission checks for the native ``program``/``parallel`` slice.
+"""Pure admission checks for the native named parallel execution.
 
 The caller owns graph dependency, wave, revision, permission, and state
 mutation checks.  This module only answers whether a new assignment can be
@@ -59,8 +59,8 @@ def _target_node(graph: GraphSpec, target: NodeRef) -> NodeRef:
 
 def _validate_coordination(graph: GraphSpec) -> None:
     coordination = graph.coordination
-    if coordination.mode != "program" or coordination.dispatch_mode != "parallel":
-        raise ValueError("parallel program coordination is required")
+    if coordination.dispatch_mode != "parallel":
+        raise ValueError("parallel coordination is required")
     if (
         not isinstance(coordination.max_active, int)
         or isinstance(coordination.max_active, bool)

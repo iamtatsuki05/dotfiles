@@ -59,21 +59,25 @@ client and no `--max-panes 1`. It holds Main metadata and accepts one terminal
 plus the expected suppressed `zellij:link` plugin; unknown panes/plugins remain
 unknown.
 
-Named agent/serial and program/serial graphs are connected through version 5.
-Native program/parallel is also connected as a Mainless version-5 program mode;
-it does not create a second task ledger. The selected terminal hosts the
-existing `native_main` supervisor, which supervises the fixed `_program-run`
-coordinator argv. Main-agent parallel, named Orca graphs, and most of the ten
-harnesses remain unfinished. Giving two systems ownership of the same worker
-would make completion and cleanup ambiguous.
+Named agent/serial and agent/parallel graphs are connected through version 5.
+Agent/parallel is Main-coordinated: Main explicitly opens an `agent_batch` of
+exact TaskSpec IDs before dispatching named writers and reviewers. Native
+program/parallel is a separate Mainless version-5 program mode; it does not
+create a second task ledger. The selected terminal hosts the existing
+`native_main` supervisor, which supervises the fixed `_program-run` coordinator
+argv. There is no automatic scheduler or implicit conversion between the two
+modes. Named Orca graphs and most of the ten harnesses remain outside the
+current target. Giving two systems ownership of the same worker would make
+completion and cleanup ambiguous.
 
 Native Claude ACP questions stay within the existing Task/Dispatch assignment.
 Real-model question acceptance covers tmux; Herdr and Zellij have fake-provider
 contract coverage for this feature. The named-native Reviewer consultation
 answer path and serial/parallel program coordinator are connected by focused
-tests. Bounded terminal/fake-provider parallel coverage is recorded below;
-real-model parallel acceptance, named Orca, and all-harness requirements remain
-pending.
+tests. Earlier bounded terminal/fake-provider parallel coverage is recorded
+below as historical evidence for its own program scope. The bounded live
+Main-parallel acceptance is recorded below; real-model parallel acceptance,
+named Orca, and all-harness requirements remain pending.
 
 ### Named nodes and explicit TaskSpec routes
 
@@ -85,14 +89,14 @@ node IDs in MCP requests, and task routes bind each plan or implementation
 stage to a particular writer/reviewer pair. A declared plan pair must be
 approved before implementation; a route without that pair can omit Planner.
 
-The configuration version is 5; named native serial state uses version 4, while
-native program/parallel state uses version 5. The graph and `role_specs` cover
-all configured nodes. Version-5 `roles` retains active assignments with a
-per-node result, question, and pending Delivery container. Native runtime Task
-UUIDs differ from logical `TaskSpec.task_id`; dispatch IDs bind their results to
-the right logical task. State readers, publishers, and task gates reject missing
-or mismatched IDs/kinds. Version-3 state retains its own contract and is not
-migrated in place.
+The configuration version is 5. Named serial state uses version 4; native
+`agent`/`parallel` and `program`/`parallel` state use version 5. The graph and
+`role_specs` cover all configured nodes. Version-5 `roles` retains active
+assignments with a per-node result, question, and pending Delivery container.
+Native runtime Task UUIDs differ from logical `TaskSpec.task_id`; dispatch IDs
+bind their results to the right logical task. State readers, publishers, and
+task gates reject missing or mismatched IDs/kinds. Version-3 state retains its
+own contract and is not migrated in place.
 
 Real tmux run `ea85a811-dd06-4bd3-a1d6-f6156f5670ef` used direct Claude Main
 `lead`, Workers `write-sum`/`write-product`, and Reviewers
@@ -108,12 +112,13 @@ workspace HEAD/index and other manifest entries unchanged. Public stop worked
 after deleting the input config/prompts; independent checks found no owned
 processes, groups, state, provider roots, snapshots, or fixture resources.
 
-This is native agent/serial acceptance. Native program/serial coordination is
-also connected in the implementation and has focused contract coverage. Native
-program/parallel uses state version 5 with a delivery container for each active
-node. `max_active`, exact node identity, and non-overlapping Worker write scopes
-control admission; a pending question holds only its own assignment, so an
-independent peer may continue when admitted. Completion delivery uses
+This is historical native agent/serial acceptance. Native program/serial
+coordination is also connected in the implementation and has focused contract
+coverage. Native program/parallel uses state version 5 with a delivery
+container for each active node. `max_active`, exact node identity, and
+non-overlapping Worker write scopes control admission; a pending question holds
+only its own assignment, so an independent peer may continue when admitted.
+Completion delivery uses
 `role_read` → `role_release` → `delivery_ack`, and a released assignment stays
 in state until its matching acknowledgment. The private parallel Stop path
 persists `native.phase=stopping`, drains safe assignments in that order, and
@@ -125,10 +130,37 @@ they do not invent a Main role, Main model, or separate CLI. Program wave state
 keeps declared `task_ids`, `phase`, and `revision`, and advances in declaration
 and dependency order. All writers finish before the wave is sealed; all
 same-revision reviewers must approve before fixed-argv verification, and only
-then can the successor wave begin. Focused checks and bounded
-real-terminal/fake-provider cases cover the native parallel contract; real-model
-parallel acceptance remains pending. Agent/parallel and named Orca execution
-are still rejected before dependency probes or resource creation.
+then can the successor wave begin. Focused checks and earlier bounded
+real-terminal/fake-provider cases cover the native program parallel contract;
+real-model parallel acceptance remains pending.
+
+Agent/parallel has a different barrier. Main first calls `task_batch_open` with
+a non-empty, unique list of declared IDs in any input order. The runtime
+normalizes the stored IDs to catalog order,
+requires dependencies to be completed outside the batch, and saves exactly
+`{task_ids, phase, revision}`. All selected tasks start without records. The
+first final-review dispatch seals the batch only after every writer and Delivery
+has drained. Same-revision reviews for every batch member must approve before
+fixed-argv verification, and verification requires the same role/Delivery drain.
+Intermediate plan review for an implementation route stays in the writers phase.
+For a plan-only route, the plan-body SHA-256 (`record.revision`) remains
+separate from the final code snapshot (`workspace_revision`).
+
+For a member with `changes_requested`, an answered consultation, or a confirmed
+`verification_failed`, Main waits for every role and Delivery to drain, confirms
+the consultation answer when applicable, and confirms remaining review rounds
+for every member. Main then calls `task_dispatch` for the original writer. That
+single request atomically reopens the exact batch peer set, including peers
+already `completed`, and dispatches the requested writer; peers are not
+auto-dispatched. There is no public reopen tool, and `task_batch_open` cannot
+reopen or replace an unfinished batch. Invalid TaskSpec, route, message,
+review-limit, or dependency input leaves the state unchanged.
+Parallel `role_prompt` is rejected, including read-only research; serial
+read-only `role_prompt` remains available. `task_batch_open` is advertised only
+in the explicit parallel Main `--tools` and `--allowedTools` lists. The bounded
+live Main-parallel acceptance is recorded below. Named Orca,
+shared Orca/native progression, and real Main Astra/provider acceptance remain
+gaps.
 
 Reviewer consultation is a separate named-native operation. `status` exposes
 the opaque consultation ID, findings, task/stage, and answer state. The CLI
@@ -166,9 +198,9 @@ wave transitions, and private Stop cases. They validate the implementation and
 contracts; they do not turn the failed serial trial into a real-model provider
 run.
 
-### Bounded native program/parallel terminal acceptance
+### Historical bounded native program/parallel terminal acceptance
 
-An independent audit covers eight successful cases using real tmux, Herdr, and
+An earlier independent audit covered eight successful cases using real tmux, Herdr, and
 Zellij terminal drivers with fake Node, client, and provider processes. This is
 terminal and lifecycle evidence. It does not establish SDK-wire behavior,
 real-model behavior, authentication, provider billing, or an operating-system
@@ -214,15 +246,24 @@ uv run --locked --project scripts/agent-team python -m unittest discover \
 -s scripts/agent-team/tests -p live_parallel_program.py -v
 ```
 
-The latest focused checks passed 263 tests on each of Python 3.11 and 3.13.
-The formal `tests/run.sh` suite also passed on both versions: 1,025 package
+The focused-check snapshot (263 tests on each of Python 3.11 and 3.13) and the
+formal `tests/run.sh` snapshot (1,025 package tests, 33 CLI tests, 33 MCP tests,
+8 compact-runner tests, and 194 source-manifest entries) belong to the
+historical baseline at commit `1314cc4`. The old PR #7 CI/build record, old
+question/program records, and the run IDs above remain historical evidence for that baseline;
+they do not describe the current source.
+
+The formal `tests/run.sh` suite passed on Python 3.11 and 3.13: 1,055 package
 tests, 33 CLI tests, 33 MCP tests, 8 compact-runner tests, and all applicable
-shell, source-state, rendered-home, and Nix checks. The 194 source-manifest
-entries stayed unchanged during these runs. Only documentation wording was
-updated afterward and rechecked. Build, clean-install, and current-head CI
-results are tracked in [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7).
-Real-model parallel acceptance remains pending separately from this bounded
-terminal/fake-provider coverage.
+shell, source-state, rendered-home, and Nix checks. The 199 source-manifest
+entries stayed unchanged during both runs. Focused checks passed 293 tests on
+each Python version. Only these documentation results were updated afterward
+and rechecked; runtime and test code stayed unchanged. For build, clean-install,
+and CI results, see [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7).
+Those results apply to the commit identified there; verify that it matches the
+code being reviewed.
+The bounded agent/parallel live acceptance is recorded below; real-model
+parallel acceptance remains unverified.
 
 The first Zellij run `f678e9f5-9fbb-4376-a18a-1855612ba69b` exited before
 review; its exact reason was not preserved. A later startup capture
@@ -239,9 +280,58 @@ cases on tmux, Herdr, and Zellij without provider or authentication calls.
 Zellij's startup test also covered a temporary-name suffix beginning with an
 underscore; the producer supplied a valid prefix while the strict path
 validator remained unchanged. It does not replace the pending real-model
-parallel acceptance. Full validation uses the documented Python 3.11 and 3.13
-suites, lint, type checking, build, and clean install; current-head results
-and CI are tracked in [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7).
+parallel acceptance.
+
+### Bounded live native agent/parallel acceptance
+
+The following eight runs exercised the Main-coordinated native
+`agent`/`parallel` path with a simulated Main and simulated provider, while the
+MCP child and selected native terminal driver were real. The runs used the same
+190-entry project-file set. They are lifecycle, batch-barrier, fixed-argv, and
+cleanup evidence for `tmux`, Herdr, and Zellij; they are not real Main/model,
+Claude SDK, Astra, provider, or operating-system sandbox evidence.
+
+| Terminal | Python | Normal run | Unanswered-question run |
+|---|---|---|---|
+| tmux | 3.13 | `846e0cd9-687d-4335-aef0-7d12602e8edc` | `4b8cc319-fbe4-47d6-9fcc-b842a577e8e2` |
+| Herdr | 3.13 | `a75710cd-a4de-4d85-a57f-9942325af8ba` | `56a92452-70b5-4d55-9112-c9e09ab24c84` |
+| Zellij | 3.13 | `d83535b1-2fd4-491c-b7ac-257c3768ea29` | `6eef0e01-118d-40f4-aa85-8f0dbf0eff81` |
+| tmux | 3.11 | `2252a0cf-3b08-432f-8a3a-f6375c4af232` | `c38a91a9-7aed-4bec-977e-a5761c8e8d47` |
+
+In each normal run, both writers were active concurrently. Main itself waited,
+read, released, and acknowledged each completion; all reviewers then reviewed
+the same integrated revision, two fixed-argv commands passed, both tasks became
+`completed`, and public Stop finished. The independent audit found 12 known
+PIDs, 9 process groups, and 20 paths absent for each normal run.
+
+In each question run, worker A reached `observed` with no answer and Main only
+waited on A. Main consumed worker B, leaving A `running` and B
+`awaiting_implementation_review` in the pre-stop snapshot. Public Stop
+cancelled the run without creating answers or acknowledging the question
+Delivery, and removed the runtime state. The audit found 8 known PIDs,
+5 process groups, and 12 paths absent for each question run. These question
+runs do not claim task completion.
+
+Reproduce the selected tmux live suite with:
+
+```bash
+AGENT_TEAM_RUN_LIVE_NATIVE=1 AGENT_TEAM_RUN_LIVE_AGENT_PARALLEL=1 \
+AGENT_TEAM_LIVE_RUNTIME=tmux \
+uv run --locked --project scripts/agent-team python -m unittest discover \
+-s scripts/agent-team/tests -p live_parallel_agent.py -v
+```
+
+An initial Python 3.11 question run
+`a0c47346-a91d-4c07-8e9f-d23af4213b4d` is excluded from the eight-run table.
+Its first public Stop returned cleanup-unconfirmed for worker A. After a
+second Stop during test cleanup, the state was absent and an independent audit
+confirmed that the known processes and owned resources were gone. The initial
+detailed error and second Stop receipt were not saved, so the cause remains
+unknown. The retained fixture contains the failure logs and pre-stop snapshots.
+Four later diagnostic runs are separate from the eight accepted runs; subsequent
+success does not prove that the original cause was fixed. The fixture now saves
+each Stop response and the state retained immediately after a failure. Public
+Stop exceptions include the existing sanitized `retained.error`.
 
 ### Bounded live question acceptance
 
@@ -344,7 +434,8 @@ The bundled defaults use `fable` for Main and Planner and `gpt-6-astra` for
 Worker and Reviewer. The role graph does not change those launch-config model
 choices.
 
-The MCP server exposes ten tools:
+The default MCP server exposes ten tools. In native `agent`/`parallel` state it
+adds the eleventh tool `task_batch_open`; no other mode advertises it.
 
 - `task_get`
 - `task_verify`
@@ -356,11 +447,17 @@ The MCP server exposes ten tools:
 - `role_release`
 - `delivery_ack`
 - `message_reply`
+- `task_batch_open` (native `agent`/`parallel` only)
 
 Main cannot choose an arbitrary command or role name through this MCP surface.
 For native runtimes, `task_dispatch` accepts only an exact TaskSpec from the
 config-declared catalog. The fixed surface keeps agent output separate from
 process-control authority.
+
+For the Claude Main launch, `task_batch_open` is included only in the explicit
+`--tools` and `--allowedTools` lists when the selected graph is native
+`agent`/`parallel`. The serial, program, and declaration-only lists remain
+unchanged.
 
 ## Orca direct roles use Orca-supervised terminals
 
@@ -479,10 +576,10 @@ question is communication in the same assignment; it does not widen the
 existing file scope, Bash policy, or other external-tool policy. A successful
 completion is also rejected until the question has been consumed by the ACP
 client. In version-3/4 native serial state, the pending question also blocks
-the next dispatch for the run. In version-5 native `program`/`parallel`, an
-independent assignment may continue when it passes `max_active` and
-write-scope admission, but `task_verify` remains run-global blocked until every
-active assignment and Delivery is drained.
+the next dispatch for the run. In version-5 native `agent`/`parallel` and
+`program`/`parallel`, an independent assignment may continue when it passes
+`max_active` and write-scope admission, but the batch/coordinator verification
+barrier remains blocked until every active assignment and Delivery is drained.
 The normal completion path stays
 `role_wait(worker_done)` → `role_read` → `role_release` → `delivery_ack`.
 
@@ -570,8 +667,12 @@ dependency cycles before state or provider effects. The catalog is included in
 Main's native instructions. `task_dispatch` must exactly match one declared
 TaskSpec; it cannot add a task ID or change paths, dependencies, evidence, or
 verification argv. When no `[[tasks]]` catalog is present, read-only
-`role_prompt` remains available but structured task dispatch is rejected. Orca
-rejects the `tasks` field.
+`role_prompt` remains available in serial native state but structured task
+dispatch is rejected. In native `agent`/`parallel`, an empty catalog fails
+before dependency or profile checks and `role_prompt` is rejected, including
+for read-only research. Parallel research must use a declared plan-only
+TaskSpec. Orca rejects the `tasks` field. Startup also validates the selected
+dependency binding and role profiles before any durable batch/task effect.
 
 The native flow is:
 
@@ -613,8 +714,9 @@ implementation writer.
 
 For Orca and native serial state (version 3/4), at most one background role can
 be active. A new role cannot start while an assignment or an unacknowledged
-Delivery exists. Version-5 native `program`/`parallel` may hold up to
-`max_active` admitted assignments.
+Delivery exists. Version-5 native `agent`/`parallel` and `program`/`parallel`
+may hold up to `max_active` admitted assignments, subject to their distinct
+batch/coordinator contracts.
 
 ```text
 role_prompt
@@ -758,9 +860,10 @@ Native questions require every `message_reply` before acknowledgment; only
 after `delivery_ack` does the private channel release the answers and record
 the consumed receipt. The question assignment's `role_read`, `role_release`,
 another dispatch, and verification are blocked while that question Delivery is
-pending. In version-5 native `program`/`parallel`, an independent admitted
-assignment may continue, but `task_verify` remains blocked until every active
-assignment and Delivery is drained. Escalations remain pending. Failed operations retain
+pending. In version-5 native `agent`/`parallel` and `program`/`parallel`, an
+independent admitted assignment may continue, but the batch/coordinator
+verification barrier remains blocked until every active assignment and Delivery
+is drained. Escalations remain pending. Failed operations retain
 their pending state. MCP framing and tool schemas load
 without selecting a backend; the first stateful call selects Orca or the
 selected native runtime from saved state. Native `status`, `attach`, and `stop`
@@ -860,7 +963,8 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
   fixed-argv verification; the bounded trial above stopped at provider failure
 - A real-model read-only plan-only run
 - A live real-model native `program`/`parallel` acceptance
-- Main-agent parallel, named Orca execution, and shared Orca/native progression
+- Real-model/provider-backed native `agent`/`parallel` acceptance; named Orca
+  execution and shared Orca/native progression remain gaps
 - Automatic recovery after crash or unproven cleanup
 
 ## Intentional exclusions

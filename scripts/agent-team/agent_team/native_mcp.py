@@ -22,6 +22,7 @@ from .contracts import (
     RoleWait,
     RuntimeFailure,
     RuntimeRequest,
+    TaskBatchOpen,
     TaskDispatch,
     TaskGet,
     TaskVerify,
@@ -48,6 +49,41 @@ from .runtime import (
 from .task_spec import TaskSpec
 
 
+def _agent_parallel_state(state: Mapping[str, object]) -> bool:
+    graph = state.get("graph")
+    if not isinstance(graph, Mapping):
+        return False
+    coordination = graph.get("coordination")
+    return (
+        state.get("version") == PARALLEL_STATE_VERSION
+        and isinstance(coordination, Mapping)
+        and coordination.get("mode") == "agent"
+        and coordination.get("dispatch_mode") == "parallel"
+    )
+
+
+def _task_batch_ids(arguments: dict[str, object]) -> tuple[str, ...]:
+    if set(arguments) != {"task_ids"}:
+        raise ToolInputError("task_batch_open requires exactly task_ids")
+    raw_ids = arguments["task_ids"]
+    if not isinstance(raw_ids, list):
+        raise ToolInputError("task_ids must be a list")
+    if not raw_ids:
+        raise ToolInputError("task_ids must not be empty")
+    task_ids: list[str] = []
+    for index, task_id in enumerate(raw_ids):
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ToolInputError(f"task_ids[{index}] must be a non-empty string")
+        if len(task_id) > MAX_PROMPT_CHARS:
+            raise ToolInputError(
+                f"task_ids[{index}] must be at most {MAX_PROMPT_CHARS} characters"
+            )
+        task_ids.append(task_id)
+    if len(set(task_ids)) != len(task_ids):
+        raise ToolInputError("task_ids must not contain duplicates")
+    return tuple(task_ids)
+
+
 class NativeMcpSession:
     def __init__(self, path: Path, state: dict[str, object]) -> None:
         from .cli import _management_plan_from_state, _runtime_engine, _start_spec
@@ -71,7 +107,13 @@ class NativeMcpSession:
                 ErrorCode.IDENTITY_MISMATCH, "native MCP run identity changed"
             )
         request: RuntimeRequest
-        if name in {"task_get", "task_verify"}:
+        if name == "task_batch_open":
+            if not _agent_parallel_state(current):
+                raise ToolInputError(
+                    "task_batch_open is supported only in agent/parallel mode"
+                )
+            request = TaskBatchOpen(_task_batch_ids(arguments))
+        elif name in {"task_get", "task_verify"}:
             if set(arguments) != {"task_id"}:
                 raise ToolInputError(f"{name} requires exactly task_id")
             task_id = bounded_text(arguments, "task_id", maximum=MAX_PROMPT_CHARS)

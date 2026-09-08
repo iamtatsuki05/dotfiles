@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Mapping
@@ -288,13 +289,10 @@ def _named_context(
             "named TaskSpec routing currently requires serial dispatch",
         )
 
-    if state.get("version") == 5 and (
-        graph.coordination.mode != "program"
-        or graph.coordination.dispatch_mode != "parallel"
-    ):
+    if state.get("version") == 5 and graph.coordination.dispatch_mode != "parallel":
         _fail(
             ErrorCode.INVALID_REQUEST,
-            "parallel TaskSpec state requires program parallel coordination",
+            "parallel TaskSpec state requires parallel coordination",
         )
 
     node_ids = {node.node_id for node in graph.nodes}
@@ -1343,7 +1341,176 @@ def _require_declared_task(state: Mapping[str, object], task: TaskSpec) -> None:
         )
 
 
+def _require_agent_batch_drained(state: Mapping[str, object]) -> None:
+    if state.get("roles") or state.get("pending_delivery_id") is not None:
+        _fail(
+            ErrorCode.BUSY,
+            "consume all assignments and deliveries before changing the Main batch",
+        )
+    for record in cast(
+        Mapping[str, Mapping[str, object]], state.get("tasks", {})
+    ).values():
+        verification = record.get("verification")
+        if record.get("status") == "verifying" or (
+            record.get("status") == "verification_failed"
+            and isinstance(verification, Mapping)
+            and verification.get("cleanup_confirmed") is not True
+        ):
+            _fail(
+                ErrorCode.BUSY,
+                "verification cleanup must be confirmed before changing the Main batch",
+            )
+
+
+def open_agent_batch(
+    state: dict[str, object], task_ids: tuple[str, ...]
+) -> Mapping[str, object]:
+    if not is_agent_parallel(state):
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "task_batch_open requires agent parallel coordination",
+        )
+    validate_saved_tasks(state)
+    _require_agent_batch_drained(state)
+    if (
+        not isinstance(task_ids, tuple)
+        or not task_ids
+        or any(not isinstance(task_id, str) or not task_id for task_id in task_ids)
+        or len(set(task_ids)) != len(task_ids)
+    ):
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "task_batch_open requires unique declared task IDs",
+        )
+    _graph, catalog = _named_context(state)
+    ids = [task.task_id for task in catalog if task.task_id in task_ids]
+    if len(ids) != len(task_ids):
+        _fail(ErrorCode.INVALID_REQUEST, "Main batch contains an undeclared task")
+    records = _mutable_tasks(state)
+    if "agent_batch" in state:
+        previous = agent_batch(state)
+        if any(
+            not isinstance(records.get(task_id), Mapping)
+            or cast(Mapping[str, object], records[task_id]).get("status") != "completed"
+            for task_id in cast(list[str], previous["task_ids"])
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "finish the current Main batch before opening another",
+            )
+    if any(task_id in records for task_id in ids):
+        _fail(ErrorCode.ORDER_VIOLATION, "new Main batch requires unstarted tasks")
+    for task in catalog:
+        if task.task_id in ids and any(
+            dependency in ids
+            or not isinstance(records.get(dependency), Mapping)
+            or cast(Mapping[str, object], records[dependency]).get("status")
+            != "completed"
+            for dependency in task.dependencies
+        ):
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "Main batch dependencies must be completed outside the batch",
+            )
+    batch = {"task_ids": ids, "phase": "writers", "revision": None}
+    agent_batch({**state, "agent_batch": batch})
+    state["agent_batch"] = batch
+    return batch
+
+
 def prepare_dispatch(
+    state: dict[str, object],
+    request: TaskDispatch,
+    *,
+    revision: str | None = None,
+    workspace_revision: str | None = None,
+) -> tuple[dict[str, object], str]:
+    if not is_agent_parallel(state):
+        return _prepare_dispatch(
+            state, request, revision=revision, workspace_revision=workspace_revision
+        )
+    validate_saved_tasks(state)
+    if not isinstance(request, TaskDispatch) or not isinstance(request.task, TaskSpec):
+        _fail(ErrorCode.INVALID_REQUEST, "TaskSpec is required")
+    _require_declared_task(state, request.task)
+    if "agent_batch" not in state:
+        _fail(ErrorCode.ORDER_VIOLATION, "open a Main task batch before dispatch")
+    batch = agent_batch(state)
+    if request.task.task_id not in cast(list[str], batch["task_ids"]):
+        _fail(ErrorCode.ORDER_VIOLATION, "task is outside the current Main batch")
+    # A rejected route or prompt must not seal the batch or invalidate peer evidence.
+    candidate = copy.deepcopy(state)
+    record = _mutable_tasks(candidate).get(request.task.task_id)
+    if role_kind(request.role) is Role.REVIEWER:
+        final_review = is_plan_only(state, request.task.task_id) or (
+            isinstance(record, Mapping) and record.get("stage") == "implementation"
+        )
+        if final_review and batch["phase"] == "writers":
+            _require_agent_batch_drained(candidate)
+            _transition_integration_wave(
+                candidate,
+                "agent_batch",
+                "seal_wave",
+                revision=workspace_revision
+                if is_plan_only(state, request.task.task_id)
+                else revision,
+            )
+    elif batch["phase"] != "writers":
+        if not isinstance(record, Mapping) or record.get("status") not in {
+            "plan_changes_requested",
+            "implementation_changes_requested",
+            "consultation_required",
+            "verification_failed",
+        }:
+            _fail(
+                ErrorCode.ORDER_VIOLATION,
+                "only a task needing revision may reopen the Main batch",
+            )
+        _require_agent_batch_drained(candidate)
+        _transition_integration_wave(candidate, "agent_batch", "reopen_wave")
+    prepared, prompt = _prepare_dispatch(
+        candidate, request, revision=revision, workspace_revision=workspace_revision
+    )
+    state["tasks"] = candidate["tasks"]
+    state["agent_batch"] = candidate["agent_batch"]
+    return prepared, prompt
+
+
+def prepare_agent_batch_verification(
+    state: dict[str, object], task_id: str, revision: str
+) -> None:
+    if not is_agent_parallel(state):
+        _fail(
+            ErrorCode.INVALID_REQUEST,
+            "Main batch verification requires agent parallel coordination",
+        )
+    validate_saved_tasks(state)
+    _require_agent_batch_drained(state)
+    batch = agent_batch(state)
+    if task_id not in cast(list[str], batch["task_ids"]):
+        _fail(ErrorCode.ORDER_VIOLATION, "verification task is outside the Main batch")
+    record = _mutable_tasks(state).get(task_id)
+    final_stage = "plan" if is_plan_only(state, task_id) else "implementation"
+    if (
+        not isinstance(record, Mapping)
+        or record.get("status") != f"{final_stage}_approved"
+    ):
+        _fail(ErrorCode.ORDER_VIOLATION, "verification requires final review approval")
+    if revision != batch["revision"] or verification_revision(record) != revision:
+        _fail(
+            ErrorCode.IDENTITY_MISMATCH,
+            "verification revision differs from the sealed Main batch",
+        )
+    if batch["phase"] == "reviewers":
+        _transition_integration_wave(state, "agent_batch", "verify_wave")
+    elif batch["phase"] != "verification":
+        _fail(
+            ErrorCode.ORDER_VIOLATION,
+            "verification requires the sealed, approved Main batch",
+        )
+
+
+def _prepare_dispatch(
     state: dict[str, object],
     request: TaskDispatch,
     *,
@@ -1356,7 +1523,7 @@ def prepare_dispatch(
     if not isinstance(request, TaskDispatch) or not isinstance(request.task, TaskSpec):
         _fail(ErrorCode.INVALID_REQUEST, "TaskSpec is required")
     _require_declared_task(state, request.task)
-    _admit_program_dispatch(
+    _admit_integration_dispatch(
         state, request, revision=revision, workspace_revision=workspace_revision
     )
     message = _require_message(request)
@@ -1695,7 +1862,13 @@ def validate_saved_tasks(state: Mapping[str, object]) -> None:
         _named_context(state)
     elif "task_specs" in state:
         parse_task_specs(state["task_specs"])
+    if "agent_batch" in state and not is_agent_parallel(state):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "Main batch requires agent parallel state")
+    if is_agent_parallel(state) and "program_wave" in state:
+        _fail(ErrorCode.IDENTITY_MISMATCH, "Main state cannot own a program wave")
     if "tasks" not in state:
+        if "agent_batch" in state:
+            agent_batch(state)
         return
     max_rounds = _max_review_rounds(state)
     tasks = state.get("tasks")
@@ -1706,25 +1879,63 @@ def validate_saved_tasks(state: Mapping[str, object]) -> None:
         _require_declared_task(state, task)
     if _is_program(state):
         program_wave(state)
+    elif is_agent_parallel(state):
+        if "agent_batch" in state:
+            agent_batch(state)
+        elif tasks or state.get("roles"):
+            _fail(ErrorCode.IDENTITY_MISMATCH, "Main tasks require an explicit batch")
 
 
 def _is_program(state: Mapping[str, object]) -> bool:
     return _named_state(state) and _named_graph(state).coordination.mode == "program"
 
 
+def is_agent_parallel(state: Mapping[str, object]) -> bool:
+    return (
+        state.get("version") == 5 and _named_graph(state).coordination.mode == "agent"
+    )
+
+
 def program_wave(state: Mapping[str, object]) -> Mapping[str, object]:
+    return _integration_wave(state, "program_wave")
+
+
+def agent_batch(state: Mapping[str, object]) -> Mapping[str, object]:
+    batch = _integration_wave(state, "agent_batch")
+    members = cast(list[str], batch["task_ids"])
+    records = cast(Mapping[str, Mapping[str, object]], state["tasks"])
+    if any(
+        record.get("status") != "completed"
+        for task_id, record in records.items()
+        if task_id not in members
+    ):
+        _fail(ErrorCode.IDENTITY_MISMATCH, "unfinished task is outside the Main batch")
+    for assignment in cast(
+        Mapping[str, Mapping[str, object]], state.get("roles", {})
+    ).values():
+        raw_task = assignment.get("task_spec")
+        if not isinstance(raw_task, Mapping) or raw_task.get("task_id") not in members:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "assignment is outside the Main batch")
+    return batch
+
+
+def _integration_wave(state: Mapping[str, object], key: str) -> Mapping[str, object]:
     """Validate the bounded integration barrier, without duplicating task records."""
 
     graph, catalog = _named_context(state)
-    if graph.coordination.mode != "program":
+    owner = "program" if key == "program_wave" else "agent"
+    if graph.coordination.mode != owner or (
+        owner == "agent" and state.get("version") != 5
+    ):
         _fail(
-            ErrorCode.INVALID_REQUEST, "integration waves require program coordination"
+            ErrorCode.INVALID_REQUEST,
+            f"integration group requires {owner} coordination",
         )
-    wave = state.get("program_wave")
+    wave = state.get(key)
     if not isinstance(wave, Mapping) or set(wave) != {"task_ids", "phase", "revision"}:
         _fail(
             ErrorCode.IDENTITY_MISMATCH,
-            "program integration wave is missing or invalid",
+            f"{owner} integration wave is missing or invalid",
         )
     ids = wave["task_ids"]
     if (
@@ -1736,7 +1947,7 @@ def program_wave(state: Mapping[str, object]) -> Mapping[str, object]:
     ):
         _fail(
             ErrorCode.IDENTITY_MISMATCH,
-            "program wave members do not match declared tasks",
+            f"{owner} wave members do not match declared tasks",
         )
     phase, revision = wave["phase"], wave["revision"]
     if phase == "writers":
@@ -1753,10 +1964,10 @@ def program_wave(state: Mapping[str, object]) -> Mapping[str, object]:
         ):
             _fail(ErrorCode.IDENTITY_MISMATCH, "integrated wave revision is invalid")
     else:
-        _fail(ErrorCode.IDENTITY_MISMATCH, "program wave phase is invalid")
+        _fail(ErrorCode.IDENTITY_MISMATCH, f"{owner} wave phase is invalid")
     records = state.get("tasks")
     if not isinstance(records, Mapping):
-        _fail(ErrorCode.IDENTITY_MISMATCH, "program wave task records are missing")
+        _fail(ErrorCode.IDENTITY_MISMATCH, f"{owner} wave task records are missing")
     for task in catalog:
         if task.task_id not in ids:
             continue
@@ -1769,7 +1980,7 @@ def program_wave(state: Mapping[str, object]) -> Mapping[str, object]:
             ):
                 _fail(
                     ErrorCode.IDENTITY_MISMATCH,
-                    "program wave contains an unresolved dependency",
+                    f"{owner} wave contains an unresolved dependency",
                 )
         record = records.get(task.task_id)
         final_stage = "plan" if is_plan_only(state, task.task_id) else "implementation"
@@ -1856,16 +2067,19 @@ def new_program_wave(state: Mapping[str, object]) -> dict[str, object]:
     return {"task_ids": ids, "phase": "writers", "revision": None}
 
 
-def _admit_program_dispatch(
+def _admit_integration_dispatch(
     state: Mapping[str, object],
     request: TaskDispatch,
     *,
     revision: str | None,
     workspace_revision: str | None,
 ) -> None:
-    if not _is_program(state):
+    if _is_program(state):
+        wave = program_wave(state)
+    elif is_agent_parallel(state):
+        wave = agent_batch(state)
+    else:
         return
-    wave = program_wave(state)
     if request.task.task_id not in cast(list[str], wave["task_ids"]):
         _fail(ErrorCode.ORDER_VIOLATION, "task is outside the current integration wave")
     if role_kind(request.role) is Role.REVIEWER:
@@ -1878,7 +2092,7 @@ def _admit_program_dispatch(
         )
         if wave["phase"] != expected_phase:
             _fail(
-                ErrorCode.ORDER_VIOLATION, "review must follow its program wave barrier"
+                ErrorCode.ORDER_VIOLATION, "review must follow its integration barrier"
             )
         if (
             expected_phase == "reviewers"
@@ -1898,10 +2112,16 @@ def _admit_program_dispatch(
 def transition_program_wave(
     state: dict[str, object], transition: str, *, revision: str | None = None
 ) -> None:
+    _transition_integration_wave(state, "program_wave", transition, revision=revision)
+
+
+def _transition_integration_wave(
+    state: dict[str, object], key: str, transition: str, *, revision: str | None = None
+) -> None:
     """Apply one controller-owned barrier transition under the existing run lock."""
 
     validate_saved_tasks(state)
-    wave = program_wave(state)
+    wave = _integration_wave(state, key)
     if state.get("roles") or state.get("pending_delivery_id") is not None:
         _fail(
             ErrorCode.BUSY,
@@ -1929,8 +2149,8 @@ def transition_program_wave(
                 "all wave writers must finish before integrated review",
             )
         next_wave = {**wave, "phase": "reviewers", "revision": revision}
-        program_wave({**state, "program_wave": next_wave})
-        state["program_wave"] = next_wave
+        _integration_wave({**state, key: next_wave}, key)
+        state[key] = next_wave
     elif transition == "verify_wave":
         if wave["phase"] != "reviewers" or any(
             status != f"{stage}_approved"
@@ -1940,8 +2160,8 @@ def transition_program_wave(
                 ErrorCode.ORDER_VIOLATION,
                 "every wave task requires review approval before verification",
             )
-        state["program_wave"] = {**wave, "phase": "verification"}
-    elif transition == "next_wave":
+        state[key] = {**wave, "phase": "verification"}
+    elif transition == "next_wave" and key == "program_wave":
         if wave["phase"] != "verification" or any(
             status != "completed" for status in statuses
         ):
@@ -1949,7 +2169,7 @@ def transition_program_wave(
                 ErrorCode.ORDER_VIOLATION,
                 "finish the current integration wave before admitting successors",
             )
-        state["program_wave"] = new_program_wave(state)
+        state[key] = new_program_wave(state)
     elif transition == "reopen_wave":
         if any(
             record.get("status") == "consultation_required"
@@ -2000,7 +2220,7 @@ def transition_program_wave(
                 )
                 if stage == "plan":
                     record["workspace_revision"] = None
-        state["program_wave"] = {**wave, "phase": "writers", "revision": None}
+        state[key] = {**wave, "phase": "writers", "revision": None}
     else:
         _fail(ErrorCode.INVALID_REQUEST, "unknown program wave transition")
 

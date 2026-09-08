@@ -707,7 +707,7 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
     Version 3 keeps the fixed ``Role`` namespace.  Versions 4 and 5 store a
     parsed graph and return its ``NodeRef`` so the node ID and its fixed kind
     remain coupled at every caller boundary.  Version 5 is accepted only for
-    the explicit program/parallel graph; it is never projected into v4.
+    an explicit parallel graph; it is never projected into v4.
     """
 
     if not isinstance(state, Mapping) or not isinstance(node_id, str) or not node_id:
@@ -740,13 +740,11 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
     graph = _parse_named_graph(state)
     if version == NAMED_STATE_VERSION and graph.coordination.dispatch_mode != "serial":
         raise RuntimeValidationError("version-4 named state requires serial dispatch")
-    if version == PARALLEL_STATE_VERSION and (
-        graph.coordination.mode != "program"
-        or graph.coordination.dispatch_mode != "parallel"
+    if (
+        version == PARALLEL_STATE_VERSION
+        and graph.coordination.dispatch_mode != "parallel"
     ):
-        raise RuntimeValidationError(
-            "parallel state requires program parallel coordination"
-        )
+        raise RuntimeValidationError("parallel state requires parallel coordination")
     try:
         target = graph.node(node_id)
     except KeyError as exc:
@@ -1304,13 +1302,11 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
     graph = _parse_named_graph(state)
     if version == NAMED_STATE_VERSION and graph.coordination.dispatch_mode != "serial":
         raise RuntimeValidationError("version-4 named state requires serial dispatch")
-    if version == PARALLEL_STATE_VERSION and (
-        graph.coordination.mode != "program"
-        or graph.coordination.dispatch_mode != "parallel"
+    if (
+        version == PARALLEL_STATE_VERSION
+        and graph.coordination.dispatch_mode != "parallel"
     ):
-        raise RuntimeValidationError(
-            "version-5 state requires program parallel coordination"
-        )
+        raise RuntimeValidationError("version-5 state requires parallel coordination")
     node_by_id = {node.node_id: node for node in graph.nodes}
     role_specs = state["role_specs"]
     assert isinstance(role_specs, dict)

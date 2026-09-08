@@ -48,7 +48,10 @@ def build_claude_argv(
     instructions: str,
     state_path: Path,
     mcp_server_path: Path | None = None,
+    agent_parallel: bool = False,
 ) -> tuple[str, ...]:
+    if agent_parallel and role != "main":
+        raise LaunchValidationError("agent parallel tool access requires Main")
     if role not in _ROLES:
         raise LaunchValidationError(f"unsupported launch role: {role}")
     if permission not in _PERMISSIONS:
@@ -104,6 +107,8 @@ def build_claude_argv(
             "mcp__agent_team__delivery_ack",
             "mcp__agent_team__message_reply",
         ]
+        if agent_parallel:
+            mcp_tools.append("mcp__agent_team__task_batch_open")
         argv.extend(
             [
                 "--tools",

@@ -47,6 +47,41 @@ attempts, and final validation status are maintained in
 not a new `Verified` safety result. The fully verified `0b3e5bc` milestone
 remains historical evidence.
 
+### Native Main/agent parallel status
+
+Version-5 native `agent`/`parallel` is a named Main-coordinated mode on the
+targeted `tmux`, `herdr`, and `zellij` terminals. It is distinct from the
+Mainless `program`/`parallel` coordinator. Main must call `task_batch_open` with
+a non-empty, unique list of declared `task_id` values in any input order before
+any member dispatch. The runtime normalizes stored IDs to catalog order, requires dependencies to be
+completed outside the batch, and stores exactly `{task_ids, phase, revision}`.
+There is no scheduler and no automatic program-mode fallback.
+
+The first final-review dispatch seals the batch after all writers and Delivery
+have drained. All reviewers inspect the same sealed workspace revision; all
+final approvals and consumption of all roles and Delivery are required before
+fixed-argv verification.
+Intermediate plan review for an implementation route stays in the writers
+phase. A plan-only final review keeps the plan-body SHA-256 in `record.revision`
+separate from `workspace_revision`. For a retryable `changes_requested`,
+answered consultation, or confirmed `verification_failed` member, Main waits
+for roles and Delivery to drain, confirms the consultation answer when
+applicable, and confirms remaining rounds for every member. Main then calls
+`task_dispatch` for the original writer. That request atomically reopens the
+exact peer set, including already `completed` peers, and dispatches the
+requested writer; peers are not auto-dispatched. There is no public reopen
+tool, and `task_batch_open` cannot reopen or replace an unfinished batch.
+Invalid TaskSpec, route, message, review-limit, or dependency input is
+state-neutral.
+
+Parallel `role_prompt` is rejected, including read-only research; serial
+read-only `role_prompt` is unchanged. `task_batch_open` is advertised only in
+the explicit Claude Main `--tools` and `--allowedTools` lists for this mode.
+The bounded live Main-parallel acceptance is recorded in [Architecture](architecture.md).
+Named Orca, shared Orca/native progression, other harnesses, real Main Astra,
+and real-model parallel acceptance remain gaps. This is an implementation
+status, not a new `Verified` safety result.
+
 ### Native program status
 
 Version-5 native `program`/`serial` and `program`/`parallel` are coordination
@@ -62,15 +97,17 @@ continue. Completion Delivery drains as Read → Release → Ack. Question
 Delivery uses message_reply and delivery_ack; Stop marks an unanswered question
 as cancelling without inventing an acknowledgment. The private parallel Stop
 path retains unknown or unproven nodes while draining safe peers.
-Declared TaskSpecs are scheduled in canonical waves. Reviewers and fixed-argv
+Declared TaskSpecs are advanced by the explicit coordinator in canonical waves;
+there is no general scheduler. Reviewers and fixed-argv
 verification are bound to the same sealed workspace revision before a successor
 wave is admitted.
 
 Focused program-contract checks cover serial and parallel admission, state,
-Delivery ordering, wave transitions, and private Stop handling. Bounded
-real-terminal/fake-provider acceptance is recorded in Architecture; this is
-not real-provider or real-model safety evidence. Real-model parallel acceptance
-is pending.
+Delivery ordering, wave transitions, and private Stop handling. Earlier bounded
+real-terminal/fake-provider acceptance is recorded in Architecture as
+historical, scoped evidence; this is not real-provider or real-model safety
+evidence and does not replace the bounded live Main-parallel acceptance in
+[Architecture](architecture.md). Real-model parallel acceptance is pending.
 
 The real serial program trial
 `b239945b-283e-403b-aba5-84ba984c8469` answered two questions in the same ACP
@@ -88,16 +125,17 @@ adapter is safe for a role. It is shown separately from the verified
 agent-team profile. Native tmux, Herdr, and Zellij Claude ACP are separate runtime profiles: their
 read-only Planner/Reviewer and scoped workspace-write Worker are selected only
 from a version-3 native config or a version-5 named `agent`/`serial`,
-`program`/`serial`, or `program`/`parallel` config. Worker dispatch requires an exact declared TaskSpec. Unknown providers and recognized-but-rejected profiles fail before
+`agent`/`parallel`, `program`/`serial`, or `program`/`parallel` config. Worker dispatch requires an exact declared TaskSpec. Unknown providers and recognized-but-rejected profiles fail before
 an Orca Task, terminal, or ACP process is created. There is no fallback to
 another harness.
 
 Version 5 changes node identity and task routing, and adds the native
-program/serial and program/parallel coordinators, without changing the harness
+agent/parallel Main path plus program/serial and program/parallel coordinators, without changing the harness
 safety dispositions in this matrix. Its bounded five-node Claude tmux
 acceptance, limited serial program trial, and bounded terminal/fake-provider
-parallel coverage are described in [Architecture](architecture.md). Real-model
-parallel acceptance remains pending.
+parallel coverage are historical and described in [Architecture](architecture.md).
+The bounded live Main-parallel acceptance is described in [Architecture](architecture.md);
+real-model parallel acceptance remains pending.
 
 The Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
 Orca resolves only the selected ACP roles' `node`, `acpx`, and

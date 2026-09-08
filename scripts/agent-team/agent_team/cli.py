@@ -626,6 +626,8 @@ def claude_argv(
     role_config: RoleConfig,
     instructions: str,
     state_path: Path,
+    *,
+    agent_parallel: bool = False,
 ) -> list[str]:
     try:
         return list(
@@ -637,6 +639,7 @@ def claude_argv(
                 instructions=instructions,
                 state_path=state_path,
                 mcp_server_path=mcp_server_path() if role == "main" else None,
+                agent_parallel=agent_parallel,
             )
         )
     except LaunchValidationError as exc:
@@ -676,11 +679,17 @@ def build_argv(
     state_path: Path,
     workspace: Path,
     orca_socket: Path | None,
+    *,
+    agent_parallel: bool = False,
 ) -> list[str]:
+    if agent_parallel and (role != "main" or role_config.provider != "claude"):
+        raise ConfigError("agent parallel tool access requires a Claude Main")
     if role_config.transport != "direct":
         raise ConfigError("build_argv only supports direct transport")
     if role_config.provider == "claude":
-        return claude_argv(role, role_config, instructions, state_path)
+        return claude_argv(
+            role, role_config, instructions, state_path, agent_parallel=agent_parallel
+        )
     if role_config.provider == "codex":
         return codex_argv(
             role, role_config, instructions, state_path, workspace, orca_socket
@@ -2738,11 +2747,13 @@ def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
         raise ConfigError(
             f"launch plan contains an invalid named graph: {exc}"
         ) from exc
+
     if (
-        graph.coordination.dispatch_mode == "parallel"
-        and graph.coordination.mode != "program"
+        graph.coordination.mode == "agent"
+        and graph.coordination.dispatch_mode == "parallel"
+        and not parse_task_specs(plan.get("task_specs", []))
     ):
-        raise ConfigError("parallel native execution requires program coordination")
+        raise ConfigError("agent parallel execution requires declared TaskSpecs")
 
 
 def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
@@ -2984,6 +2995,55 @@ def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
     base = node.role_spec.prompt_path.read_text(encoding="utf-8").rstrip()
     if node.ref.kind is not Role.MAIN:
         return base
+    parallel = team.graph.coordination.dispatch_mode == "parallel"
+    batch_contract = (
+        "並列実行では最初に、独立して開始できるTaskSpecのtask_id一覧をtask_batch_openに渡し、"
+        "同じ集合として記録します。依存先は集合の外でcompletedになっている必要があります。"
+        "集合は全件completedになった後だけ次の集合へ置き換えます。未開始のタスクだけを選び、"
+        "起動はMainがtask_dispatchで明示します。max_active、同じnodeの再利用、変更範囲の競合による拒否は、"
+        "該当担当の結果を消費してから再判断してください。\n"
+        "全作成担当の結果とDeliveryを消費するまでは最終レビューを開始しません。"
+        "実装前の計画レビューは作成工程内で進めます。実装がない計画のみのrouteは計画レビューが最終レビューです。"
+        "最初の最終レビュー依頼で集合のコードの版（workspace revision）が確定し、以後の最終レビューと検証は同じ版に固定されます。"
+        "集合内の全最終レビューが承認され、全担当とDeliveryの処理が終わってからtask_verifyを呼びます。"
+        "差し戻しや回答済み相談、検証失敗から元の作成担当へ戻すときは、全担当とDeliveryを消費してから"
+        "task_dispatchします。同じ集合の承認済み・完了済みタスクも再レビュー待ちへ戻るため、"
+        "修正後に全件の最終レビューと検証をやり直してください。過去の集合は戻りません。"
+        "再開前に全件のtask_getでreview_roundsを確認します。修正対象以外の承認済み・完了済みタスクも含め、"
+        "集合内のどれかの最終レビューが上限に達していれば修正を再依頼せず、未完了としてユーザー判断を待ちます。\n"
+        if parallel
+        else ""
+    )
+    completion_order = (
+        "この順序が完了するまで同じnodeを再利用しません。"
+        if parallel
+        else "この順序が完了するまで次の担当を起動しません。"
+    )
+    question_scope = (
+        "質問したnodeのread、release、集合の最終レビュー・検証は行えません。"
+        "質問中でも、同じ集合の独立した担当の起動や結果の消費は進められます。"
+        if parallel
+        else "質問中のread、release、別担当の起動、検証は行えません。"
+    )
+    verification_order = (
+        "集合内の全最終レビューが承認され、全担当とDeliveryを消費した後はtask_verifyを呼びます。"
+        if parallel
+        else "なった後はtask_verifyを呼びます。"
+    )
+    readonly_scope = (
+        "並列実行のrole_promptは未対応です。読み取り専用の調査も、宣言済みの計画のみのTaskSpecを使います。"
+        if parallel
+        else "role_promptはTaskSpecを使わない読み取り専用の調査に限ります。"
+    )
+    review_routing = (
+        "task_getで状態を確認します。"
+        "実装前の計画はawaiting_plan_reviewならplan_reviewerへ進めます。"
+        "最終レビュー（実装レビュー、または実装担当がない計画のレビュー）は、集合内の全作成担当とDeliveryを消費した後に、routesの対応するreviewerへ依頼します。"
+        "個別タスクのawaiting_*_reviewだけでは開始できません。"
+        "他のタスクが質問中なら、先に完了したタスクも最終レビュー待ちのまま保持してください。"
+        if parallel
+        else "task_getで状態を確認し、awaiting_plan_reviewならplan_reviewer、awaiting_implementation_reviewならimplementation_reviewerへ依頼します。"
+    )
     return (
         f"{base}\n\n## 名前付きチームの実行契約\n"
         f"あなたのnode IDは{node.ref.node_id}です。"
@@ -2996,25 +3056,29 @@ def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
         "plan_writerがあるタスクは、その担当による計画とplan_reviewerの承認が必須です。"
         "plan_writerがnullの場合だけ、implementation_writerから始めます。"
         "task_dispatchのtaskには対応するTaskSpec全体を渡してください。\n"
-        "role_waitのkindがworker_doneなら、role_readで結果を読み、role_releaseで"
+        + batch_contract
+        + "role_waitのkindがworker_doneなら、role_readで結果を読み、role_releaseで"
         "所有リソースを解放し、最後にdelivery_ackで通知全体を確認済みにします。"
-        "この順序が完了するまで次の担当を起動しません。失敗した操作は未処理として保持し、"
+        + completion_order
+        + "失敗した操作は未処理として保持し、"
         "後続の操作で飛ばしてはいけません。\n"
         "kindがquestionなら完了ではありません。全eventのmessage_idにmessage_replyで回答し、"
         "全質問に回答した後でdelivery_ackを呼びます。その後、同じnodeを再待機します。"
-        "回答は受領確認後に同じACP sessionへ返されます。質問中のread、release、"
-        "別担当の起動、検証は行えません。根拠を持って答えられる内容には回答し、"
+        "回答は受領確認後に同じACP sessionへ返されます。"
+        + question_scope
+        + "根拠を持って答えられる内容には回答し、"
         "ユーザーだけが決められる事項は提示して実際の回答を待ちます。"
         "経過時間を回答や承認とみなさず、回答によってTaskSpecや権限を拡張しません。\n"
-        "task_getで状態を確認し、awaiting_plan_reviewならplan_reviewer、"
-        "awaiting_implementation_reviewならimplementation_reviewerへ依頼します。"
-        "レビューはJSONのdecision（approve、request_changes、consult）で判定されます。"
+        + review_routing
+        + "レビューはJSONのdecision（approve、request_changes、consult）で判定されます。"
         "plan_approvedでimplementation_writerがある場合はその担当へ進み、plan_changes_requestedならplan_writer、"
         "implementation_changes_requestedならimplementation_writerへ同じTaskSpecを渡します。"
         "前段の結果とレビュー証拠は保存され、次の担当へ渡されます。"
         "別のreviewerへ切り替えたり別task_idで同じ作業を登録したりして上限を回避しません。\n"
         "implementation_approved、または実装担当を持たない計画のみのrouteがplan_approvedに"
-        "なった後はtask_verifyを呼びます。計画のみでも本文のハッシュとコードの版は別に保存されます。プログラムが、Reviewerが"
+        + ("なっていても、" if parallel else "")
+        + verification_order
+        + "計画のみでも本文のハッシュとコードの版は別に保存されます。プログラムが、Reviewerが"
         "承認した同じコードの版に対し、宣言済みの固定argvで検証します。"
         "verification_failedなら保存された失敗証拠に従い、許可範囲内の修正を"
         "implementation_writer（計画のみならplan_writer）へ依頼します。Reviewer承認や担当の成功通知だけでは"
@@ -3026,8 +3090,8 @@ def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
         "登録してもらいます。回答を捏造してはいけません。answeredがtrueなら上限内で"
         "元のstageの作成担当へ戻し、再レビューを受けます。回答はTaskSpecや権限を変更しません。\n"
         f"レビュー上限は、計画・実装それぞれ初回を含め{team.max_review_rounds}回です。"
-        "role_promptはTaskSpecを使わない読み取り専用の調査に限ります。"
-        "実行時が未対応と返した工程・接続を自己判断で代替してはいけません。"
+        + readonly_scope
+        + "実行時が未対応と返した工程・接続を自己判断で代替してはいけません。"
         "Mainは実装や検証証拠の作成を自分で行わず、固定MCPツールで進行してください。\n"
         "\n起動時のgraphとTaskSpec:\n"
         + json.dumps(
@@ -3086,6 +3150,10 @@ def _v5_runtime_plan(
                     state_path,
                     resolved_workspace,
                     None,
+                    agent_parallel=(
+                        ref.kind is Role.MAIN
+                        and selected.graph.coordination.dispatch_mode == "parallel"
+                    ),
                 )
                 if spec.transport == "direct" and execution == "tui_direct"
                 else []
@@ -3281,7 +3349,13 @@ def _mcp_tools() -> list[dict[str, object]]:
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"named state graph is invalid: {exc}") from exc
     selected = tuple(node.node_id for node in graph.nodes if node.kind is not Role.MAIN)
-    return tools(selected)
+    return tools(
+        selected,
+        agent_parallel=(
+            state["version"] == PARALLEL_STATE_VERSION
+            and graph.coordination.mode == "agent"
+        ),
+    )
 
 
 def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:

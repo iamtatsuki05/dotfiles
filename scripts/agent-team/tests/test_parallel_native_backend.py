@@ -462,9 +462,13 @@ class ParallelNativeBackendTest(unittest.TestCase):
         with (
             mock.patch.object(native, "remove_owned_tree", side_effect=fail_one),
             mock.patch.object(native, "_remove_socket_root"),
-            self.assertRaises(RuntimeFailure),
+            self.assertRaises(RuntimeFailure) as failure,
         ):
             self.backend.stop()
+        self.assertIn("implementation-a", str(failure.exception))
+        self.assertIn(
+            "native ACP private cleanup failed: OSError", str(failure.exception)
+        )
         state = native.runtime_read_state(self.path)
         self.assertEqual(set(state["roles"]), {"implementation-a"})
         self.assertEqual(
