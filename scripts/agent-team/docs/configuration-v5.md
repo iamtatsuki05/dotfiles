@@ -3,17 +3,21 @@
 [日本語](configuration-v5_JA.md) · [Configuration](configuration.md) · [Architecture](architecture.md)
 
 Version 5 gives each node an ID, role kind, and its own settings, and binds each
-TaskSpec stage to exact writer/reviewer nodes. Native `agent`/`serial` and
-`program`/`serial` teams can run. A program team has no Main role: the selected
-native terminal runs the coordinator under the existing `native_main` supervisor
-with the fixed `_program-run` argv. It does not create a separate Main role
-spec, model, or CLI. Parallel execution and named Orca execution remain
-rejected; their graph values can still be validated and rendered.
+TaskSpec stage to exact writer/reviewer nodes. Native `agent`/`serial`,
+`program`/`serial`, and `program`/`parallel` teams can run. A program team
+has no Main role: the selected native terminal runs the coordinator under the
+existing `native_main` supervisor with the fixed `_program-run` argv. It does
+not create a separate Main role spec, model, or CLI. Native
+`program`/`parallel` uses state version 5 and per-assignment delivery records;
+Main-agent parallel and named Orca execution remain rejected. The
+implementation has focused contract coverage and bounded real-terminal/
+fake-provider coverage. Real-model parallel acceptance is pending.
 
 The bundled version-3 defaults remain Main/Planner on Claude `fable` and
 Worker/Reviewer on direct Codex `gpt-6-astra`. The example here explicitly uses
-Claude for every node. See [Architecture](architecture.md) for the separate
-bounded live acceptance and its limits.
+Claude for every node. See [Architecture](architecture.md) for the
+bounded real-terminal/fake-provider coverage, separate real-model evidence,
+and the limits of each.
 
 ## Declare exact node and graph fields
 
@@ -29,7 +33,8 @@ bounded live acceptance and its limits.
 Team IDs match `[a-z][a-z0-9-]{0,23}`; node IDs match
 `[a-z][a-z0-9-]{0,63}`. Names and labels are non-empty printable strings up to
 128 characters. `max_review_rounds` and `max_active` are positive integers;
-serial dispatch requires `max_active = 1`. Boolean values are not integers.
+serial dispatch requires `max_active = 1`, while parallel program dispatch uses
+the positive `max_active` cap. Boolean values are not integers.
 Unknown fields are rejected. Prompt paths resolve relative to the config
 directory and must name existing files inside it.
 
@@ -203,9 +208,33 @@ the stated prerequisites are met. The coordinator follows declared TaskSpec
 order and dependencies, forms serial integration waves, and advances only
 after every writer in the wave has finished, every same-revision Reviewer has
 approved, and every declared fixed-argv verification has passed. A successor
-wave starts only after that barrier. Changing `dispatch_mode` to `parallel`
-and choosing a positive `max_active` still produces a graph value, but parallel
-start is rejected before dependency probes or resource creation.
+wave starts only after that barrier. To run the parallel program variant, use
+the same graph with the coordination table below.
+
+## Run a Mainless parallel program
+
+Adapt the serial example above by keeping both Worker-to-Reviewer edges,
+TaskSpecs, and routes, then use this coordination table:
+
+```toml
+[teams.all-claude.coordination]
+mode = "program"
+entry_nodes = ["worker-a", "worker-b"]
+dispatch_mode = "parallel"
+max_active = 2
+```
+
+The native coordinator admits independent assignments up to `max_active`. A
+candidate is rejected while its node is busy, the cap is full, or its Worker
+`allowed_paths` overlap an active Worker scope. A pending user question blocks
+its own assignment; an independent candidate may continue when admission still
+allows it. `task_verify` remains run-global blocked until every active assignment
+and Delivery is drained. State version 5 keeps each assignment's result, question, and
+Delivery stage separately. The canonical wave still seals after all writers
+finish, reviews the same integrated revision, and runs the declared fixed-argv
+verification before the next wave. Focused contract checks and bounded
+real-terminal/fake-provider cases cover this path; real-model parallel
+acceptance has not been run.
 
 The coordinator uses the existing native supervisor; it does not add a Main
 model. Attach to that terminal with `--coordinator` when inspection is needed:
@@ -264,10 +293,10 @@ agent-team start --config /path/to/config-v5.toml \
 `teams` lists every parsed team. `validate` can omit `--team` to check all teams.
 `graph` and version-5 `start` require `--team`; selection is exact, without
 aliases or case conversion. Graph formats are `json`, `ascii`, and `mermaid`.
-For the native agent/serial or program/serial example, remove `--dry-run` to
-start after meeting the prerequisites. Parallel and named Orca starts fail
-before dependency probes or resource creation. Inspection does not start
-providers.
+For the native agent/serial, program/serial, or program/parallel example,
+remove `--dry-run` to start after meeting the prerequisites. Agent/parallel
+and named Orca starts fail before dependency probes or resource creation.
+Inspection does not start providers.
 
 ## Use saved identity for management
 
@@ -281,7 +310,9 @@ State is stored at `$XDG_STATE_HOME/agent-team/<derived-team-id>/state.json`,
 defaulting to `~/.local/state/agent-team/`. Use `status`, `attach`, or `stop`
 with `--state` to manage that saved run without rereading its config.
 
-The config version is 5; named native state uses version 4. `role_specs` holds
-all nodes, while `roles` holds only active assignments. Older fixed-role state
-is not converted. See [Architecture](architecture.md) for identity checks and
-the question, completion, review, verification, and cleanup contracts.
+The config version is 5; named native serial state uses version 4, while native
+program/parallel state uses version 5. `role_specs` holds all nodes, while
+`roles` holds active assignments and their per-node delivery state. Older
+fixed-role state is not converted. See [Architecture](architecture.md) for
+identity checks and the question, completion, review, verification, and cleanup
+contracts.

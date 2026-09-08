@@ -41,6 +41,7 @@ from .native_terminal import is_native_runtime
 from .runtime import (
     MAX_PROMPT_CHARS,
     NAMED_STATE_VERSION,
+    PARALLEL_STATE_VERSION,
     read_state,
     resolve_state_role,
 )
@@ -89,7 +90,7 @@ class NativeMcpSession:
                 bounded_text(arguments, "body", maximum=20_000),
             )
         else:
-            if current["version"] == NAMED_STATE_VERSION:
+            if current["version"] in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
                 role = resolve_state_role(
                     current, bounded_text(arguments, "role", maximum=64)
                 )

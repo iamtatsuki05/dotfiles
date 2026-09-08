@@ -51,13 +51,15 @@ Zellij driverは`0.44.1`でcompatibilityを確認した対象です。preflight�
 detached mode、persistent clientなし、`--max-panes 1`なしを使います。Main metadataを保持し、
 terminalを1つと既知のsuppressed `zellij:link` pluginだけを受け入れ、未知のpane/pluginはunknownのままにします。
 
-HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serialとprogram/serial構成はversion 5で接続しています。
-program構成にはMain roleを置かず、選択したterminal上で既存の`native_main` supervisorが固定argvの`_program-run` coordinatorを監督します。
-明示的なparallel workflow、名前付きOrca構成、10 harnessの大半は未完了です。2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
+HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serialとprogram/serial構成に加え、
+program/parallel構成もversion 5で接続しています。program構成にはMain roleを置かず、選択したterminal上で既存の
+`native_main` supervisorが固定argvの`_program-run` coordinatorを監督します。Main-agentのparallel、名前付きOrca構成、
+10 harnessの大半は未完了です。2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
 
 native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。名前付きnativeのReviewer相談回答と
-serial program coordinatorもfocused testで接続しています。並列処理、名前付きOrca、全ハーネスへの対応は引き続き未完了です。
+serial/parallel program coordinatorもfocused testで接続しています。boundedな端末・fake providerのparallel coverageは下記に記載し、
+実モデルのparallel受入、名前付きOrca、全ハーネスへの対応は引き続き未完了です。
 
 ### 名前付きnodeとTaskSpecの担当指定
 
@@ -67,10 +69,11 @@ provider/model/effort/prompt/permissionはnodeごとに保持します。Mainは
 taskのrouteは計画・実装それぞれのwriterとreviewerを指定します。計画担当の組を宣言した場合は、
 計画の承認後に実装へ進みます。その組を省略したrouteではPlannerを省けます。
 
-configはversion 5、名前付きnative stateはversion 4です。graphと`role_specs`は設定済みの全nodeを含み、
-`roles`には実行中のassignmentだけを保存します。native runtimeのTask UUIDと論理的な`TaskSpec.task_id`は別物で、
-dispatch IDが結果と対象taskを結び付けます。stateの読み取り、通知の保存、taskの遷移では、
-ID・kindの欠落や不一致を拒否します。version 3のstateは従来の契約を維持し、自動移行しません。
+configはversion 5、名前付きnativeのserial stateはversion 4、program/parallel stateはversion 5です。
+graphと`role_specs`は設定済みの全nodeを含み、version 5の`roles`にはactive assignmentとnodeごとのresult、question、
+pending Delivery containerを保存します。native runtimeのTask UUIDと論理的な`TaskSpec.task_id`は別物で、
+dispatch IDが結果と対象taskを結び付けます。stateの読み取り、通知の保存、taskの遷移では、ID・kindの欠落や不一致を拒否します。
+version 3のstateは従来の契約を維持し、自動移行しません。
 
 実モデルのtmux run `ea85a811-dd06-4bd3-a1d6-f6156f5670ef`では、direct ClaudeのMain `lead`、
 Worker `write-sum`/`write-product`、Reviewer `review-sum`/`review-product`の5nodeすべてに
@@ -83,9 +86,17 @@ Fable/highを明示指定しました。Mainは設定一覧の先頭ではあり
 process group、state、provider root、snapshot、fixture資源の不在を確認しています。
 
 これはnativeのagent/serial構成の受入結果です。nativeのprogram/serial進行管理も実装とfocused contract testへ接続しています。
-programはMain role、Main model、専用CLIを作らず、選択したterminalと保存済みcoordinator identityを使います。
+nativeのprogram/parallelはversion 5 stateを使い、activeなnodeごとにDelivery containerを持ちます。
+`max_active`、正確なnode identity、重ならないWorker write scopeでadmissionを判定し、pending questionは自分のassignmentだけを止めます。
+条件を満たす独立peerは継続できます。完了Deliveryは`role_read` → `role_release` → `delivery_ack`の順で処理し、
+release後のassignmentも一致するackまでstateに残します。privateなparallel Stopは`native.phase=stopping`を保存して安全なassignmentを同じ順でdrainし、
+identity不明、typed result不足、cleanup未確認のnodeを保持したまま安全なpeerを続けます。
+
+両program modeはMain role、Main model、専用CLIを作らず、選択したterminalと保存済みcoordinator identityを使います。
 `program_wave`は宣言順と依存関係から`task_ids`、`phase`、`revision`を保持し、wave内の全writer完了、同じrevisionの全Reviewer承認、
-fixed argv検証の順に進みます。parallel assignmentと名前付きOrca構成は、dependency確認や資源作成より前に引き続き拒否します。
+fixed argv検証の順に進みます。focused testとboundedな実端末・fake providerのcaseでnative parallelのcontractを確認していますが、
+実モデルのparallel受入は未実施です。
+agent/parallelと名前付きOrca構成は、dependency確認や資源作成より前に引き続き拒否します。
 
 Reviewerの相談は、名前付きnativeで独立した操作として扱います。`status`にはopaqueな相談ID、findings、task/stage、回答状態を表示し、
 `answer --consultation-id ID --body ...`で`agent`と`program`の両方へ回答できます。IDはrun、TaskSpec digest、review stage、正確なreview Dispatchに束縛し、
@@ -105,10 +116,65 @@ private path、fixture、virtual environmentは残りませんでした。observ
 cleanupの主張は、native clientが受理したresult、公開stopの結果、process/path確認に限定します。model切替とbilling変更は行わず、通常authのwrite経路も未検証です。
 利用上限後の実モデルread-only plan-only試験は実行していません。
 
-program contract focused runはPython 3.13と3.11で各169 test、skip 0でした。Claude SDK 1.3.0とCodex SDK 1.4.0のfixtureを使い、
-144 source hashが不変でした。別のmid full runは、相談回答とplan-only追加の前にPython両版でpackage 908、CLI 33、MCP 33、compact 8を通過しています。
-この結果を、追加後の最終的なlive evidenceとは扱いません。最終focused checkではRuff 132 fileとstrict mypy 54 source fileも通過し、
-freshなread-only reviewで重大な問題はありませんでした。これらは実装とcontractの検証であり、失敗した実機試験をprovider workflow成功へ変えるものではありません。
+program contract focused testでは、serialとparallelのadmission、assignmentごとのstate、Delivery順序、
+canonical wave遷移、private Stopを確認しています。これは実装とcontractの検証であり、失敗したserialの実機試験を
+実モデルのprovider workflow成功へ変えるものではありません。
+
+### native program/parallelの限定端末受入
+
+独立監査では、fake Node・client・providerを使い、実際のtmux、Herdr、Zellij terminal driverで8件の成功ケースを確認しました。
+これはterminalとlifecycleの証拠です。SDK wire、実モデル、認証、provider billing、OS sandboxの証拠ではありません。
+
+| ケース | terminal / Python | run ID |
+|---|---|---|
+| writers → review → fixed argv検証 → stop | Zellij / 3.13 | `ab237f28-c06f-4922-913a-2d4e4e776e11` |
+| writers → review → fixed argv検証 → stop | Herdr / 3.13 | `b321d505-0fef-475b-b546-446f59601ccb` |
+| writers → review → fixed argv検証 → stop | tmux / 3.13 | `0b1b54ab-4f03-4a45-94d0-fe556c6cc64c` |
+| writers → review → fixed argv検証 → stop | tmux / 3.11 | `6a22a03f-43da-47d8-9840-c5f65e554491` |
+| Aは未回答、Bは継続、stop | Zellij / 3.13 | `ca873b0e-b63d-47e5-a78b-7e5f9a23a57b` |
+| Aは未回答、Bは継続、stop | Herdr / 3.13 | `9262e0da-041d-4dfc-a4b1-d1b010bfac2e` |
+| Aは未回答、Bは継続、stop | tmux / 3.13 | `1b0fb484-2b37-4878-a9b7-f34fb5adf92c` |
+| Aは未回答、Bは継続、stop | tmux / 3.11 | `62b0e835-2c43-4e70-8cff-dd08051d5bd4` |
+
+通常ケースでは、2つのwriterが同時にactiveとなり、互いに異なるfileへ書き込みました。
+writerをdrainしてcanonical waveをsealし、同じ統合revision
+`98795fc4bcb4f6e7e15d48e8d8470b73160bd858382ce1349103d3f6e9bdb082`をreviewし、
+fixed argvの読み取りと出力assertを通過して2つのtaskをcompletedにし、public Stopまで完了しました。
+独立監査では、各通常ケースで既知のPID 11件、process group 9件、path 20件の不在を確認しました。
+fixture rootは消失し、source manifestは不変でした。
+
+questionケースでは、B側のbarrierをreleaseする前に、両runnerとclientのPID/argv、process group、kernel parentを取得しました。
+Aを未回答のまま保持し、Bは出力とackまで進みました。public Stopは回答もacknowledgmentも捏造せず、Aの状態を保持しました。
+Stop前のsnapshotではAがrunning、Bがawaiting implementation reviewでした。どちらもTask completionとは扱っていません。
+各questionケースで既知のPID 7件、process group 5件、path 12件が不在となり、fixture rootは消失し、source manifestは不変でした。
+
+最新matrixには、atomicなreadの`lstat` → `open`で正当なrenameを同じguard内で初回を含めて最大3回試行する修正と、
+process exit後に`_wait`がfreshなstateを読み、matching publicationを検証する修正を含みます。再現例:
+
+```
+AGENT_TEAM_RUN_LIVE_NATIVE=1 AGENT_TEAM_RUN_LIVE_PROGRAM=1 \
+AGENT_TEAM_LIVE_RUNTIME=tmux \
+uv run --locked --project scripts/agent-team python -m unittest discover \
+-s scripts/agent-team/tests -p live_parallel_program.py -v
+```
+
+最新focused testはPython 3.11と3.13で各263件が成功しました。正式な`tests/run.sh`も両版で通過し、
+パッケージ1,025件、CLI 33件、MCP 33件、compact runner 8件と、適用対象のshell・source state・rendered home・Nixを確認しています。
+実行中はsource manifestの194項目が不変でした。終了後は文書の表現だけを更新し、再確認しています。
+build、clean install、最新headのCI結果は[PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)へ集約します。
+実モデルのparallel受入は、この端末・模擬providerの検証とは別に未実施です。
+
+最初のZellij run `f678e9f5-9fbb-4376-a18a-1855612ba69b`はreview前に終了し、正確な理由は保持できませんでした。
+後のstartup capture `1d4a1e5b-9c8f-4c4e-be00-84eb69a12df1`ではchild receiptがなく、public Stopも失敗しました。
+manualのexact-owned server cleanupでは、既知のPID、process group、path、workload scopeの不在を確認しましたが、
+`descendants_stopped=false`は保持しています。これらの失敗記録から、未観測descendantのcleanupや最初の終了の因果関係は主張しません。
+stateとterminalは消失し、inertなfailed fixtureは保持しています。
+
+それ以前のterminal/fake provider suiteは、上記8件のparallel監査とは別のhistorical evidenceです。
+providerや認証を呼び出さず、tmux、Herdr、Zellijでlifecycleとquestionの5件を確認しました。
+Zellijでは一時名のsuffixが`_`Bで始まる場合も検証し、生成側のprefixは有効な形に保っています。
+この記録は、未実施の実モデルparallel受入を置き換えません。正式な検証には、記載済みのPython 3.11／3.13の全テスト、
+lint、型検査、build、clean installを使い、current headの結果とCIは[PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)に記録します。
 
 ### 実モデルを使ったtmuxでの質問応答受入
 
@@ -131,11 +197,6 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 処理プロセスは終了し、所有する待機中のtmux端末は後から回収しました。失敗時の状態、一時領域、スナップショット、結果ファイル、
 試験用ファイルは保持しています。今回の再試験が成功しても、過去の失敗を成功に変更することはありません。
 
-実際の端末と模擬プロバイダーを使う試験では、tmux、Herdr、Zellijの各5件が成功しました。プロバイダーや認証への呼び出しはありません。
-Zellijでは一時名のランダム部分が`_`で始まる場合も検証し、生成側の接頭辞を修正しています。既存の厳格なパス検証は維持しています。
-正式な検証には、記載済みのPython 3.11／3.13の全テスト、lint、型検査、ビルド、インストール確認を使います。
-最新headの結果とCIは[PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)に記録します。
-
 ## componentごとに責務を限定する
 
 | Component | 責務 |
@@ -150,7 +211,9 @@ Zellijでは一時名のランダム部分が`_`で始まる場合も検証し�
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | NativeBackendを選択したterminal driverへ束縛する。 |
 | `agent_team/herdr.py`, `zellij.py` | Herdrのversion 0.8.2/protocol 20のhandshakeと、0.44.1でcompatibilityを確認したZellijのidentity/cleanup contractを検証する。 |
 | `agent_team/native_main.py` | 所有するnative Mainのprocess group、またはprogram coordinator childを監督し、終了receiptを保存する。 |
-| `agent_team/native_program.py`, `program_policy.py` | Main modelや別task ledgerを作らず、保存済みnative `program` graphをserialのTaskSpec waveとして進める。 |
+| `agent_team/native_program.py`, `program_policy.py` | Main modelや別task ledgerを作らず、保存済みnative `program` graphをserialまたはparallelのTaskSpec waveとして進める。 |
+| `agent_team/native_delivery.py` | version 3/4のroot Deliveryと、version 5のnodeごとのresult、question、pending Delivery containerを解決する。 |
+| `agent_team/parallel_admission.py` | version 5の`max_active`、exact node、重ならないWorker scopeのadmissionを検査する。 |
 | `agent_team/orca.py` | 固定Orca argv/envelope decoderを担当する。MCP role操作は持たない。 |
 | `agent_team/tmux.py` | nonceを付けたprivate tmux serverとMain paneの作成・検査を担当する。 |
 | `agent_team/locking.py` | teamごとのstable lifecycle reservationを担当する。backendをimportせず、stateの書き込みとruntime操作で共有する。 |
@@ -168,7 +231,7 @@ Zellijでは一時名のランダム部分が`_`で始まる場合も検証し�
 | `agent_team/native_acp_dependencies.py` | 選択したnative providerのNode、ACP adapter、SDK、必要なprovider実行fileだけを解決し、fingerprintを固定する。 |
 | `agent_team/codex_preflight.py`, `codex_acp.py` | 既存の認証file・設定を検証し、Codex専用の起動fileを固定する。公開設定ではCodex ACPを無効にしている。 |
 | `agent_team/codex_scoped_launch.mjs`, `codex_scoped_inspect.mjs`, `codex_scoped_transport.mjs`, `codex_scoped_bridge.mjs` | app-serverの起動設定を固定し、有効な設定の検査、通信の制限、file tool要求の仲介を担う。[Codex ACPの実装状況](acp_JA.md#範囲を制限したcodex-acpの実装公開設定では未有効)を参照。 |
-| `agent_team/runtime.py` | identity、private file、state v3、command、environment、cleanupの安全helperを共有する。state writeは、callerがreservationを保持していない限り共有lockを取得する。 |
+| `agent_team/runtime.py` | identity、private file、state v3/v4/v5、command、environment、cleanupの安全helperを共有する。state writeは、callerがreservationを保持していない限り共有lockを取得する。 |
 | `agent_team/process_identity.py` | LinuxとmacOSでprocessのexact argvを読み、表示文字列に依存しないnative所有権検査を提供する。 |
 | `agent_team/registry.py` | 認識済みharnessと検証済みrole profileを記録し、別providerへのfallthroughを行わない。 |
 | `agent_team/adapters.py` | provider非依存のbackground seam、出力制限付きprocess runner、exact identity検証、Copilot/OpenCode read-only adapterを提供する。Orca lifecycleの権限は持たない。 |
@@ -309,9 +372,12 @@ delivery、tool-callのidentityとquestion/answerのhashだけを残します。
 fsyncや`recorded`公開の失敗から復旧できるよう、次のquestionまたはterminal completionまでquestion/answer
 本文を保持する場合があります。receipt自体にはraw本文を含めません。
 
-questionのDeliveryが保留中は、`role_read`、`role_release`、別のdispatch、`task_verify`を拒否します。
+questionのDeliveryが保留中は、そのassignmentの`role_read`、`role_release`、別のdispatchを拒否します。
 questionは同じassignmentの追加通信であり、既存のfile scope、Bash policy、その他のexternal-tool policyを
-広げません。ACP clientが消費するまでは、successful completionも拒否します。通常の完了経路は引き続き
+広げません。ACP clientが消費するまでは、そのassignmentのsuccessful completionも拒否します。version 3/4のnative serial stateでは、
+questionが消費されるまでrun全体の次のdispatchも止まります。version 5のnative `program`/`parallel`では、
+`max_active`とwrite scopeのadmissionを通る独立assignmentを継続できますが、`task_verify`は全active assignmentとDeliveryのdrainが終わるまで
+run全体で拒否します。通常の完了経路は引き続き
 `role_wait(worker_done)` → `role_read` → `role_release` → `delivery_ack`です。
 
 `role_wait`は、自身の待機期限内で質問・完了通知の保存ロックを待ちます。
@@ -395,8 +461,9 @@ stderr SHA-256 hashを保存します。全command成功とcleanup確認がそ�
 
 ## identityが一致したときだけlifecycleを進める
 
-background roleは同時に1つしか動きません。active assignmentや未acknowledgeの
-Deliveryがある場合、次のroleは起動できません。
+Orcaとnative serial state（version 3/4）では、background roleは同時に1つしか動きません。
+active assignmentや未acknowledgeのDeliveryがある場合、次のroleは起動できません。
+version 5のnative `program`/`parallel`では、admissionを通ったassignmentを`max_active`まで保持できます。
 
 ```text
 role_prompt
@@ -503,8 +570,10 @@ methodは、別のuser-facing protocolではありません。
 
 共通MCP protocolでは観測したDeliveryを記録し、結果の読み取り、所有するrole resourceの解放、
 完了通知の受領確認という順序を強制します。native questionは全`message_reply`後に受領確認し、
-`delivery_ack`後にだけprivate channelが回答を渡してconsumed receiptを記録します。質問中は
-`role_read`、`role_release`、別dispatch、verificationをblockします。escalationは保留します。
+`delivery_ack`後にだけprivate channelが回答を渡してconsumed receiptを記録します。質問中はそのassignmentの
+`role_read`、`role_release`、別dispatch、verificationをblockします。version 5のnative `program`/`parallel`では、
+条件を満たす独立assignmentを継続できますが、`task_verify`は全active assignmentとDeliveryのdrainが終わるまで
+run全体でblockします。escalationは保留します。
 操作が失敗した場合は未処理状態を保持します。MCPのframingとtool schemaはbackendを選択せずに
 読み込めます。最初のstateful callで保存済みstateからOrcaまたは選択したnative runtimeを選びます。
 nativeの`status`、`attach`、`stop`は選択したdriverの所有resourceを検査または操作します。
@@ -577,9 +646,10 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 以下は合意した範囲から除外した項目ではなく、残る実装・実証項目です。Issue #8、#9、#11で追跡します。
 
 - 全10harnessで必要なprofileと実機証拠
-- 実装・review・fixed argv検証まで通る実モデルprogram run。下記の試験はprovider failureで停止しました
+- 実装・review・fixed argv検証まで通る実モデルprogram run。下記のserial試験はprovider failureで停止しました
 - 実モデルのread-only plan-only run
-- 明示的なparallel task、名前付きOrca構成、Orcaとnativeの共有progression
+- 実モデルのnative `program`/`parallel`受入
+- Main-agentのparallel、名前付きOrca構成、Orcaとnativeの共有progression
 - crashやcleanup不明後の自動recovery
 
 ## 意図的な対象外

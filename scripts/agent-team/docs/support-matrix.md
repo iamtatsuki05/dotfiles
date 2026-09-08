@@ -47,21 +47,30 @@ attempts, and final validation status are maintained in
 not a new `Verified` safety result. The fully verified `0b3e5bc` milestone
 remains historical evidence.
 
-### Native program/serial status
+### Native program status
 
-Version-5 native `program`/`serial` is a coordination mode, not a new harness
-profile. It has no Main role or Main model. The selected terminal hosts the
-existing `native_main` supervisor and its fixed `_program-run` coordinator;
-state keeps `coordinator_terminal`, `coordinator_argv`,
-`coordinator_process`, and `coordinator_pid` separate from Main fields.
-Declared TaskSpecs are scheduled in serial integration waves. Reviewers and
-fixed-argv verification are bound to the same sealed workspace revision before
-a successor wave is admitted.
+Version-5 native `program`/`serial` and `program`/`parallel` are coordination
+modes, not new harness profiles. They have no Main role or Main model. The
+selected terminal hosts the existing `native_main` supervisor and its fixed
+`_program-run` coordinator; state keeps `coordinator_terminal`,
+`coordinator_argv`, `coordinator_process`, and `coordinator_pid` separate from
+Main fields. Serial program state uses version 4. Parallel program state uses
+version 5 with a result, question, and Delivery container for each active node.
+`max_active` and non-overlapping Worker scopes bound admission. A pending
+question blocks its own assignment while an independent admitted peer may
+continue. Completion Delivery drains as Read → Release → Ack. Question
+Delivery uses message_reply and delivery_ack; Stop marks an unanswered question
+as cancelling without inventing an acknowledgment. The private parallel Stop
+path retains unknown or unproven nodes while draining safe peers.
+Declared TaskSpecs are scheduled in canonical waves. Reviewers and fixed-argv
+verification are bound to the same sealed workspace revision before a successor
+wave is admitted.
 
-The focused program-contract suite passed 169 tests on Python 3.13 and 3.11,
-with zero skips, using SDK fixtures `@agentclientprotocol/sdk@1.3.0` and the
-Codex alias at SDK `1.4.0`; 144 source hashes were unchanged. This is contract
-evidence for the implementation, not a real-provider safety result.
+Focused program-contract checks cover serial and parallel admission, state,
+Delivery ordering, wave transitions, and private Stop handling. Bounded
+real-terminal/fake-provider acceptance is recorded in Architecture; this is
+not real-provider or real-model safety evidence. Real-model parallel acceptance
+is pending.
 
 The real serial program trial
 `b239945b-283e-403b-aba5-84ba984c8469` answered two questions in the same ACP
@@ -72,21 +81,23 @@ error prevented independent typed receipt fields from being retained. The
 native client result, stop result, and process/path checks are therefore the
 only cleanup evidence claimed for that run. Parallel dispatch, named Orca, all
 ten harnesses, model switching, billing changes, and normal-auth write coverage
-were not established.
+were not established. No real-model parallel dispatch has been run.
 
 An ACP adapter being installed or listed by acpx does not prove that the
 adapter is safe for a role. It is shown separately from the verified
 agent-team profile. Native tmux, Herdr, and Zellij Claude ACP are separate runtime profiles: their
 read-only Planner/Reviewer and scoped workspace-write Worker are selected only
-from a version-3 native config or a version-5 named `agent`/`serial` or
-`program`/`serial` config. Worker dispatch requires an exact declared TaskSpec. Unknown providers and recognized-but-rejected profiles fail before
+from a version-3 native config or a version-5 named `agent`/`serial`,
+`program`/`serial`, or `program`/`parallel` config. Worker dispatch requires an exact declared TaskSpec. Unknown providers and recognized-but-rejected profiles fail before
 an Orca Task, terminal, or ACP process is created. There is no fallback to
 another harness.
 
 Version 5 changes node identity and task routing, and adds the native
-program/serial coordinator, without changing the harness safety dispositions
-in this matrix. Its bounded five-node Claude tmux acceptance and the limited
-program trial are described in [Architecture](architecture.md).
+program/serial and program/parallel coordinators, without changing the harness
+safety dispositions in this matrix. Its bounded five-node Claude tmux
+acceptance, limited serial program trial, and bounded terminal/fake-provider
+parallel coverage are described in [Architecture](architecture.md). Real-model
+parallel acceptance remains pending.
 
 The Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
 Orca resolves only the selected ACP roles' `node`, `acpx`, and

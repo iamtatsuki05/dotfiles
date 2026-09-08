@@ -42,8 +42,9 @@ def controller_keys(state: Mapping[str, object]) -> ControllerKeys:
     """Return the exact native controller fields for a validated state shape.
 
     Version 3 is the fixed-role agent contract.  Version 4 derives the mode
-    from its parsed graph; a program graph never acquires a fabricated Main
-    identity and an agent graph never uses coordinator aliases.
+    from its parsed graph; version 5 is reserved for an explicitly parallel
+    program graph.  A program graph never acquires a fabricated Main identity
+    and an agent graph never uses coordinator aliases.
     """
 
     if not isinstance(state, Mapping):
@@ -53,7 +54,7 @@ def controller_keys(state: Mapping[str, object]) -> ControllerKeys:
         if "graph" in state:
             _fail("version-3 state must not contain a graph")
         return _AGENT_KEYS
-    if version != 4:
+    if version not in {4, 5}:
         _fail("agent-team native controller state version is unsupported")
 
     from .named_graph import GraphSpec
@@ -63,9 +64,20 @@ def controller_keys(state: Mapping[str, object]) -> ControllerKeys:
     except (TypeError, ValueError) as exc:
         _fail(f"agent-team native controller graph is invalid: {exc}")
     if graph.coordination.mode == "agent":
+        if version == 5:
+            _fail("parallel state requires program parallel coordination")
+        if graph.coordination.dispatch_mode != "serial":
+            _fail("named state requires serial coordination")
         return _AGENT_KEYS
-    if graph.coordination.mode == "program":
+    if graph.coordination.mode == "program" and (
+        (version == 4 and graph.coordination.dispatch_mode == "serial")
+        or (version == 5 and graph.coordination.dispatch_mode == "parallel")
+    ):
         return _PROGRAM_KEYS
+    if version == 4:
+        _fail("named state requires serial coordination")
+    if version == 5:
+        _fail("parallel state requires program parallel coordination")
     _fail("agent-team native controller coordination mode is invalid")
 
 

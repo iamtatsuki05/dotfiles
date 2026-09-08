@@ -24,11 +24,12 @@ from .contracts import (
     TaskVerify,
 )
 from .native_controller import controller_keys
+from .native_delivery import container, containers
 from .native_question_channel import validate_question_request
 from .program_policy import select_action
 from .runtime import MAX_RESULT_BODY_CHARS, read_state
 from .task_execution import task_consultation
-from .task_spec import parse_task_specs
+from .task_spec import TaskSpec, parse_task_specs
 
 
 class ProgramPort(Protocol):
@@ -43,14 +44,33 @@ def _emit(event: Mapping[str, object]) -> None:
     print(json.dumps(dict(event), ensure_ascii=False, sort_keys=True), flush=True)
 
 
+def _delivery_container(
+    state: Mapping[str, object], role: NodeRef | None
+) -> Mapping[str, object]:
+    if state.get("version") == 5:
+        if role is None:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "parallel delivery requires an exact role",
+            )
+        return container(state, role.node_id)
+    return container(state)
+
+
+def _logical_task_id(assignment: Mapping[str, object]) -> str:
+    task = TaskSpec.from_dict(assignment.get("task_spec"))
+    return task.task_id
+
+
 def _wait_or_read(
     backend: ProgramPort, state: Mapping[str, object], role: NodeRef
 ) -> None:
-    pending = state.get("pending_delivery_id")
+    owner = _delivery_container(state, role)
+    pending = owner.get("pending_delivery_id")
     if pending is None:
         backend.request(RoleWait(role, 1000))
-    elif state.get("pending_delivery_kind") == "worker_done":
-        stage = state.get("pending_delivery_stage")
+    elif owner.get("pending_delivery_kind") == "worker_done":
+        stage = owner.get("pending_delivery_stage")
         if stage == "observed":
             backend.request(RoleRead(role, MAX_RESULT_BODY_CHARS))
         elif stage == "read":
@@ -65,24 +85,83 @@ def _wait_or_read(
         )
 
 
+def _acknowledge(
+    backend: ProgramPort, state: Mapping[str, object], role: NodeRef | None
+) -> None:
+    owner = _delivery_container(state, role)
+    delivery = owner.get("pending_delivery_id")
+    if not isinstance(delivery, str) or not delivery:
+        raise RuntimeFailure(ErrorCode.IDENTITY_MISMATCH, "pending delivery is missing")
+    backend.request(DeliveryAck(DeliveryRef(delivery)))
+
+
+def _question_notice(
+    node_id: str,
+    assignment: Mapping[str, object],
+) -> dict[str, object] | None:
+    question = assignment.get("native_question")
+    if not isinstance(question, Mapping) or question.get("phase") != "observed":
+        return None
+    fields = validate_question_request(question["request"]).questions
+    ids = cast(list[str], question["message_ids"])
+    answers = cast(Mapping[str, str], question["answers"])
+    messages = [
+        {"message_id": message_id, "body": field.body}
+        for message_id, field in zip(ids, fields, strict=True)
+        if message_id not in answers
+    ]
+    if not messages:
+        return None
+    return {
+        "node_id": node_id,
+        "role_kind": assignment.get("role_kind"),
+        "task_id": _logical_task_id(assignment),
+        "messages": messages,
+    }
+
+
 def _notice(
-    state: Mapping[str, object], *, reason: str | None, task_id: str | None
+    state: Mapping[str, object],
+    *,
+    reason: str | None,
+    task_id: str | None,
+    role: NodeRef | None = None,
 ) -> dict[str, object]:
-    question = state.get("native_question")
     result: dict[str, object] = {
         "status": "waiting_for_user",
         "task_id": task_id,
         "reason": reason,
     }
-    if isinstance(question, Mapping) and question.get("phase") == "observed":
-        fields = validate_question_request(question["request"]).questions
-        ids = cast(list[str], question["message_ids"])
-        answers = cast(Mapping[str, str], question["answers"])
-        result["messages"] = [
-            {"message_id": message_id, "body": field.body}
-            for message_id, field in zip(ids, fields, strict=True)
-            if message_id not in answers
+    if state.get("version") == 5:
+        selected_node = role.node_id if role is not None else None
+        questions = [
+            item
+            for node_id, assignment in containers(state)
+            if node_id is not None
+            for item in [_question_notice(node_id, assignment)]
+            if item is not None
         ]
+        selected_question = next(
+            (item for item in questions if item["node_id"] == selected_node),
+            None,
+        )
+        if selected_question is not None:
+            result["node_id"] = selected_question["node_id"]
+            result["role_kind"] = selected_question["role_kind"]
+            result["messages"] = selected_question["messages"]
+        result["questions"] = questions
+    else:
+        question = state.get("native_question")
+        if isinstance(question, Mapping) and question.get("phase") == "observed":
+            fields = validate_question_request(question["request"]).questions
+            ids = cast(list[str], question["message_ids"])
+            answers = cast(Mapping[str, str], question["answers"])
+            result["messages"] = [
+                {"message_id": message_id, "body": field.body}
+                for message_id, field in zip(ids, fields, strict=True)
+                if message_id not in answers
+            ]
+    if "messages" in result or result.get("questions"):
         result["answer_command"] = (
             "agent-team answer --state STATE --message-id ID --body ANSWER"
         )
@@ -107,7 +186,12 @@ def drive(backend: ProgramPort) -> int:
             state = backend.program_snapshot()
             action = select_action(state)
             if action.kind == "wait_user":
-                notice = _notice(state, reason=action.message, task_id=action.task_id)
+                notice = _notice(
+                    state,
+                    reason=action.message,
+                    task_id=action.task_id,
+                    role=action.role,
+                )
                 if notice != last_notice:
                     _emit(notice)
                     last_notice = notice
@@ -151,12 +235,7 @@ def drive(backend: ProgramPort) -> int:
                 assert action.task_id is not None
                 backend.request(TaskVerify(action.task_id))
             elif action.kind == "acknowledge":
-                delivery = state.get("pending_delivery_id")
-                if not isinstance(delivery, str):
-                    raise RuntimeFailure(
-                        ErrorCode.IDENTITY_MISMATCH, "pending delivery is missing"
-                    )
-                backend.request(DeliveryAck(DeliveryRef(delivery)))
+                _acknowledge(backend, state, action.role)
             elif action.kind == "wait":
                 if action.role is None:
                     raise RuntimeFailure(
