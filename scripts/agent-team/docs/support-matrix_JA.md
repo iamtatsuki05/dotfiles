@@ -40,10 +40,13 @@ Codexのquestion capabilityとquestion socketは無効で、公開Codex ACP prof
 
 ACP adapterがインストールされていることやacpxが表示することだけでは、安全なrole用adapterで
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
-native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative configから選んだread-only
+native tmux、Herdr、ZellijのClaude ACPは別runtime profileです。version 3のnative config、またはversion 5の名前付きagent/serial configで選んだread-only
 Planner/Reviewerとscoped workspace-write Workerだけを使い、Worker dispatchには宣言済みTaskSpec
 との完全一致が必要です。unknown providerと認識済みだが拒否されたprofileは、Orca Task、terminal、
 ACP processを作る前に失敗します。別harnessへのfallbackはありません。
+
+Version 5で変わるのはnodeの識別方法とtaskの担当指定であり、このmatrixのharness安全判定は変わりません。
+Claudeを使う5nodeのtmux受入試験は、[アーキテクチャ](architecture_JA.md)に記載しています。
 
 OrcaのClaude ACP profileにはNode.js `22.13.0`以降も必要です。起動前にOrcaは選択したACP roleの
 `node`、`acpx`、`claude-agent-acp`だけを解決し、exact package manifestを確認したうえで、absoluteな

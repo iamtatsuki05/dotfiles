@@ -189,8 +189,9 @@ role commands and state path; `--no-attach` is accepted. Real `start`, `status`,
 `attach`, and `stop` use the same version-3 lifecycle. The plan's `config_path`
 is the referenced launch file so child role processes read the same settings.
 Unsupported graphs remain available for inspection but fail before runtime
-resources are created. Arbitrary graph execution and parallel roles are not
-implemented.
+resources are created. Version 4 does not execute arbitrary graphs or parallel
+roles. [Version 5](configuration-v5.md) separately connects named native
+agent/serial graphs; it does not change this version-4 contract.
 
 ## Version boundary
 
@@ -200,7 +201,9 @@ top-level v4 `teams` field to a version-3 file is rejected at the CLI version
 boundary; fields are never copied between versions and no silent fallback is
 performed. Version-3 `start`, `status`, `attach`, and `stop` retain their
 historical path and file-size behavior. Supplying `--team` explicitly selects
-the bounded v4 loader, which rejects a version-3 file with the version-4 error.
+the bounded loader; version-4 files use the v4 schema, and a version-3 file is
+rejected with the existing version-4 error. Version-5 files use their explicit
+named-node schema.
 Without `--team`, a version-4 file follows the old version-3 path and fails
 with the unchanged `version must be integer 3` message before any resource is
 created.

@@ -126,6 +126,34 @@ class NativeMainContractTest(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertNotIn("main_process", self._read_state(self.state_path)["native"])
 
+    def test_named_main_runs_frozen_command_and_records_owned_exit(self) -> None:
+        marker = self.root / "named-main-ran"
+        state = self._state(
+            self._python_argv(
+                "from pathlib import Path; Path(__import__('sys').argv[1]).write_text('named')",
+                str(marker),
+            )
+        )
+        state["version"] = 4
+        state["graph"] = {
+            "nodes": [{"node_id": "lead", "kind": "main"}],
+            "edges": [],
+            "coordination": {
+                "mode": "agent",
+                "entry_nodes": ["lead"],
+                "dispatch_mode": "serial",
+                "max_active": 1,
+            },
+            "routes": [],
+        }
+        self._save_state(state)
+        self.assertEqual(native_main.run(self.state_path, self.run_id), 0)
+        self.assertEqual(marker.read_text(), "named")
+        process = self._read_state(self.state_path)["native"]["main_process"]
+        self.assertEqual(process["phase"], "exited")
+        self.assertTrue(process["group_stopped"])
+        self._wait_pid_gone(process["agent_pid"])
+
     def test_launch_waits_for_publication_lock_without_duplicate_process(self) -> None:
         self._save_state(self._state([str(self.root / "main")]))
         holder = _LifecycleReservation(self.state_path, create_parent=True)

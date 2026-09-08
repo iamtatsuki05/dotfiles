@@ -13,6 +13,10 @@ exact TaskSpec from the config's `[[tasks]]` catalog. Missing values and
 unsupported combinations fail before any role starts. See
 [Version-4 configuration](configuration-v4.md) for the separate topology
 schema and pure inspection commands.
+For node-local settings, multiple Workers/Reviewers, and explicit TaskSpec
+routes, use [Version-5 configuration](configuration-v5.md). Native
+`agent`/`serial` execution is connected; program, parallel, and named Orca
+execution remain rejected. The reference below describes version 3.
 
 ## Start from the canonical config
 
@@ -61,8 +65,10 @@ the canonical Worker and Reviewer remain direct Codex roles.
 
 ## Select an experimental native terminal runtime explicitly
 
-Use a native `runtime = "tmux"`, `"herdr"`, or `"zellij"` only in a custom
-version-3 config. Main is required and
+This section describes a custom version-3 config with
+`runtime = "tmux"`, `"herdr"`, or `"zellij"`. For multiple named nodes, use
+[Version 5](configuration-v5.md) and its separate execution conditions. In the
+version-3 config below, Main is required and
 must be direct Claude with `orchestrator` permission. Planner and Reviewer may
 be omitted or may each be verified Claude ACP with `read-only` permission and
 the pinned `claude-acp-0.70.0` adapter. Worker may be selected as the scoped

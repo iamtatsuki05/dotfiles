@@ -24,6 +24,8 @@ HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契
 - [設定リファレンス](docs/configuration_JA.md)はconfig version 3、native TaskSpec catalog、
   対応するprovider/transportの組み合わせを説明します。[Version 4の設定](docs/configuration-v4_JA.md)
   では、team名による選択、graphの確認、起動設定への参照を説明します。
+  [Version 5の設定](docs/configuration-v5_JA.md)では、node ID、nodeごとの設定、
+  taskの担当を指定してnativeで順次実行する方法を説明します。
 - [Harness対応matrix](docs/support-matrix_JA.md)は、認識済み・利用可能・実行可能・
   拒否を区別します。
 - [ACPの境界](docs/acp_JA.md)はadapter pin、認証、ACPがsandboxではない理由を説明します。
@@ -42,7 +44,7 @@ HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契
 bundled Orca configでは起動直後に動くのはMainだけです。Planner、Worker、Reviewerは
 必要なときだけ起動し、background roleは同時に1つしか動きません。
 
-bundled configは、これまでどおり4 roleのOrca構成です。customなnative configでは、
+bundled configは、これまでどおり4 roleのOrca構成です。version 3のcustomなnative configでは、
 Mainをdirect Claude・permission `orchestrator`として定義し、verified Claude ACPの
 Planner/Reviewer（`read-only`）とscoped Worker（`workspace-write`）を追加できます。
 native Workerへdispatchするには、一致する`[[tasks]]` entryが必要です。その他の未対応profileは、state、
@@ -51,8 +53,15 @@ Task、Dispatch、processに影響する前に拒否します。
 nativeの質問応答は、選択したClaude ACP assignment内の追加通信です。roleのpermission、
 TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質問応答も有効にしません。
 完全検証済みの`0b3e5bc` milestoneは過去の証拠です。tmuxのbounded acceptanceと協調的な検証状況は
-[アーキテクチャ](docs/architecture_JA.md)に記載し、専任Mainなしの実行、任意構成のチーム、明示的な並列実行、
+[アーキテクチャ](docs/architecture_JA.md)に記載し、専任Mainなしの実行、残るgraph構成、明示的な並列実行、
 全harness、Codex認証、Orcaとnativeに共通する進行管理の要件とは分けて扱います。
+
+Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
+現在はnativeの`agent`/`serial`構成で順次実行します。実モデルのtmux試験では、
+4件の独立したassignmentで2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの
+固定argv検証、公開コマンドによる停止まで確認しました。既定profileは上表のままで、
+この試験では5nodeすべてにClaude Fableを明示指定しています。programによる進行管理、
+並列実行、名前付きOrca構成、agent間の相談は、実行時にはまだ利用できません。
 
 ## checkoutから実行する、またはprojectをinstallする
 

@@ -22,12 +22,12 @@ from .contracts import (
     ReadReceipt,
     ReleaseReceipt,
     ReplyReceipt,
-    Role,
     RoleGet,
     RolePrompt,
     RoleRead,
     RoleRelease,
     RoleStatusReceipt,
+    RoleTarget,
     RoleWait,
     RuntimeFailure,
     RuntimeRequest,
@@ -188,10 +188,7 @@ class WorkflowEngine(TeamRuntime):
         result = self._backend.request(request)
         if not isinstance(result, AttachReceipt):
             self._protocol_failure("backend returned an invalid attach receipt")
-        if (
-            result.role is not request.role
-            or result.run_id != self._require_start().run_id
-        ):
+        if result.role != request.role or result.run_id != self._require_start().run_id:
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
                 "attach receipt does not match the requested role and Run",
@@ -214,7 +211,7 @@ class WorkflowEngine(TeamRuntime):
                 "a role or Delivery is already active",
             )
         result = self._backend.request(request)
-        if not isinstance(result, Assignment) or result.role is not request.role:
+        if not isinstance(result, Assignment) or result.role != request.role:
             self._protocol_failure("backend returned an invalid role assignment")
         identity = result.completion_identity
         if (
@@ -462,7 +459,7 @@ class WorkflowEngine(TeamRuntime):
     def _role_get(self, request: RoleGet) -> RuntimeResult:
         self._require_assignment(request.role)
         result = self._backend.request(request)
-        if not isinstance(result, RoleStatusReceipt) or result.role is not request.role:
+        if not isinstance(result, RoleStatusReceipt) or result.role != request.role:
             self._protocol_failure("backend returned an invalid role status receipt")
         return result
 
@@ -475,16 +472,16 @@ class WorkflowEngine(TeamRuntime):
             )
         return start
 
-    def _require_assignment(self, role: Role) -> Assignment:
+    def _require_assignment(self, role: RoleTarget) -> Assignment:
         assignment = self._session.assignment
-        if assignment is None or assignment.role is not role:
+        if assignment is None or assignment.role != role:
             raise RuntimeFailure(
                 ErrorCode.TEAM_NOT_RUNNING,
                 "role has no active assignment",
             )
         return assignment
 
-    def _require_completion(self, role: Role) -> None:
+    def _require_completion(self, role: RoleTarget) -> None:
         self._require_assignment(role)
         if self._session.completion is None:
             raise RuntimeFailure(

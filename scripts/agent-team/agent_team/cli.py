@@ -37,6 +37,14 @@ from .adapters import (
     remove_owned_tree,
 )
 from .cleanup import StartupCleanup
+from .config_roles import (
+    ALL_ROLES,
+    ROLE_PERMISSIONS,
+    ConfigError,
+    RoleConfig,
+    parse_role,
+    require_string,
+)
 from .config_v4 import (
     V4Config,
     V4ConfigError,
@@ -46,14 +54,27 @@ from .config_v4 import (
     render_v4_team,
     v4_teams_json,
 )
+from .config_v5 import (
+    V5Config,
+    V5Node,
+    V5Team,
+    load_v5_config_data,
+    render_v5_team,
+    select_v5_team,
+    v5_team_rows,
+)
 from .contracts import (
     Attach,
     ErrorCode,
+    NodeRef,
     Role,
     RoleSpec,
+    RoleTarget,
     RuntimeFailure,
     StartSpec,
     Status,
+    role_id,
+    role_kind,
 )
 from .harness_launch import (
     LaunchValidationError,
@@ -61,6 +82,7 @@ from .harness_launch import (
     build_codex_argv,
     build_plan_role_command,
 )
+from .named_graph import GraphSpec
 from .native_acp_dependencies import (
     CodexAcpExecutables,
     NativeAcpDependencyError,
@@ -69,13 +91,13 @@ from .native_acp_dependencies import (
 )
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .registry import (
-    CANONICAL_HARNESSES,
     adapter_id_for_profile,
     profile_execution,
-    require_profile,
     status_rows,
 )
 from .runtime import (
+    MAX_RESULT_BODY_CHARS,
+    NAMED_STATE_VERSION,
     RuntimeValidationError,
     acp_environment,
     build_acp_agent_command,
@@ -83,6 +105,7 @@ from .runtime import (
     build_acp_runner_command,
     build_acp_session_name,
     read_prompt_file,
+    resolve_state_role,
 )
 from .runtime import (
     create_prompt_file as runtime_create_prompt_file,
@@ -111,8 +134,6 @@ if TYPE_CHECKING:
     from .tmux_backend import TmuxBackend
     from .zellij_backend import ZellijBackend
 
-SUPPORTED_TRANSPORTS: Final = frozenset({"direct", "acp"})
-SUPPORTED_PROVIDERS: Final = frozenset(CANONICAL_HARNESSES)
 CONFIG_VERSION: Final = 3
 ACP_TIMEOUT_SECONDS: Final = 900
 ACP_CLEANUP_TIMEOUT_SECONDS: Final = 15
@@ -121,18 +142,6 @@ ACP_KILL_WAIT_SECONDS: Final = 2
 MAX_ACP_OUTPUT_CHARS: Final = 100_000
 MAX_RUNTIME_ERROR_CHARS: Final = 240
 MAX_CLI_ERROR_CHARS: Final = 16_384
-PROVIDER_EFFORTS: Final = {
-    "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
-    "codex": frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
-    "copilot": frozenset({"none", "low", "medium", "high", "xhigh", "max"}),
-    "opencode": frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"}),
-}
-ROLE_PERMISSIONS: Final = {
-    "planner": "read-only",
-    "worker": "workspace-write",
-    "reviewer": "read-only",
-}
-ALL_ROLES: Final = ("main", "planner", "worker", "reviewer")
 V4_RUNTIME_EDGES: Final = frozenset(
     {
         ("main", "planner", "delegates-to"),
@@ -145,10 +154,6 @@ V4_RUNTIME_EDGES: Final = frozenset(
         ("reviewer", "main", "escalates-to"),
     }
 )
-
-
-class ConfigError(ValueError):
-    pass
 
 
 class AcpProcessCleanupError(RuntimeError):
@@ -165,16 +170,6 @@ def _runtime_failure_message(error: RuntimeFailure) -> str:
 
 
 @dataclass(frozen=True)
-class RoleConfig:
-    provider: str
-    transport: str
-    model: str
-    effort: str
-    prompt_path: Path
-    permission: str
-
-
-@dataclass(frozen=True)
 class TeamConfig:
     config_path: Path
     runtime: str
@@ -185,86 +180,11 @@ class TeamConfig:
     task_specs: tuple[TaskSpec, ...] = ()
 
 
-def require_string(table: dict[str, object], key: str, context: str) -> str:
-    value = table.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"{context}.{key} must be a non-empty string")
-    return value
-
-
-def resolve_prompt(config_dir: Path, raw_path: str, context: str) -> Path:
-    prompt_path = (config_dir / raw_path).resolve()
-    try:
-        prompt_path.relative_to(config_dir)
-    except ValueError as exc:
-        raise ConfigError(f"{context}.prompt must stay within {config_dir}") from exc
-    if not prompt_path.is_file():
-        raise ConfigError(f"{context}.prompt does not exist: {prompt_path}")
-    return prompt_path
-
-
-def parse_role(
-    table: object,
-    *,
-    context: str,
-    config_dir: Path,
-    expected_permission: str,
-) -> RoleConfig:
-    if not isinstance(table, dict):
-        raise ConfigError(f"{context} must be a table")
-    provider = require_string(table, "provider", context)
-    if provider not in SUPPORTED_PROVIDERS:
-        supported = ", ".join(sorted(SUPPORTED_PROVIDERS))
-        raise ConfigError(f"{context}.provider must be one of: {supported}")
-    transport = require_string(table, "transport", context)
-    if transport not in SUPPORTED_TRANSPORTS:
-        supported = ", ".join(sorted(SUPPORTED_TRANSPORTS))
-        raise ConfigError(f"{context}.transport must be one of: {supported}")
-    model = require_string(table, "model", context)
-    effort = require_string(table, "effort", context)
-    if provider == "copilot":
-        if model == "auto" and effort != "none":
-            raise ConfigError(f"{context} Copilot model=auto requires effort=none")
-        if model != "auto" and effort == "none":
-            raise ConfigError(
-                f"{context} explicit Copilot models cannot use effort=none"
-            )
-    if provider not in PROVIDER_EFFORTS:
-        role = context.removeprefix("roles.")
-        try:
-            require_profile(provider, role, transport, expected_permission)
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
-        raise ConfigError(f"no effort profile is registered for {provider}")
-    if effort not in PROVIDER_EFFORTS[provider]:
-        supported = ", ".join(sorted(PROVIDER_EFFORTS[provider]))
-        raise ConfigError(
-            f"{context}.effort is not supported by {provider}; use one of: {supported}"
-        )
-    permission = require_string(table, "permission", context)
-    if permission != expected_permission:
-        raise ConfigError(f"{context}.permission must be {expected_permission!r}")
-    role = context.removeprefix("roles.")
-    try:
-        require_profile(provider, role, transport, permission)
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
-    if transport == "acp" and context == "main":
-        raise ConfigError("main.transport='acp' is not supported")
-    prompt = require_string(table, "prompt", context)
-    return RoleConfig(
-        provider=provider,
-        transport=transport,
-        model=model,
-        effort=effort,
-        prompt_path=resolve_prompt(config_dir, prompt, context),
-        permission=permission,
-    )
-
-
 def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
     resolved_path = config_path.expanduser().resolve()
     version = data.get("version")
+    if isinstance(version, int) and not isinstance(version, bool) and version == 5:
+        raise ConfigError("config version 5 requires exactly one --team")
     if (
         not isinstance(version, int)
         or isinstance(version, bool)
@@ -298,7 +218,7 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
         data.get("main"),
         context="main",
         config_dir=config_dir,
-        expected_permission="orchestrator",
+        kind=Role.MAIN,
     )
     raw_roles = data.get("roles")
     if not isinstance(raw_roles, dict):
@@ -311,9 +231,9 @@ def _load_config_data(config_path: Path, data: dict[str, object]) -> TeamConfig:
             raw_roles.get(role),
             context=f"roles.{role}",
             config_dir=config_dir,
-            expected_permission=permission,
+            kind=Role(role),
         )
-        for role, permission in ROLE_PERMISSIONS.items()
+        for role in ROLE_PERMISSIONS
         if runtime == "orca" or role in raw_roles
     }
     if "worker" in roles and roles["worker"].transport == "acp":
@@ -507,7 +427,18 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
         values[key] = value
 
     raw_specs = state.get("role_specs")
-    if (
+    named_graph: GraphSpec | None = None
+    if state.get("version") == NAMED_STATE_VERSION:
+        if runtime == "orca" or not isinstance(state.get("graph"), Mapping):
+            raise ConfigError("named saved state requires a native graph")
+        try:
+            named_graph = GraphSpec.from_dict(state["graph"])
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"saved named graph is invalid: {exc}") from exc
+        node_ids = {node.node_id for node in named_graph.nodes}
+        if not isinstance(raw_specs, dict) or set(raw_specs) != node_ids:
+            raise ConfigError("saved state role_specs do not match its graph")
+    elif (
         not isinstance(raw_specs, dict)
         or "main" not in raw_specs
         or not set(raw_specs).issubset(ALL_ROLES)
@@ -516,11 +447,23 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
         raise ConfigError(
             "saved state must contain role_specs for exactly " + ", ".join(ALL_ROLES)
         )
+    assert isinstance(raw_specs, dict)
     roles: dict[str, dict[str, object]] = {}
     for role in raw_specs:
         raw_spec = raw_specs.get(role)
         if not isinstance(raw_spec, dict):
             raise ConfigError(f"saved state is missing role_specs.{role}")
+        if named_graph is not None:
+            try:
+                node = named_graph.node(role)
+            except KeyError as exc:
+                raise ConfigError(
+                    "saved state role_specs do not match its graph"
+                ) from exc
+            if raw_spec.get("kind") != node.kind.value:
+                raise ConfigError(
+                    f"saved state role kind does not match its graph: {role}"
+                )
         launch = dict(raw_spec)
         launch["role"] = role
         launch.setdefault("env", {})
@@ -535,6 +478,7 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
         **({"orca_socket": values["orca_socket"]} if runtime == "orca" else {}),
         "roles": roles,
         "task_specs": state.get("task_specs", []),
+        **({"graph": named_graph} if named_graph is not None else {}),
         **(
             {"max_review_rounds": state["max_review_rounds"]}
             if "max_review_rounds" in state
@@ -741,7 +685,7 @@ def build_argv(
 
 def acp_agent_command(
     team_id: str,
-    role: str,
+    role: str | RoleTarget,
     launch_nonce: str,
     *,
     executables: AcpExecutables | NativeAcpExecutables,
@@ -842,7 +786,7 @@ def _validate_acp_assignment_snapshot(
 
 
 def create_prompt_file(
-    state_dir: Path, role: str, launch_nonce: str, text: str
+    state_dir: Path, role: str | RoleTarget, launch_nonce: str, text: str
 ) -> Path:
     try:
         return runtime_create_prompt_file(state_dir, role, launch_nonce, text)
@@ -854,7 +798,7 @@ def validate_prompt_file(
     path: Path,
     state_dir: Path,
     *,
-    role: str | None = None,
+    role: str | RoleTarget | None = None,
     launch_nonce: str | None = None,
 ) -> Path:
     try:
@@ -869,7 +813,7 @@ def remove_prompt_file(
     path: Path,
     state_dir: Path,
     *,
-    role: str,
+    role: str | RoleTarget,
     launch_nonce: str,
 ) -> None:
     try:
@@ -1145,6 +1089,68 @@ def nested_string(
     return current
 
 
+def _state_role_target(
+    state: Mapping[str, object], role: str | RoleTarget
+) -> RoleTarget | str:
+    """Resolve a runner role against a validated version-3/version-4 state."""
+
+    version = state.get("version")
+    if version not in {3, NAMED_STATE_VERSION}:
+        raise ConfigError("ACP role identity requires a supported saved state")
+    if isinstance(role, (Role, NodeRef)):
+        node_id = role_id(role)
+        try:
+            selected = resolve_state_role(state, node_id)
+        except RuntimeValidationError as exc:
+            raise ConfigError(str(exc)) from exc
+        if selected != role:
+            raise ConfigError("ACP role identity or kind does not match saved state")
+        return selected
+    if not isinstance(role, str):
+        raise ConfigError("ACP role identity is invalid")
+    try:
+        return resolve_state_role(state, role)
+    except RuntimeValidationError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+def _runner_role_target(
+    state: Mapping[str, object], role: str | RoleTarget
+) -> RoleTarget | str:
+    return _state_role_target(state, role)
+
+
+def _role_id_string(target: RoleTarget | str) -> str:
+    return role_id(target) if isinstance(target, (Role, NodeRef)) else target
+
+
+def _role_target_for_plan(plan: Mapping[str, object], role: str) -> RoleTarget:
+    """Resolve a public management role against the saved launch plan."""
+
+    roles = plan.get("roles")
+    if not isinstance(roles, Mapping) or role not in roles:
+        raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role is not selected")
+    graph = plan.get("graph")
+    if isinstance(graph, GraphSpec):
+        try:
+            selected = graph.node(role)
+        except KeyError as exc:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "role is not selected"
+            ) from exc
+        launch = roles[role]
+        if not isinstance(launch, Mapping) or launch.get("kind") != selected.kind.value:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "saved role kind does not match its graph",
+            )
+        return selected
+    try:
+        return Role(role)
+    except ValueError as exc:
+        raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role is not selected") from exc
+
+
 def role_command(plan: dict[str, object], role: str) -> str:
     try:
         raw_socket = plan.get("orca_socket")
@@ -1170,7 +1176,7 @@ def role_command(plan: dict[str, object], role: str) -> str:
 
 def acp_runner_command(
     state: dict[str, object],
-    role: str,
+    role: str | RoleTarget,
     *,
     task_id: str,
     dispatch_id: str,
@@ -1194,7 +1200,7 @@ def acp_runner_command(
         raise ConfigError(str(exc)) from exc
 
 
-def acp_session_name(role: str, launch_nonce: str) -> str:
+def acp_session_name(role: str | RoleTarget, launch_nonce: str) -> str:
     try:
         return build_acp_session_name(role, launch_nonce)
     except RuntimeValidationError as exc:
@@ -1319,7 +1325,7 @@ def _native_acp_result_body(output: str, failure: str | None, *, maximum: int) -
 
 def _acp_assignment(
     state: dict[str, object],
-    role: str,
+    role: str | RoleTarget,
     *,
     state_path: Path,
     task_id: str,
@@ -1332,15 +1338,26 @@ def _acp_assignment(
     dict[str, object],
     AcpExecutables | NativeAcpExecutables | CodexAcpExecutables,
 ]:
+    selected_role = _runner_role_target(state, role)
+    selected_id = (
+        role_id(selected_role)
+        if isinstance(selected_role, (Role, NodeRef))
+        else selected_role
+    )
+    selected_kind = (
+        role_kind(selected_role).value
+        if isinstance(selected_role, (Role, NodeRef))
+        else selected_role
+    )
     state_state_path = state.get("state_path")
     if not isinstance(state_state_path, str) or state_path.resolve(
         strict=False
     ) != Path(state_state_path).resolve(strict=False):
         raise ConfigError("ACP state path does not match the launch plan")
     roles = state.get("roles")
-    assignment = roles.get(role) if isinstance(roles, dict) else None
+    assignment = roles.get(selected_id) if isinstance(roles, dict) else None
     if not isinstance(assignment, dict):
-        raise ConfigError(f"ACP role assignment is missing: {role}")
+        raise ConfigError(f"ACP role assignment is missing: {selected_id}")
     expected = {
         "task_id": task_id,
         "dispatch_id": dispatch_id,
@@ -1352,15 +1369,15 @@ def _acp_assignment(
         if assignment.get(key) != value:
             raise ConfigError(f"ACP assignment does not match {key}")
     specs = state.get("role_specs")
-    spec = specs.get(role) if isinstance(specs, dict) else None
+    spec = specs.get(selected_id) if isinstance(specs, dict) else None
     if not isinstance(spec, dict):
-        raise ConfigError(f"ACP launch plan is missing role: {role}")
+        raise ConfigError(f"ACP launch plan is missing role: {selected_id}")
     try:
         expected_profile = native_profile(
             cast(str, spec.get("provider"))
             if is_native_runtime(state["runtime"])
             else "claude",
-            role,
+            selected_kind,
         )
     except RuntimeValidationError as exc:
         raise ConfigError(str(exc)) from exc
@@ -1398,7 +1415,7 @@ def _acp_assignment(
         )
         expected_command = acp_agent_command(
             team_id,
-            role,
+            selected_role,
             launch_nonce,
             executables=executables,
             **({"write_policy": write_policy} if write_policy is not None else {}),
@@ -1407,13 +1424,13 @@ def _acp_assignment(
     if assignment.get("agent_command") != expected_command:
         raise ConfigError("ACP assignment has an invalid agent command")
     session_name = assignment.get("session_name")
-    if session_name != acp_session_name(role, launch_nonce):
+    if session_name != acp_session_name(selected_role, launch_nonce):
         raise ConfigError("ACP assignment has an invalid session name")
     _validate_acp_assignment_snapshot(assignment, executables)
     validate_prompt_file(
         prompt_path,
         state_path.parent,
-        role=role,
+        role=selected_role,
         launch_nonce=launch_nonce,
     )
     return assignment, spec, executables
@@ -1421,7 +1438,7 @@ def _acp_assignment(
 
 def _native_completion_run_id(
     state: dict[str, object],
-    role: str,
+    role: str | RoleTarget,
     *,
     state_path: Path,
     task_id: str,
@@ -1432,9 +1449,17 @@ def _native_completion_run_id(
 ) -> str | None:
     """Return the run identity only when native completion can be trusted."""
 
-    if role not in {"planner", "worker", "reviewer"} or not all(
-        isinstance(value, str) and value
-        for value in (task_id, dispatch_id, terminal_handle, launch_nonce)
+    try:
+        selected_role = _runner_role_target(state, role)
+    except ConfigError:
+        return None
+    if (
+        not isinstance(selected_role, (Role, NodeRef))
+        or role_kind(selected_role) not in {Role.PLANNER, Role.WORKER, Role.REVIEWER}
+        or not all(
+            isinstance(value, str) and value
+            for value in (task_id, dispatch_id, terminal_handle, launch_nonce)
+        )
     ):
         return None
     if not is_native_runtime(state.get("runtime")):
@@ -1454,7 +1479,8 @@ def _native_completion_run_id(
     if not isinstance(run_id, str) or not run_id:
         return None
     roles = state.get("roles")
-    assignment = roles.get(role) if isinstance(roles, dict) else None
+    selected_id = role_id(selected_role)
+    assignment = roles.get(selected_id) if isinstance(roles, dict) else None
     if (
         not isinstance(assignment, dict)
         or assignment.get("launcher_owned_runner") is not True
@@ -1472,11 +1498,13 @@ def _native_completion_run_id(
     ):
         return None
     specs = state.get("role_specs")
-    spec = specs.get(role) if isinstance(specs, dict) else None
+    spec = specs.get(selected_id) if isinstance(specs, dict) else None
     if not isinstance(spec, dict):
         return None
     try:
-        expected_spec = native_profile(cast(str, spec.get("provider")), role)
+        expected_spec = native_profile(
+            cast(str, spec.get("provider")), role_kind(selected_role).value
+        )
     except RuntimeValidationError:
         return None
     if any(spec.get(key) != value for key, value in expected_spec.items()):
@@ -1487,7 +1515,7 @@ def _native_completion_run_id(
 def _publish_native_validation_failure(
     state: dict[str, object],
     *,
-    role: str,
+    role: str | RoleTarget,
     state_path: Path,
     task_id: str,
     dispatch_id: str,
@@ -1516,9 +1544,12 @@ def _publish_native_validation_failure(
     try:
         from .native_backend import publish_completion
 
+        selected_role = _runner_role_target(state, role)
+        if not isinstance(selected_role, (Role, NodeRef)):
+            return
         publish_completion(
             state_path,
-            role=role,
+            role=_role_id_string(selected_role),
             run_id=run_id,
             task_id=task_id,
             dispatch_id=dispatch_id,
@@ -1573,7 +1604,7 @@ def _send_worker_done(
 
 def acp_run(
     *,
-    role: str,
+    role: str | RoleTarget,
     state_path: Path,
     task_id: str,
     dispatch_id: str,
@@ -1584,6 +1615,11 @@ def acp_run(
     try:
         state = read_state(state_path)
     except (ConfigError, OSError, TypeError, RuntimeValidationError) as exc:
+        print(f"ACP runner validation failed: {exc}", file=sys.stderr)
+        return 1
+    try:
+        selected_role = _state_role_target(state, role)
+    except ConfigError as exc:
         print(f"ACP runner validation failed: {exc}", file=sys.stderr)
         return 1
     native = is_native_runtime(state.get("runtime"))
@@ -1607,7 +1643,7 @@ def acp_run(
             signal.signal(number, cancel)
         return _acp_run_turn(
             state=state,
-            role=role,
+            role=selected_role,
             state_path=state_path,
             task_id=task_id,
             dispatch_id=dispatch_id,
@@ -1746,7 +1782,7 @@ def _native_question_context(
 def _acp_run_turn(
     *,
     state: dict[str, object],
-    role: str,
+    role: str | RoleTarget,
     state_path: Path,
     task_id: str,
     dispatch_id: str,
@@ -1758,13 +1794,14 @@ def _acp_run_turn(
     """Run one selected ACP turn and publish its trusted result."""
 
     try:
+        selected_role = _state_role_target(state, role)
         if is_native_runtime(state["runtime"]) and cancellation is None:
             raise ConfigError("native ACP requires a cancellation controller")
         if cancellation is not None and cancellation.is_set():
             raise ConfigError("native ACP cancellation requested before client launch")
         assignment, spec, executables = _acp_assignment(
             state,
-            role,
+            selected_role,
             state_path=state_path,
             task_id=task_id,
             dispatch_id=dispatch_id,
@@ -1787,7 +1824,7 @@ def _acp_run_turn(
         prompt_text = read_prompt_file(
             prompt_path,
             state_path.parent,
-            role=role,
+            role=selected_role,
             launch_nonce=launch_nonce,
         )
         if isinstance(executables, CodexAcpExecutables):
@@ -1805,14 +1842,14 @@ def _acp_run_turn(
             )
             agent_command = acp_agent_command(
                 nested_string(state, ("team_id",), "agent-team state"),
-                role,
+                selected_role,
                 launch_nonce,
                 executables=executables,
                 **({"write_policy": write_policy} if write_policy is not None else {}),
                 questions=is_native_runtime(state["runtime"]),
             )
             native_environment = acp_env()
-        session_name = acp_session_name(role, launch_nonce)
+        session_name = acp_session_name(selected_role, launch_nonce)
         native_argv = None
         if isinstance(executables, (NativeAcpExecutables, CodexAcpExecutables)):
             native_argv = client_argv(
@@ -1881,7 +1918,14 @@ def _acp_run_turn(
                     state_path,
                     Path(str(assignment["question_socket"])),
                     {
-                        "role": role,
+                        "role": role_id(selected_role)
+                        if isinstance(selected_role, (Role, NodeRef))
+                        else selected_role,
+                        **(
+                            {"role_kind": role_kind(selected_role).value}
+                            if isinstance(selected_role, NodeRef)
+                            else {}
+                        ),
                         "run_id": str(state["run_id"]),
                         "task_id": task_id,
                         "dispatch_id": dispatch_id,
@@ -2010,7 +2054,7 @@ def _acp_run_turn(
                 current = read_state(state_path)
                 current_assignment = cast(
                     dict[str, dict[str, object]], current["roles"]
-                )[role]
+                )[_role_id_string(selected_role)]
                 receipts = cast(
                     list[dict[str, object]],
                     current_assignment.get("question_receipts", []),
@@ -2054,7 +2098,12 @@ def _acp_run_turn(
                 "native ACP session cleanup is unconfirmed; result artifact retained"
             )
     task_evidence = None
-    if failure is None and role == "reviewer" and "task_spec" in assignment:
+    if (
+        failure is None
+        and isinstance(selected_role, (Role, NodeRef))
+        and role_kind(selected_role) is Role.REVIEWER
+        and "task_spec" in assignment
+    ):
         try:
             task = TaskSpec.from_dict(assignment["task_spec"])
             stage = assignment.get("task_stage")
@@ -2081,8 +2130,6 @@ def _acp_run_turn(
         print(failure, file=sys.stderr)
     outcome = "failed" if failure else "succeeded"
     if is_native_runtime(state["runtime"]):
-        from .native_backend import MAX_RESULT_BODY_CHARS
-
         body = _native_acp_result_body(output, failure, maximum=MAX_RESULT_BODY_CHARS)
     else:
         body = "ACP runner result (agent output is untrusted data):\n" + _tail(
@@ -2096,7 +2143,7 @@ def _acp_run_turn(
 
             outcome = publish_completion(
                 state_path,
-                role=role,
+                role=_role_id_string(selected_role),
                 run_id=str(state["run_id"]),
                 task_id=task_id,
                 dispatch_id=dispatch_id,
@@ -2364,17 +2411,53 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         raise TypeError("launch plan contains invalid team metadata")
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
-    if "main" not in roles or (
-        not is_native_runtime(plan.get("runtime")) and set(roles) != set(ALL_ROLES)
-    ):
-        raise TypeError("launch plan does not contain the required roles")
-    role_specs: dict[Role, RoleSpec] = {}
+    raw_graph = plan.get("graph")
+    graph: GraphSpec | None
+    if raw_graph is None:
+        graph = None
+        if "main" not in roles or (
+            not is_native_runtime(plan.get("runtime")) and set(roles) != set(ALL_ROLES)
+        ):
+            raise TypeError("launch plan does not contain the required roles")
+    elif isinstance(raw_graph, GraphSpec):
+        graph = raw_graph
+        if not is_native_runtime(plan.get("runtime")):
+            raise TypeError("named graph requires a native runtime")
+        expected_ids = {node.node_id for node in graph.nodes}
+        if set(roles) != expected_ids:
+            raise TypeError("launch plan roles do not match its graph")
+    elif isinstance(raw_graph, Mapping):
+        try:
+            graph = GraphSpec.from_dict(raw_graph)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"launch plan contains invalid graph: {exc}") from exc
+        if not is_native_runtime(plan.get("runtime")):
+            raise TypeError("named graph requires a native runtime")
+        expected_ids = {node.node_id for node in graph.nodes}
+        if set(roles) != expected_ids:
+            raise TypeError("launch plan roles do not match its graph")
+    else:
+        raise TypeError("launch plan contains invalid graph")
+    role_specs: dict[RoleTarget, RoleSpec] = {}
     for role_name in roles:
-        if role_name not in ALL_ROLES:
-            raise TypeError(f"launch plan contains an unknown role: {role_name}")
         launch = roles.get(role_name)
         if not isinstance(launch, dict):
             raise TypeError(f"launch plan contains invalid role: {role_name}")
+        if graph is None:
+            if role_name not in ALL_ROLES:
+                raise TypeError(f"launch plan contains an unknown role: {role_name}")
+            role_target: RoleTarget = Role(role_name)
+        else:
+            try:
+                role_target = graph.node(role_name)
+            except KeyError as exc:
+                raise TypeError(
+                    f"launch plan contains an unknown named node: {role_name}"
+                ) from exc
+            if launch.get("kind") != role_kind(role_target).value:
+                raise TypeError(
+                    f"launch plan role kind does not match its graph: {role_name}"
+                )
         values = {
             key: launch.get(key)
             for key in (
@@ -2431,7 +2514,7 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
             if raw_provider_snapshot is not None
             else None,
         )
-        role_specs[Role(role_name)] = role_config
+        role_specs[role_target] = role_config
     return StartSpec(
         team_id=cast(str, team_id),
         workspace=Path(cast(str, workspace)),
@@ -2441,6 +2524,7 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         attach=attach,
         max_review_rounds=cast(int | None, plan.get("max_review_rounds")),
         task_specs=parse_task_specs(plan.get("task_specs", [])),
+        graph=graph,
     )
 
 
@@ -2622,7 +2706,29 @@ def _runtime_engine(
     return WorkflowEngine(backend), backend
 
 
+def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
+    raw = plan.get("graph")
+    if raw is None:
+        return
+    if not is_native_runtime(plan.get("runtime")):
+        raise ConfigError("named graph requires a native runtime")
+    try:
+        graph = raw if isinstance(raw, GraphSpec) else GraphSpec.from_dict(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"launch plan contains an invalid named graph: {exc}"
+        ) from exc
+    if (
+        graph.coordination.mode != "agent"
+        or graph.coordination.dispatch_mode != "serial"
+    ):
+        raise ConfigError(
+            "native named execution currently requires agent coordination and serial dispatch"
+        )
+
+
 def start_team(plan: dict[str, object], *, attach: bool) -> dict[str, object]:
+    _require_named_runtime_plan(plan)
     _ensure_orca_platform()
     _start_prerequisites(plan)
     engine, backend = _runtime_engine(plan, resume_existing=False)
@@ -2640,15 +2746,20 @@ def manage_team(
     command: str, plan: dict[str, object], role: str | None
 ) -> dict[str, object]:
     _ensure_orca_platform()
+    start_spec = _start_spec(plan, attach=False)
+    selected_role: RoleTarget | None = None
+    if command == "attach":
+        if role is None:
+            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "attach requires a role")
+        selected_role = _role_target_for_plan(plan, role)
     engine, backend = _runtime_engine(plan, resume_existing=True)
-    engine.start(_start_spec(plan, attach=False))
+    engine.start(start_spec)
     if command == "status":
         engine.request(Status())
         response = backend.last_status_response
     elif command == "attach":
-        if role is None:
-            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "attach requires a role")
-        engine.request(Attach(Role(role)))
+        assert selected_role is not None
+        engine.request(Attach(selected_role))
         response = backend.last_attach_response
     elif command == "stop":
         engine.stop()
@@ -2681,8 +2792,8 @@ def default_config_path() -> Path:
         ) from exc
 
 
-def _run_v4_runtime_command(args: argparse.Namespace, plan: dict[str, object]) -> int:
-    """Run one v3 lifecycle operation with the CLI runtime error boundary."""
+def _run_runtime_command(args: argparse.Namespace, plan: dict[str, object]) -> int:
+    """Run a selected lifecycle operation with the CLI runtime error boundary."""
 
     try:
         if args.command == "start":
@@ -2701,6 +2812,28 @@ def _run_v4_runtime_command(args: argparse.Namespace, plan: dict[str, object]) -
 
 def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
     """Dispatch v4 inspection commands and selected v3 runtime operations."""
+
+    if args.command == "validate":
+        config.require_valid()
+        selected = (
+            (config.team(args.team[0]),)
+            if args.team and len(args.team) == 1
+            else config.teams
+        )
+        if args.team is not None and len(args.team) != 1:
+            raise ConfigError("exactly one --team must be specified")
+        print(
+            json.dumps(
+                {
+                    "version": 4,
+                    "valid": True,
+                    "teams": [str(team.team_id) for team in selected],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
 
     if args.command == "teams":
         print(v4_teams_json(config), end="")
@@ -2729,11 +2862,167 @@ def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
         if args.dry_run:
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
-        return _run_v4_runtime_command(args, plan)
+        return _run_runtime_command(args, plan)
     if args.command in {"status", "attach", "stop"}:
         plan = _v4_runtime_plan(config, args.cwd, args.team)
-        return _run_v4_runtime_command(args, plan)
+        return _run_runtime_command(args, plan)
     raise ConfigError(f"command {args.command} requires config version 3")
+
+
+def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
+    base = node.role_spec.prompt_path.read_text(encoding="utf-8").rstrip()
+    if node.ref.kind is not Role.MAIN:
+        return base
+    return (
+        f"{base}\n\n## 名前付きチームの実行契約\n"
+        f"あなたのnode IDは{node.ref.node_id}です。"
+        "以下の起動時設定にあるnode IDをMCPのrole引数に指定してください。"
+        "kindは担当の種類と権限を示します。同じkindでもnode IDが異なれば別の担当です。"
+        "kindの名前をnode IDの代わりに使ったり、一覧の先頭を暗黙に選んだりしません。\n"
+        "TaskSpecは起動時に宣言されたものだけを使います。目的、変更範囲、依存、"
+        "固定argv、相談条件を変更してはいけません。追加・変更が必要ならユーザーに"
+        "設定更新と再起動を依頼してください。各task_idの依頼先はroutesで指定されています。"
+        "plan_writerがあるタスクは、その担当による計画とplan_reviewerの承認が必須です。"
+        "plan_writerがnullの場合だけ、implementation_writerから始めます。"
+        "task_dispatchのtaskには対応するTaskSpec全体を渡してください。\n"
+        "role_waitのkindがworker_doneなら、role_readで結果を読み、role_releaseで"
+        "所有リソースを解放し、最後にdelivery_ackで通知全体を確認済みにします。"
+        "この順序が完了するまで次の担当を起動しません。失敗した操作は未処理として保持し、"
+        "後続の操作で飛ばしてはいけません。\n"
+        "kindがquestionなら完了ではありません。全eventのmessage_idにmessage_replyで回答し、"
+        "全質問に回答した後でdelivery_ackを呼びます。その後、同じnodeを再待機します。"
+        "回答は受領確認後に同じACP sessionへ返されます。質問中のread、release、"
+        "別担当の起動、検証は行えません。根拠を持って答えられる内容には回答し、"
+        "ユーザーだけが決められる事項は提示して実際の回答を待ちます。"
+        "経過時間を回答や承認とみなさず、回答によってTaskSpecや権限を拡張しません。\n"
+        "task_getで状態を確認し、awaiting_plan_reviewならplan_reviewer、"
+        "awaiting_implementation_reviewならimplementation_reviewerへ依頼します。"
+        "レビューはJSONのdecision（approve、request_changes、consult）で判定されます。"
+        "plan_approvedならimplementation_writer、plan_changes_requestedならplan_writer、"
+        "implementation_changes_requestedならimplementation_writerへ同じTaskSpecを渡します。"
+        "前段の結果とレビュー証拠は保存され、次の担当へ渡されます。"
+        "別のreviewerへ切り替えたり別task_idで同じ作業を登録したりして上限を回避しません。\n"
+        "implementation_approvedの後はtask_verifyを呼びます。プログラムが、Reviewerが"
+        "承認した同じコードの版に対し、宣言済みの固定argvで検証します。"
+        "verification_failedなら保存された失敗証拠に従い、許可範囲内の修正を"
+        "implementation_writerへ依頼します。Reviewer承認や担当の成功通知だけでは"
+        "タスク全体の完了を報告できません。task_getのstatusがcompletedになった場合だけ"
+        "完了として報告してください。consultation_required、failed、回数上限、"
+        "停止やcleanupの未確認は未完了です。\n"
+        f"レビュー上限は、計画・実装それぞれ初回を含め{team.max_review_rounds}回です。"
+        "role_promptはTaskSpecを使わない読み取り専用の調査に限ります。"
+        "実行時が未対応と返した工程・接続を自己判断で代替してはいけません。"
+        "Mainは実装や検証証拠の作成を自分で行わず、固定MCPツールで進行してください。\n"
+        "\n起動時のgraphとTaskSpec:\n"
+        + json.dumps(
+            {
+                "graph": team.graph.as_dict(),
+                "tasks": [task.as_dict() for task in team.task_specs],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _v5_runtime_plan(
+    config: V5Config, workspace: Path, team: str | list[str] | None
+) -> dict[str, object]:
+    selected = select_v5_team(config, team)
+    resolved_workspace = workspace.expanduser().resolve()
+    if not resolved_workspace.is_dir():
+        raise ConfigError(f"workspace is not a directory: {resolved_workspace}")
+    runtime_id = team_name(selected.team_id, resolved_workspace)
+    state_path = state_path_for(runtime_id)
+    roles: dict[str, dict[str, object]] = {}
+    for node in selected.nodes:
+        ref, spec = node.ref, node.role_spec
+        instructions = _v5_role_instructions(node, selected)
+        execution = profile_execution(
+            spec.provider, ref.kind.value, spec.transport, spec.permission
+        )
+        adapter_id = adapter_id_for_profile(
+            spec.provider, ref.kind.value, spec.transport, spec.permission
+        )
+        environment = (
+            {"CODEX_HOME": str(state_dir_for(runtime_id) / "codex" / ref.node_id)}
+            if spec.provider == "codex" and spec.transport == "direct"
+            else {}
+        )
+        roles[ref.node_id] = {
+            "role": ref.node_id,
+            "kind": ref.kind.value,
+            "provider": spec.provider,
+            "transport": spec.transport,
+            "model": spec.model,
+            "effort": spec.effort,
+            "permission": spec.permission,
+            "instructions": instructions,
+            "execution": execution,
+            "adapter_id": adapter_id,
+            "env": environment,
+            "argv": (
+                build_argv(
+                    ref.kind.value,
+                    spec,
+                    instructions,
+                    state_path,
+                    resolved_workspace,
+                    None,
+                )
+                if spec.transport == "direct" and execution == "tui_direct"
+                else []
+            ),
+        }
+    return {
+        "runtime": config.runtime,
+        "max_review_rounds": selected.max_review_rounds,
+        "task_specs": [task.as_dict() for task in selected.task_specs],
+        "team_id": runtime_id,
+        "workspace": str(resolved_workspace),
+        "config_path": str(config.config_path),
+        "state_path": str(state_path),
+        "roles": roles,
+        "graph": selected.graph.as_dict(),
+    }
+
+
+def run_v5_command(args: argparse.Namespace, config: V5Config) -> int:
+    if args.command == "teams":
+        print(
+            json.dumps(
+                {"teams": list(v5_team_rows(config))}, ensure_ascii=False, indent=2
+            )
+        )
+        return 0
+    if args.command == "graph":
+        print(render_v5_team(config, args.team, args.format), end="")
+        return 0
+    if args.command == "validate":
+        if args.team is not None:
+            selected: tuple[V5Team, ...] = (select_v5_team(config, args.team),)
+        else:
+            selected = config.teams
+        print(
+            json.dumps(
+                {
+                    "version": 5,
+                    "valid": True,
+                    "teams": [team.team_id for team in selected],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if args.command != "start":
+        raise ConfigError(f"{args.command} must use the saved run state")
+    plan = _v5_runtime_plan(config, args.cwd, args.team)
+    if args.dry_run:
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0
+    return _run_runtime_command(args, plan)
 
 
 def render_cli_error(error: BaseException) -> str:
@@ -2794,7 +3083,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--state", type=resolve_cli_path)
     status.add_argument("--team", action="append")
     attach = subparsers.add_parser("attach", help="focus one role in Orca")
-    attach.add_argument("role", choices=ALL_ROLES)
+    attach.add_argument("role")
     add_context_arguments(attach, management=True)
     attach.add_argument("--state", type=resolve_cli_path)
     attach.add_argument("--team", action="append")
@@ -2806,14 +3095,19 @@ def build_parser() -> argparse.ArgumentParser:
         "harnesses", help="show recognized harnesses and static availability"
     )
     harnesses.add_argument("--json", action="store_true", dest="as_json")
-    teams = subparsers.add_parser("teams", help="list version-4 configured teams")
+    validate = subparsers.add_parser(
+        "validate", help="validate a configuration without starting agents"
+    )
+    add_context_arguments(validate)
+    validate.add_argument("--team", action="append")
+    teams = subparsers.add_parser("teams", help="list configured teams")
     add_context_arguments(teams)
-    graph = subparsers.add_parser("graph", help="render one version-4 team topology")
+    graph = subparsers.add_parser("graph", help="render one selected team topology")
     add_context_arguments(graph)
     graph.add_argument("--team", action="append", required=True)
     graph.add_argument("--format", choices=("json", "ascii", "mermaid"), required=True)
     acp = subparsers.add_parser("_acp-run", help=argparse.SUPPRESS)
-    acp.add_argument("role", choices=ALL_ROLES)
+    acp.add_argument("role")
     acp.add_argument("--state", type=Path, required=True)
     acp.add_argument("--task-id", required=True)
     acp.add_argument("--dispatch-id", required=True)
@@ -2833,6 +3127,33 @@ def build_parser() -> argparse.ArgumentParser:
     native_main.add_argument("--run-id", required=True)
     subparsers.add_parser("_mcp-server", help=argparse.SUPPRESS)
     return parser
+
+
+def _mcp_tools() -> list[dict[str, object]]:
+    """Return the role catalog selected by the current saved state.
+
+    Declaration-only MCP startup intentionally has no state dependency.  Once
+    a state path is supplied, it is authoritative: a malformed or mismatched
+    state is surfaced instead of silently advertising the fixed role catalog.
+    """
+
+    from .mcp_protocol import tools
+
+    raw_path = os.environ.get("AGENT_TEAM_STATE_PATH")
+    if not raw_path:
+        return tools()
+    state = read_state(Path(raw_path))
+    if state.get("version") != NAMED_STATE_VERSION:
+        return tools()
+    raw_graph = state.get("graph")
+    if not isinstance(raw_graph, Mapping):
+        raise ConfigError("named state is missing its graph")
+    try:
+        graph = GraphSpec.from_dict(raw_graph)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"named state graph is invalid: {exc}") from exc
+    selected = tuple(node.node_id for node in graph.nodes if node.kind is not Role.MAIN)
+    return tools(selected)
 
 
 def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -2856,7 +3177,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "_mcp-server":
         from .mcp_protocol import serve
 
-        return serve(_execute_mcp_tool)
+        return serve(_execute_mcp_tool, tool_catalog=_mcp_tools)
     if args.command == "_native-main":
         from .native_main import run
 
@@ -2919,19 +3240,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
             return 1
     try:
-        if args.command in {"teams", "graph"}:
-            resolved_config_path, config_data = read_config_file(args.config)
-            version = config_data.get("version")
-            if (
-                isinstance(version, int)
-                and not isinstance(version, bool)
-                and version == 4
-            ):
-                return run_v4_command(
-                    args, load_v4_config_data(resolved_config_path, config_data)
-                )
-            raise ConfigError(f"{args.command} requires config version 4")
-
         team_values = getattr(args, "team", None)
         state_argument = getattr(args, "state", None)
         if args.command in {"status", "attach", "stop"}:
@@ -2940,8 +3248,25 @@ def main(argv: list[str] | None = None) -> int:
                     state_argument, args.cwd, config_path=args.config, team=team_values
                 )
             )
-        elif team_values is not None:
+        elif args.command in {"teams", "graph", "validate"} or team_values is not None:
             resolved_config_path, config_data = read_config_file(args.config)
+            version = config_data.get("version")
+            if (
+                isinstance(version, int)
+                and not isinstance(version, bool)
+                and version == 5
+            ):
+                return run_v5_command(
+                    args, load_v5_config_data(resolved_config_path, config_data)
+                )
+            if args.command == "validate" and version == 3:
+                _load_config_data(resolved_config_path, config_data)
+                print(
+                    json.dumps(
+                        {"version": 3, "valid": True}, ensure_ascii=False, indent=2
+                    )
+                )
+                return 0
             return run_v4_command(
                 args, load_v4_config_data(resolved_config_path, config_data)
             )
@@ -2958,22 +3283,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
         return 2
 
-    try:
-        if args.command == "start":
-            if args.dry_run:
-                print(json.dumps(plan, ensure_ascii=False, indent=2))
-                return 0
-            result = start_team(plan, attach=not args.no_attach)
-        else:
-            result = manage_team(args.command, plan, getattr(args, "role", None))
-    except RuntimeFailure as exc:
-        print(f"ERROR: {_runtime_failure_message(exc)}", file=sys.stderr)
-        return 1
-    except (ConfigError, RuntimeError, OSError, TypeError, UnicodeDecodeError) as exc:
-        print(f"ERROR: {render_cli_error(exc)}", file=sys.stderr)
-        return 1
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    if args.command == "start" and args.dry_run:
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0
+    return _run_runtime_command(args, plan)
 
 
 if __name__ == "__main__":

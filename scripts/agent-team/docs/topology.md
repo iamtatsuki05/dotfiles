@@ -7,6 +7,10 @@ It describes which agents exist and how they delegate work, review results,
 or escalate questions. It does not start an agent, read configuration, call a
 provider, or invoke Orca.
 
+This is the version-4 catalog domain. Version 5 uses `agent_team.named_graph`
+for graph identity and TaskSpec routes; see
+[Version-5 configuration](configuration-v5.md).
+
 ## Data model
 
 The module is `agent_team.topology` and uses only Python 3.11 standard-library

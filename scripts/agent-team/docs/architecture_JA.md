@@ -50,13 +50,41 @@ Zellij driverは`0.44.1`でcompatibilityを確認した対象です。preflight�
 detached mode、persistent clientなし、`--max-panes 1`なしを使います。Main metadataを保持し、
 terminalを1つと既知のsuppressed `zellij:link` pluginだけを受け入れ、未知のpane/pluginはunknownのままにします。
 
-HerdrとZellijはnative terminal driverとして利用できます。今後の実装課題には、任意role graph、
-Mainなしの構成、明示的なparallel workflow、10 harnessの大半が残っています。これらの未実装部分を
+HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serial構成はversion 5で実行できます。
+今後の実装課題には、Mainなしの構成、明示的なparallel workflow、名前付きOrca構成、10 harnessの大半が残っています。これらの未実装部分を
 2つのsystemで分担すると、完了判定とcleanupの責任が曖昧になります。
 
 native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。
-任意の役割構成、Mainなしの実行、並列処理、全ハーネスへの対応は、引き続き未完了です。
+残るgraph構成、Mainなしの実行、並列処理、全ハーネスへの対応は、引き続き未完了です。
+
+### 名前付きnodeとTaskSpecの担当指定
+
+[Version 5](configuration-v5_JA.md)では、`NodeRef(node_id, kind)`と固定の役割種別`Role`を分けます。
+IDはnode、assignment、資源、質問、結果、通知を識別し、kindは工程と権限を決めます。
+provider/model/effort/prompt/permissionはnodeごとに保持します。MainはMCPに正確なnode IDを渡し、
+taskのrouteは計画・実装それぞれのwriterとreviewerを指定します。計画担当の組を宣言した場合は、
+計画の承認後に実装へ進みます。その組を省略したrouteではPlannerを省けます。
+
+configはversion 5、名前付きnative stateはversion 4です。graphと`role_specs`は設定済みの全nodeを含み、
+`roles`には実行中のassignmentだけを保存します。native runtimeのTask UUIDと論理的な`TaskSpec.task_id`は別物で、
+dispatch IDが結果と対象taskを結び付けます。stateの読み取り、通知の保存、taskの遷移では、
+ID・kindの欠落や不一致を拒否します。version 3のstateは従来の契約を維持し、自動移行しません。
+
+実モデルのtmux run `ea85a811-dd06-4bd3-a1d6-f6156f5670ef`では、direct ClaudeのMain `lead`、
+Worker `write-sum`/`write-product`、Reviewer `review-sum`/`review-product`の5nodeすべてに
+Fable/highを明示指定しました。Mainは設定一覧の先頭ではありません。両Workerの実装後にレビューを始め、
+`write-sum`は2問へのMainの回答と受領確認後、同じACPセッションで作業を再開しました。
+4つの別セッションから、成功と後始末を示す型付き結果を取得しています。両taskの承認と宣言済み固定argvの検証は、
+同じ統合revision `73f695e5defd84158855ea581793b125263b7cac884d336bbba34637e4647f07`で成立しました。
+読み取り専用のobserverは、変更が許可したfixtureの2ファイルだけであり、workspaceのHEAD・index・その他のmanifest項目が
+変わらないことを確認しました。入力configとpromptを削除した後の公開stopも成功し、独立した照合で所有process、
+process group、state、provider root、snapshot、fixture資源の不在を確認しています。
+
+これはnativeのagent/serial構成の受入結果です。programによる進行管理、並列assignmentの制御、
+名前付きOrca構成、`consults-to`による通信は未実装です。これらのgraph値は検証・描画できます。
+program・並列実行・名前付きOrca構成の起動は、依存関係の確認や資源の作成より前に拒否します。
+agent間で相談する操作は、まだ公開していません。
 
 ### 実モデルを使ったtmuxでの質問応答受入
 
@@ -90,6 +118,7 @@ Zellijでは一時名のランダム部分が`_`で始まる場合も検証し�
 |---|---|
 | `config.toml` | 固定role、provider、transport、model、effort、prompt、permission、nativeの`[[tasks]]`を宣言する。 |
 | `agent_team/config_v4.py`, `topology.py` | 名前付きteam一覧を検証し、graphを描画する。起動可能な項目は、対応するversion-3起動設定を明示参照する。 |
+| `agent_team/config_roles.py`, `config_v5.py`, `named_graph.py` | nodeごとの役割設定、graphの識別子、taskの担当を検証し、選択したversion 5のteamを起動設定に変換する。graph描画も担う。 |
 | `agent_team/cli.py` | config/引数をparse・検証し、`WorkflowEngine(OrcaBackend)`または選択したnative terminal backendを選び、互換JSONを描画し、ACP turnを実行する。 |
 | `agent_team/backend.py` | Orcaの`start`/`status`/`attach`/`stop` adapter、state v3のidentity検証、互換receiptを担当する。 |
 | `agent_team/native_backend.py` | 共通nativeの`start`/`status`/`attach`/`stop`、native ACP assignment、完了通知、cleanup確認を担当する。 |
@@ -521,7 +550,7 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 以下は合意した範囲から除外した項目ではなく、残る実装要件です。Issue #8、#9、#11で追跡します。
 
 - 全10harnessで必要なprofileと実機証拠
-- Dedicated Mainlessの実行、任意role graph、明示的な並列task、Orcaとnativeの共有progression
+- Dedicated Mainlessの実行、残るgraph構成、明示的な並列task、Orcaとnativeの共有progression
 - Reviewerの`consult`後に再開する経路
 - crashやcleanup不明後の自動recovery
 

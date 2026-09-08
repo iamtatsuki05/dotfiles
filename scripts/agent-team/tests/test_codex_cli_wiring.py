@@ -446,6 +446,7 @@ class CodexCliWiringTest(unittest.TestCase):
                 "adapter_snapshot": adapter_snapshot,
             }
             state: dict[str, object] = {
+                "version": 3,
                 "runtime": "tmux",
                 "team_id": "team-test",
                 "state_path": str(state_path),
@@ -513,10 +514,12 @@ class CodexCliWiringTest(unittest.TestCase):
                 "instructions": "worker instructions",
             }
             state: dict[str, object] = {
+                "version": 3,
                 "runtime": "tmux",
                 "workspace": str(workspace),
                 "state_path": str(state_path),
                 "run_id": "run-1",
+                "role_specs": {"worker": spec},
             }
             receipt = {
                 "output": "codex output",

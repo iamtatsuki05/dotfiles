@@ -26,6 +26,7 @@ from .contracts import (
     TaskGet,
     TaskVerify,
     _OpaqueRef,
+    role_kind,
 )
 from .mcp_protocol import (
     MAX_READ_LINES,
@@ -37,7 +38,12 @@ from .mcp_protocol import (
     require_role,
 )
 from .native_terminal import is_native_runtime
-from .runtime import MAX_PROMPT_CHARS, read_state
+from .runtime import (
+    MAX_PROMPT_CHARS,
+    NAMED_STATE_VERSION,
+    read_state,
+    resolve_state_role,
+)
 from .task_spec import TaskSpec
 
 
@@ -83,7 +89,14 @@ class NativeMcpSession:
                 bounded_text(arguments, "body", maximum=20_000),
             )
         else:
-            role = Role(require_role(arguments))
+            if current["version"] == NAMED_STATE_VERSION:
+                role = resolve_state_role(
+                    current, bounded_text(arguments, "role", maximum=64)
+                )
+                if role_kind(role) is Role.MAIN:
+                    raise ToolInputError("Main is not a dispatchable node")
+            else:
+                role = Role(require_role(arguments))
             if name == "role_get":
                 request = RoleGet(role)
             elif name == "task_dispatch":

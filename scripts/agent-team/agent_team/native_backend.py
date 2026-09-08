@@ -50,6 +50,7 @@ from .contracts import (
     LaunchMode,
     MessageRef,
     MessageReply,
+    NodeRef,
     NormalizedEvent,
     Outcome,
     ReadReceipt,
@@ -61,6 +62,7 @@ from .contracts import (
     RoleRead,
     RoleRelease,
     RoleStatusReceipt,
+    RoleTarget,
     RoleWait,
     RunRef,
     RuntimeFailure,
@@ -76,9 +78,12 @@ from .contracts import (
     TaskVerify,
     TerminalRef,
     WaitReceipt,
+    role_id,
+    role_kind,
 )
 from .harness_launch import LaunchValidationError, build_claude_argv
 from .locking import _LifecycleReservation
+from .named_graph import validate_graph
 from .native_question_channel import validate_question_request
 from .native_terminal import (
     NativeTerminalDriver,
@@ -90,6 +95,8 @@ from .native_terminal import (
 from .process_identity import python_process_argv, read_process_argv
 from .runtime import (
     MAX_PROMPT_CHARS,
+    MAX_RESULT_BODY_CHARS,
+    NAMED_STATE_VERSION,
     RuntimeValidationError,
     StatePublishError,
     acp_environment,
@@ -97,6 +104,7 @@ from .runtime import (
     build_acp_session_name,
     create_prompt_file,
     remove_prompt_file,
+    resolve_state_role,
     validate_native_main_process,
 )
 from .runtime import (
@@ -128,7 +136,6 @@ from .workspace_revision import snapshot_revision
 
 NATIVE_PHASES: Final = frozenset({"starting", "running", "stopping"})
 ACP_ROLES: Final = frozenset({Role.PLANNER, Role.WORKER, Role.REVIEWER})
-MAX_RESULT_BODY_CHARS: Final = 100_000
 PROCESS_WAIT_SECONDS: Final = 5.0
 ACP_CANCEL_GRACE_SECONDS: Final = 45.0
 PROCESS_POLL_SECONDS: Final = 0.05
@@ -248,9 +255,10 @@ def _require_codex_inspection_cleanup(state: Mapping[str, object]) -> None:
         )
 
 
-def _assignment(state: Mapping[str, object], role: Role) -> dict[str, object]:
+def _assignment(state: Mapping[str, object], role: RoleTarget) -> dict[str, object]:
+    _require_target(state, role)
     roles = _required_mapping(state.get("roles"), "roles")
-    raw = roles.get(role.value)
+    raw = roles.get(role_id(role))
     if not isinstance(raw, dict):
         raise RuntimeFailure(
             ErrorCode.TEAM_NOT_RUNNING,
@@ -259,15 +267,33 @@ def _assignment(state: Mapping[str, object], role: Role) -> dict[str, object]:
     return raw
 
 
+def _require_target(state: Mapping[str, object], role: RoleTarget) -> None:
+    try:
+        selected = resolve_state_role(state, role_id(role))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "native node is not selected"
+        ) from exc
+    if selected != role:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "native node identity or kind does not match"
+        )
+
+
+def _named_identity(state: Mapping[str, object], node_id: str) -> dict[str, str]:
+    target = resolve_state_role(state, node_id)
+    return {"role_kind": target.kind.value} if isinstance(target, NodeRef) else {}
+
+
 def _role_specs(state: Mapping[str, object]) -> dict[str, object]:
     return _required_mapping(state.get("role_specs"), "role_specs")
 
 
-def _spec_dict(spec: object, role: Role) -> dict[str, object]:
+def _spec_dict(spec: object, role: RoleTarget) -> dict[str, object]:
     if not hasattr(spec, "provider"):
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST,
-            f"role spec is invalid: {role.value}",
+            f"role spec is invalid: {role_id(role)}",
         )
     # StartSpec is typed, but the backend still validates the boundary before
     # writing durable state so a caller cannot smuggle arbitrary role data in.
@@ -286,7 +312,7 @@ def _spec_dict(spec: object, role: Role) -> dict[str, object]:
     if not all(isinstance(value, str) and value for value in values.values()):
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST,
-            f"role spec is incomplete: {role.value}",
+            f"role spec is incomplete: {role_id(role)}",
         )
     result: dict[str, object] = dict(values)
     adapter_id = getattr(spec, "adapter_id", None)
@@ -294,7 +320,7 @@ def _spec_dict(spec: object, role: Role) -> dict[str, object]:
         if not isinstance(adapter_id, str) or not adapter_id:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
-                f"role spec adapter is invalid: {role.value}",
+                f"role spec adapter is invalid: {role_id(role)}",
             )
         result["adapter_id"] = adapter_id
     raw_executables = getattr(spec, "acp_executables", None)
@@ -302,7 +328,7 @@ def _spec_dict(spec: object, role: Role) -> dict[str, object]:
         if not isinstance(raw_executables, Mapping):
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
-                f"role spec ACP bindings are invalid: {role.value}",
+                f"role spec ACP bindings are invalid: {role_id(role)}",
             )
         result["acp_executables"] = dict(raw_executables)
     wrapper_digest = getattr(spec, "scoped_wrapper_sha256", None)
@@ -335,20 +361,47 @@ def _validate_profile(
     raw_specs = spec.role_specs
     if not isinstance(raw_specs, Mapping):
         raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role specs are required")
-    if Role.MAIN not in raw_specs:
+    main: RoleTarget | None
+    if spec.graph is not None:
+        try:
+            validate_graph(spec.graph, spec.task_specs)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+        if set(raw_specs) != set(spec.graph.nodes):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "node specs must match the selected graph"
+            )
+        if (
+            spec.graph.coordination.mode != "agent"
+            or spec.graph.coordination.dispatch_mode != "serial"
+        ):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST,
+                "native named execution currently requires agent coordination and serial dispatch",
+            )
+        main = spec.graph.main_node
+    else:
+        if any(not isinstance(role, Role) for role in raw_specs):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "named nodes require an explicit graph"
+            )
+        main = Role.MAIN if Role.MAIN in raw_specs else None
+    if main is None:
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST,
             "native runtime requires a Main role",
         )
-    if Role.WORKER in raw_specs and Role.REVIEWER not in raw_specs:
+    if any(role_kind(role) is Role.WORKER for role in raw_specs) and not any(
+        role_kind(role) is Role.REVIEWER for role in raw_specs
+    ):
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST, "native Worker requires a selected Reviewer"
         )
     allowed = {Role.MAIN, *ACP_ROLES}
     unknown = [
-        role.value if isinstance(role, Role) else str(role)
+        role_id(role) if isinstance(role, (Role, NodeRef)) else str(role)
         for role in raw_specs
-        if not isinstance(role, Role) or role not in allowed
+        if not isinstance(role, (Role, NodeRef)) or role_kind(role) not in allowed
     ]
     if unknown:
         raise RuntimeFailure(
@@ -359,10 +412,12 @@ def _validate_profile(
     role_specs: dict[str, dict[str, object]] = {}
     acp_bindings: dict[str, object] = {}
     for role, role_spec in raw_specs.items():
-        if not isinstance(role, Role):
+        if not isinstance(role, (Role, NodeRef)):
             raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role spec key is invalid")
         normalized = _spec_dict(role_spec, role)
-        if role is Role.MAIN:
+        if isinstance(role, NodeRef):
+            normalized["kind"] = role.kind.value
+        if role_kind(role) is Role.MAIN:
             expected = {
                 "provider": "claude",
                 "transport": "direct",
@@ -382,20 +437,20 @@ def _validate_profile(
         else:
             try:
                 expected = native_profile(
-                    cast(str, normalized.get("provider")), role.value
+                    cast(str, normalized.get("provider")), role_kind(role).value
                 )
             except RuntimeValidationError as exc:
                 raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
             if any(normalized.get(key) != value for key, value in expected.items()):
                 raise RuntimeFailure(
                     ErrorCode.INVALID_REQUEST,
-                    f"native {role.value} does not match its scoped ACP profile",
+                    f"native {role_id(role)} does not match its scoped ACP profile",
                 )
             raw = normalized.get("acp_executables")
             if not isinstance(raw, Mapping):
                 raise RuntimeFailure(
                     ErrorCode.INVALID_REQUEST,
-                    f"native {role.value} is missing ACP executable bindings",
+                    f"native {role_id(role)} is missing ACP executable bindings",
                 )
             if preflight:
                 try:
@@ -434,7 +489,7 @@ def _validate_profile(
                 except Exception as exc:
                     raise _runtime_error(
                         exc,
-                        f"selected {role.value} ACP dependencies are unavailable",
+                        f"selected {role_id(role)} ACP dependencies are unavailable",
                         code=ErrorCode.INVALID_REQUEST,
                     ) from exc
                 if not isinstance(snapshot, Mapping):
@@ -442,7 +497,7 @@ def _validate_profile(
                         ErrorCode.BACKEND_PROTOCOL_FAILURE,
                         "ACP adapter snapshot is invalid",
                     )
-                acp_bindings[role.value] = executables
+                acp_bindings[role_id(role)] = executables
                 normalized["acp_executables"] = executables.as_dict()
                 if normalized["provider"] == "claude":
                     normalized["scoped_wrapper_sha256"] = checked_digest(SCOPED_AGENT)
@@ -451,7 +506,7 @@ def _validate_profile(
                     normalized["scoped_question_client_sha256"] = checked_digest(
                         SCOPED_QUESTIONS
                     )
-        role_specs[role.value] = normalized
+        role_specs[role_id(role)] = normalized
 
     if not preflight:
         return role_specs, acp_bindings, []
@@ -459,10 +514,10 @@ def _validate_profile(
         argv = list(
             build_claude_argv(
                 role="main",
-                model=cast(str, role_specs[Role.MAIN.value]["model"]),
-                effort=cast(str, role_specs[Role.MAIN.value]["effort"]),
+                model=cast(str, role_specs[role_id(main)]["model"]),
+                effort=cast(str, role_specs[role_id(main)]["effort"]),
                 permission="orchestrator",
-                instructions=cast(str, role_specs[Role.MAIN.value]["instructions"]),
+                instructions=cast(str, role_specs[role_id(main)]["instructions"]),
                 state_path=_absolute(spec.state_path),
                 mcp_server_path=launcher_path,
             )
@@ -566,7 +621,7 @@ def _validated_supervisor_argv(state: Mapping[str, object]) -> tuple[str, ...]:
 def _native_result_fields(
     value: object,
     *,
-    role: str,
+    role: RoleTarget,
     run_id: str,
     task_id: str,
     dispatch_id: str,
@@ -579,12 +634,13 @@ def _native_result_fields(
             "native completion result is invalid",
         )
     expected = {
-        "role": role,
+        "role": role_id(role),
         "run_id": run_id,
         "task_id": task_id,
         "dispatch_id": dispatch_id,
         "terminal_handle": terminal_handle,
         "launch_nonce": launch_nonce,
+        **({"role_kind": role.kind.value} if isinstance(role, NodeRef) else {}),
     }
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
@@ -612,8 +668,16 @@ def _native_result_fields(
 
 
 def _assignment_identity(
-    assignment: Mapping[str, object], *, role: Role, state: Mapping[str, object]
+    assignment: Mapping[str, object], *, role: RoleTarget, state: Mapping[str, object]
 ) -> tuple[str, str, str, str]:
+    _require_target(state, role)
+    if isinstance(role, NodeRef) and (
+        assignment.get("role") != role.node_id
+        or assignment.get("role_kind") != role.kind.value
+    ):
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "native assignment node identity changed"
+        )
     values = tuple(
         assignment.get(key)
         for key in ("task_id", "dispatch_id", "terminal_handle", "launch_nonce")
@@ -621,7 +685,7 @@ def _assignment_identity(
     if not all(isinstance(value, str) and value for value in values):
         raise RuntimeFailure(
             ErrorCode.BACKEND_PROTOCOL_FAILURE,
-            f"native {role.value} assignment identity is incomplete",
+            f"native {role_id(role)} assignment identity is incomplete",
         )
     if assignment.get("launcher_owned_runner") is not True:
         raise RuntimeFailure(
@@ -813,7 +877,7 @@ def _runner_identity_is_owned(
 
 
 def _validate_runner_argv(
-    state_path: Path, role: Role, assignment: Mapping[str, object]
+    state_path: Path, role: RoleTarget, assignment: Mapping[str, object]
 ) -> tuple[str, ...]:
     """Validate the persisted runner command against its assignment identity."""
 
@@ -844,7 +908,7 @@ def _validate_runner_argv(
         "-m",
         "agent_team",
         "_acp-run",
-        role.value,
+        role_id(role),
         "--state",
         str(state_path),
         "--task-id",
@@ -972,7 +1036,10 @@ def _publisher_assignment(
             ErrorCode.IDENTITY_MISMATCH, "native completion role spec is missing"
         )
     try:
-        expected = native_profile(cast(str, selected_spec.get("provider")), role)
+        expected = native_profile(
+            cast(str, selected_spec.get("provider")),
+            role_kind(resolve_state_role(state, role)).value,
+        )
     except RuntimeValidationError as exc:
         raise RuntimeFailure(ErrorCode.IDENTITY_MISMATCH, str(exc)) from exc
     if any(
@@ -983,9 +1050,9 @@ def _publisher_assignment(
             ErrorCode.IDENTITY_MISMATCH,
             "native completion role spec does not match its ACP profile",
         )
-    assignment = _assignment(state, Role(role))
+    assignment = _assignment(state, resolve_state_role(state, role))
     saved_task, saved_dispatch, saved_terminal, saved_nonce = _assignment_identity(
-        assignment, role=Role(role), state=state
+        assignment, role=resolve_state_role(state, role), state=state
     )
     if (saved_task, saved_dispatch, saved_terminal, saved_nonce) != (
         task_id,
@@ -997,7 +1064,9 @@ def _publisher_assignment(
             ErrorCode.IDENTITY_MISMATCH,
             "native completion identity does not match assignment",
         )
-    _assert_publisher(_absolute(state_path), Role(role), assignment)
+    _assert_publisher(
+        _absolute(state_path), resolve_state_role(state, role), assignment
+    )
     return assignment
 
 
@@ -1017,10 +1086,6 @@ def publish_completion(
 ) -> str:
     """Publish one trusted ACP completion after the runner cleaned its session."""
 
-    if role not in {item.value for item in ACP_ROLES}:
-        raise RuntimeFailure(
-            ErrorCode.INVALID_REQUEST, "native completion role is unsupported"
-        )
     if outcome not in {Outcome.SUCCEEDED.value, Outcome.FAILED.value}:
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST, "native completion outcome is invalid"
@@ -1069,7 +1134,12 @@ def publish_completion(
                     else "ACP ended before question delivery cleanup was confirmed"
                 )
         evidence = None
-        if task is not None and role == "reviewer" and outcome == "succeeded":
+        target = resolve_state_role(state, role)
+        if (
+            task is not None
+            and role_kind(target) is Role.REVIEWER
+            and outcome == "succeeded"
+        ):
             stage = assignment.get("task_stage")
             revision = assignment.get("task_revision")
             if (
@@ -1102,7 +1172,7 @@ def publish_completion(
         if existing is not None:
             existing_fields = _native_result_fields(
                 existing,
-                role=role,
+                role=target,
                 run_id=run_id,
                 task_id=task_id,
                 dispatch_id=dispatch_id,
@@ -1120,6 +1190,7 @@ def publish_completion(
             return outcome
         state["native_result"] = {
             "role": role,
+            **_named_identity(state, role),
             "run_id": run_id,
             "task_id": task_id,
             "dispatch_id": dispatch_id,
@@ -1148,7 +1219,9 @@ def publish_completion(
         reservation.release()
 
 
-def _assert_publisher(path: Path, role: Role, assignment: Mapping[str, object]) -> None:
+def _assert_publisher(
+    path: Path, role: RoleTarget, assignment: Mapping[str, object]
+) -> None:
     expected = _validate_runner_argv(path, role, assignment)
     pid = os.getpid()
     if (
@@ -1166,13 +1239,32 @@ def _assert_publisher(path: Path, role: Role, assignment: Mapping[str, object]) 
 def _read_question_state(
     path: Path, identity: Mapping[str, str]
 ) -> tuple[dict[str, object], dict[str, object]]:
-    if set(identity) != set(native_questions.IDENTITY_FIELDS):
+    state = _read_state(_absolute(path))
+    named = state["version"] == NAMED_STATE_VERSION
+    fields = (
+        native_questions.NAMED_IDENTITY_FIELDS
+        if named
+        else native_questions.IDENTITY_FIELDS
+    )
+    if set(identity) != set(fields):
         raise RuntimeFailure(
             ErrorCode.IDENTITY_MISMATCH,
             "native question publisher identity is incomplete",
         )
-    state = _read_state(_absolute(path))
-    assignment = _publisher_assignment(path, state, **identity)
+    try:
+        target = resolve_state_role(state, identity["role"])
+    except RuntimeValidationError as exc:
+        raise RuntimeFailure(ErrorCode.IDENTITY_MISMATCH, str(exc)) from exc
+    if named and identity["role_kind"] != role_kind(target).value:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH,
+            "native question publisher kind does not match its graph",
+        )
+    assignment = _publisher_assignment(
+        path,
+        state,
+        **{field: identity[field] for field in native_questions.IDENTITY_FIELDS},
+    )
     validate_task_assignment(state, assignment)
     spec = _required_mapping(_role_specs(state)[identity["role"]], "question role spec")
     if spec.get("provider") != "claude":
@@ -1229,6 +1321,7 @@ def publish_question(
             raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
         state["native_question"] = {
             **identity,
+            **_named_identity(state, identity["role"]),
             "phase": "published",
             "request": parsed.as_dict(),
             "delivery_id": _new_id(),
@@ -1432,7 +1525,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             finally:
                 reservation.release()
         if spec.attach:
-            self.request(Attach(Role.MAIN))
+            main = spec.graph.main_node if spec.graph is not None else Role.MAIN
+            assert main is not None
+            self.request(Attach(main))
         return result
 
     def request(self, request: BackendRequest) -> BackendResult:
@@ -1714,7 +1809,8 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         except OSError as exc:
             raise _runtime_error(exc, "native socket root setup failed") from exc
         state: dict[str, object] = {
-            "version": 3,
+            "version": NAMED_STATE_VERSION if spec.graph is not None else 3,
+            **({"graph": spec.graph.as_dict()} if spec.graph is not None else {}),
             "runtime": self.runtime,
             "team_id": spec.team_id,
             "workspace": str(_canonical(spec.workspace)),
@@ -1880,11 +1976,15 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         previous = self._require_state()
         current = _read_state(path)
         for key in (
+            "version",
             "runtime",
             "team_id",
             "run_id",
             "main_terminal",
             "task_specs",
+            "graph",
+            "role_specs",
+            "max_review_rounds",
         ):
             if current.get(key) != previous.get(key):
                 raise RuntimeFailure(
@@ -1938,6 +2038,16 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         if state.get("runtime") != self.runtime:
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "native state runtime does not match"
+            )
+        expected_graph = spec.graph.as_dict() if spec.graph is not None else None
+        expected_version = NAMED_STATE_VERSION if spec.graph is not None else 3
+        if (
+            state.get("graph") != expected_graph
+            or state.get("version") != expected_version
+        ):
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "native graph snapshot does not match requested configuration",
             )
         if _role_specs(state) != expected_role_specs:
             raise RuntimeFailure(
@@ -2017,9 +2127,9 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         return StatusReceipt(status, team_id, RunRef(run_id))
 
     def _attach(self, request: Attach) -> AttachReceipt:
-        if request.role is not Role.MAIN:
+        if role_kind(request.role) is not Role.MAIN:
             state = self._require_state()
-            if request.role.value in _role_specs(state):
+            if role_id(request.role) in _role_specs(state):
                 raise RuntimeFailure(
                     ErrorCode.INVALID_REQUEST,
                     "native ACP roles have no TTY to attach",
@@ -2029,6 +2139,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         path = _state_path(previous)
         try:
             state = self._reload_state(path)
+            _require_target(state, request.role)
             native = _native(state)
             receipt = self._receipt_from_state(native)
             driver = self._driver or self._driver_from_receipt(receipt)
@@ -2063,19 +2174,22 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         terminal = _required_string(state.get("main_terminal"), "main_terminal")
         self.last_attach_response = {
             "status": "focused",
-            "role": Role.MAIN.value,
+            "role": role_id(request.role),
+            **_named_identity(state, role_id(request.role)),
             "terminal": terminal,
             "argv": list(argv),
         }
-        return AttachReceipt(Role.MAIN, TerminalRef(terminal), RunRef(run_id))
+        return AttachReceipt(request.role, TerminalRef(terminal), RunRef(run_id))
 
     def _prompt(self, request: RolePrompt | TaskDispatch) -> Assignment:
-        if request.role is Role.WORKER and not isinstance(request, TaskDispatch):
+        if role_kind(request.role) is Role.WORKER and not isinstance(
+            request, TaskDispatch
+        ):
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST,
                 "Worker requires task_dispatch with a TaskSpec",
             )
-        if request.role not in ACP_ROLES:
+        if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
@@ -2104,6 +2218,10 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         try:
             state = self._reload_state(path)
             _require_running(state)
+            if state["version"] == NAMED_STATE_VERSION or isinstance(
+                request.role, NodeRef
+            ):
+                _require_target(state, request.role)
             if _verification_pending(state):
                 raise RuntimeFailure(
                     ErrorCode.BUSY,
@@ -2129,7 +2247,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     else None
                 )
                 if (
-                    request.role is Role.REVIEWER
+                    role_kind(request.role) is Role.REVIEWER
                     and isinstance(prior_task, Mapping)
                     and prior_task.get("status") == "awaiting_implementation_review"
                 ):
@@ -2141,12 +2259,12 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         "TaskSpec prompt exceeds character limit",
                     )
             specs = _role_specs(state)
-            raw_spec = specs.get(request.role.value)
+            raw_spec = specs.get(role_id(request.role))
             if not isinstance(raw_spec, Mapping):
                 raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role is not selected")
             try:
                 expected_spec = native_profile(
-                    cast(str, raw_spec.get("provider")), request.role.value
+                    cast(str, raw_spec.get("provider")), role_kind(request.role).value
                 )
             except RuntimeValidationError as exc:
                 raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
@@ -2228,7 +2346,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 # The journal must be durable before inspection can spawn a child.
                 inspection_state = self._reload_state(path)
                 _native(inspection_state)["codex_inspection_cleanup"] = {
-                    "role": request.role.value,
+                    "role": role_id(request.role),
                     "provider_private_root": str(private_root),
                     "cleanup_confirmed": False,
                 }
@@ -2292,18 +2410,18 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 )
                 agent_command = build_acp_agent_command(
                     _required_string(state.get("team_id"), "team_id"),
-                    request.role.value,
+                    request.role,
                     launch_nonce,
                     executables=executables,
                     write_policy=write_policy,
                     questions=True,
                 )
-            session_name = build_acp_session_name(request.role.value, launch_nonce)
+            session_name = build_acp_session_name(request.role, launch_nonce)
             task_id = _new_id()
             dispatch_id = _new_id()
             terminal_handle = _new_id()
             prompt_path = create_prompt_file(
-                path.parent, request.role.value, launch_nonce, text
+                path.parent, request.role, launch_nonce, text
             )
             snapshot_root = Path(tempfile.mkdtemp(prefix="agent-team-snapshot-"))
             launch_argv = [
@@ -2311,7 +2429,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 "-m",
                 "agent_team",
                 "_acp-run",
-                request.role.value,
+                role_id(request.role),
                 "--state",
                 str(path),
                 "--task-id",
@@ -2342,6 +2460,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     exc, "native ACP runner gate setup failed"
                 ) from exc
             assignment = {
+                **(
+                    {"role": request.role.node_id, "role_kind": request.role.kind.value}
+                    if isinstance(request.role, NodeRef)
+                    else {}
+                ),
                 "task_id": task_id,
                 "dispatch_id": dispatch_id,
                 "terminal_handle": terminal_handle,
@@ -2372,7 +2495,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             if raw_spec["provider"] == "claude":
                 assert private_root is not None
                 assignment["question_socket"] = str(private_root / "q.sock")
-            roles[request.role.value] = assignment
+            roles[role_id(request.role)] = assignment
             try:
                 _save_state(path, state, require_existing=True, reservation_held=True)
                 assignment_persisted = True
@@ -2408,7 +2531,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     release_read = None
             pid = process.pid
             assignment["runner_pid"] = pid
-            self._runners[request.role.value] = process
+            self._runners[role_id(request.role)] = process
             try:
                 pgid = os.getpgid(pid)
             except OSError as exc:
@@ -2513,7 +2636,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         private_root: Path | None,
         snapshot_root: Path | None,
         state_path: Path,
-        role: Role,
+        role: RoleTarget,
     ) -> None:
         if prompt_path is not None and (
             prompt_path.exists() or prompt_path.is_symlink()
@@ -2522,7 +2645,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 remove_prompt_file(
                     prompt_path,
                     state_path.parent,
-                    role=role.value,
+                    role=role,
                     launch_nonce=prompt_path.stem.rsplit("-", 1)[-1],
                 )
             except (RuntimeError, OSError, TypeError, ValueError) as cleanup_error:
@@ -2535,7 +2658,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     del cleanup_error
 
     def _assignment_receipt(
-        self, state: Mapping[str, object], role: Role
+        self, state: Mapping[str, object], role: RoleTarget
     ) -> Assignment:
         assignment = _assignment(state, role)
         task_id, dispatch_id, terminal, _nonce = _assignment_identity(
@@ -2575,7 +2698,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 time.sleep(min(PROCESS_POLL_SECONDS, remaining))
 
     def _wait(self, request: RoleWait) -> WaitReceipt:
-        if request.role not in ACP_ROLES:
+        if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
@@ -2656,7 +2779,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             if result is not None:
                 _delivery_id, _outcome, _cleanup, _body = _native_result_fields(
                     result,
-                    role=request.role.value,
+                    role=request.role,
                     run_id=run_id,
                     task_id=task_id,
                     dispatch_id=dispatch_id,
@@ -2699,7 +2822,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                         current_body,
                     ) = _native_result_fields(
                         current_result,
-                        role=request.role.value,
+                        role=request.role,
                         run_id=run_id,
                         task_id=task_id,
                         dispatch_id=dispatch_id,
@@ -2730,7 +2853,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     return WaitReceipt(DeliveryRef(current_delivery), (event,))
                 finally:
                     reservation.release()
-            runner = self._runners.get(request.role.value)
+            runner = self._runners.get(role_id(request.role))
             if (runner is not None and runner.poll() is not None) or (
                 runner is None and self._saved_runner_status(assignment) == "exited"
             ):
@@ -2744,7 +2867,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             time.sleep(min(PROCESS_POLL_SECONDS, remaining))
 
     def _read(self, request: RoleRead) -> ReadReceipt:
-        if request.role not in ACP_ROLES:
+        if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
@@ -2777,7 +2900,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             result = state.get("native_result")
             delivery_id, _outcome, _cleanup, body = _native_result_fields(
                 result,
-                role=request.role.value,
+                role=request.role,
                 run_id=run_id,
                 task_id=task_id,
                 dispatch_id=dispatch_id,
@@ -2798,7 +2921,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             reservation.release()
 
     def _release(self, request: RoleRelease) -> ReleaseReceipt:
-        if request.role not in ACP_ROLES:
+        if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
@@ -2827,7 +2950,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             result = state.get("native_result")
             _delivery, _outcome, cleanup_confirmed, _body = _native_result_fields(
                 result,
-                role=request.role.value,
+                role=request.role,
                 run_id=run_id,
                 task_id=task_id,
                 dispatch_id=dispatch_id,
@@ -2842,7 +2965,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         finally:
             reservation.release()
 
-        process = self._runners.get(request.role.value)
+        process = self._runners.get(role_id(request.role))
         if process is not None:
             try:
                 process.wait(timeout=PROCESS_WAIT_SECONDS)
@@ -2876,7 +2999,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             run_id = _required_string(state.get("run_id"), "run_id")
             _delivery, _outcome, cleanup_confirmed, _body = _native_result_fields(
                 state.get("native_result"),
-                role=request.role.value,
+                role=request.role,
                 run_id=run_id,
                 task_id=task_id,
                 dispatch_id=dispatch_id,
@@ -2890,17 +3013,17 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 )
             self._cleanup_assignment(assignment, path, request.role)
             roles = _required_mapping(state.get("roles"), "roles")
-            del roles[request.role.value]
+            del roles[role_id(request.role)]
             state[PENDING_DELIVERY_STAGE] = "released"
             _save_state(path, state, require_existing=True, reservation_held=True)
-            self._runners.pop(request.role.value, None)
+            self._runners.pop(role_id(request.role), None)
             self._state = state
             return ReleaseReceipt("released")
         finally:
             reservation.release()
 
     def _cleanup_assignment(
-        self, assignment: Mapping[str, object], path: Path, role: Role
+        self, assignment: Mapping[str, object], path: Path, role: RoleTarget
     ) -> None:
         raw_prompt = assignment.get("prompt_path")
         nonce = assignment.get("launch_nonce")
@@ -2912,9 +3035,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         prompt = Path(raw_prompt)
         if prompt.exists() or prompt.is_symlink():
             try:
-                remove_prompt_file(
-                    prompt, path.parent, role=role.value, launch_nonce=nonce
-                )
+                remove_prompt_file(prompt, path.parent, role=role, launch_nonce=nonce)
             except Exception as exc:
                 raise _runtime_error(exc, "native ACP prompt cleanup failed") from exc
         for key in ("provider_private_root", "snapshot_root"):
@@ -3025,7 +3146,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             reservation.release()
 
     def _role_get(self, request: RoleGet) -> RoleStatusReceipt:
-        if request.role not in ACP_ROLES:
+        if role_kind(request.role) not in ACP_ROLES:
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "native role is not an ACP role"
             )
@@ -3039,7 +3160,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             status = (
                 "completed" if state.get("native_result") is not None else "running"
             )
-            runner = self._runners.get(request.role.value)
+            runner = self._runners.get(role_id(request.role))
             if (
                 runner is not None
                 and runner.poll() is not None
@@ -3065,7 +3186,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         path: Path,
         inspected_state: Mapping[str, object],
         inspected: NativeTerminalInspection,
-    ) -> tuple[dict[str, object], ReceiptT, dict[str, object], Role | None]:
+    ) -> tuple[dict[str, object], ReceiptT, dict[str, object], RoleTarget | None]:
         state = self._reload_state(path)
         self._assert_inspection_current(inspected_state, state)
         _require_codex_inspection_cleanup(state)
@@ -3119,7 +3240,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             question["error"] = None
         _save_state(path, state, require_existing=True, reservation_held=True)
         roles = _required_mapping(state.get("roles"), "roles")
-        active_role: Role | None = None
+        active_role: RoleTarget | None = None
         if roles:
             if len(roles) != 1:
                 raise RuntimeFailure(
@@ -3128,13 +3249,13 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 )
             raw_role = next(iter(roles))
             try:
-                active_role = Role(raw_role)
+                active_role = resolve_state_role(state, raw_role)
             except ValueError as exc:
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "native role ownership is invalid",
                 ) from exc
-            if active_role not in ACP_ROLES:
+            if role_kind(active_role) not in ACP_ROLES:
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
                     "native role ownership is invalid",
@@ -3168,11 +3289,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 )
             time.sleep(PROCESS_POLL_SECONDS)
 
-    def _cancel_runner(self, state: dict[str, object], role: Role) -> None:
+    def _cancel_runner(self, state: dict[str, object], role: RoleTarget) -> None:
         path = _state_path(state)
         assignment = _assignment(state, role)
         _validate_runner_argv(path, role, assignment)
-        process = self._runners.get(role.value)
+        process = self._runners.get(role_id(role))
         if process is not None and process.pid != assignment.get("runner_pid"):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "native ACP runner PID changed"
@@ -3228,7 +3349,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
         run_id = _required_string(current.get("run_id"), "run_id")
         _delivery, _outcome, cleanup_confirmed, _body = _native_result_fields(
             result,
-            role=role.value,
+            role=role,
             run_id=run_id,
             task_id=task_id,
             dispatch_id=dispatch_id,
@@ -3260,7 +3381,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     "native ACP assignment changed during cancellation",
                 )
             roles = _required_mapping(current.get("roles"), "roles")
-            roles.pop(role.value, None)
+            roles.pop(role_id(role), None)
             current.pop("native_result", None)
             current.pop("native_question", None)
             _clear_pending(current)

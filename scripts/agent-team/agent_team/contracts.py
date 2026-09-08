@@ -7,13 +7,17 @@ returning a receipt to the workflow layer.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, TypeAlias
+from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 from .task_spec import TaskSpec
+
+if TYPE_CHECKING:
+    from .named_graph import GraphSpec
 
 
 class Role(str, Enum):
@@ -21,6 +25,50 @@ class Role(str, Enum):
     PLANNER = "planner"
     WORKER = "worker"
     REVIEWER = "reviewer"
+
+
+_NODE_ID = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class NodeRef:
+    """A named node identity paired with its fixed role kind."""
+
+    node_id: str
+    kind: Role
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.node_id, str):
+            raise TypeError("node_id must be a string")
+        if _NODE_ID.fullmatch(self.node_id) is None:
+            raise ValueError(
+                "node_id must be a lowercase slug of at most 64 characters"
+            )
+        if not isinstance(self.kind, Role):
+            raise TypeError("node kind must be a Role")
+
+
+RoleTarget: TypeAlias = Role | NodeRef
+
+
+def role_id(target: RoleTarget) -> str:
+    """Return the explicit node ID carried by a role target."""
+
+    if isinstance(target, Role):
+        return target.value
+    if isinstance(target, NodeRef):
+        return target.node_id
+    raise TypeError("role target must be a Role or NodeRef")
+
+
+def role_kind(target: RoleTarget) -> Role:
+    """Return the fixed role kind carried by a role target."""
+
+    if isinstance(target, Role):
+        return target
+    if isinstance(target, NodeRef):
+        return target.kind
+    raise TypeError("role target must be a Role or NodeRef")
 
 
 class LaunchMode(str, Enum):
@@ -142,10 +190,11 @@ class StartSpec:
     workspace: Path
     config_path: Path
     state_path: Path
-    role_specs: Mapping[Role, RoleSpec]
+    role_specs: Mapping[RoleTarget, RoleSpec]
     attach: bool = False
     max_review_rounds: int | None = None
     task_specs: tuple[TaskSpec, ...] = ()
+    graph: GraphSpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +207,7 @@ class CompletionIdentity:
 
 @dataclass(frozen=True, slots=True)
 class Assignment:
-    role: Role
+    role: RoleTarget
     launch_mode: LaunchMode
     task_id: TaskRef
     dispatch_id: DispatchRef
@@ -308,7 +357,7 @@ class StatusReceipt:
 
 @dataclass(frozen=True, slots=True)
 class RoleStatusReceipt:
-    role: Role
+    role: RoleTarget
     status: str
 
 
@@ -321,7 +370,7 @@ class TaskStatusReceipt:
 
 @dataclass(frozen=True, slots=True)
 class AttachReceipt:
-    role: Role
+    role: RoleTarget
     terminal_id: TerminalRef
     run_id: RunRef
 
@@ -333,23 +382,23 @@ class Status:
 
 @dataclass(frozen=True, slots=True)
 class Attach:
-    role: Role
+    role: RoleTarget
 
 
 @dataclass(frozen=True, slots=True)
 class RoleGet:
-    role: Role
+    role: RoleTarget
 
 
 @dataclass(frozen=True, slots=True)
 class RolePrompt:
-    role: Role
+    role: RoleTarget
     text: str
 
 
 @dataclass(frozen=True, slots=True)
 class TaskDispatch:
-    role: Role
+    role: RoleTarget
     task: TaskSpec
     message: str
 
@@ -366,19 +415,19 @@ class TaskVerify:
 
 @dataclass(frozen=True, slots=True)
 class RoleWait:
-    role: Role
+    role: RoleTarget
     timeout_ms: int
 
 
 @dataclass(frozen=True, slots=True)
 class RoleRead:
-    role: Role
+    role: RoleTarget
     lines: int
 
 
 @dataclass(frozen=True, slots=True)
 class RoleRelease:
-    role: Role
+    role: RoleTarget
 
 
 @dataclass(frozen=True, slots=True)

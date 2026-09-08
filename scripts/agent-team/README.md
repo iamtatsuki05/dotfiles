@@ -28,6 +28,8 @@ linked reference documents when changing the implementation or configuration.
   TaskSpec catalog, and supported provider/transport combinations.
   [Version-4 configuration](docs/configuration-v4.md)
   describes named team selection, graph inspection, and launch configuration links.
+  [Version-5 configuration](docs/configuration-v5.md) connects exact node IDs,
+  node-local settings, and task routes to native serial execution.
 - [Harness support matrix](docs/support-matrix.md) separates recognized,
   available, runnable, and rejected harnesses.
 - [ACP boundary](docs/acp.md) explains adapter pins, authentication, and why
@@ -49,7 +51,7 @@ Worker, and Reviewer start on demand, and only one background role may be active
 at a time.
 
 The bundled configuration remains the four-role Orca configuration above. A
-custom native configuration must select direct Claude Main with `orchestrator`
+custom version-3 native configuration must select direct Claude Main with `orchestrator`
 permission and may include verified Claude ACP Planner/Reviewer roles with
 `read-only` permission and a scoped Claude ACP Worker with `workspace-write`
 permission. Dispatching a native Worker requires a matching `[[tasks]]` entry;
@@ -62,8 +64,16 @@ scope, Bash or external-tool policy, and it does not enable question handling
 for Codex. The previous fully verified `0b3e5bc` milestone remains historical.
 The bounded tmux acceptance and the cooperative test status are recorded in
 [Architecture](docs/architecture.md); they do not complete the broader
-Mainless, arbitrary-graph, parallel, all-harness, Codex-auth, or shared
+Mainless, remaining graph modes, parallel, all-harness, Codex-auth, or shared
 Orca/native progression requirements.
+
+Version 5 supports multiple named Worker and Reviewer nodes with explicit task
+routes in native `agent`/`serial` teams. A real tmux run completed two TaskSpecs
+through four distinct assignments, including questions, review, fixed-argv
+verification at one integrated revision, and public stop. The default profiles
+above remain unchanged; this acceptance selected Claude Fable explicitly for
+all five nodes. Program coordination, parallel execution, named Orca execution,
+and agent-to-agent consultation remain unavailable at runtime.
 
 ## Run from a checkout or install the project
 

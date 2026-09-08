@@ -139,6 +139,12 @@ class OrcaBackend(BackendPort):
         self.last_stop_response: dict[str, object] | None = None
 
     def start(self, spec: StartSpec) -> StartResult:
+        if spec.graph is not None or any(
+            not isinstance(role, Role) for role in spec.role_specs
+        ):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "Orca does not support named execution yet"
+            )
         self._ensure_supported_platform()
         reservation = _LifecycleReservation(
             spec.state_path, create_parent=not self._resume_existing
@@ -1041,6 +1047,10 @@ class OrcaBackend(BackendPort):
         return StatusReceipt("running", team_id, RunRef(run_id))
 
     def _attach(self, request: Attach) -> AttachReceipt:
+        if not isinstance(request.role, Role):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "Orca does not support named execution yet"
+            )
         self._ensure_supported_platform()
         state = self._require_state()
         reservation = _LifecycleReservation(
@@ -1048,17 +1058,17 @@ class OrcaBackend(BackendPort):
         )
         reservation.acquire()
         try:
-            return self._attach_locked(request)
+            return self._attach_locked(request.role)
         finally:
             reservation.release()
 
-    def _attach_locked(self, request: Attach) -> AttachReceipt:
+    def _attach_locked(self, role: Role) -> AttachReceipt:
         state = self._reload_state_locked()
         self._retry_published_startup_marker(state)
         state_path = self._state_path(state)
         state_file_identity = self._state_file_identity(state_path)
         workspace = self._workspace(state)
-        terminal_id = self._terminal_for_role(state, request.role)
+        terminal_id = self._terminal_for_role(state, role)
         run_id = state_string(state, "run_id")
         worktree_id = state_string(state, "worktree_id")
         self._verify_worktree(
@@ -1071,14 +1081,14 @@ class OrcaBackend(BackendPort):
             workspace=workspace,
             coordinator_handle=state_string(state, "main_terminal"),
         )
-        if request.role is Role.MAIN:
+        if role is Role.MAIN:
             terminal_title = f"{state_string(state, 'team_id')}-main"
         else:
-            terminal_title = f"{state_string(state, 'team_id')}-{request.role.value}"
-            assignment = self._assignment_for_role(state, request.role)
+            terminal_title = f"{state_string(state, 'team_id')}-{role.value}"
+            assignment = self._assignment_for_role(state, role)
             self._verify_assignment(
                 assignment=assignment,
-                role=request.role.value,
+                role=role.value,
                 run_id=run_id,
                 worktree_id=worktree_id,
                 workspace=workspace,
@@ -1105,10 +1115,10 @@ class OrcaBackend(BackendPort):
             raise self._runtime_failure(exc, "team attach failed") from exc
         self.last_attach_response = {
             "status": "focused",
-            "role": request.role.value,
+            "role": role.value,
             "terminal": terminal_id,
         }
-        return AttachReceipt(request.role, TerminalRef(terminal_id), RunRef(run_id))
+        return AttachReceipt(role, TerminalRef(terminal_id), RunRef(run_id))
 
     def _ensure_orca_ready(self, workspace: Path) -> tuple[str, Path]:
         try:
@@ -1478,6 +1488,10 @@ class OrcaBackend(BackendPort):
     ) -> dict[str, object]:
         role_specs: dict[str, dict[str, object]] = {}
         for role, role_spec in spec.role_specs.items():
+            if not isinstance(role, Role):
+                raise RuntimeFailure(
+                    ErrorCode.INVALID_REQUEST, "Orca requires fixed role specs"
+                )
             role_specs[role.value] = {
                 "provider": role_spec.provider,
                 "transport": role_spec.transport,

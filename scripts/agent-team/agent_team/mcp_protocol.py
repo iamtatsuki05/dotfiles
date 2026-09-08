@@ -22,14 +22,14 @@ class ToolInputError(ValueError):
     pass
 
 
-def role_schema() -> dict[str, object]:
-    return {"type": "string", "enum": list(ROLES)}
+def role_schema(roles: tuple[str, ...] = ROLES) -> dict[str, object]:
+    return {"type": "string", "enum": list(roles)}
 
 
-def tools() -> list[dict[str, object]]:
+def tools(roles: tuple[str, ...] = ROLES) -> list[dict[str, object]]:
     role_only = {
         "type": "object",
-        "properties": {"role": role_schema()},
+        "properties": {"role": role_schema(roles)},
         "required": ["role"],
         "additionalProperties": False,
     }
@@ -56,7 +56,7 @@ def tools() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "role": role_schema(),
+                    "role": role_schema(roles),
                     "task": task_schema(),
                     "message": {"type": "string", "minLength": 1},
                 },
@@ -75,7 +75,7 @@ def tools() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "role": role_schema(),
+                    "role": role_schema(roles),
                     "text": {"type": "string", "minLength": 1},
                 },
                 "required": ["role", "text"],
@@ -88,7 +88,7 @@ def tools() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "role": role_schema(),
+                    "role": role_schema(roles),
                     "timeout_ms": {
                         "type": "integer",
                         "minimum": MIN_TIMEOUT_MS,
@@ -106,7 +106,7 @@ def tools() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "role": role_schema(),
+                    "role": role_schema(roles),
                     "lines": {
                         "type": "integer",
                         "minimum": 1,
@@ -219,7 +219,12 @@ def error(request_id: object, code: int, message: str) -> dict[str, object]:
     }
 
 
-def handle(request: object, execute_tool: ExecuteTool) -> dict[str, object] | None:
+def handle(
+    request: object,
+    execute_tool: ExecuteTool,
+    *,
+    tool_catalog: Callable[[], list[dict[str, object]]] = tools,
+) -> dict[str, object] | None:
     if not isinstance(request, dict):
         return error(None, -32600, "request must be an object")
     request_id = request.get("id")
@@ -242,7 +247,11 @@ def handle(request: object, execute_tool: ExecuteTool) -> dict[str, object] | No
             },
         )
     if method == "tools/list":
-        return success(request_id, {"tools": tools()})
+        try:
+            catalog = tool_catalog()
+        except (ValueError, RuntimeFailure, RuntimeError, TypeError, OSError) as exc:
+            return error(request_id, -32603, str(exc)[:4_000])
+        return success(request_id, {"tools": catalog})
     if method == "tools/call":
         params = request.get("params")
         if not isinstance(params, dict) or not isinstance(params.get("name"), str):
@@ -258,14 +267,18 @@ def emit(response: dict[str, object]) -> None:
     print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
-def serve(execute_tool: ExecuteTool) -> int:
+def serve(
+    execute_tool: ExecuteTool,
+    *,
+    tool_catalog: Callable[[], list[dict[str, object]]] = tools,
+) -> int:
     for line in sys.stdin:
         try:
             request = json.loads(line, object_pairs_hook=_unique_object)
         except (json.JSONDecodeError, ToolInputError):
             emit(error(None, -32700, "invalid JSON"))
             continue
-        response = handle(request, execute_tool)
+        response = handle(request, execute_tool, tool_catalog=tool_catalog)
         if response is not None:
             emit(response)
     return 0
