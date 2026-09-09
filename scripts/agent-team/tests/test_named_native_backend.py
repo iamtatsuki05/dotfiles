@@ -15,7 +15,6 @@ from agent_team import cli, contracts, native_question_channel, tmux_backend
 from agent_team import native_backend as native
 from agent_team.adapters import ProcessResult
 from agent_team.contracts import (
-    Attach,
     DeliveryAck,
     MessageReply,
     Role,
@@ -25,7 +24,7 @@ from agent_team.contracts import (
     RuntimeFailure,
     TaskDispatch,
 )
-from agent_team.native_mcp import NativeMcpSession
+from agent_team.runtime_mcp import RuntimeMcpSession
 
 
 class NamedNativeBackendTest(unittest.TestCase):
@@ -226,25 +225,21 @@ class NamedNativeBackendTest(unittest.TestCase):
                 self.assertEqual(self.fixture.state_path.read_bytes(), before)
         native.runtime_write_state(self.fixture.state_path, original)
 
-    def test_orca_rejects_named_contract_before_runtime_access(self) -> None:
+    def test_orca_rejects_program_contract_before_runtime_access(self) -> None:
         from agent_team.backend import OrcaBackend
 
-        spec = self.start()
+        spec = self.start(program=True)
         backend = OrcaBackend(mock.Mock())
-        with mock.patch.object(
-            backend,
-            "_ensure_supported_platform",
-            side_effect=AssertionError("runtime accessed"),
+        with (
+            mock.patch.object(
+                backend,
+                "_ensure_supported_platform",
+                side_effect=AssertionError("runtime accessed"),
+            ),
+            self.assertRaises(RuntimeFailure) as failure,
         ):
-            for operation in (
-                lambda: backend.start(spec),
-                lambda: backend.request(Attach(self.main)),
-            ):
-                with self.assertRaises(RuntimeFailure) as failure:
-                    operation()
-                self.assertEqual(
-                    failure.exception.code, contracts.ErrorCode.INVALID_REQUEST
-                )
+            backend.start(spec)
+        self.assertEqual(failure.exception.code, contracts.ErrorCode.INVALID_REQUEST)
 
     def test_named_completion_keeps_read_release_ack_order(self) -> None:
         self.start()
@@ -561,7 +556,7 @@ class NamedNativeBackendTest(unittest.TestCase):
     def test_mcp_dispatch_uses_selected_node_without_kind_alias(self) -> None:
         self.start()
         state = native.runtime_read_state(self.fixture.state_path)
-        session = NativeMcpSession.__new__(NativeMcpSession)
+        session = RuntimeMcpSession.__new__(RuntimeMcpSession)
         session.path = self.fixture.state_path
         session.run_id = state["run_id"]
         session.runtime = "tmux"

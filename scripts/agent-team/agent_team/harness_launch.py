@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,7 @@ from .runtime import RuntimeValidationError
 _ROLES: Final = frozenset({"main", "planner", "worker", "reviewer"})
 _PERMISSIONS: Final = frozenset({"orchestrator", "read-only", "workspace-write"})
 _ENV_NAME_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_ENV_EXECUTABLE: Final = Path("/usr/bin/env")
 
 
 class LaunchValidationError(RuntimeValidationError):
@@ -287,7 +289,17 @@ def build_shell_command(
 ) -> str:
     if not argv or any(not isinstance(item, str) or not item for item in argv):
         raise LaunchValidationError("launch argv must be non-empty strings")
-    env = {} if environment is None else dict(environment)
+    assignments = _environment_assignments(
+        {} if environment is None else dict(environment)
+    )
+    command = [*assignments, *argv]
+    if assignments:
+        command.insert(0, "env")
+    return shlex.join(command)
+
+
+def _environment_assignments(environment: Mapping[str, str]) -> list[str]:
+    env = dict(environment)
     assignments: list[str] = []
     for name in sorted(env):
         value = env[name]
@@ -296,10 +308,52 @@ def build_shell_command(
         if not isinstance(value, str):
             raise LaunchValidationError(f"launch environment value is invalid: {name}")
         assignments.append(f"{name}={value}")
-    command = [*assignments, *argv]
-    if assignments:
-        command.insert(0, "env")
-    return shlex.join(command)
+    return assignments
+
+
+def build_isolated_role_command(
+    argv: Sequence[str],
+    *,
+    executable: Path,
+    environment: Mapping[str, str],
+    role_environment: Mapping[str, str] | None = None,
+) -> str:
+    """Materialize one role command with a fixed executable and closed env.
+
+    The caller resolves ``executable`` and snapshots ``environment`` at the
+    actual Orca Main command boundary.  This helper only validates and quotes
+    those already selected values; it never resolves a command or reads the
+    process environment.
+    """
+
+    if not argv or any(not isinstance(item, str) or not item for item in argv):
+        raise LaunchValidationError("launch argv must be non-empty strings")
+    if not isinstance(executable, Path) or not executable.is_absolute():
+        raise LaunchValidationError("selected launch executable must be absolute")
+    try:
+        resolved = executable.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise LaunchValidationError(
+            "selected launch executable is unavailable"
+        ) from exc
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise LaunchValidationError("selected launch executable is not executable")
+    if not _ENV_EXECUTABLE.is_file() or not os.access(_ENV_EXECUTABLE, os.X_OK):
+        raise LaunchValidationError("/usr/bin/env is unavailable")
+
+    merged_environment = dict(environment)
+    if role_environment is not None:
+        merged_environment.update(role_environment)
+    assignments = _environment_assignments(merged_environment)
+    return shlex.join(
+        [
+            str(_ENV_EXECUTABLE),
+            "-i",
+            *assignments,
+            str(resolved),
+            *tuple(argv[1:]),
+        ]
+    )
 
 
 def _role_spec(
@@ -376,6 +430,8 @@ def build_plan_role_command(
     *,
     control_socket: Path | None = None,
     mcp_server_path: Path | None = None,
+    executable: Path | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> str:
     """Shell-quote a validated plan launch, rebuilding only for a socket override."""
 
@@ -411,5 +467,16 @@ def build_plan_role_command(
             workspace=workspace,
             control_socket=control_socket,
             mcp_server_path=mcp_server_path,
+        )
+    if executable is not None or environment is not None:
+        if executable is None or environment is None:
+            raise LaunchValidationError(
+                "isolated launch requires executable and environment"
+            )
+        return build_isolated_role_command(
+            argv,
+            executable=executable,
+            environment=environment,
+            role_environment=raw_env,
         )
     return build_shell_command(argv, raw_env)

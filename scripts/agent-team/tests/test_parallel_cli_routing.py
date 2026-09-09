@@ -14,7 +14,7 @@ import test_config_v5_cli as config_support
 import test_native_acp_runner as runner_support
 import test_parallel_native_backend as parallel_backend_support
 
-from agent_team import cli, native_backend, native_main, native_mcp
+from agent_team import cli, native_backend, native_main, runtime_mcp
 from agent_team.adapters import ProcessResult
 from agent_team.config_v5 import load_v5_config_data
 from agent_team.contracts import NodeRef, Role, RoleGet, RoleStatusReceipt
@@ -227,7 +227,7 @@ class ParallelCliRoutingTest(unittest.TestCase):
         self.assertIsNone(spec.graph.main_node)
         self.assertNotIn("main", restored["roles"])
 
-    def test_runner_and_native_mcp_resolve_exact_v5_node_refs(self) -> None:
+    def test_runner_and_runtime_mcp_resolve_exact_v5_node_refs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agent-team-v5-routing-") as directory:
             root = Path(directory)
             plan = self._parallel_plan(root)
@@ -259,12 +259,14 @@ class ParallelCliRoutingTest(unittest.TestCase):
                     return RoleStatusReceipt(request.role, "running")
 
             backend = RecordingBackend()
-            session = native_mcp.NativeMcpSession.__new__(native_mcp.NativeMcpSession)
+            session = runtime_mcp.RuntimeMcpSession.__new__(
+                runtime_mcp.RuntimeMcpSession
+            )
             session.path = root / "state.json"
             session.run_id = "run-v5"
             session.runtime = "tmux"
             session.backend = backend
-            with mock.patch.object(native_mcp, "read_state", return_value=state):
+            with mock.patch.object(runtime_mcp, "read_state", return_value=state):
                 response = session.execute("role_get", {"role": "implementation-a"})
 
             self.assertEqual(

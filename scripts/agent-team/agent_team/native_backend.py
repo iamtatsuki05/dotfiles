@@ -17,15 +17,13 @@ import stat
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from types import FrameType
-from typing import Final, Generic, NoReturn, cast
+from typing import Final, Generic, cast
 
 from . import native_acp_dependencies, native_delivery, native_questions
 from .adapters import (
@@ -100,6 +98,7 @@ from .native_terminal import (
 )
 from .parallel_admission import admission_blocker
 from .process_identity import python_process_argv, read_process_argv
+from .role_snapshot import preflight_scoped_role, role_spec_snapshot
 from .runtime import (
     MAX_PROMPT_CHARS,
     MAX_RESULT_BODY_CHARS,
@@ -141,15 +140,13 @@ from .task_execution import (
     new_program_wave,
     open_agent_batch,
     parse_review,
-    prepare_agent_batch_verification,
     prepare_dispatch,
-    program_wave,
     task_consultation,
     transition_program_wave,
     validate_task_assignment,
-    verification_revision,
 )
 from .task_spec import TaskSpec, parse_task_specs
+from .task_verification import _verification_pending, verify_approved_task
 from .workspace_revision import snapshot_revision
 
 NATIVE_PHASES: Final = frozenset({"starting", "running", "stopping"})
@@ -171,41 +168,6 @@ _RUNNER_GATE_SCRIPT: Final = (
     "os.close(fd)\n"
     "os.execvpe(sys.argv[2], sys.argv[2:], os.environ)\n"
 )
-
-
-class VerificationCancelled(BaseException):
-    pass
-
-
-def _verification_pending(state: Mapping[str, object]) -> bool:
-    tasks = state.get("tasks")
-    return isinstance(tasks, Mapping) and any(
-        isinstance(task, Mapping) and task.get("status") == "verifying"
-        for task in tasks.values()
-    )
-
-
-@contextmanager
-def _verification_signals() -> Iterator[None]:
-    if threading.current_thread() is not threading.main_thread():
-        raise RuntimeFailure(
-            ErrorCode.INVALID_REQUEST,
-            "verification requires the runtime process main thread",
-        )
-
-    def cancel(_signal: int, _frame: FrameType | None) -> NoReturn:
-        raise VerificationCancelled("verification interrupted")
-
-    previous = {
-        number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)
-    }
-    try:
-        for number in previous:
-            signal.signal(number, cancel)
-        yield
-    finally:
-        for number, handler in previous.items():
-            signal.signal(number, handler)
 
 
 def _new_id() -> str:
@@ -307,70 +269,6 @@ def _role_specs(state: Mapping[str, object]) -> dict[str, object]:
     return _required_mapping(state.get("role_specs"), "role_specs")
 
 
-def _spec_dict(spec: object, role: RoleTarget) -> dict[str, object]:
-    if not hasattr(spec, "provider"):
-        raise RuntimeFailure(
-            ErrorCode.INVALID_REQUEST,
-            f"role spec is invalid: {role_id(role)}",
-        )
-    # StartSpec is typed, but the backend still validates the boundary before
-    # writing durable state so a caller cannot smuggle arbitrary role data in.
-    values = {
-        key: getattr(spec, key, None)
-        for key in (
-            "provider",
-            "transport",
-            "model",
-            "effort",
-            "permission",
-            "instructions",
-            "execution",
-        )
-    }
-    if not all(isinstance(value, str) and value for value in values.values()):
-        raise RuntimeFailure(
-            ErrorCode.INVALID_REQUEST,
-            f"role spec is incomplete: {role_id(role)}",
-        )
-    result: dict[str, object] = dict(values)
-    adapter_id = getattr(spec, "adapter_id", None)
-    if adapter_id is not None:
-        if not isinstance(adapter_id, str) or not adapter_id:
-            raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST,
-                f"role spec adapter is invalid: {role_id(role)}",
-            )
-        result["adapter_id"] = adapter_id
-    raw_executables = getattr(spec, "acp_executables", None)
-    if raw_executables is not None:
-        if not isinstance(raw_executables, Mapping):
-            raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST,
-                f"role spec ACP bindings are invalid: {role_id(role)}",
-            )
-        result["acp_executables"] = dict(raw_executables)
-    wrapper_digest = getattr(spec, "scoped_wrapper_sha256", None)
-    if wrapper_digest is not None:
-        result["scoped_wrapper_sha256"] = wrapper_digest
-    client_digest = getattr(spec, "scoped_client_sha256", None)
-    if client_digest is not None:
-        result["scoped_client_sha256"] = client_digest
-    policy_digest = getattr(spec, "scoped_policy_sha256", None)
-    if policy_digest is not None:
-        result["scoped_policy_sha256"] = policy_digest
-    question_digest = getattr(spec, "scoped_question_client_sha256", None)
-    if question_digest is not None:
-        result["scoped_question_client_sha256"] = question_digest
-    provider_snapshot = getattr(spec, "provider_snapshot", None)
-    if provider_snapshot is not None:
-        if not isinstance(provider_snapshot, Mapping):
-            raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST, "provider snapshot must be a mapping"
-            )
-        result["provider_snapshot"] = copy.deepcopy(dict(provider_snapshot))
-    return result
-
-
 def _validate_profile(
     spec: StartSpec, launcher_path: Path, *, preflight: bool = True
 ) -> tuple[dict[str, dict[str, object]], dict[str, object], list[str]]:
@@ -438,7 +336,7 @@ def _validate_profile(
     for role, role_spec in raw_specs.items():
         if not isinstance(role, (Role, NodeRef)):
             raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role spec key is invalid")
-        normalized = _spec_dict(role_spec, role)
+        normalized = role_spec_snapshot(role_spec, role)
         if isinstance(role, NodeRef):
             normalized["kind"] = role.kind.value
         if role_kind(role) is Role.MAIN:
@@ -459,77 +357,11 @@ def _validate_profile(
                     "native Main cannot carry an ACP adapter",
                 )
         else:
-            try:
-                expected = native_profile(
-                    cast(str, normalized.get("provider")), role_kind(role).value
-                )
-            except RuntimeValidationError as exc:
-                raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
-            if any(normalized.get(key) != value for key, value in expected.items()):
-                raise RuntimeFailure(
-                    ErrorCode.INVALID_REQUEST,
-                    f"native {role_id(role)} does not match its scoped ACP profile",
-                )
-            raw = normalized.get("acp_executables")
-            if not isinstance(raw, Mapping):
-                raise RuntimeFailure(
-                    ErrorCode.INVALID_REQUEST,
-                    f"native {role_id(role)} is missing ACP executable bindings",
-                )
-            if preflight:
-                try:
-                    executables: (
-                        native_acp_dependencies.CodexAcpExecutables
-                        | native_acp_dependencies.NativeAcpExecutables
-                    )
-                    if normalized["provider"] == "codex":
-                        from . import codex_acp
-
-                        executables = (
-                            native_acp_dependencies.CodexAcpExecutables.from_dict(raw)
-                        )
-                        executables.verify()
-                        provider_snapshot = normalized.get("provider_snapshot")
-                        if not isinstance(provider_snapshot, Mapping):
-                            raise RuntimeValidationError(
-                                "Codex provider snapshot is missing"
-                            )
-                        codex_acp.verify_snapshot(provider_snapshot, spec.workspace)
-                    else:
-                        executables = (
-                            native_acp_dependencies.NativeAcpExecutables.from_dict(raw)
-                        )
-                        executables.verify()
-                    # The snapshot helper is part of the explicit ACP boundary.
-                    # It is called before state/task/process creation so a bad
-                    # binding cannot leave a native assignment behind.
-                    snapshot = (
-                        native_acp_dependencies.codex_adapter_snapshot(executables)
-                        if isinstance(
-                            executables, native_acp_dependencies.CodexAcpExecutables
-                        )
-                        else native_acp_dependencies.adapter_snapshot(executables)
-                    )
-                except Exception as exc:
-                    raise _runtime_error(
-                        exc,
-                        f"selected {role_id(role)} ACP dependencies are unavailable",
-                        code=ErrorCode.INVALID_REQUEST,
-                    ) from exc
-                if not isinstance(snapshot, Mapping):
-                    raise RuntimeFailure(
-                        ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                        "ACP adapter snapshot is invalid",
-                    )
+            executables = preflight_scoped_role(
+                normalized, role, spec.workspace, preflight=preflight
+            )
+            if executables is not None:
                 acp_bindings[role_id(role)] = executables
-                normalized["acp_executables"] = executables.as_dict()
-                if normalized["provider"] == "claude":
-                    normalized["scoped_wrapper_sha256"] = checked_digest(SCOPED_AGENT)
-                    normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
-                    normalized["scoped_policy_sha256"] = checked_digest(SCOPED_POLICY)
-                    normalized["scoped_question_client_sha256"] = checked_digest(
-                        SCOPED_QUESTIONS
-                    )
         role_specs[role_id(role)] = normalized
 
     if not preflight or main is None:
@@ -1840,101 +1672,19 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             reservation.release()
 
     def _task_verify(self, request: TaskVerify) -> TaskStatusReceipt:
-        from .task_verification import run_verification
-
         path = _state_path(self._require_state())
         reservation = _LifecycleReservation(path, create_parent=False)
         reservation.acquire()
         try:
             state = self._progress_state(path)
             _require_running(state)
-            if _verification_pending(state):
-                raise RuntimeFailure(
-                    ErrorCode.BUSY,
-                    "verification cleanup must be confirmed before executing another task",
-                )
-            record = self._task_record(state, request.task_id)
-            final_stage = (
-                "plan" if is_plan_only(state, request.task_id) else "implementation"
+            return verify_approved_task(
+                state,
+                request.task_id,
+                save=lambda: _save_state(
+                    path, state, require_existing=True, reservation_held=True
+                ),
             )
-            if controller_keys(state).pid == "coordinator_pid":
-                wave = program_wave(state)
-                if (
-                    wave["phase"] != "verification"
-                    or request.task_id not in cast(list[str], wave["task_ids"])
-                    or verification_revision(record) != wave["revision"]
-                ):
-                    raise RuntimeFailure(
-                        ErrorCode.ORDER_VIOLATION,
-                        "verification requires the sealed, approved program wave",
-                    )
-            if record.get("status") != f"{final_stage}_approved":
-                raise RuntimeFailure(
-                    ErrorCode.ORDER_VIOLATION,
-                    f"verification requires {final_stage} review approval",
-                )
-            if state.get("roles") or state.get(PENDING_DELIVERY_ID) is not None:
-                raise RuntimeFailure(
-                    ErrorCode.BUSY,
-                    "consume the active role and Delivery before verification",
-                )
-            task = TaskSpec.from_dict(record["spec"])
-            revision = verification_revision(record)
-            verdict = parse_review(
-                json.dumps(record.get("task_evidence")),
-                task=task,
-                stage=final_stage,
-                revision=str(record["revision"]),
-            )
-            if verdict["decision"] != "approve":
-                raise RuntimeFailure(
-                    ErrorCode.ORDER_VIOLATION, "final review approval is missing"
-                )
-            workspace = Path(str(state["workspace"]))
-            if snapshot_revision(workspace) != revision:
-                raise RuntimeFailure(
-                    ErrorCode.IDENTITY_MISMATCH, "approved workspace revision changed"
-                )
-            with _verification_signals():
-                if is_agent_parallel(state):
-                    prepare_agent_batch_verification(state, request.task_id, revision)
-                record["status"] = "verifying"
-                _save_state(path, state, require_existing=True, reservation_held=True)
-                try:
-                    evidence = run_verification(task, workspace, revision)
-                except BaseException as exc:
-                    cleanup_confirmed = isinstance(
-                        exc, (VerificationCancelled, RuntimeFailure)
-                    )
-                    record["status"] = (
-                        "verification_failed" if cleanup_confirmed else "verifying"
-                    )
-                    record["verification"] = {
-                        "revision": revision,
-                        "passed": False,
-                        "commands": [],
-                        "error": "verification interrupted or failed",
-                        "cleanup_confirmed": cleanup_confirmed,
-                    }
-                    _save_state(
-                        path, state, require_existing=True, reservation_held=True
-                    )
-                    if not isinstance(exc, Exception):
-                        raise
-                    raise RuntimeFailure(
-                        ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                        "verification execution failed",
-                    ) from exc
-                record["verification"] = evidence
-                record["status"] = (
-                    "verifying"
-                    if evidence["cleanup_confirmed"] is not True
-                    else "completed"
-                    if evidence["passed"] is True
-                    else "verification_failed"
-                )
-                _save_state(path, state, require_existing=True, reservation_held=True)
-            return TaskStatusReceipt(task.task_id, str(record["status"]), dict(record))
         finally:
             reservation.release()
 

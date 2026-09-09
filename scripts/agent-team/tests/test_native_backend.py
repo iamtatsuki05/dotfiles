@@ -39,8 +39,8 @@ from agent_team.contracts import (
     TaskVerify,
 )
 from agent_team.named_graph import GraphSpec
-from agent_team.native_mcp import NativeMcpSession
 from agent_team.runtime import RuntimeValidationError
+from agent_team.runtime_mcp import RuntimeMcpSession
 from agent_team.task_spec import TaskSpec, VerificationSpec
 from agent_team.tmux import CloseEvidence, TmuxInspection, TmuxReceipt, _PathIdentity
 
@@ -391,7 +391,7 @@ class NativeBackendTest(unittest.TestCase):
                     with self.assertRaises(RuntimeFailure):
                         backend.request(forbidden)
                     self.assertEqual(self.state_path.read_bytes(), observed)
-            session = NativeMcpSession.__new__(NativeMcpSession)
+            session = RuntimeMcpSession.__new__(RuntimeMcpSession)
             session.path = self.state_path
             session.run_id = initial["run_id"]
             session.runtime = backend.runtime
@@ -1254,7 +1254,7 @@ class NativeBackendTest(unittest.TestCase):
     def test_task_dispatch_is_persisted_through_public_mcp(self) -> None:
         task = self.task_spec()
         with self.planner_backend(task_specs=(task,)) as backend:
-            session = NativeMcpSession.__new__(NativeMcpSession)
+            session = RuntimeMcpSession.__new__(RuntimeMcpSession)
             session.path = self.state_path
             session.run_id = native.runtime_read_state(self.state_path)["run_id"]
             session.runtime = backend.runtime
@@ -1324,7 +1324,7 @@ class NativeBackendTest(unittest.TestCase):
         self,
     ) -> None:
         with self.planner_backend() as backend:
-            session = NativeMcpSession.__new__(NativeMcpSession)
+            session = RuntimeMcpSession.__new__(RuntimeMcpSession)
             session.path = self.state_path
             session.run_id = native.runtime_read_state(self.state_path)["run_id"]
             session.runtime = backend.runtime
@@ -1350,7 +1350,7 @@ class NativeBackendTest(unittest.TestCase):
     ) -> None:
         task = self.task_spec()
         with self.planner_backend(task_specs=(task,)) as backend:
-            session = NativeMcpSession.__new__(NativeMcpSession)
+            session = RuntimeMcpSession.__new__(RuntimeMcpSession)
             session.path = self.state_path
             session.run_id = native.runtime_read_state(self.state_path)["run_id"]
             session.runtime = backend.runtime

@@ -9,7 +9,7 @@ provider subscription into an API-key contract.
 
 ## What agent-team runs
 
-On Orca, the verified ACP profile is a read-only Planner or Reviewer using Claude:
+On fixed version-3 Orca, the verified ACP profile is a read-only Planner or Reviewer using Claude:
 
 - Node.js `22.13.0` or newer
 - `acpx@0.13.2`
@@ -33,7 +33,7 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-When an Orca launch plan contains an ACP role, startup resolves `node`, `acpx`, and
+When a fixed version-3 Orca plan contains an ACP role, startup resolves `node`, `acpx`, and
 `claude-agent-acp`, verifies the exact package manifests, and records the
 absolute paths and SHA-256 fingerprints in that role's launch snapshot. The
 role-start path rechecks the saved binding before creating the Orca Task. The
@@ -53,6 +53,13 @@ uses its isolated `CODEX_HOME` and provider-native permission profiles for the
 verified workspace-write Worker and read-only Reviewer.
 
 ## Native Claude ACP
+
+Version-5 named Orca uses the scoped Claude ACP profile described below.
+The internal Codex path remains disabled in public configuration. Named Orca launches each assignment
+in an owned Orca terminal and retains Orca Task/Dispatch/Delivery identities;
+it does not use the fixed version-3 `acpx` client. The input graph must be
+`agent`/`serial`. This connection has contract-test coverage and awaits live
+Orca acceptance.
 
 Native tmux, Herdr, and Zellij use a separate client with one public ACP connection per assignment.
 It selects Node.js, `@agentclientprotocol/claude-agent-acp@0.70.0`, and that
@@ -178,7 +185,7 @@ cleanup evidence.
 
 ## Scoped Codex ACP implementation: not enabled
 
-The native backend contains a scoped Codex implementation, but the registry still
+The native and named Orca runtime paths contain a scoped Codex implementation, but the registry still
 rejects Codex ACP configurations. It is not a runnable profile. Real authenticated
 model turns and their permission/cleanup checks remain required before activation.
 

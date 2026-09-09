@@ -6,8 +6,9 @@
 ## Runtime selection is explicit
 
 `agent-team` separates orchestration from agent execution and selects the
-backend from the version-3 `runtime` field. `runtime = "orca"` keeps the
-existing four-role Orca contract. `runtime = "tmux"`, `"herdr"`, or `"zellij"`
+backend from the configuration's `runtime` field. Version-3 `runtime = "orca"`
+keeps the fixed four-role contract; version 5 also connects named Orca
+`agent`/`serial` graphs. Version-3 `runtime = "tmux"`, `"herdr"`, or `"zellij"`
 selects an experimental native
 path that requires direct Claude Main and accepts optional verified Claude ACP
 Planner, Worker, and Reviewer roles. Native Worker assignments require an
@@ -15,7 +16,7 @@ exact TaskSpec from the config's `[[tasks]]` catalog. Other unsupported native
 profiles are rejected before state, Task, Dispatch, or process effects are
 created.
 
-### Orca runtime
+### Fixed version-3 Orca runtime
 
 Orca owns the Run, Tasks, Dispatches, messages, and terminals. The launcher owns
 role-specific arguments, private runtime state, and the bridge between ACP
@@ -34,6 +35,84 @@ flowchart TD
     Reviewer --> Done
     Done --> Main
 ```
+
+### Named Orca uses the common task rules
+
+Version-5 named Orca `agent`/`serial` uses version-4 state tagged
+`runtime = "orca"`. Main is direct Claude. Background nodes use the selected
+scoped Claude ACP profile, with exact node IDs and frozen role
+settings. Internal Codex ACP bindings are implemented, but public configuration
+still rejects them. `orca_dispatch` creates the Orca Task and terminal, stores the
+Dispatch identity, and then sends the scoped runner command. The logical
+TaskSpec ID and remote Orca Task ID occupy separate fields and namespaces.
+
+`orca_acp` records trusted output and provider cleanup in `orca_result`.
+`notification_expected` records the decision to send `worker_done`, not proof
+of delivery. `orca_tasks` matches the actual Delivery to that result and
+enforces read → release → ACK. A saved terminal-close receipt permits local
+cleanup to resume without closing the terminal twice. Common task execution
+and verification code checks review decisions, round limits, and the approved
+workspace revision before running fixed argv.
+
+Claude questions use the existing private socket and one Orca question message
+for all form fields. Main replies with a JSON answer map and acknowledges the
+Delivery. The worker waits for local ACK and matching answer ID/body before
+returning the answer to the same ACP session. Codex questions remain disabled.
+
+Delivery waits/reads and status/attach probes run outside the state reservation. Reply, ACK, and the final
+terminal-focus effect are fenced against concurrent stop. `pending_orca_effect`
+records reply/ACK identity and the answer hash before the external operation;
+an unknown result blocks replay, further progress, and stop. Status exposes
+the retained marker as `cleanup_pending`. Partial startup similarly retains
+`pending_role_start`. Neither marker proves that an external effect completed,
+and there is no automatic recovery for those unknown effects. Stop first waits
+for confirmed provider cleanup, then drains existing completion Delivery or
+stops the exact context-only Dispatch and closes owned terminals. These paths
+have contract tests. The latest live attempt reached Main startup and prompt acceptance;
+a real-model named Orca workflow remains unverified.
+
+### Named Orca serial validation
+
+The formal `tests/run.sh` passed on Python 3.13.15 (570.951 seconds) and
+3.11.15 (533.847 seconds). Each run completed 1,192 package tests, 33 CLI tests,
+33 MCP tests, 8 compact-runner tests, and the applicable shell, source-state,
+rendered-home, and Nix checks. All 222 source-manifest entries stayed unchanged.
+The log also contains an expected negative-fixture message and platform skips;
+these do not establish a live Orca workflow.
+
+A clean Python 3.11 install contained only `dotfiles-agent-team` 0.1.0, with no
+extra Python dependencies. All 76 runtime files matched the source and wheel;
+the sdist, author, Python requirement, README metadata, and lockfile checks
+passed. The isolated CLI checks created no runtime state, and the environment
+was removed afterward. Build and CI results in [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)
+identify the commit they validate.
+
+Two attempts used real Orca 1.4.190 and selected Claude Code 2.1.263. The first,
+`run_a372c9ef428f`, stopped at the new repository's trust dialog before a named
+workflow. Public stop succeeded; the four selected normal Claude path fingerprints
+were unchanged. The second, `run_70c45e0282db`, used a dedicated worktree of an
+already trusted repository. Main terminal
+`term_a26f70d6-d450-438c-9335-afb448ea0af1` started without a trust dialog and
+accepted the 3,178-byte initial prompt. Fable then reported a usage limit.
+There were no TaskDispatches, Workers, or Reviewers, and no model response,
+question, review, fixed-argv verification, or task completion was observed.
+
+The second attempt's public stop succeeded before the displayed automatic
+retry. Independent checks found saved state, the live Main terminal, and all
+three recorded PIDs absent. The observer then failed because state was gone;
+its subsequent stop failed locally without creating another remote effect.
+Closed terminal metadata may remain in Orca history. The dedicated retry
+worktree, its initial shell, and the selected install were retained for a later
+attempt; this is not a claim that all fixture resources were removed.
+
+During the second attempt, `~/.claude.json` changed cache, startup, and OAuth
+profile metadata. The selected repository's trust value and both selected settings-file
+hashes were unchanged; the selected credentials file was absent before and
+after. Keychain contents were not compared, and the OAuth subject's complete
+before/after identity could not be verified. Existing Team subscription auth
+status does not prove actual billing, and no login, trust grant, permission, or
+billing-plan change was requested. Named Orca's real-model workflow remains
+unverified, as do the other outstanding backend and harness requirements.
 
 ### Experimental native terminal runtimes
 
@@ -66,8 +145,8 @@ program/parallel is a separate Mainless version-5 program mode; it does not
 create a second task ledger. The selected terminal hosts the existing
 `native_main` supervisor, which supervises the fixed `_program-run` coordinator
 argv. There is no automatic scheduler or implicit conversion between the two
-modes. Named Orca graphs and most of the ten harnesses remain outside the
-current target. Giving two systems ownership of the same worker would make
+modes. Orca program/parallel graphs and most of the ten harnesses remain outside the
+current execution target. Giving two systems ownership of the same worker would make
 completion and cleanup ambiguous.
 
 Native Claude ACP questions stay within the existing Task/Dispatch assignment.
@@ -253,7 +332,8 @@ historical baseline at commit `1314cc4`. The old PR #7 CI/build record, old
 question/program records, and the run IDs above remain historical evidence for that baseline;
 they do not describe the current source.
 
-The formal `tests/run.sh` suite passed on Python 3.11 and 3.13: 1,055 package
+At the earlier native Main-parallel commit `8b7d17b`, the formal `tests/run.sh`
+suite passed on Python 3.11 and 3.13: 1,055 package
 tests, 33 CLI tests, 33 MCP tests, 8 compact-runner tests, and all applicable
 shell, source-state, rendered-home, and Nix checks. The 199 source-manifest
 entries stayed unchanged during both runs. Focused checks passed 293 tests on
@@ -386,7 +466,9 @@ change those earlier outcomes.
 | `agent_team/locking.py` | Owns the stable per-team lifecycle reservation, shared by state writes and runtime operations without importing a backend. |
 | `agent_team/cleanup.py` | Owns the private stop journal, startup-recovery sidecar, and exact local cleanup/rollback phases. |
 | `agent_team/mcp_protocol.py` | Owns shared MCP schemas, JSON-RPC framing, and lazy backend-independent serving. |
-| `agent_team/mcp_server.py`, `native_mcp.py` | Map the ten Main-facing tools to the selected Orca or native backend while preserving the shared lifecycle reservation. Native task tools are implemented by the native backend; Orca does not silently emulate them. |
+| `agent_team/mcp_server.py`, `runtime_mcp.py` | Decode Main tools. Fixed Orca uses `mcp_server`; native and named Orca use the shared `runtime_mcp` framing and selected backend. |
+| `agent_team/orca_dispatch.py`, `orca_acp.py`, `orca_tasks.py`, `orca_questions.py` | Bind scoped ACP assignments to Orca Task/Dispatch/terminal identities and enforce result, question, stop, and Delivery ordering. |
+| `agent_team/role_snapshot.py`, `task_verification.py` | Share selected profile snapshots and approved-revision verification between native and named Orca. |
 | `agent_team/task_spec.py` | Validates the exact immutable TaskSpec schema and its path/verification fields. |
 | `agent_team/task_execution.py` | Persists TaskSpec digests, dependency admission, review decisions, and per-stage round limits. |
 | `agent_team/task_verification.py` | Runs declared fixed argv against the approved workspace revision and records bounded evidence. |
@@ -461,7 +543,7 @@ unchanged.
 
 ## Orca direct roles use Orca-supervised terminals
 
-In `runtime = "orca"`, Worker and Reviewer use direct Codex.
+In fixed version-3 `runtime = "orca"`, Worker and Reviewer use direct Codex.
 
 1. The MCP bridge creates an Orca Task.
 2. It starts a launcher-owned Codex terminal with an isolated `CODEX_HOME`.
@@ -481,20 +563,20 @@ Reviewer roles.
 
 ## ACP roles use a bare Dispatch and a trusted runner
 
-In `runtime = "orca"`, the canonical Planner uses Claude through ACP. acpx is
+In fixed version-3 `runtime = "orca"`, the canonical Planner uses Claude through ACP. acpx is
 not an Orca-recognized TUI, so agent-team uses a bare terminal without
 pretending that it is a supervised native agent. In a native runtime, each
 selected Claude ACP Planner, Worker, or Reviewer uses the native public SDK
 client, without a TTY or pane-based completion path.
 
-Before starting an Orca ACP role, startup requires Node.js `22.13.0` or newer
+Before starting a fixed version-3 Orca ACP role, startup requires Node.js `22.13.0` or newer
 and the exact `acpx@0.13.2` and
 `@agentclientprotocol/claude-agent-acp@0.70.0` packages. It resolves only the
 selected Orca roles' `node`, `acpx`, and `claude-agent-acp` files, verifies
 their package manifests, and stores absolute paths with SHA-256 fingerprints.
 The Orca role-start path rechecks that binding before creating the Orca Task.
 
-Native runtimes have a separate dependency binding: Node.js `22.0.0` or newer,
+Native and named Orca runtimes have a separate Claude dependency binding: Node.js `22.0.0` or newer,
 `@agentclientprotocol/claude-agent-acp@0.70.0`, and its dependency
 `@agentclientprotocol/sdk@1.3.0`. It resolves and fingerprints `node`, the
 Claude ACP entrypoint and `dist/lib.js`, and the SDK entrypoint. Native does not select or invoke
@@ -671,7 +753,8 @@ verification argv. When no `[[tasks]]` catalog is present, read-only
 dispatch is rejected. In native `agent`/`parallel`, an empty catalog fails
 before dependency or profile checks and `role_prompt` is rejected, including
 for read-only research. Parallel research must use a declared plan-only
-TaskSpec. Orca rejects the `tasks` field. Startup also validates the selected
+TaskSpec. Fixed version-3 Orca rejects top-level `tasks`; named Orca uses the
+selected team catalog. Startup also validates the selected
 dependency binding and role profiles before any durable batch/task effect.
 
 The native flow is:
@@ -765,7 +848,7 @@ workspace, config path, Run, Main terminal, role specifications, and active
 assignment. Model, effort, permission, and instructions are copied at launch;
 an ACP runner does not reinterpret a changed config during the same team run.
 
-An Orca ACP role specification stores the resolved absolute `node`, `acpx`, and
+A fixed version-3 Orca ACP role specification stores the resolved absolute `node`, `acpx`, and
 `claude-agent-acp` paths and their SHA-256 fingerprints. A native ACP role
 stores absolute `node`, Claude ACP entry and library, and SDK dependency paths with the same binding
 check. Each runner uses and verifies its saved binding; missing or changed
@@ -777,6 +860,17 @@ reads use non-following file descriptors.
 Codex runtime homes are isolated below the same team directory.
 If the replacement succeeds but directory durability is unknown, the state is
 treated as published and the startup marker is retained for management retry.
+
+Orca creates a bare Main terminal, publishes the Run and state, and then sends
+the frozen Main command once. A failed or uncertain send retains the Main
+startup record and prepared-resource identities; it never triggers automatic
+resend or terminal deletion. The Orca idle receipt is not evidence that the
+MCP client has connected.
+
+The actual Main launch resolves its executable in the caller's environment and
+uses an absolute path with the same environment allowlist as native Main.
+Orca shell settings cannot substitute another executable or add API credentials
+to that launch. Configuration validation and dry-run do not resolve executables.
 
 Native state stores a selected-terminal receipt and the supervised Main process
 receipt. Native ownership checks compare the saved executable, private process
@@ -849,8 +943,9 @@ terminal completion allows its removal.
   cleanup may return to Worker within the implementation review-round limit.
 
 CLI lifecycle operations use `WorkflowEngine` with the backend selected by
-`runtime`. Orca role operations use `mcp_server`; native role operations use
-`native_backend` through `native_mcp`. Both paths share the typed contract,
+`runtime`. Fixed Orca role operations use `mcp_server`. `runtime_mcp` routes
+native operations to `native_backend` and named Orca operations to
+`OrcaBackend`/`orca_tasks`. These paths share the typed contract,
 state, and reservation helpers. The role methods on the abstract backend
 contract are not a separate user-facing protocol.
 

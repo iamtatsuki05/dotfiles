@@ -351,7 +351,9 @@ class CodexCliWiringTest(unittest.TestCase):
                     ],
                 )
 
-    def test_codex_acp_is_rejected_for_orca_before_dependency_resolution(self) -> None:
+    def test_codex_acp_is_rejected_for_fixed_orca_before_dependency_resolution(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plan = codex_plan(root, runtime="orca")
@@ -362,7 +364,9 @@ class CodexCliWiringTest(unittest.TestCase):
                     "resolve",
                     side_effect=AssertionError("Codex ACP was resolved for Orca"),
                 ) as resolve,
-                self.assertRaisesRegex(cli.ConfigError, "requires a native runtime"),
+                self.assertRaisesRegex(
+                    cli.ConfigError, "requires a native or named Orca runtime"
+                ),
             ):
                 cli._start_prerequisites(plan)
 

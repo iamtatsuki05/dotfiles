@@ -5,14 +5,14 @@
 
 ## runtimeを明示的に選択する
 
-`agent-team`はオーケストレーションとAgent実行を分け、version 3の`runtime`でbackendを
-選択します。`runtime = "orca"`は既存の4 role固定のOrca contractを使います。
-`runtime = "tmux"`、`"herdr"`、`"zellij"`は実験的なnative pathで、direct Claude Mainを必須とし、verified Claude ACPの
+`agent-team`はオーケストレーションとAgent実行を分け、設定の`runtime`でbackendを選択します。
+version 3の`runtime = "orca"`は既存の4 role固定構成を使い、version 5は名前付きOrcaの`agent`/`serial`にも対応します。
+version 3の`runtime = "tmux"`、`"herdr"`、`"zellij"`は実験的なnative pathで、direct Claude Mainを必須とし、verified Claude ACPの
 Planner、Worker、Reviewerを任意に追加できます。native Workerのassignmentにはconfigの
 `[[tasks]]` catalogにあるTaskSpecとの完全一致が必要です。その他の未対応native profileは、
 state、Task、Dispatch、processに影響する前に拒否します。
 
-### Orca runtime
+### 固定version 3のOrca runtime
 
 OrcaはRun、Task、Dispatch、message、terminalを管理します。launcherはrole別の起動引数と
 private runtime stateを管理し、ACPの完了をOrcaの`worker_done`へ変換します。
@@ -30,6 +30,62 @@ flowchart TD
     Reviewer --> Done
     Done --> Main
 ```
+
+### 名前付きOrcaにも共通のタスク規則を適用する
+
+Version 5の名前付きOrca `agent`/`serial`は、`runtime = "orca"`を持つversion 4のstateを保存します。
+Mainはdirect Claude、background nodeはscoped Claude ACPを使い、node IDと役割の設定を固定します。
+Codex ACPの内部実装もありますが、公開設定では拒否します。
+`orca_dispatch`はOrcaのTaskとterminalを作り、Dispatchの識別情報を保存してからrunnerの起動commandを送ります。
+論理的なTaskSpec IDとOrca Task IDは、別のfieldと名前空間で管理します。
+
+`orca_acp`は信頼する出力とproviderの終了確認を`orca_result`へ保存します。
+`notification_expected`が表すのは`worker_done`を送る判断であり、配達済みの証拠ではありません。
+`orca_tasks`は実際のDeliveryと結果を照合し、read → release → ACKの順を強制します。
+端末の終了証拠を保存するため、ローカルファイルの削除だけ失敗しても、端末を二重に閉じず再試行できます。
+レビュー判断、回数上限、承認済みworkspace revision、固定argv検証には共通のタスク処理を使います。
+
+Claudeの質問は既存のprivate socketを使い、フォームの全fieldをOrcaの質問1件にまとめます。
+MainがJSONの回答を返してDeliveryをACKした後、workerは保存済み回答のIDと本文を照合します。
+一致を確認してから同じACP sessionへ回答を渡します。Codexの質問は無効です。
+
+Deliveryの待機・読み取りとstatus/attachの照合中は、stateの排他制御を解放します。返信、ACK、最終的なterminalのfocus操作では、停止との競合を防ぐため排他制御を保持します。
+`pending_orca_effect`には返信・ACKの識別情報と回答のhashを外部操作の前に保存します。
+結果が不明なら再送、進行、停止を拒否し、`status`の`cleanup_pending`に記録を表示します。
+起動途中の失敗も`pending_role_start`へ残します。これらの記録だけで外部操作の完了を証明せず、不明な操作の自動復旧も行いません。
+停止ではproviderの終了確認を待ち、既存の完了Deliveryを消費するか、該当するcontext-only Dispatchと所有端末を停止します。
+各経路の契約テストは成功しています。直近の実機試験ではMain起動とprompt受付まで確認しましたが、名前付きOrcaの実モデル全工程は未確認です。
+
+### 名前付きOrca直列実行の検証
+
+正式な`tests/run.sh`は、Python 3.13.15で570.951秒、3.11.15で533.847秒かかり、両方とも成功しました。
+各環境でパッケージ1,192件、CLI 33件、MCP 33件、compact runner 8件と、適用対象のshell・source state・rendered home・Nix検証を実行しました。
+実行中はsource manifestの222項目が不変でした。ログには意図した負例の出力とplatformによるskipも含まれます。
+この検証だけでは、Orcaでの実機全工程を確認したことにはなりません。
+
+Python 3.11の空の環境へ導入したパッケージは`dotfiles-agent-team` 0.1.0だけで、追加のPython依存はありません。
+runtimeの76ファイルはsource・wheel・導入先で一致し、sdist、著者、対応Python、README metadata、lockfileの検証も成功しました。
+隔離したCLI検証ではruntime stateを作らず、検証後に環境を削除しました。buildとCIの対象commitは
+[PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)に記載します。
+
+実機試験はOrca 1.4.190と選択したClaude Code 2.1.263で2回行いました。
+最初の`run_a372c9ef428f`は新規repositoryのtrust画面で停止し、名前付きチームの進行には到達していません。
+公開stopは成功し、通常のClaudeの確認対象4pathに変化はありませんでした。
+2回目の`run_70c45e0282db`では、既に信頼済みのrepositoryに専用worktreeを作成しました。
+Main端末`term_a26f70d6-d450-438c-9335-afb448ea0af1`はtrust画面なしで起動し、3,178 byteの初期promptを受け付けました。
+その後Fableの利用上限が表示され、TaskDispatch・Worker・Reviewerは0件でした。
+モデル応答、質問、レビュー、固定argv検証、タスク完了は確認していません。
+
+2回目は表示された自動再開の前に公開stopが成功し、保存state、稼働中のMain端末、記録した3 PIDの不在を独立に確認しました。
+観測scriptはstate消失で終了し、その後の重複stopはlocalで失敗しました。新たな外部操作は発生していません。
+Orcaには閉じた端末の履歴情報が残る場合があります。再試験に使う専用worktree、初期shell、選択済みの導入環境は保持しており、
+試験用資源をすべて削除したという意味ではありません。
+
+2回目の試験では`~/.claude.json`のcache、起動統計、OAuth profile metadata等が更新されました。
+選択repositoryのtrust値とsettingsファイル2件のhashは不変でした。確認対象のcredentialsファイルは試験前後とも存在しませんでした。
+Keychainの内容は比較しておらず、OAuth subjectの試験前後の同一性も完全には確認できていません。
+既存のTeam subscription認証のstatusは、実際の課金記録の確認とは区別します。login、trust付与、権限・課金契約の変更は要求していません。
+名前付きOrcaの実モデル全工程と、残るbackend・harnessの受入条件は未達です。
 
 ### 実験的なnative terminal runtime
 
@@ -55,7 +111,7 @@ HerdrとZellijはnative terminal driverとして利用できます。名前付�
 program/parallel構成をversion 5で接続しています。agent/parallelはMainが正確なTaskSpec IDの`agent_batch`を明示してから
 named writerとReviewerをdispatchします。program構成にはMain roleを置かず、選択したterminal上で既存の`native_main`
 supervisorが固定argvの`_program-run` coordinatorを監督します。2つのmodeの間にschedulerや暗黙の変換はありません。
-名前付きOrca構成と10 harnessの大半は現在の対象外です。2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
+Orcaのprogram・parallel構成と10 harnessの大半は、現在の実行対象外です。2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
 
 native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。名前付きnativeのReviewer相談回答と
@@ -174,7 +230,7 @@ uv run --locked --project scripts/agent-team python -m unittest discover \
 CLI 33件、MCP 33件、compact runner 8件、source manifest 194項目）は、commit `1314cc4`時点のhistorical baselineです。
 旧PR #7のCI/build記録と上記のquestion/program run IDも、同じcommit時点の記録であり、現在のsourceの結果ではありません。
 
-正式な`tests/run.sh`はPython 3.11と3.13で通過しました。各環境でパッケージ1,055件、CLI 33件、MCP 33件、
+以前のnative Main並列commit `8b7d17b`では、正式な`tests/run.sh`がPython 3.11と3.13で通過しました。各環境でパッケージ1,055件、CLI 33件、MCP 33件、
 compact runner 8件と、適用対象のshell・source state・rendered home・Nix検証を実行しています。
 両実行中はsource manifestの199項目が不変でした。変更周辺のテスト293件も両Pythonで成功しています。
 終了後はこの文書の検証結果だけを更新して再確認し、実装・テストは変更していません。build・clean install・CIの結果は
@@ -274,7 +330,9 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 | `agent_team/locking.py` | teamごとのstable lifecycle reservationを担当する。backendをimportせず、stateの書き込みとruntime操作で共有する。 |
 | `agent_team/cleanup.py` | private stop journal、startup recovery sidecar、local cleanup/rollbackのexact phaseを担当する。 |
 | `agent_team/mcp_protocol.py` | 共通MCP schema、JSON-RPC framing、backendに依存しない遅延serveを担当する。 |
-| `agent_team/mcp_server.py`, `native_mcp.py` | Main向けの10 toolを選択したOrcaまたはnative backendへ変換し、共通のlifecycle reservationを維持する。native task toolはnative backendが処理し、Orcaはsilentにemulateしない。 |
+| `agent_team/mcp_server.py`, `runtime_mcp.py` | Mainのtool入力を解釈する。固定Orcaは`mcp_server`、nativeと名前付きOrcaは共通の`runtime_mcp`と選択したbackendを使う。 |
+| `agent_team/orca_dispatch.py`, `orca_acp.py`, `orca_tasks.py`, `orca_questions.py` | scoped ACPをOrcaのTask・Dispatch・terminalに結び付け、結果、質問、停止、Deliveryの処理順を強制する。 |
+| `agent_team/role_snapshot.py`, `task_verification.py` | 選択した設定のsnapshotと承認済みrevisionの検証をnative・名前付きOrcaで共有する。 |
 | `agent_team/task_spec.py` | immutable TaskSpecのexact schemaとpath/verification fieldを検証する。 |
 | `agent_team/task_execution.py` | TaskSpec digest、dependency admission、review decision、stage別round limitを保存する。 |
 | `agent_team/task_verification.py` | approved workspace revisionでfixed argvを実行し、bounded evidenceを保存する。 |
@@ -341,7 +399,7 @@ serial、program、declaration-onlyのtool listは変わりません。
 
 ## Orcaのdirect roleはOrcaが監督するterminalで動く
 
-`runtime = "orca"`では、WorkerとReviewerはdirect Codexです。
+固定version 3の`runtime = "orca"`では、WorkerとReviewerはdirect Codexです。
 
 1. MCP bridgeがOrca Taskを作ります。
 2. launcher専用のCodex terminalを、隔離した`CODEX_HOME`で起動します。
@@ -360,12 +418,12 @@ Workerやdirect Reviewerではありません。
 
 ## ACP roleはbare Dispatchとtrusted runnerで動く
 
-`runtime = "orca"`では、canonical PlannerがClaude ACPで動きます。acpxはOrcaが認識する
+固定version 3の`runtime = "orca"`では、canonical PlannerがClaude ACPで動きます。acpxはOrcaが認識する
 TUIではないため、native agentに見せかけず、bare terminalで実行します。native runtimeでは、
 選択したClaude ACPのPlanner、Worker、Reviewerにpublic SDK clientを使います。TTYや
 paneの文字列を完了判定には使いません。
 
-OrcaのACP roleを起動する前に、Node.js `22.13.0`以降と、exactな`acpx@0.13.2`、
+固定version 3のOrcaでACP roleを起動する前に、Node.js `22.13.0`以降と、exactな`acpx@0.13.2`、
 `@agentclientprotocol/claude-agent-acp@0.70.0` packageが必要です。Orcaは選択したroleの
 `node`、`acpx`、`claude-agent-acp`を解決し、package manifestを確認してabsoluteなpathと
 SHA-256 fingerprintを保存します。Orcaのrole起動経路はOrca Taskを作る前にbindingを再検証します。
@@ -500,7 +558,7 @@ argvを追加・変更できません。`[[tasks]]`がないnative configでは�
 `role_prompt`は使えますが、structured task dispatchは拒否します。native `agent`/`parallel`では
 空のcatalogをdependencyやprofile確認より前に拒否し、read-onlyを含む`role_prompt`も拒否します。
 parallelの調査には宣言済みplan-only TaskSpecを使います。選択したdependency bindingとrole profileの
-確認も、batchやtaskのdurable effectより前に完了します。Orcaは`tasks` fieldを拒否します。
+確認も、batchやtaskのdurable effectより前に完了します。固定version 3のOrcaはtop-levelの`tasks`を拒否し、名前付きOrcaはteamのcatalogを使います。
 
 通常のnative flowは次のとおりです。
 
@@ -570,7 +628,7 @@ Run、Main terminal、role spec、active assignmentを保存します。model、
 permission、instructionsは起動時に固定します。同じteamの実行中にconfigを変更しても、
 ACP runnerが新しい値を読み直すことはありません。
 
-OrcaのACP roleのspecには、解決した`node`、`acpx`、`claude-agent-acp`のabsolute pathとSHA-256
+固定version 3のOrca ACP specには、解決した`node`、`acpx`、`claude-agent-acp`のabsolute pathとSHA-256
 fingerprintを保存します。native ACP roleには`node`、Claude ACP entryとlibrary、SDKのpathとfingerprintを
 保存します。各runnerは自分のbindingを検証し、fileの不足や変更があればfail-closedで停止します。
 
@@ -578,6 +636,14 @@ ACP prompt sidecarとstate fileは、現在のuserだけが読めるprivate file
 atomicに書き込み、replace後にparent directoryをfsyncします。promptはsymlinkを辿らないfile descriptorから読みます。
 Codexのruntime homeも同じteam directoryの下へ隔離します。
 replace後のdurabilityが不明でもstateはpublish済みとして扱い、startup markerを残して管理操作で再試行します。
+
+OrcaのMainは、空のterminalを作成し、Runとstateを保存してから起動commandを一度だけ送ります。
+送信に失敗した場合や成否が不明な場合は、Mainの起動記録と準備済みresourceのIDを保持します。
+自動再送やterminalの削除は行いません。Orcaのidle receiptだけでは、MCP clientの接続成功は判断しません。
+
+実際のMain起動時には、呼び出し元で実行ファイルの絶対pathを確定し、native Mainと同じallowlistの
+環境変数を渡します。Orca側のshell設定によって別の実行ファイルやAPI認証情報が選ばれるのを防ぎます。
+設定検証とdry-runでは、実行ファイルの解決は行いません。
 
 native stateには選択したterminalのreceiptと、監督対象のMain process receiptを保存します。
 nativeの所有権検査はsaved executable、private process group、exact argv、固定した
@@ -628,8 +694,9 @@ outboxにだけ保持します。
   自動recoveryは主張しません。実行済みcommandの証拠とcleanupを確認できた`verification_failed` taskは、
   implementationのreview round上限内でWorkerへ戻せます。
 
-CLIの起動・管理操作は`runtime`で選択したbackendを`WorkflowEngine`へ渡します。Orcaのrole操作は
-`mcp_server`、nativeのrole操作は`native_mcp`を通じて`native_backend`が処理します。両方の
+CLIの起動・管理操作は`runtime`で選択したbackendを`WorkflowEngine`へ渡します。固定Orcaのrole操作は
+`mcp_server`が処理します。`runtime_mcp`はnativeの操作を`native_backend`へ、名前付きOrcaの操作を
+`OrcaBackend`/`orca_tasks`へ渡します。これらの
 pathがtyped contract、state、reservation helperを共有します。抽象backend contractのrole
 methodは、別のuser-facing protocolではありません。
 

@@ -11,8 +11,8 @@ Worker、Reviewerを持つ実験的なnative subsetです。native Workerのassi
 roleを起動する前に拒否します。topology schemaとresourceを起動しない確認commandは
 [Version 4の設定](configuration-v4_JA.md)を参照してください。
 nodeごとの設定、複数のWorker/Reviewer、TaskSpecの担当指定には、
-[Version 5の設定](configuration-v5_JA.md)を使います。version 5ではnativeの`agent`/`serial`と
-`program`/`serial`構成が接続しています。並列実行と名前付きOrca構成は引き続き拒否します。以下は
+[Version 5の設定](configuration-v5_JA.md)を使います。nativeではagent/program、serial/parallelの各構成を受け付けます。
+名前付きOrcaはscoped ACPのbackground roleを使う`agent`/`serial`だけを受け付け、実モデル全工程の受入は未達です。以下は
 固定Main roleを持つversion 3のリファレンスで、Mainなしのprogram graphは表現しません。
 
 ## canonical configから始める
@@ -202,7 +202,7 @@ cleanup判定にも同じ限界があります。
 | `max_review_rounds` | 正の整数。各段階の初回判定と再判定を数える。 |
 | `main` | 必須のMain role table。 |
 | `roles` | `orca`は`planner`、`worker`、`reviewer`を過不足なく含める。各native runtimeは任意の`planner`、`worker`、`reviewer`を含められますが、WorkerにはReviewerが必要です。Mainは別に宣言し、常に必須です。 |
-| `tasks` | native runtimeだけで使う任意の`[[tasks]]` TaskSpec catalogです。各taskの固定検証は`[[tasks.verification]]`で宣言します。Orcaはこのfieldを拒否します。未指定ならread-onlyの`role_prompt`は使えますが、structured `task_dispatch`は拒否します。 |
+| `tasks` | native runtimeだけで使う任意の`[[tasks]]` TaskSpec catalogです。各taskの固定検証は`[[tasks.verification]]`で宣言します。固定version 3のOrcaは、このtop-level fieldを拒否します。未指定ならread-onlyの`role_prompt`は使えますが、structured `task_dispatch`は拒否します。 |
 
 runtime team IDは、`team_prefix`、workspace名、workspaceのabsolute pathのhashから
 作ります。config pathはIDに含みません。同じprefixとworkspaceを使う2つのconfigは、
@@ -234,7 +234,7 @@ absolute pathや`..`で外へ出る指定は拒否します。
 | Worker | Codex / `direct` | `workspace-write` |
 | Reviewer | ClaudeまたはCodex / `direct`、Claude / `acp`、Copilot / `direct` | `read-only` |
 
-canonical Reviewerはdirect Codexです。Claude ACPはread-only background roleで利用
+固定version 3のOrcaで使うcanonical Reviewerはdirect Codexです。Claude ACPはread-only background roleで利用
 できますが、configを明示的に変更する必要があります。Copilotは厳密なCLI `1.0.81`を使う
 direct backgroundのread-only Planner/Reviewerに限定します。Main ACP、Codex ACP、
 workspace-write Claude、すべてのworkspace-write ACPはfail-fastで拒否します。
@@ -256,7 +256,7 @@ direct Worker/Reviewer、Codex ACP、Main ACP、scoped profile以外のworkspace
 
 ## ACP依存関係は明示し、選択したroleだけで解決する
 
-OrcaのClaude `acp`を選ぶconfigには、Node.js `22.13.0`以降と、exact packageの
+固定version 3のOrcaでClaude `acp`を選ぶconfigには、Node.js `22.13.0`以降と、exact packageの
 `acpx@0.13.2`、`@agentclientprotocol/claude-agent-acp@0.70.0`が必要です。`agent-team`の外で、
 たとえば次のように導入してください。
 
@@ -265,7 +265,7 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-Orcaでは起動時に`node`、`acpx`、`claude-agent-acp`を解決し、exact package manifestを確認したうえで、
+固定version 3のOrcaでは起動時に`node`、`acpx`、`claude-agent-acp`を解決し、exact package manifestを確認したうえで、
 absoluteなfile pathとSHA-256 fingerprintをlaunch snapshotへ保存します。
 runnerは保存したbindingを検証して使います。fileの不足や変更はfail-closedで停止します。実行時の
 commandは`npm`や`npx`を呼び出さず、directだけのconfigではACP依存関係を解決しません。
@@ -357,7 +357,7 @@ native Mainにはcatalogをstartup instructionとして渡します。`task_disp
 TaskSpecの1件と完全一致しなければならず、dispatch時にtask ID、path scope、dependency、
 evidence、fixed verification argvを追加・変更できません。native configに`[[tasks]]`が
 なければ、read-onlyの`role_prompt`は使えますが、structured task dispatchは拒否します。
-Orca configでは`tasks` fieldを拒否します。
+固定version 3のOrca configではtop-levelの`tasks`を拒否し、version 5の名前付きOrcaではteamのcatalogを使います。
 
 native task lifecycleの順序は次のとおりです。
 

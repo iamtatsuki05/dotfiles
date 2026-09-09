@@ -10,7 +10,7 @@ import stat
 import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from .acp_dependencies import AcpDependencyError, AcpExecutables
 from .contracts import ErrorCode, RuntimeFailure
@@ -18,8 +18,12 @@ from .locking import _LifecycleReservation
 from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
 from .native_controller import ControllerKeys, controller_keys
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
-from .task_execution import validate_saved_tasks, validate_task_assignment
-from .task_spec import parse_task_specs
+from .task_execution import (
+    parse_review,
+    validate_saved_tasks,
+    validate_task_assignment,
+)
+from .task_spec import TaskSpec, parse_task_specs
 
 if TYPE_CHECKING:
     from .contracts import NodeRef, RoleTarget
@@ -735,8 +739,10 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
         return role
     if version not in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
         raise RuntimeValidationError("agent-team state has an unsupported version")
-    if state.get("runtime") == "orca":
-        raise RuntimeValidationError("version-4 Orca state is not supported")
+    if state.get("runtime") == "orca" and version != NAMED_STATE_VERSION:
+        raise RuntimeValidationError(
+            "Orca named state requires version-4 serial coordination"
+        )
     graph = _parse_named_graph(state)
     if version == NAMED_STATE_VERSION and graph.coordination.dispatch_mode != "serial":
         raise RuntimeValidationError("version-4 named state requires serial dispatch")
@@ -745,6 +751,8 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
         and graph.coordination.dispatch_mode != "parallel"
     ):
         raise RuntimeValidationError("parallel state requires parallel coordination")
+    if state.get("runtime") == "orca" and graph.coordination.mode != "agent":
+        raise RuntimeValidationError("Orca named state requires agent coordination")
     try:
         target = graph.node(node_id)
     except KeyError as exc:
@@ -761,7 +769,7 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
 def _validate_named_role_spec(
     node_id: str, node_kind: str, spec: Mapping[str, object]
 ) -> None:
-    required = (
+    required: tuple[str, ...] = (
         "kind",
         "provider",
         "transport",
@@ -1210,6 +1218,449 @@ def _validate_named_native_result(
             )
 
 
+def _validate_orca_result(
+    state: Mapping[str, object],
+    result: object,
+    node_by_id: Mapping[str, NodeRef],
+    role_specs: Mapping[str, object],
+    roles: Mapping[str, object],
+) -> None:
+    """Validate one trusted Orca completion publication.
+
+    Orca publishes a structured runner result before its Delivery is observed.
+    It therefore cannot reuse the native result validator: native process and
+    question receipts are deliberately absent from this state shape.
+    """
+
+    if not isinstance(result, dict):
+        raise RuntimeValidationError("Orca result must be an object")
+    required = {
+        "role",
+        "role_kind",
+        "run_id",
+        "task_id",
+        "dispatch_id",
+        "terminal_handle",
+        "launch_nonce",
+        "outcome",
+        "body",
+        "cleanup_confirmed",
+        "notification_expected",
+    }
+    optional = {"delivery_id", "logical_task_id", "task_evidence"}
+    if set(result) - required - optional or not required.issubset(result):
+        raise RuntimeValidationError("Orca result fields are invalid")
+
+    def result_string(field: str) -> str:
+        value = result.get(field)
+        if not isinstance(value, str) or not value:
+            raise RuntimeValidationError(f"Orca result {field} is invalid")
+        return value
+
+    role = result_string("role")
+    role_kind = result_string("role_kind")
+    node = node_by_id.get(role)
+    spec = role_specs.get(role)
+    if (
+        node is None
+        or not isinstance(spec, Mapping)
+        or node.kind.value != role_kind
+        or spec.get("kind") != role_kind
+        or role_kind not in ACP_ROLES
+        or result.get("run_id") != state.get("run_id")
+    ):
+        raise RuntimeValidationError("Orca result identity does not match its graph")
+
+    result_string("run_id")
+    result_string("task_id")
+    dispatch_id = result_string("dispatch_id")
+    result_string("terminal_handle")
+    launch_nonce = result_string("launch_nonce")
+    if not _LAUNCH_NONCE_RE.fullmatch(launch_nonce):
+        raise RuntimeValidationError("Orca result launch nonce is invalid")
+    outcome = result.get("outcome")
+    if not isinstance(outcome, str) or outcome not in {"succeeded", "failed"}:
+        raise RuntimeValidationError("Orca result outcome is invalid")
+    body = result.get("body")
+    if not isinstance(body, str) or len(body) > MAX_RESULT_BODY_CHARS:
+        raise RuntimeValidationError("Orca result body is invalid")
+    if type(result.get("cleanup_confirmed")) is not bool:
+        raise RuntimeValidationError("Orca result cleanup confirmation is invalid")
+    if type(result.get("notification_expected")) is not bool:
+        raise RuntimeValidationError("Orca notification expectation is invalid")
+    if (
+        result["notification_expected"] is True
+        and result["cleanup_confirmed"] is not True
+    ):
+        raise RuntimeValidationError("Orca notification requires confirmed cleanup")
+    if result["notification_expected"] is False and outcome != "failed":
+        raise RuntimeValidationError("suppressed Orca result must be failed")
+
+    delivery_id = result.get("delivery_id")
+    if delivery_id is not None and result["notification_expected"] is not True:
+        raise RuntimeValidationError("suppressed Orca result cannot have a Delivery")
+    if delivery_id is not None and (
+        not isinstance(delivery_id, str) or not delivery_id
+    ):
+        raise RuntimeValidationError("Orca result delivery identity is invalid")
+    logical_task_id = result.get("logical_task_id")
+    if logical_task_id is not None and (
+        not isinstance(logical_task_id, str) or not logical_task_id
+    ):
+        raise RuntimeValidationError("Orca result logical TaskSpec ID is invalid")
+    if "task_evidence" in result and not isinstance(result["task_evidence"], Mapping):
+        raise RuntimeValidationError("Orca result task evidence is invalid")
+
+    assignment = roles.get(role)
+    if not roles and state.get("pending_delivery_stage") != "released":
+        raise RuntimeValidationError(
+            "Orca result without an assignment requires released Delivery"
+        )
+    if roles and not isinstance(assignment, Mapping):
+        raise RuntimeValidationError("Orca result does not belong to an active role")
+    if isinstance(assignment, Mapping):
+        if assignment.get("role") != role or assignment.get("role_kind") != role_kind:
+            raise RuntimeValidationError("Orca result assignment identity is invalid")
+        if any(
+            result.get(field) != assignment.get(field)
+            for field in ("task_id", "dispatch_id", "terminal_handle", "launch_nonce")
+        ):
+            raise RuntimeValidationError("Orca result does not match its assignment")
+        task_spec = assignment.get("task_spec")
+        if isinstance(task_spec, Mapping):
+            if not isinstance(logical_task_id, str):
+                raise RuntimeValidationError(
+                    "Orca TaskSpec assignment requires logical_task_id"
+                )
+            if task_spec.get("task_id") != logical_task_id:
+                raise RuntimeValidationError("Orca result TaskSpec identity changed")
+        elif logical_task_id is not None:
+            raise RuntimeValidationError(
+                "taskless Orca result must not contain logical_task_id"
+            )
+
+    tasks = state.get("tasks")
+    task_record: Mapping[str, object] | None = None
+    if isinstance(tasks, Mapping):
+        if isinstance(logical_task_id, str):
+            candidate = tasks.get(logical_task_id)
+            if not isinstance(candidate, Mapping):
+                raise RuntimeValidationError("Orca result TaskSpec is not saved")
+            task_record = candidate
+        elif not roles:
+            matches = tuple(
+                candidate
+                for candidate in tasks.values()
+                if isinstance(candidate, Mapping)
+                and candidate.get("dispatch_id") == dispatch_id
+            )
+            if len(matches) > 1:
+                raise RuntimeValidationError(
+                    "Orca result TaskSpec identity is ambiguous"
+                )
+            if matches:
+                raise RuntimeValidationError(
+                    "Orca released TaskSpec result requires logical_task_id"
+                )
+    if task_record is not None and (
+        task_record.get("role") != role
+        or task_record.get("role_kind") != role_kind
+        or task_record.get("dispatch_id") != dispatch_id
+    ):
+        raise RuntimeValidationError("Orca result TaskSpec identity changed")
+
+    if (
+        outcome == "succeeded"
+        and role_kind == "reviewer"
+        and task_record is not None
+        and "task_evidence" not in result
+    ):
+        raise RuntimeValidationError("successful Orca reviewer result lacks evidence")
+
+    if "task_evidence" in result:
+        evidence = result["task_evidence"]
+        if (
+            outcome != "succeeded"
+            or role_kind != "reviewer"
+            or not isinstance(logical_task_id, str)
+            or not isinstance(evidence, Mapping)
+            or task_record is None
+        ):
+            raise RuntimeValidationError("Orca task evidence is not allowed here")
+        stage = task_record.get("stage")
+        revision = task_record.get("revision")
+        try:
+            task = TaskSpec.from_dict(task_record.get("spec"))
+            if not isinstance(stage, str) or not isinstance(revision, str):
+                raise TypeError("saved Orca review binding is incomplete")
+            verdict = parse_review(
+                json.dumps(dict(evidence), ensure_ascii=False),
+                task=task,
+                stage=stage,
+                revision=revision,
+            )
+        except (TypeError, ValueError, RuntimeFailure) as exc:
+            raise RuntimeValidationError("Orca task evidence is invalid") from exc
+        if verdict != dict(evidence):
+            raise RuntimeValidationError("Orca task evidence is not canonical")
+
+
+def _validate_orca_effect(state: Mapping[str, object]) -> None:
+    if "pending_orca_effect" not in state:
+        return
+    effect = state["pending_orca_effect"]
+    if not isinstance(effect, Mapping) or set(effect) != {
+        "operation",
+        "run_id",
+        "main_terminal",
+        "delivery_id",
+        "message_id",
+        "body_sha256",
+    }:
+        raise RuntimeValidationError("Orca pending effect fields are invalid")
+    if any(effect[key] != state.get(key) for key in ("run_id", "main_terminal")):
+        raise RuntimeValidationError("Orca pending effect Run identity changed")
+    delivery_id = effect["delivery_id"]
+    if (
+        not isinstance(delivery_id, str)
+        or not delivery_id
+        or delivery_id != state.get("pending_delivery_id")
+    ):
+        raise RuntimeValidationError("Orca pending effect Delivery identity changed")
+    kind = state.get("pending_delivery_kind")
+    stage = state.get("pending_delivery_stage")
+    if effect["operation"] == "reply":
+        message_id, digest = effect["message_id"], effect["body_sha256"]
+        if (
+            kind != "question"
+            or stage != "observed"
+            or not isinstance(message_id, str)
+            or message_id not in cast(list[object], state["pending_question_ids"])
+            or message_id in cast(list[object], state["replied_question_ids"])
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise RuntimeValidationError("Orca pending reply identity is invalid")
+    elif effect["operation"] == "ack":
+        if effect["message_id"] is not None or effect["body_sha256"] is not None:
+            raise RuntimeValidationError("Orca pending ACK contains reply data")
+        if not (
+            kind == "worker_done"
+            and stage == "released"
+            or kind == "question"
+            and stage == "observed"
+            and state.get("pending_question_ids") == state.get("replied_question_ids")
+        ):
+            raise RuntimeValidationError("Orca pending ACK is premature")
+    else:
+        raise RuntimeValidationError("Orca pending effect operation is invalid")
+
+
+def _validate_orca_release(
+    state: Mapping[str, object],
+    result: Mapping[str, object] | None,
+    roles: Mapping[str, object],
+) -> None:
+    """Validate the durable external-terminal release journal."""
+
+    release = state.get("orca_release")
+    pending_stage = state.get("pending_delivery_stage")
+    if release is None:
+        if pending_stage == "released":
+            raise RuntimeValidationError(
+                "released Orca state is missing release journal"
+            )
+        return
+    if not isinstance(release, Mapping) or set(release) != {
+        "phase",
+        "identity",
+        "terminal_close",
+    }:
+        raise RuntimeValidationError("Orca release journal fields are invalid")
+    phase = release.get("phase")
+    if phase not in {"closing", "closed", "released"}:
+        raise RuntimeValidationError("Orca release journal phase is invalid")
+    identity = release.get("identity")
+    identity_fields = {
+        "role",
+        "role_kind",
+        "run_id",
+        "task_id",
+        "dispatch_id",
+        "terminal_handle",
+        "launch_nonce",
+        "delivery_id",
+    }
+    if not isinstance(identity, Mapping) or set(identity) != identity_fields:
+        raise RuntimeValidationError("Orca release identity fields are invalid")
+    if any(
+        not isinstance(identity.get(field), str) or not identity.get(field)
+        for field in identity_fields
+    ):
+        raise RuntimeValidationError("Orca release identity is invalid")
+    if result is None:
+        raise RuntimeValidationError("Orca release journal has no result")
+    for field in identity_fields:
+        if result.get(field) != identity.get(field):
+            raise RuntimeValidationError("Orca release identity does not match result")
+
+    close = release.get("terminal_close")
+    if phase == "closing":
+        if close is not None or pending_stage != "read" or not roles:
+            raise RuntimeValidationError("Orca closing release journal is invalid")
+        return
+
+    if not isinstance(close, Mapping) or set(close) != {
+        "handle",
+        "close_mode",
+        "pty_killed",
+        "pty_stop_verdict",
+    }:
+        raise RuntimeValidationError("Orca terminal close receipt is invalid")
+    if close.get("handle") != identity.get("terminal_handle"):
+        raise RuntimeValidationError("Orca terminal close handle changed")
+    close_mode = close.get("close_mode")
+    if close_mode is not None and (not isinstance(close_mode, str) or not close_mode):
+        raise RuntimeValidationError("Orca terminal close mode is invalid")
+    if close.get("pty_killed") is not True:
+        raise RuntimeValidationError("Orca terminal close did not kill the PTY")
+    pty_stop_verdict = close.get("pty_stop_verdict")
+    if pty_stop_verdict is not None and (
+        not isinstance(pty_stop_verdict, str)
+        or pty_stop_verdict in {"live", "unverifiable"}
+    ):
+        raise RuntimeValidationError("Orca terminal stop verdict is invalid")
+    if phase == "closed":
+        if pending_stage != "read" or not roles:
+            raise RuntimeValidationError("Orca closed release journal is invalid")
+        return
+    if (
+        pending_stage != "released"
+        or roles
+        or result.get("cleanup_confirmed") is not True
+    ):
+        raise RuntimeValidationError("Orca released release journal is invalid")
+
+
+def _validate_orca_delivery(
+    state: Mapping[str, object],
+    result: Mapping[str, object] | None,
+    roles: Mapping[str, object],
+) -> None:
+    """Validate the serial Orca Delivery state around an optional result."""
+
+    pending_id = state.get("pending_delivery_id")
+    pending_fields = (
+        "pending_delivery_kind",
+        "pending_delivery_stage",
+        "pending_question_ids",
+        "replied_question_ids",
+    )
+    if pending_id is None:
+        if any(field in state for field in pending_fields):
+            raise RuntimeValidationError("Orca pending Delivery is incomplete")
+        if isinstance(result, Mapping) and "delivery_id" in result:
+            raise RuntimeValidationError(
+                "Orca result delivery requires an observed pending Delivery"
+            )
+        return
+
+    if not isinstance(pending_id, str) or not pending_id:
+        raise RuntimeValidationError("Orca pending Delivery identity is invalid")
+    kind = state.get("pending_delivery_kind")
+    stage = state.get("pending_delivery_stage")
+    if kind not in {"worker_done", "question", "escalation"}:
+        raise RuntimeValidationError("Orca pending Delivery kind is invalid")
+    if stage not in {"invalid", "observed", "read", "released"}:
+        raise RuntimeValidationError("Orca pending Delivery stage is invalid")
+
+    question_ids = state.get("pending_question_ids")
+    replied_ids = state.get("replied_question_ids")
+    if (
+        not isinstance(question_ids, list)
+        or not isinstance(replied_ids, list)
+        or any(not isinstance(item, str) or not item for item in question_ids)
+        or any(not isinstance(item, str) or not item for item in replied_ids)
+        or len(question_ids) != len(set(question_ids))
+        or len(replied_ids) != len(set(replied_ids))
+    ):
+        raise RuntimeValidationError("Orca pending Delivery question IDs are invalid")
+
+    def failed_terminal_result_allowed() -> bool:
+        if result is None or result.get("outcome") != "failed":
+            return False
+        if "delivery_id" in result:
+            return False
+        role = result.get("role")
+        assignment = roles.get(role) if isinstance(role, str) else None
+        if not isinstance(assignment, Mapping):
+            return False
+        question = assignment.get("orca_question")
+        question_failed = isinstance(question, Mapping) and question.get("phase") in {
+            "failed",
+            "cancelling",
+        }
+        return question_failed or state.get("orca_stop_requested") is True
+
+    if stage == "invalid":
+        if result is not None:
+            if "delivery_id" in result:
+                raise RuntimeValidationError(
+                    "invalid Orca Delivery cannot contain delivery_id"
+                )
+            if (
+                kind in {"question", "escalation"}
+                and not failed_terminal_result_allowed()
+            ):
+                raise RuntimeValidationError(
+                    "successful Orca result cannot coexist with unresolved Delivery"
+                )
+        if kind == "question" and not set(replied_ids).issubset(question_ids):
+            raise RuntimeValidationError("Orca invalid question IDs are inconsistent")
+        return
+
+    if kind == "question":
+        if stage != "observed" or (
+            result is not None and not failed_terminal_result_allowed()
+        ):
+            raise RuntimeValidationError(
+                "Orca question Delivery has an unexpected result or stage"
+            )
+        if not set(replied_ids).issubset(question_ids):
+            raise RuntimeValidationError("Orca question reply identity is invalid")
+        return
+
+    if question_ids or replied_ids:
+        raise RuntimeValidationError("Orca non-question Delivery has question IDs")
+    if kind == "escalation":
+        if result is not None and not failed_terminal_result_allowed():
+            raise RuntimeValidationError("Orca escalation cannot contain a result")
+        return
+
+    # A malformed worker_done Delivery may be retained at the invalid stage,
+    # but any trusted result must bind to an actually observed Delivery.
+    if result is None:
+        if stage == "invalid":
+            return
+        raise RuntimeValidationError("Orca worker_done Delivery has no result")
+    delivery_id = result.get("delivery_id")
+    if stage in {"observed", "read", "released"} and delivery_id != pending_id:
+        raise RuntimeValidationError("observed Orca result lacks delivery identity")
+    if stage == "invalid" and delivery_id is not None:
+        raise RuntimeValidationError("Orca result does not match its pending Delivery")
+    role = result.get("role")
+    assignment = roles.get(role) if isinstance(role, str) else None
+    if stage in {"observed", "read"} and (
+        not isinstance(assignment, Mapping)
+        or assignment.get("completion_observed") is not True
+    ):
+        raise RuntimeValidationError(
+            "Orca observed completion has no active assignment"
+        )
+    if stage == "released" and (roles or result.get("cleanup_confirmed") is not True):
+        raise RuntimeValidationError("Orca released result lacks cleanup evidence")
+
+
 def _validate_parallel_delivery_container(
     assignment: Mapping[str, object],
     *,
@@ -1271,12 +1722,42 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
             "agent-team state has an unsupported named version"
         )
     runtime = state.get("runtime")
-    if not is_native_runtime(runtime):
+    orca = runtime == "orca"
+    if orca and version != NAMED_STATE_VERSION:
+        raise RuntimeValidationError(
+            "Orca named state requires version-4 serial coordination"
+        )
+    if not orca and not is_native_runtime(runtime):
         raise RuntimeValidationError("named state requires a native runtime")
-    if "worktree_id" in state or "orca_socket" in state:
+    if orca:
+        if not isinstance(state.get("tasks"), dict):
+            raise RuntimeValidationError("Orca named state is missing tasks")
+        if (
+            "orca_stop_requested" in state
+            and state.get("orca_stop_requested") is not True
+        ):
+            raise RuntimeValidationError("orca_stop_requested must be true")
+        if any(
+            field in state
+            for field in (
+                "native",
+                "native_result",
+                "native_question",
+                "coordinator_terminal",
+                "coordinator_argv",
+                "coordinator_process",
+                "coordinator_pid",
+                "main_argv",
+                "main_process",
+                "agent_pid",
+                "pending_delivery",
+            )
+        ):
+            raise RuntimeValidationError("Orca named state contains native metadata")
+    elif "worktree_id" in state or "orca_socket" in state:
         raise RuntimeValidationError("native state must not contain Orca metadata")
 
-    required = (
+    required: tuple[str, ...] = (
         "version",
         "runtime",
         "team_id",
@@ -1289,6 +1770,8 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
         "role_specs",
         "roles",
     )
+    if orca:
+        required = (*required, "main_terminal", "worktree_id", "orca_socket")
     for key in required:
         value = state.get(key)
         if key in {"graph", "role_specs", "roles"}:
@@ -1299,6 +1782,9 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
     if _canonical(Path(str(state["state_path"]))) != _canonical(path):
         raise RuntimeValidationError("agent-team state path does not match its file")
 
+    if orca and not isinstance(state.get("task_specs"), list):
+        raise RuntimeValidationError("Orca named state is missing task_specs")
+
     graph = _parse_named_graph(state)
     if version == NAMED_STATE_VERSION and graph.coordination.dispatch_mode != "serial":
         raise RuntimeValidationError("version-4 named state requires serial dispatch")
@@ -1307,6 +1793,8 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
         and graph.coordination.dispatch_mode != "parallel"
     ):
         raise RuntimeValidationError("version-5 state requires parallel coordination")
+    if orca and graph.coordination.mode != "agent":
+        raise RuntimeValidationError("Orca named state requires agent coordination")
     node_by_id = {node.node_id: node for node in graph.nodes}
     role_specs = state["role_specs"]
     assert isinstance(role_specs, dict)
@@ -1322,16 +1810,21 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
             )
         _validate_named_role_spec(node_id, node.kind.value, spec)
 
-    try:
-        keys = controller_keys(state)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeValidationError(
-            f"agent-team native controller identity is invalid: {exc}"
-        ) from exc
-    _validate_native_controller_state(state, keys)
+    if not orca:
+        try:
+            keys = controller_keys(state)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeValidationError(
+                f"agent-team native controller identity is invalid: {exc}"
+            ) from exc
+        _validate_native_controller_state(state, keys)
 
     roles = state["roles"]
     assert isinstance(roles, dict)
+    if orca and len(roles) > 1:
+        raise RuntimeValidationError(
+            "Orca version-4 state allows at most one active role"
+        )
     for node_id, assignment in roles.items():
         assignment_node = node_by_id.get(node_id)
         if assignment_node is None or not isinstance(assignment, dict):
@@ -1343,11 +1836,31 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
             raise RuntimeValidationError(
                 f"agent-team state role assignment identity does not match {node_id}"
             )
+        if orca and assignment_node.kind.value not in ACP_ROLES:
+            raise RuntimeValidationError("Orca state cannot assign its Main node")
+        if orca and any(
+            field in assignment
+            for field in (
+                "runner_pid",
+                "runner_process_group_id",
+                "runner_argv",
+                "runner_startup_argv",
+                "launcher_owned_runner",
+                "native_result",
+                "native_question",
+                "question_receipts",
+            )
+        ):
+            raise RuntimeValidationError(
+                "Orca state contains native assignment metadata"
+            )
         _validate_assignment_common(
             state,
             node_id,
             assignment,
-            ownership_key="launcher_owned_runner",
+            ownership_key="launcher_owned_terminal"
+            if orca
+            else "launcher_owned_runner",
         )
         assignment_spec = role_specs[node_id]
         assert isinstance(assignment_spec, Mapping)
@@ -1403,6 +1916,35 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
                         "parallel native delivery identity was reused"
                     )
                 delivery_ids.add(delivery_id)
+    elif orca:
+        orca_result = state.get("orca_result")
+        if "orca_result" in state:
+            _validate_orca_result(
+                state,
+                orca_result,
+                node_by_id,
+                role_specs,
+                roles,
+            )
+        for assignment in roles.values():
+            if isinstance(assignment, Mapping) and "orca_question" in assignment:
+                from .orca_questions import validate_outbox
+
+                try:
+                    validate_outbox(state, assignment)
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeValidationError(str(exc)) from exc
+        _validate_orca_delivery(
+            state,
+            orca_result if isinstance(orca_result, Mapping) else None,
+            roles,
+        )
+        _validate_orca_release(
+            state,
+            orca_result if isinstance(orca_result, Mapping) else None,
+            roles,
+        )
+        _validate_orca_effect(state)
     else:
         native_result = state.get("native_result")
         pending_id = state.get("pending_delivery_id")
@@ -1426,12 +1968,13 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
                 roles,
             )
 
-    from .native_questions import validate_state as validate_questions
+    if not orca:
+        from .native_questions import validate_state as validate_questions
 
-    try:
-        validate_questions(state)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeValidationError(str(exc)) from exc
+        try:
+            validate_questions(state)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeValidationError(str(exc)) from exc
     return state
 
 

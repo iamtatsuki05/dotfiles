@@ -1032,6 +1032,15 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 elif args[:2] == ["terminal", "create"]:
                     title = args[args.index("--title") + 1]
                     print(json.dumps({{"ok": True, "result": {{"terminal": {{"handle": "term_main", "worktreeId": "repo::/project", "title": title}}}}}}))
+                elif args[:2] == ["terminal", "send"]:
+                    terminal = args[args.index("--terminal") + 1]
+                    text = args[args.index("--text") + 1]
+                    paths = list(Path(os.environ["XDG_STATE_HOME"]).glob("agent-team/*/state.json"))
+                    assert len(paths) == 1, paths
+                    state = json.loads(paths[0].read_text())
+                    assert state["main_terminal"] == terminal
+                    assert state["pending_role_start"]["phase"] == "main_send_started"
+                    print(json.dumps({{"ok": True, "result": {{"send": {{"handle": terminal, "accepted": True, "bytesWritten": len((text + "\\r").encode("utf-8"))}}}}}}))
                 elif args[:2] == ["terminal", "wait"]:
                     terminal = args[args.index("--terminal") + 1]
                     condition = args[args.index("--for") + 1]
@@ -1320,15 +1329,19 @@ class AgentTeamStartTest(AgentTeamTestCase):
                 ["worktree", "show"],
                 ["terminal", "create"],
                 ["terminal", "show"],
-                ["terminal", "wait"],
                 ["orchestration", "run-create"],
                 ["orchestration", "run-show"],
+                ["terminal", "send"],
+                ["terminal", "wait"],
                 ["terminal", "switch"],
             ],
         )
         create = next(row for row in log if row[:2] == ["terminal", "create"])
-        command = create[create.index("--command") + 1]
-        self.assertTrue(shlex.split(command)[0] == "claude")
+        self.assertNotIn("--command", create)
+        send = next(row for row in log if row[:2] == ["terminal", "send"])
+        command = send[send.index("--text") + 1]
+        self.assertEqual(shlex.split(command)[:2], ["/usr/bin/env", "-i"])
+        self.assertIn(str((fake_bin / "claude").resolve()), shlex.split(command))
         self.assertNotIn("_role-run", shlex.split(command))
         self.assertNotIn("--config", shlex.split(command))
         self.assertIn("日本語のmain指示。", command)

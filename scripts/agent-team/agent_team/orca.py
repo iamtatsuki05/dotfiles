@@ -57,6 +57,8 @@ def _operation_name(operation: tuple[str, ...]) -> str:
         return "worktree show"
     if operation[:2] == ("terminal", "create"):
         return "terminal create"
+    if operation[:2] == ("terminal", "send"):
+        return "terminal send"
     if operation[:2] == ("terminal", "wait"):
         return "terminal wait"
     if operation[:2] == ("terminal", "switch"):
@@ -234,6 +236,13 @@ class TerminalSwitchVerdict:
     navigated: bool
 
 
+@dataclass(frozen=True, slots=True)
+class TerminalSendVerdict:
+    handle: str
+    accepted: bool
+    bytes_written: int
+
+
 class OrcaClient:
     """Run the small, fixed Orca command set required by CLI lifecycle."""
 
@@ -321,22 +330,62 @@ class OrcaClient:
         *,
         worktree_id: str,
         title: str,
-        command: str,
+        command: str | None,
         cwd: Path,
     ) -> dict[str, object]:
+        operation: tuple[str, ...] = (
+            "terminal",
+            "create",
+            "--worktree",
+            f"id:{worktree_id}",
+            "--title",
+            title,
+        )
+        if command is not None:
+            operation += ("--command", command)
+        operation += ("--json",)
         return self._call(
+            operation,
+            cwd=cwd,
+        )
+
+    def terminal_send(
+        self, *, terminal_id: str, text: str, cwd: Path
+    ) -> TerminalSendVerdict:
+        if not isinstance(text, str) or not text:
+            raise OrcaProtocolError("Orca terminal send text was invalid")
+        result = self._call(
             (
                 "terminal",
-                "create",
-                "--worktree",
-                f"id:{worktree_id}",
-                "--title",
-                title,
-                "--command",
-                command,
+                "send",
+                "--terminal",
+                terminal_id,
+                "--text",
+                text,
+                "--enter",
                 "--json",
             ),
             cwd=cwd,
+        )
+        send = result.get("send")
+        if not isinstance(send, dict):
+            raise OrcaProtocolError("Orca terminal send response was invalid")
+        handle = _required_string(send, ("handle",), "orca terminal send")
+        accepted = _required_bool(send, ("accepted",), "orca terminal send")
+        bytes_written = send.get("bytesWritten")
+        if (
+            not isinstance(bytes_written, int)
+            or isinstance(bytes_written, bool)
+            or bytes_written != len((text + "\r").encode("utf-8"))
+            or not accepted
+        ):
+            raise OrcaProtocolError("Orca terminal send response was invalid")
+        if handle != terminal_id:
+            raise OrcaProtocolError("Orca terminal send response was invalid")
+        return TerminalSendVerdict(
+            handle=handle,
+            accepted=accepted,
+            bytes_written=bytes_written,
         )
 
     def terminal_wait(self, *, terminal_id: str, cwd: Path) -> None:
