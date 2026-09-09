@@ -22,6 +22,16 @@ Named Orca
 parallel execution remains outside the supported target. Existing bounded
 terminal/fake-provider and real-model records remain historical, scoped
 evidence as described in Architecture.
+
+Version-5 named Orca `agent`/`serial` teams can use direct Claude Main and
+scoped Claude ACP background roles. Planner/Reviewer stay read-only; Worker dispatch requires a
+declared TaskSpec; review and fixed-argv verification use the same task rules
+as native teams. Contract tests pass. In the latest live attempt, Main started
+and accepted the prompt before a usage limit; no TaskDispatch was observed.
+See [Architecture](docs/architecture.md) for validation and live evidence.
+Codex ACP remains disabled in public configuration.
+See [Version-5 configuration](docs/configuration-v5.md).
+
 Native Claude ACP assignments also have a bounded `AskUserQuestion` path over
 the existing ACP form elicitation, using the same Task/Dispatch and a private
 question socket. The contract and current evidence are documented in
@@ -97,8 +107,8 @@ acceptance selected Claude Fable explicitly for all five nodes. The native
 parallel path has focused contract coverage and bounded terminal/fake-provider
 acceptance, but this real run was native agent/serial acceptance. Real-model
 parallel acceptance remains pending. The bounded Main-parallel live acceptance
-is recorded in [Architecture](docs/architecture.md). Named Orca execution
-remains unavailable at runtime. Named-native Reviewer consultation answers are available through a
+is recorded in [Architecture](docs/architecture.md). Named Orca supports only
+`agent`/`serial`; its real-model workflow remains unverified. Named Reviewer consultation answers are available through a
 bounded opaque ID. Resuming requires the original writer and another review
 within the round limit; reaching the limit keeps the task unresolved even after
 an answer is saved.
@@ -276,7 +286,7 @@ Before starting a team:
    `status --json` command reports a ready runtime and graph. For `runtime =
    "tmux"`, `"herdr"`, or `"zellij"`, confirm that the selected terminal is available; Orca is not required.
 3. Log in to the selected providers with the accounts you intend to use. The
-   bundled Orca roles require both Claude and Codex; native runtimes require Claude.
+   bundled Orca roles require both Claude and Codex; native and named Orca teams require Claude.
 4. For `runtime = "orca"`, register the target repository with Orca once.
 
 Native runtimes currently use the standard Claude login under the normal home
@@ -308,7 +318,7 @@ herdr --version
 zellij --version
 ```
 
-An Orca config that selects an ACP role requires Node.js 22.13 or later and the
+A fixed version-3 Orca config with an ACP role requires Node.js 22.13 or later and the
 installed commands from `acpx@0.13.2` and
 `@agentclientprotocol/claude-agent-acp@0.70.0`. Install the selected tools
 explicitly, for example into a directory you choose:
@@ -370,10 +380,11 @@ agent-team start --no-attach
 
 Ask Main for the development task. In the bundled Orca configuration, Main
 decides whether to run Planner first, then dispatches Worker and Reviewer
-through the `agent_team` MCP server. In a native runtime, Main can request only
-the configured Claude ACP Planner, Worker, and Reviewer roles. A native Worker
-must be dispatched with a complete TaskSpec that exactly matches a `[[tasks]]`
-entry in the selected native config. Main is the only role that talks to the user.
+through the `agent_team` MCP server. In native and version-5 named Orca teams,
+Main dispatches only the configured scoped ACP roles. A Worker requires a
+complete TaskSpec matching the selected catalog: top-level `[[tasks]]` in
+version 3, or the selected team's tasks in version 5. Main is the only role
+that talks to the user.
 
 For named teams, use the bundled catalog or the synced `teams.toml`:
 
@@ -456,7 +467,8 @@ declared entry. A new task ID, path, dependency, or verification argv cannot
 be invented at dispatch time. Startup rejects duplicate IDs, undeclared
 dependencies, and dependency cycles before state or provider effects. If a
 native config has no `[[tasks]]`, read-only `role_prompt` remains available but
-structured task dispatch is rejected; Orca rejects the `tasks` field.
+structured task dispatch is rejected. Fixed version-3 Orca rejects that
+top-level field; version-5 named Orca uses the selected team's catalog.
 
 For native `agent`/`parallel`, `role_prompt` is explicitly unsupported, including
 for read-only work. Use a declared plan-only TaskSpec when parallel research is
@@ -551,7 +563,10 @@ cleanup result requires user consultation and remains retained.
 - Unsupported runtime, provider, transport, permission, config version, or state
   format fails before launch. The launcher never silently switches backends or
   transports.
-- Orca keeps its fixed four-role contract. Version-3 native runtimes require
+- Bundled version-3 Orca keeps its fixed four-role contract. Version-5 named
+  Orca accepts `agent`/`serial`, direct Claude Main, and scoped Claude ACP
+  background roles with the declared TaskSpec rules. Orca program and parallel
+  modes fail before dependency probes or resource creation. Version-3 native runtimes require
   Main and allow optional verified Claude ACP Planner/Reviewer roles plus a
   scoped Claude ACP Worker. Version-5 native `agent`/`serial` and
   `agent`/`parallel` teams keep Main; version-5 `program`/`serial` and
@@ -634,7 +649,7 @@ The tracked limitation is [#11](https://github.com/iamtatsuki05/dotfiles/issues/
 | `native Worker requires task_dispatch with a TaskSpec` | Use a complete TaskSpec that exactly matches a `[[tasks]]` entry in the selected native config. |
 | `native role is not a Claude ACP role` | The selected native runtime accepts only configured Claude ACP Planner/Worker/Reviewer roles. |
 | Authentication is required | Run `claude auth status` or `codex login status` outside agent-team. |
-| ACP dependency check fails | Orca uses acpx; native uses Claude ACP 0.70.0, its `dist/lib.js`, and SDK 1.3.0. Include the selected `node_modules/.bin` directory and Node >=22.0.0 in `PATH`. |
+| ACP dependency check fails | Fixed version-3 Orca uses acpx. Native and named Orca use the scoped Claude binding described in [ACP](docs/acp.md). Check the missing or changed selected file before retrying. |
 | Native terminal driver reports `unknown` | Preserve state and inspect the selected driver receipt. Do not treat pane/session absence as cleanup proof. |
 | Existing native state lacks `supervisor_argv` | Stop it with the matching executable/version before upgrading; state is not reconstructed or migrated. |
 | `approved workspace revision changed` | Re-dispatch Worker, review the new revision, and do not bypass the gate. |

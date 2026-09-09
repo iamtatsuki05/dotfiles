@@ -8,7 +8,7 @@ OS sandboxではなく、providerのsubscriptionをAPI keyの契約へ変える�
 
 ## agent-teamが実行するもの
 
-Orcaで検証済みのACP profileは、Claudeを使うread-onlyのPlannerまたはReviewerです。
+固定version 3のOrcaで検証済みのACP profileは、Claudeを使うread-onlyのPlannerまたはReviewerです。
 
 - Node.js `22.13.0`以降
 - `acpx@0.13.2`
@@ -30,7 +30,7 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-Orcaの起動planにACP roleが含まれる場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、
+固定version 3のOrcaにACP roleが含まれる場合だけ、起動時に`node`、`acpx`、`claude-agent-acp`を解決し、
 package manifestのexact versionを確認します。解決した3つのabsolute pathとSHA-256 fingerprintを
 roleのlaunch snapshotへ保存します。role起動経路はOrca Taskを作る前に保存bindingを再検証し、
 runnerもACP実行の前に再検証して、各session operationで同じfileを使います。実行ファイルが不足、
@@ -46,6 +46,12 @@ read-only Reviewerには、隔離した`CODEX_HOME`とprovider native permission
 Codexを使います。
 
 ## native runtimeのClaude ACP
+
+Version 5の名前付きOrcaも、この節で説明するscoped Claude ACPを使います。
+Codexの内部実装も接続していますが、公開設定では無効です。
+assignmentごとに所有するOrca terminalで実行し、OrcaのTask・Dispatch・Deliveryを維持します。
+固定version 3の`acpx` clientは使いません。受け付けるgraphは`agent`/`serial`です。
+接続の契約テストはありますが、Orca実モデル全工程の受入は未達です。
 
 native tmux、Herdr、Zellijでは専用clientが、assignmentごとに公開ACPの接続を1本使います。
 必要な依存はNode.js、`@agentclientprotocol/claude-agent-acp@0.70.0`、そのadapterに
@@ -129,7 +135,7 @@ reservation内ではstopをprovider successより優先し、Reviewer evidence�
 
 ## 範囲を制限したCodex ACPの実装：公開設定では未有効
 
-native backendには、変更範囲を制限したCodexの実装を追加しています。
+nativeと名前付きOrcaの内部経路には、変更範囲を制限したCodexの実装を追加しています。
 ただし、registryは引き続きCodex ACPの設定を拒否します。実行可能な対応済み構成ではありません。
 有効化には、実際の認証を使うモデル実行と、その権限・終了処理の検証が必要です。
 

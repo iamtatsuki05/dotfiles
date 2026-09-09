@@ -9,7 +9,10 @@ Mainが正確なTaskSpec IDのbatchを明示してからdispatchします。`pro
 program構成にはMain roleを置きません。選択したnative terminal上で既存の`native_main` supervisorが、
 固定argvの`_program-run` coordinatorを監督します。専用のMain role spec、model、CLIは作りません。
 native `agent`/`parallel`は`agent_batch`を、program構成は`program_wave`を使い、schedulerは追加しません。
-名前付きOrca構成は現在の証拠範囲外です。今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。
+名前付きOrcaは`agent`/`serial`を受け付けます。Mainはdirect Claude・permission `orchestrator`、
+Planner、Worker、Reviewerはscoped Claude ACPを使い、Workerには宣言済みTaskSpecが必要です。
+Orcaのprogram・parallel構成は依存確認や資源作成の前に拒否し、名前付き構成の実モデル全工程の受入は未達です。Codex ACPの公開設定も拒否します。
+今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。
 既存のfocused contract testとboundedな端末・fake providerの記録は、それぞれの過去runに限定した証拠です。実モデルのparallel受入も未実施です。
 
 同梱のversion 3設定は、Main/PlannerにClaude `fable`、Worker/Reviewerにdirect Codex
@@ -56,6 +59,8 @@ routeには`task_id`と、次の少なくとも一組を指定します。
 同梱の[prompts directory](../agent_team/defaults/prompts)をコピーしても使えます。実行前にはworkspaceに対象のsourceと検証ファイルを用意し、
 `/workspace/example`をその絶対pathに置き換えます。検証では宣言したargvをそのまま実行します。
 選択するnative runtimeとACPの依存関係は、[設定リファレンス](configuration_JA.md#実験的なnative-terminal-runtimeを明示的に選ぶ)に記載しています。
+Orcaではアプリを起動してworkspaceを登録し、[scoped Claude ACPの依存関係](acp_JA.md#native-runtimeのclaude-acp)を用意してください。
+この名前付き構成には、固定version 3のacpx設定を使いません。
 
 ```toml
 version = 5
@@ -302,7 +307,7 @@ agent-team start --config /path/to/config-v5.toml \
 `graph`とversion 5の`start`には`--team`が必須で、別名や大文字・小文字の変換をせず完全一致で選びます。
 graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serial、agent/parallel、program/serial、
 program/parallel構成は、起動条件を満たした後で`--dry-run`を外すと起動します。
-名前付きOrca構成は、依存関係やprofile確認、資源作成より前に拒否します。native `agent`/`parallel`でTaskSpec catalogが空なら、
+serialの例では`runtime = "orca"`も選択できます。Orcaのprogram・parallel構成は拒否します。native `agent`/`parallel`でTaskSpec catalogが空なら、
 依存関係やprofile確認より前に拒否します。
 検査コマンドはproviderを起動しません。
 

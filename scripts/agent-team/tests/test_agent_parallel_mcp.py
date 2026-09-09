@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_team import mcp_protocol, native_mcp
+from agent_team import mcp_protocol, runtime_mcp
 from agent_team.contracts import TaskBatchOpen, TaskBatchReceipt
 from agent_team.mcp_protocol import ToolInputError
 from agent_team.runtime import MAX_PROMPT_CHARS
@@ -39,8 +39,8 @@ def _saved_state(
 class AgentParallelMcpTest(unittest.TestCase):
     def make_session(
         self, backend: _RecordingBackend, state: dict[str, object]
-    ) -> native_mcp.NativeMcpSession:
-        session = native_mcp.NativeMcpSession.__new__(native_mcp.NativeMcpSession)
+    ) -> runtime_mcp.RuntimeMcpSession:
+        session = runtime_mcp.RuntimeMcpSession.__new__(runtime_mcp.RuntimeMcpSession)
         session.path = Path("/tmp/agent-team-mcp-state.json")
         session.run_id = state["run_id"]
         session.runtime = state["runtime"]
@@ -83,7 +83,7 @@ class AgentParallelMcpTest(unittest.TestCase):
         backend = _RecordingBackend()
         session = self.make_session(backend, state)
 
-        with mock.patch.object(native_mcp, "read_state", return_value=state):
+        with mock.patch.object(runtime_mcp, "read_state", return_value=state):
             result = session.execute(
                 "task_batch_open", {"task_ids": ["task-a", "task-b"]}
             )
@@ -118,7 +118,7 @@ class AgentParallelMcpTest(unittest.TestCase):
                 backend = _RecordingBackend()
                 session = self.make_session(backend, state)
                 with (
-                    mock.patch.object(native_mcp, "read_state", return_value=state),
+                    mock.patch.object(runtime_mcp, "read_state", return_value=state),
                     self.assertRaises(ToolInputError),
                 ):
                     session.execute("task_batch_open", arguments)
@@ -139,7 +139,7 @@ class AgentParallelMcpTest(unittest.TestCase):
                 backend = _RecordingBackend()
                 session = self.make_session(backend, state)
                 with (
-                    mock.patch.object(native_mcp, "read_state", return_value=state),
+                    mock.patch.object(runtime_mcp, "read_state", return_value=state),
                     self.assertRaisesRegex(ToolInputError, "agent/parallel"),
                 ):
                     session.execute("task_batch_open", {"task_ids": ["task-a"]})

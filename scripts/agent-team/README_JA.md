@@ -21,6 +21,13 @@ native Claude ACP assignmentには、既存ACPのform elicitationとprivate ques
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。
 
+Version 5の名前付きOrca構成では、`agent`/`serial`を選択できます。Mainはdirect Claude、
+Planner/ReviewerはClaude ACPの読み取り専用、WorkerはTaskSpecで許可した範囲だけを書き込むClaude ACPを使います。
+Workerには宣言済みTaskSpecが必要で、レビューと固定argv検証にはnativeと共通の規則を適用します。
+契約テストは成功していますが、直近の実機試験は利用上限によりMain起動とprompt受付までで、TaskDispatchには到達していません。
+正式検証と実機の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載します。Codex ACPは公開設定では無効です。
+設定方法は[Version 5の設定](docs/configuration-v5_JA.md)を参照してください。
+
 初めて使う場合は、「managed commandを導入する」「起動前の条件を満たす」
 「teamを起動する」を読んでください。実装や設定を変える場合は、詳細ドキュメントも
 参照してください。
@@ -73,8 +80,8 @@ program parallelは`program_wave` coordinatorを使う別のstate identityです
 2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
 既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。この実モデルrunはnativeのagent/serial受入です。
 native parallelにはfocused contract testとboundedな端末coverageがありますが、実モデルのparallel受入は未実施です。
-今回のMain parallel live受入は[アーキテクチャ](docs/architecture_JA.md)に記載します。名前付きOrca構成は実行時に利用できません。
-名前付きnativeのReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
+今回のMain parallel live受入は[アーキテクチャ](docs/architecture_JA.md)に記載します。名前付きOrcaは`agent`/`serial`だけを受け付け、実モデルの全工程は未確認です。
+名前付き構成のReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
 回数上限に達している場合は、回答を保存してもtaskは未解決のままです。
 
 ## checkoutから実行する、またはprojectをinstallする
@@ -221,7 +228,7 @@ ACPセッションを再開し、Reviewer承認と同一リビジョンの固定
    terminalが利用できることを確認し、
    Orcaは必要ありません。
 3. 選択したproviderを使うaccountへloginしている。bundled Orca roleではClaudeとCodexの両方、
-   native runtimeではClaudeが必要です。
+   nativeと名前付きOrcaではClaudeが必要です。
 4. `runtime = "orca"`では対象repositoryをOrcaへ一度登録している。
 
 現在のnative runtimeは、通常のホームディレクトリにある標準のClaudeログインを使います。
@@ -252,7 +259,7 @@ herdr --version
 zellij --version
 ```
 
-OrcaのACP roleを選択するconfigにはNode.js 22.13以降と、`acpx@0.13.2`、
+固定version 3のOrcaでACP roleを選択する場合、Node.js 22.13以降と、`acpx@0.13.2`、
 `@agentclientprotocol/claude-agent-acp@0.70.0`のcommandが必要です。利用するtoolは、
 例えば次のように指定したdirectoryへ事前に導入してください。
 
@@ -305,9 +312,9 @@ agent-team start --no-attach
 ```
 
 Mainへ開発作業を依頼してください。bundled Orca configでは、MainがPlannerの要否を判断し、
-`agent_team` MCP serverを通じてWorkerとReviewerを起動します。native runtimeでは、configに
-含まれるClaude ACPのPlanner、Worker、Reviewerだけを依頼できます。native Workerは選択した
-configの`[[tasks]]`に完全一致するTaskSpec付き`task_dispatch`で起動します。
+`agent_team` MCP serverを通じてWorkerとReviewerを起動します。nativeとversion 5の名前付きOrcaでは、
+設定したscoped ACPの役割だけを起動します。Workerの`task_dispatch`には、選択したcatalogと
+完全一致するTaskSpecが必要です。catalogはversion 3ではtop-levelの`[[tasks]]`、version 5では選択したteamに定義します。
 ユーザーと対話するroleはMainだけです。
 
 team名で選ぶ場合は、同梱の一覧、またはsync後の`teams.toml`を指定します。
@@ -388,8 +395,8 @@ timeout_seconds = 30
 Mainが呼べる`task_dispatch`は、宣言済みentryと完全一致するTaskSpecだけです。dispatch時に
 新しいtask ID、path、dependency、verification argvを発明できません。起動前にIDの重複、
 未宣言dependency、dependency cycleを拒否します。native configに`[[tasks]]`がなければ、
-read-onlyの`role_prompt`は使えますが、structured task dispatchは拒否します。Orcaは`tasks`
-fieldを拒否します。
+read-onlyの`role_prompt`は使えますが、structured task dispatchは拒否します。固定version 3のOrcaは
+top-levelの`tasks`を拒否し、version 5の名前付きOrcaは選択したteamのcatalogを使います。
 
 native `agent`/`parallel`では、読み取り専用の調査を含めて`role_prompt`を明示的に拒否します。
 parallelで調査する場合は、宣言済みのplan-only TaskSpecを使います。serialのread-only
@@ -459,7 +466,9 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
 
 - 未対応のruntime、provider、transport、permission、config version、state formatは、起動前に
   拒否します。別backendや別transportへ自動で切り替えません。
-- Orcaは4 role固定です。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
+- 同梱のversion 3 Orcaは4 role固定です。version 5の名前付きOrcaは`agent`/`serial`、direct ClaudeのMain、
+  scoped Claude ACPのbackground roleを受け付け、宣言済みTaskSpecの規則を適用します。
+  Orcaのprogram・parallel構成は、依存確認や資源作成の前に拒否します。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
   Planner/Reviewerと、scoped Claude ACPのworkspace-write Workerを任意に追加できます。version 5の
   native `agent`/`serial`と`agent`/`parallel`はMainを使い、`program`/`serial`と`program`/`parallel`は保存済みcoordinatorを使います。
   native Workerの`task_dispatch`にはconfigの`[[tasks]]` entryとの一致が必要で、その他の未対応profileは起動処理の効果が発生する前に拒否します。
@@ -523,7 +532,7 @@ Orca 1.4.190では、非表示の検出済みworktreeに作ったterminalの終�
 | `native Worker requires task_dispatch with a TaskSpec` | 選択したnative configの`[[tasks]]` entryと完全一致するTaskSpecで`task_dispatch`を呼ぶ。 |
 | `native role is not a Claude ACP role` | 選択したnative runtimeでは、configにあるClaude ACPのPlanner/Worker/Reviewerだけを使う。 |
 | authenticationを求められる | agent-team外で`claude auth status`か`codex login status`を確認する。 |
-| ACPの依存検査に失敗する | Orcaはacpx package、nativeはClaude ACP 0.70.0、`dist/lib.js`、SDK 1.3.0を使う。選んだ`node_modules/.bin`とNode >=22.0.0を`PATH`に含める。 |
+| ACPの依存検査に失敗する | 固定version 3 Orcaはacpxを使う。nativeと名前付きOrcaは[ACP](docs/acp_JA.md)に記載したscoped Claudeの依存を使う。不足・変更された選択対象のfileを確認してから再試行する。 |
 | `approved workspace revision changed` | Workerを再dispatchして新しいrevisionをreviewする。gateを迂回しない。 |
 | `verification cleanup is unconfirmed` | 保存stateとprocess/cleanup evidenceを残す。restartのためにstateを削除しない。 |
 | roleが`escalation`を返す | 保持されたterminalとRunを調べる。完了として扱わない。 |
@@ -541,7 +550,7 @@ prompt本文、無関係なterminal出力は含めません。
 - **Dispatch**: Taskとterminalを結ぶ1回の実行attempt。
 - **Delivery**: Mainが内容を処理し、acknowledgeするmessage batch。
 - **direct**: providerの通常のinteractive CLI。
-- **ACP**: Agent Client Protocol。Orcaは固定したacpx client、nativeは選択したpublic ACP SDK経由で使う。
+- **ACP**: Agent Client Protocol。固定version 3 Orcaはacpx client、nativeと名前付きOrcaは選択した公開ACP SDK経由で使う。
 
 ## 変更を検証する
 

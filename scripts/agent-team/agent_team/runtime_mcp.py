@@ -1,4 +1,4 @@
-"""Map the fixed MCP tools to the native typed runtime."""
+"""Map Main's MCP tools to the selected typed runtime."""
 
 from __future__ import annotations
 
@@ -84,14 +84,16 @@ def _task_batch_ids(arguments: dict[str, object]) -> tuple[str, ...]:
     return tuple(task_ids)
 
 
-class NativeMcpSession:
+class RuntimeMcpSession:
     def __init__(self, path: Path, state: dict[str, object]) -> None:
         from .cli import _management_plan_from_state, _runtime_engine, _start_spec
 
         runtime = state.get("runtime")
-        if not is_native_runtime(runtime):
+        if not is_native_runtime(runtime) and not (
+            runtime == "orca" and state.get("version") == NAMED_STATE_VERSION
+        ):
             raise RuntimeFailure(
-                ErrorCode.IDENTITY_MISMATCH, "native MCP requires a native runtime"
+                ErrorCode.IDENTITY_MISMATCH, "MCP requires a supported typed runtime"
             )
         self.path = path.resolve()
         self.run_id = state["run_id"]
@@ -104,7 +106,7 @@ class NativeMcpSession:
         current = read_state(self.path)
         if current["runtime"] != self.runtime or current["run_id"] != self.run_id:
             raise RuntimeFailure(
-                ErrorCode.IDENTITY_MISMATCH, "native MCP run identity changed"
+                ErrorCode.IDENTITY_MISMATCH, "MCP run identity changed"
             )
         request: RuntimeRequest
         if name == "task_batch_open":
@@ -127,9 +129,15 @@ class NativeMcpSession:
                 raise ToolInputError(
                     "message_reply requires exactly message_id and body"
                 )
+            if self.runtime == "orca":
+                from .native_question_channel import MAX_FRAME_BYTES
+
+                maximum_body = MAX_FRAME_BYTES
+            else:
+                maximum_body = 20_000
             request = MessageReply(
                 MessageRef(bounded_text(arguments, "message_id", maximum=256)),
-                bounded_text(arguments, "body", maximum=20_000),
+                bounded_text(arguments, "body", maximum=maximum_body),
             )
         else:
             if current["version"] in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
@@ -186,7 +194,7 @@ class NativeMcpSession:
         if not isinstance(result, dict):
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
-                "native tool receipt is not an object",
+                "runtime tool receipt is not an object",
             )
         return cast(dict[str, object], result)
 
@@ -207,11 +215,11 @@ def _wire(value: object) -> object:
     if value is None or isinstance(value, (str, int, bool)):
         return value
     raise RuntimeFailure(
-        ErrorCode.BACKEND_PROTOCOL_FAILURE, "unsupported native tool receipt"
+        ErrorCode.BACKEND_PROTOCOL_FAILURE, "unsupported runtime tool receipt"
     )
 
 
-_session: NativeMcpSession | None = None
+_session: RuntimeMcpSession | None = None
 
 
 def execute_tool(
@@ -221,9 +229,7 @@ def execute_tool(
     path = path.resolve()
     state = read_state(path)
     if _session is None:
-        _session = NativeMcpSession(path, state)
+        _session = RuntimeMcpSession(path, state)
     elif _session.path != path or _session.run_id != state["run_id"]:
-        raise RuntimeFailure(
-            ErrorCode.IDENTITY_MISMATCH, "native MCP state identity changed"
-        )
+        raise RuntimeFailure(ErrorCode.IDENTITY_MISMATCH, "MCP state identity changed")
     return _session.execute(name, arguments)

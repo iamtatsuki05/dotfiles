@@ -40,6 +40,7 @@ from agent_team.backend import (
     OrcaProtocolError,
     OrcaTransportError,
     TerminalCloseVerdict,
+    TerminalSendVerdict,
     TerminalSwitchVerdict,
     WorkerStopAlreadySettledVerdict,
     WorkerStopContextOnlyVerdict,
@@ -200,6 +201,17 @@ class FakeOrcaClient:
 
     def terminal_wait(self, *, terminal_id: str, cwd: Path) -> None:
         self.calls.append(("terminal-wait", terminal_id))
+
+    def terminal_send(
+        self, *, terminal_id: str, text: str, cwd: Path
+    ) -> TerminalSendVerdict:
+        del cwd
+        self.calls.append(("terminal-send", terminal_id))
+        return TerminalSendVerdict(
+            handle=terminal_id,
+            accepted=True,
+            bytes_written=len((text + "\r").encode("utf-8")),
+        )
 
     def run_create(self, *, objective: str, terminal_id: str, cwd: Path) -> str:
         self.calls.append(("run-create", terminal_id))
@@ -1357,7 +1369,6 @@ class OrcaBackendSafetyTest(unittest.TestCase):
                 "worktree-show",
                 "terminal-create",
                 "terminal-show",
-                "terminal-wait",
                 "run-create",
                 "terminal-show",
                 "terminal-close",

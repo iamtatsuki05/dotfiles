@@ -351,28 +351,32 @@ class ProgramConsultationCliTest(unittest.TestCase):
                 self.assertFalse(engine.started)
                 self.assertEqual(backend.requests, [])
 
-    def test_consultation_route_rejects_named_orca_before_backend(self) -> None:
+    def test_consultation_route_rejects_fixed_orca_before_backend(self) -> None:
         engine = _ManagementEngine(
             TaskStatusReceipt("task-a", "consultation_required", {})
         )
         backend = _ManagementBackend()
         with (
             mock.patch.object(cli, "_ensure_orca_platform"),
-            mock.patch.object(cli, "_start_spec") as start_spec,
+            mock.patch.object(
+                cli,
+                "_start_spec",
+                return_value=replace(_start_spec(_graph("agent")), graph=None),
+            ) as start_spec,
             mock.patch.object(
                 cli, "_runtime_engine", return_value=(engine, backend)
             ) as runtime,
-            self.assertRaises(RuntimeFailure),
+            self.assertRaisesRegex(RuntimeFailure, "named task graph"),
         ):
             cli.manage_team(
                 "answer",
-                {"runtime": "orca", "graph": _graph("agent")},
+                {"runtime": "orca"},
                 None,
                 consultation_id="consult-1",
                 body="回答",
             )
 
-        start_spec.assert_not_called()
+        start_spec.assert_called_once_with({"runtime": "orca"}, attach=False)
         runtime.assert_not_called()
         self.assertFalse(engine.started)
 

@@ -484,7 +484,7 @@ class ConfigV5CliTest(unittest.TestCase):
         )
         self.assertIsNone(backend.start_spec.graph.main_node)
 
-    def test_orca_named_real_start_reports_unconnected_mode_without_fallback(
+    def test_orca_named_program_start_reports_unconnected_mode_without_fallback(
         self,
     ) -> None:
         self.config_path.write_text(_v5_config_text(runtime="orca"), encoding="utf-8")
@@ -492,7 +492,7 @@ class ConfigV5CliTest(unittest.TestCase):
             mock.patch.object(cli, "_start_prerequisites") as prerequisites,
             mock.patch.object(cli, "_runtime_engine") as runtime,
         ):
-            result, stdout, stderr = self.run_cli("start", "--team", "build")
+            result, stdout, stderr = self.run_cli("start", "--team", "program")
 
         self.assertEqual(result, 1)
         self.assertEqual(stdout, "")

@@ -14,7 +14,7 @@ login, downloads packages, starts a process, or writes a workspace.
 
 | Harness | Direct profiles currently runnable | ACP adapter known | Static registry snapshot (not safety status) | Why not broader |
 |---|---|---|---|---|
-| Claude | Main `orchestrator`; Planner/Reviewer `read-only` | Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`; native tmux/Herdr/Zellij: direct public SDK with `@agentclientprotocol/sdk@1.3.0` | Verified | Bundled Orca ACP remains read-only; all native terminal drivers share the scoped Worker profile bound to declared TaskSpecs. |
+| Claude | Main `orchestrator`; Planner/Reviewer `read-only` | Fixed version-3 Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`; native and named Orca: direct public SDK with `@agentclientprotocol/sdk@1.3.0` | Verified | Bundled Orca ACP remains read-only; all native terminal drivers share the scoped Worker profile bound to declared TaskSpecs. |
 | Codex | Main `orchestrator`; Planner/Reviewer `read-only`; Worker `workspace-write` | `codex-acp` | Direct verified; ACP rejected | ACP permission mediation did not stop internal writes in the negative test. |
 | GitHub Copilot | Planner/Reviewer `read-only` (direct background, exact `1.0.81`) | Native `copilot --acp`; acpx built-in `copilot` | Verified when exact GitHub CLI is resolved | The profile is intentionally limited to read-only Planner/Reviewer; Workers remain rejected. |
 | Cursor | None | Native `cursor-agent acp`; acpx built-in `cursor` | Recognized; direct=`not-run`; acp=`not-run` | A historical auth observation is unverified; current permission phases are `not-run`. |
@@ -24,6 +24,19 @@ login, downloads packages, starts a process, or writes a workspace.
 | OpenCode | None (adapter implemented, not yet registered) | Native `opencode acp`; acpx built-in `opencode` | Recognized; raw=`blocked`; snapshot=`blocked` | Current raw/snapshot authentication is blocked; the historical raw symlink rejection remains separate. |
 | OpenClaw | None | Native `openclaw acp`; acpx built-in `openclaw` | Recognized; direct=`not-run`; Docker=`blocked` | Direct sandbox-off is not a safe profile; Docker image/context/endpoint pins are unavailable. |
 | Grok | None | Native `grok agent stdio`; acpx built-in `grok-build` | Recognized; direct=`blocked`; native stdio=`blocked` | Authentication is not established; direct/native-stdio phases are `not-run`. |
+
+### Named Orca execution status
+
+Version-5 Orca `agent`/`serial` connects scoped Claude ACP
+to named TaskSpec dispatch, review, fixed-argv verification, and
+read → release → ACK. Claude also supports question forms through Main;
+Codex ACP is connected internally but still rejected by configuration parsing;
+its questions also remain disabled. Program and parallel Orca execution are
+rejected before launch. Named Orca has contract-test coverage. As of 2026-09-09,
+the latest live attempt reached Main startup and prompt acceptance but no TaskDispatch;
+no complete named Orca workflow has been verified. See [Architecture](architecture.md)
+for the startup and cleanup evidence. This does not change the static registry
+or the safety findings for unwrapped adapters in the table above.
 
 ### Native Claude question status
 
@@ -137,10 +150,10 @@ parallel coverage are historical and described in [Architecture](architecture.md
 The bounded live Main-parallel acceptance is described in [Architecture](architecture.md);
 real-model parallel acceptance remains pending.
 
-The Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
+The fixed version-3 Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
 Orca resolves only the selected ACP roles' `node`, `acpx`, and
 `claude-agent-acp` files, verifies the exact package manifests, and records
-absolute paths with SHA-256 fingerprints. Native terminal runtimes instead resolve `node`,
+absolute paths with SHA-256 fingerprints. Native and named Orca Claude profiles instead resolve `node`,
 `claude-agent-acp@0.70.0`, its `dist/lib.js` library, and its dependency
 `@agentclientprotocol/sdk@1.3.0`; all four absolute paths and SHA-256
 fingerprints are stored. It does not select acpx. Installed transitive

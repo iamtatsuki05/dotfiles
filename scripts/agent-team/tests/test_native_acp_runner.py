@@ -18,8 +18,8 @@ from unittest import mock
 from agent_team import adapters, cli, native_backend, tmux_backend
 from agent_team.adapters import ExecutionError, ProcessResult
 from agent_team.native_acp_dependencies import NativeAcpExecutables, adapter_snapshot
-from agent_team.native_mcp import NativeMcpSession
 from agent_team.runtime import read_state
+from agent_team.runtime_mcp import RuntimeMcpSession
 from agent_team.scoped_acp import (
     SCOPED_AGENT,
     SCOPED_CLIENT,
@@ -369,7 +369,7 @@ class NativeAcpRunnerTest(unittest.TestCase):
 
     def _question_state(
         self,
-    ) -> tuple[dict[str, object], NativeAcpExecutables, Path, NativeMcpSession]:
+    ) -> tuple[dict[str, object], NativeAcpExecutables, Path, RuntimeMcpSession]:
         state, executables, prompt_path = self._state()
         sdk = Path(os.environ["AGENT_TEAM_SDK_ENTRY"]).resolve(strict=True)
         dummy_sdk = executables.sdk.parent.parent
@@ -407,7 +407,7 @@ class NativeAcpRunnerTest(unittest.TestCase):
         cli.write_state(state_path, state)
         backend = tmux_backend.TmuxBackend(launcher_path=Path(state["launcher_path"]))
         backend._state = state
-        session = NativeMcpSession.__new__(NativeMcpSession)
+        session = RuntimeMcpSession.__new__(RuntimeMcpSession)
         session.path = state_path
         session.run_id = state["run_id"]
         session.runtime = "tmux"

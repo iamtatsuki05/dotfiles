@@ -14,9 +14,10 @@ unsupported combinations fail before any role starts. See
 [Version-4 configuration](configuration-v4.md) for the separate topology
 schema and pure inspection commands.
 For node-local settings, multiple Workers/Reviewers, and explicit TaskSpec
-routes, use [Version-5 configuration](configuration-v5.md). Native
-`agent`/`serial` and `program`/`serial` execution are connected in version 5;
-parallel and named Orca execution remain rejected. The version-3 reference
+routes, use [Version-5 configuration](configuration-v5.md). Native terminals
+accept agent/program and serial/parallel teams. Named Orca accepts only
+`agent`/`serial` with scoped ACP background roles; its live acceptance is pending.
+The version-3 reference
 below retains its fixed Main role and does not express a Mainless program graph.
 
 ## Start from the canonical config
@@ -231,7 +232,7 @@ close; the earlier process-group-based cleanup promotion has the same limitation
 | `max_review_rounds` | Positive integer. Counts the first Reviewer decision and every retry for one stage. |
 | `main` | Required Main role table. |
 | `roles` | `orca` must contain exactly `planner`, `worker`, and `reviewer`; each native runtime may contain optional `planner`, `worker`, and `reviewer`. Main is declared separately and is always required. A native Worker requires a Reviewer. |
-| `tasks` | Native runtimes only: optional `[[tasks]]` TaskSpec catalog with `[[tasks.verification]]` entries. Orca rejects this field. Without it, read-only `role_prompt` remains available but structured `task_dispatch` is rejected. |
+| `tasks` | Native runtimes only: optional `[[tasks]]` TaskSpec catalog with `[[tasks.verification]]` entries. Fixed version-3 Orca rejects this top-level field. Without it, read-only `role_prompt` remains available but structured `task_dispatch` is rejected. |
 
 The runtime team ID combines `team_prefix` with the workspace name and a hash
 of the absolute workspace path. The config path is not part of the ID. Two
@@ -256,7 +257,7 @@ team before changing it.
 Prompt paths must stay inside the config directory and must name existing
 files. Absolute escapes and `..` escapes are rejected.
 
-## The Orca capability matrix is intentionally small
+## The fixed version-3 Orca capability matrix is intentionally small
 
 | Role | Allowed provider / transport | Required permission |
 |---|---|---|
@@ -290,7 +291,7 @@ startup effects.
 
 ## ACP dependencies are explicit and selected-only
 
-An Orca config that selects Claude `acp` requires Node.js `22.13.0` or newer
+A fixed version-3 Orca config that selects Claude `acp` requires Node.js `22.13.0` or newer
 and the exact packages `acpx@0.13.2` and
 `@agentclientprotocol/claude-agent-acp@0.70.0`. Install them explicitly
 outside `agent-team`, for example:
@@ -300,7 +301,7 @@ npm install --prefix /path/to/agent-team-acp acpx@0.13.2 @agentclientprotocol/cl
 export PATH="/path/to/agent-team-acp/node_modules/.bin:$PATH"
 ```
 
-For Orca, startup resolves `node`, `acpx`, and
+For fixed version-3 Orca, startup resolves `node`, `acpx`, and
 `claude-agent-acp`, checks the exact package manifests, and saves absolute file
 paths with SHA-256 fingerprints in the launch snapshot. The runner verifies and
 uses that saved binding. Missing or changed files fail closed. Runtime commands
@@ -405,7 +406,8 @@ must exactly match one declared TaskSpec. Main cannot add a task ID or change
 its path scope, dependencies, evidence requirements, or verification argv at
 dispatch time. If a native config has no `[[tasks]]`, read-only `role_prompt`
 remains available, but structured task dispatch is rejected. The `tasks` field
-is rejected by the Orca config loader.
+is rejected by the fixed version-3 Orca config loader. Version-5 named Orca
+uses the selected team catalog.
 
 The native task lifecycle uses the ten public tools:
 

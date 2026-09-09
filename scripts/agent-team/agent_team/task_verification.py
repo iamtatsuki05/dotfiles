@@ -3,17 +3,36 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import signal
+import threading
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from typing import NoReturn
+from types import FrameType
+from typing import NoReturn, cast
 
 from .adapters import ExecutionError, ProcessRunner
-from .contracts import ErrorCode, RuntimeFailure
+from .contracts import ErrorCode, RuntimeFailure, TaskStatusReceipt
+from .named_graph import GraphSpec
 from .runtime import acp_environment
+from .task_execution import (
+    is_agent_parallel,
+    is_plan_only,
+    parse_review,
+    prepare_agent_batch_verification,
+    program_wave,
+    verification_revision,
+)
 from .task_spec import TaskSpec, VerificationSpec
 from .workspace_revision import WorkspaceRevisionError, snapshot_revision
 
 _MAX_ERROR_CHARS = 512
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+class VerificationCancelled(BaseException):
+    pass
 
 
 def _fail(code: ErrorCode, message: str) -> NoReturn:
@@ -64,6 +83,146 @@ def _result(
         "error": error,
         "cleanup_confirmed": cleanup_confirmed,
     }
+
+
+def _verification_pending(state: Mapping[str, object]) -> bool:
+    tasks = state.get("tasks")
+    return isinstance(tasks, Mapping) and any(
+        isinstance(task, Mapping) and task.get("status") == "verifying"
+        for task in tasks.values()
+    )
+
+
+@contextmanager
+def _verification_signals() -> Iterator[None]:
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeFailure(
+            ErrorCode.INVALID_REQUEST,
+            "verification requires the runtime process main thread",
+        )
+
+    def cancel(_signal: int, _frame: FrameType | None) -> NoReturn:
+        raise VerificationCancelled("verification interrupted")
+
+    previous = {
+        number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        for number in previous:
+            signal.signal(number, cancel)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+def _task_record(state: dict[str, object], task_id: str) -> dict[str, object]:
+    tasks = state.get("tasks")
+    record = tasks.get(task_id) if isinstance(tasks, dict) else None
+    if not isinstance(record, dict):
+        raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "task is unknown")
+    return record
+
+
+def _program_coordination(state: Mapping[str, object]) -> bool:
+    raw_graph = state.get("graph")
+    if not isinstance(raw_graph, Mapping):
+        return False
+    try:
+        graph = GraphSpec.from_dict(raw_graph)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "saved graph is invalid"
+        ) from exc
+    return graph.coordination.mode == "program"
+
+
+def verify_approved_task(
+    state: dict[str, object], task_id: str, *, save: Callable[[], None]
+) -> TaskStatusReceipt:
+    """Verify one review-approved task while retaining cleanup evidence."""
+
+    if _verification_pending(state):
+        raise RuntimeFailure(
+            ErrorCode.BUSY,
+            "verification cleanup must be confirmed before executing another task",
+        )
+    record = _task_record(state, task_id)
+    final_stage = "plan" if is_plan_only(state, task_id) else "implementation"
+    if _program_coordination(state):
+        wave = program_wave(state)
+        if (
+            wave["phase"] != "verification"
+            or task_id not in cast(list[str], wave["task_ids"])
+            or verification_revision(record) != wave["revision"]
+        ):
+            raise RuntimeFailure(
+                ErrorCode.ORDER_VIOLATION,
+                "verification requires the sealed, approved program wave",
+            )
+    if record.get("status") != f"{final_stage}_approved":
+        raise RuntimeFailure(
+            ErrorCode.ORDER_VIOLATION,
+            f"verification requires {final_stage} review approval",
+        )
+    if state.get("roles") or state.get("pending_delivery_id") is not None:
+        raise RuntimeFailure(
+            ErrorCode.BUSY,
+            "consume the active role and Delivery before verification",
+        )
+    task = TaskSpec.from_dict(record["spec"])
+    revision = verification_revision(record)
+    verdict = parse_review(
+        json.dumps(record.get("task_evidence")),
+        task=task,
+        stage=final_stage,
+        revision=str(record["revision"]),
+    )
+    if verdict["decision"] != "approve":
+        raise RuntimeFailure(
+            ErrorCode.ORDER_VIOLATION, "final review approval is missing"
+        )
+    workspace = Path(str(state["workspace"]))
+    if snapshot_revision(workspace) != revision:
+        raise RuntimeFailure(
+            ErrorCode.IDENTITY_MISMATCH, "approved workspace revision changed"
+        )
+    with _verification_signals():
+        if is_agent_parallel(state):
+            prepare_agent_batch_verification(state, task_id, revision)
+        record["status"] = "verifying"
+        save()
+        try:
+            evidence = run_verification(task, workspace, revision)
+        except BaseException as exc:
+            cleanup_confirmed = isinstance(exc, (VerificationCancelled, RuntimeFailure))
+            record["status"] = (
+                "verification_failed" if cleanup_confirmed else "verifying"
+            )
+            record["verification"] = {
+                "revision": revision,
+                "passed": False,
+                "commands": [],
+                "error": "verification interrupted or failed",
+                "cleanup_confirmed": cleanup_confirmed,
+            }
+            save()
+            if not isinstance(exc, Exception):
+                raise
+            raise RuntimeFailure(
+                ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                "verification execution failed",
+            ) from exc
+        record["verification"] = evidence
+        record["status"] = (
+            "verifying"
+            if evidence["cleanup_confirmed"] is not True
+            else "completed"
+            if evidence["passed"] is True
+            else "verification_failed"
+        )
+        save()
+    return TaskStatusReceipt(task.task_id, str(record["status"]), dict(record))
 
 
 def run_verification(

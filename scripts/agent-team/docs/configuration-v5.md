@@ -13,7 +13,11 @@ terminal runs the coordinator under the existing `native_main` supervisor with
 the fixed `_program-run` argv. It does not create a separate Main role spec,
 model, CLI, or scheduler. The two modes have separate state identities:
 `agent`/`parallel` uses `agent_batch`, while program modes use `program_wave`.
-Named Orca graphs remain outside the current evidence. The bounded live
+Named Orca accepts `agent`/`serial` with direct Claude Main (`orchestrator`)
+and scoped Claude ACP for Planner, Worker, and Reviewer. Worker
+dispatch requires an exact declared TaskSpec. Orca program and parallel modes
+fail before dependency probes or resource creation; live named Orca acceptance
+is pending. Codex ACP configurations remain rejected. The bounded live
 Main-parallel acceptance is recorded in [Architecture](architecture.md).
 Existing focused checks and bounded terminal/fake-provider records are
 historical, scoped evidence; real-model parallel acceptance remains pending.
@@ -74,6 +78,9 @@ Before a real run, prepare the source and verifier files in your workspace and
 replace `/workspace/example` with that absolute path. Verification runs the
 declared argv exactly. The selected native runtime and ACP prerequisites are
 listed in [Configuration](configuration.md#select-an-experimental-native-terminal-runtime-explicitly).
+For Orca, start the app, register the workspace, and prepare the selected
+[scoped Claude ACP dependencies](acp.md#native-claude-acp). The fixed version-3
+acpx setup does not apply to this named example.
 
 ```toml
 version = 5
@@ -358,8 +365,8 @@ agent-team start --config /path/to/config-v5.toml \
 aliases or case conversion. Graph formats are `json`, `ascii`, and `mermaid`.
 For the native agent/serial, agent/parallel, program/serial, or
 program/parallel example, remove `--dry-run` to start after meeting the
-prerequisites. Named Orca starts remain unsupported and fail before dependency
-probes or resource creation. An empty TaskSpec catalog also fails before
+prerequisites. The serial example can also select `runtime = "orca"`; Orca
+program and parallel modes remain rejected. An empty TaskSpec catalog also fails before
 dependency or profile checks for native `agent`/`parallel`.
 Inspection does not start providers.
 

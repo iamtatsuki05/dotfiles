@@ -15,10 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
 
-from .contracts import ErrorCode, RuntimeFailure
+from .contracts import ErrorCode, RoleTarget, RuntimeFailure
 from .runtime import (
     RuntimeValidationError,
     remove_prompt_file,
+    resolve_state_role,
     validate_prompt_file,
 )
 
@@ -486,7 +487,9 @@ def validated_assignments(
             if isinstance(raw_stage, str):
                 local_stage = raw_stage
             validate_background_assignment(
-                role_name,
+                resolve_state_role(state, role_name)
+                if state.get("runtime") == "orca" and state.get("version") == 4
+                else role_name,
                 raw_assignment,
                 state_path=state_path,
                 state_root=state_root,
@@ -511,7 +514,7 @@ def validated_assignments(
 
 
 def validate_background_assignment(
-    role_name: str,
+    role_name: str | RoleTarget,
     assignment: Mapping[str, object],
     *,
     state_path: Path,
@@ -595,7 +598,7 @@ def validate_background_assignment(
 
 
 def cleanup_assignment_phase(
-    role_name: str,
+    role_name: str | RoleTarget,
     assignment: Mapping[str, object],
     *,
     state_path: Path,

@@ -12,8 +12,8 @@ import subprocess
 import sys
 import time
 import tomllib
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -436,8 +436,8 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
     raw_specs = state.get("role_specs")
     named_graph: GraphSpec | None = None
     if state.get("version") in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}:
-        if runtime == "orca" or not isinstance(state.get("graph"), Mapping):
-            raise ConfigError("named saved state requires a native graph")
+        if not isinstance(state.get("graph"), Mapping):
+            raise ConfigError("named saved state requires a graph")
         try:
             named_graph = GraphSpec.from_dict(state["graph"])
         except (TypeError, ValueError) as exc:
@@ -1167,7 +1167,26 @@ def _role_target_for_plan(plan: Mapping[str, object], role: str) -> RoleTarget:
         raise RuntimeFailure(ErrorCode.INVALID_REQUEST, "role is not selected") from exc
 
 
-def role_command(plan: dict[str, object], role: str) -> str:
+def _resolve_orca_main_executable(provider: str) -> Path:
+    selected = shutil.which(provider)
+    if selected is None:
+        raise ConfigError(f"selected {provider} executable is unavailable")
+    try:
+        executable = Path(selected).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise ConfigError(f"selected {provider} executable is unavailable") from exc
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise ConfigError(f"selected {provider} executable is not executable")
+    return executable
+
+
+def role_command(
+    plan: dict[str, object],
+    role: str,
+    *,
+    executable: Path | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> str:
     try:
         raw_socket = plan.get("orca_socket")
         control_socket = (
@@ -1185,6 +1204,8 @@ def role_command(plan: dict[str, object], role: str) -> str:
                 if role == "main" and control_socket is not None and provider == "codex"
                 else None
             ),
+            executable=executable,
+            environment=environment,
         )
     except (LaunchValidationError, RuntimeValidationError) as exc:
         raise ConfigError(str(exc)) from exc
@@ -1339,6 +1360,12 @@ def _native_acp_result_body(output: str, failure: str | None, *, maximum: int) -
     return prefix + bounded_output
 
 
+def _uses_scoped_acp(state: Mapping[str, object]) -> bool:
+    return is_native_runtime(state.get("runtime")) or (
+        state.get("runtime") == "orca" and state.get("version") == NAMED_STATE_VERSION
+    )
+
+
 def _acp_assignment(
     state: dict[str, object],
     role: str | RoleTarget,
@@ -1390,9 +1417,7 @@ def _acp_assignment(
         raise ConfigError(f"ACP launch plan is missing role: {selected_id}")
     try:
         expected_profile = native_profile(
-            cast(str, spec.get("provider"))
-            if is_native_runtime(state["runtime"])
-            else "claude",
+            cast(str, spec.get("provider")) if _uses_scoped_acp(state) else "claude",
             selected_kind,
         )
     except RuntimeValidationError as exc:
@@ -1405,7 +1430,7 @@ def _acp_assignment(
     ):
         raise ConfigError("ACP role does not match its scoped capability")
     executables: AcpExecutables | NativeAcpExecutables | CodexAcpExecutables
-    if is_native_runtime(state["runtime"]):
+    if _uses_scoped_acp(state):
         try:
             executables = (
                 CodexAcpExecutables.from_dict(spec.get("acp_executables"))
@@ -1426,7 +1451,7 @@ def _acp_assignment(
     else:
         write_policy = (
             validate_write_policy(state, assignment, spec)
-            if is_native_runtime(state["runtime"])
+            if _uses_scoped_acp(state)
             else None
         )
         expected_command = acp_agent_command(
@@ -1435,7 +1460,7 @@ def _acp_assignment(
             launch_nonce,
             executables=executables,
             **({"write_policy": write_policy} if write_policy is not None else {}),
-            questions=is_native_runtime(state["runtime"]),
+            questions=_uses_scoped_acp(state),
         )
     if assignment.get("agent_command") != expected_command:
         raise ConfigError("ACP assignment has an invalid agent command")
@@ -1581,6 +1606,55 @@ def _publish_native_validation_failure(
         )
 
 
+def _publish_orca_validation_failure(
+    state: dict[str, object],
+    *,
+    role: str | RoleTarget,
+    state_path: Path,
+    task_id: str,
+    dispatch_id: str,
+    terminal_handle: str,
+    prompt_path: Path,
+    launch_nonce: str,
+    error: BaseException,
+) -> None:
+    if state.get("runtime") != "orca" or state.get("version") != NAMED_STATE_VERSION:
+        return
+    try:
+        selected = _state_role_target(state, role)
+        if not isinstance(selected, NodeRef):
+            return
+        roles = state.get("roles")
+        assignment = roles.get(selected.node_id) if isinstance(roles, Mapping) else None
+        if not isinstance(assignment, Mapping) or assignment.get("prompt_path") != str(
+            prompt_path
+        ):
+            return
+        if Path(str(state.get("state_path"))).resolve() != state_path.resolve():
+            return
+        from .orca_acp import publish_completion
+
+        publish_completion(
+            state_path,
+            role=selected.node_id,
+            role_kind=selected.kind.value,
+            run_id=str(state["run_id"]),
+            task_id=task_id,
+            dispatch_id=dispatch_id,
+            terminal_handle=terminal_handle,
+            launch_nonce=launch_nonce,
+            outcome="failed",
+            body=_native_acp_result_body(
+                "",
+                f"ACP runner validation failed: {error}",
+                maximum=MAX_RESULT_BODY_CHARS,
+            ),
+            cleanup_confirmed=True,
+        )
+    except (RuntimeFailure, RuntimeError, ValueError, OSError, TypeError) as exc:
+        print(f"Orca validation failure could not be published: {exc}", file=sys.stderr)
+
+
 def _send_worker_done(
     state: dict[str, object],
     assignment: dict[str, object],
@@ -1638,17 +1712,17 @@ def acp_run(
     except ConfigError as exc:
         print(f"ACP runner validation failed: {exc}", file=sys.stderr)
         return 1
-    native = is_native_runtime(state.get("runtime"))
+    scoped = _uses_scoped_acp(state)
     previous = (
         {
             number: signal.getsignal(number)
             for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
         }
-        if native
+        if scoped
         else {}
     )
 
-    cancellation = Event() if native else None
+    cancellation = Event() if scoped else None
 
     def cancel(_number: int, _frame: FrameType | None) -> None:
         assert cancellation is not None
@@ -1738,6 +1812,49 @@ class _NativeAcpClientRunner(ProcessRunner):
             ) from exc
 
 
+class _OrcaAcpClientRunner(_NativeAcpClientRunner):
+    def __init__(
+        self,
+        *,
+        state_path: Path,
+        identity: Mapping[str, str],
+        role_spec: Mapping[str, object],
+        cancellation: Event,
+        max_output_bytes: int,
+    ) -> None:
+        super().__init__(cancellation=cancellation, max_output_bytes=max_output_bytes)
+        self._state_path = state_path
+        self._identity = dict(identity)
+        self._role_spec = dict(role_spec)
+
+    def _check_cancelled(self) -> None:
+        from .orca_acp import _assignment_for_completion
+
+        try:
+            state = read_state(self._state_path)
+            _assignment_for_completion(state, **self._identity)
+            specs = cast(Mapping[str, object], state["role_specs"])
+            if specs.get(self._identity["role"]) != self._role_spec:
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH, "Orca ACP role snapshot changed"
+                )
+        except (
+            ConfigError,
+            RuntimeFailure,
+            RuntimeValidationError,
+            ValueError,
+            TypeError,
+            OSError,
+        ) as exc:
+            self._cancellation.set()
+            raise NativeAcpCancelled(
+                f"Orca ACP identity is unconfirmed: {exc}"
+            ) from exc
+        if state.get("orca_stop_requested") is True:
+            self._cancellation.set()
+        super()._check_cancelled()
+
+
 @contextmanager
 def _native_question_context(
     state_path: Path, socket_path: Path, identity: Mapping[str, str]
@@ -1811,7 +1928,7 @@ def _acp_run_turn(
 
     try:
         selected_role = _state_role_target(state, role)
-        if is_native_runtime(state["runtime"]) and cancellation is None:
+        if _uses_scoped_acp(state) and cancellation is None:
             raise ConfigError("native ACP requires a cancellation controller")
         if cancellation is not None and cancellation.is_set():
             raise ConfigError("native ACP cancellation requested before client launch")
@@ -1853,7 +1970,7 @@ def _acp_run_turn(
         else:
             write_policy = (
                 validate_write_policy(state, assignment, spec)
-                if is_native_runtime(state["runtime"])
+                if _uses_scoped_acp(state)
                 else None
             )
             agent_command = acp_agent_command(
@@ -1862,7 +1979,7 @@ def _acp_run_turn(
                 launch_nonce,
                 executables=executables,
                 **({"write_policy": write_policy} if write_policy is not None else {}),
-                questions=is_native_runtime(state["runtime"]),
+                questions=_uses_scoped_acp(state),
             )
             native_environment = acp_env()
         session_name = acp_session_name(selected_role, launch_nonce)
@@ -1894,7 +2011,12 @@ def _acp_run_turn(
         RuntimeValidationError,
         NativeAcpDependencyError,
     ) as exc:
-        _publish_native_validation_failure(
+        validation_publisher = (
+            _publish_native_validation_failure
+            if is_native_runtime(state["runtime"])
+            else _publish_orca_validation_failure
+        )
+        validation_publisher(
             state,
             role=role,
             state_path=state_path,
@@ -1929,8 +2051,15 @@ def _acp_run_turn(
 
     try:
         if native_argv is not None:
+            question_factory: Callable[
+                [Path, Path, Mapping[str, str]], AbstractContextManager[None]
+            ] = _native_question_context
+            if state["runtime"] == "orca":
+                from .orca_questions import question_context as orca_question_context
+
+                question_factory = orca_question_context
             question_context = (
-                _native_question_context(
+                question_factory(
                     state_path,
                     Path(str(assignment["question_socket"])),
                     {
@@ -1953,10 +2082,27 @@ def _acp_run_turn(
                 else nullcontext()
             )
             assert cancellation is not None
-            native_client = _NativeAcpClientRunner(
-                cancellation=cancellation,
-                max_output_bytes=MAX_ACP_OUTPUT_CHARS * 4 + 4096,
-            )
+            if state["runtime"] == "orca":
+                native_client = _OrcaAcpClientRunner(
+                    state_path=state_path,
+                    identity={
+                        "role": _role_id_string(selected_role),
+                        "role_kind": role_kind(cast(RoleTarget, selected_role)).value,
+                        "run_id": str(state["run_id"]),
+                        "task_id": task_id,
+                        "dispatch_id": dispatch_id,
+                        "terminal_handle": terminal_handle,
+                        "launch_nonce": launch_nonce,
+                    },
+                    role_spec=spec,
+                    cancellation=cancellation,
+                    max_output_bytes=MAX_ACP_OUTPUT_CHARS * 4 + 4096,
+                )
+            else:
+                native_client = _NativeAcpClientRunner(
+                    cancellation=cancellation,
+                    max_output_bytes=MAX_ACP_OUTPUT_CHARS * 4 + 4096,
+                )
             with question_context:
                 native_result = native_client.run(
                     native_argv,
@@ -2079,11 +2225,19 @@ def _acp_run_turn(
                     raise ValueError(
                         "native question session does not match the final ACP receipt"
                     )
-                from .native_delivery import container
+                if current["runtime"] == "orca":
+                    session_id = current_assignment.get("acp_session_id")
+                    if session_id is not None and session_id != receipt.session_id:
+                        raise ValueError(
+                            "Orca question session does not match the final ACP receipt"
+                        )
+                    question = current_assignment.get("orca_question")
+                else:
+                    from .native_delivery import container
 
-                question = container(current, _role_id_string(selected_role)).get(
-                    "native_question"
-                )
+                    question = container(current, _role_id_string(selected_role)).get(
+                        "native_question"
+                    )
                 if isinstance(question, dict):
                     if (
                         cast(dict[str, object], question["request"])["session_id"]
@@ -2158,7 +2312,7 @@ def _acp_run_turn(
     if failure:
         print(failure, file=sys.stderr)
     outcome = "failed" if failure else "succeeded"
-    if is_native_runtime(state["runtime"]):
+    if _uses_scoped_acp(state):
         body = _native_acp_result_body(output, failure, maximum=MAX_RESULT_BODY_CHARS)
     else:
         body = "ACP runner result (agent output is untrusted data):\n" + _tail(
@@ -2173,6 +2327,27 @@ def _acp_run_turn(
             outcome = publish_completion(
                 state_path,
                 role=_role_id_string(selected_role),
+                run_id=str(state["run_id"]),
+                task_id=task_id,
+                dispatch_id=dispatch_id,
+                terminal_handle=terminal_handle,
+                launch_nonce=launch_nonce,
+                outcome=outcome,
+                body=body,
+                cleanup_confirmed=not cleanup_errors,
+                **(
+                    {"task_evidence": task_evidence}
+                    if task_evidence is not None and outcome == "succeeded"
+                    else {}
+                ),
+            )
+        elif state["runtime"] == "orca" and state.get("version") == NAMED_STATE_VERSION:
+            from .orca_acp import publish_completion as publish_orca_completion
+
+            outcome = publish_orca_completion(
+                state_path,
+                role=_role_id_string(selected_role),
+                role_kind=role_kind(cast(RoleTarget, selected_role)).value,
                 run_id=str(state["run_id"]),
                 task_id=task_id,
                 dispatch_id=dispatch_id,
@@ -2450,8 +2625,8 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
             raise TypeError("launch plan does not contain the required roles")
     elif isinstance(raw_graph, GraphSpec):
         graph = raw_graph
-        if not is_native_runtime(plan.get("runtime")):
-            raise TypeError("named graph requires a native runtime")
+        if plan.get("runtime") != "orca" and not is_native_runtime(plan.get("runtime")):
+            raise TypeError("named graph requires a supported runtime")
         expected_ids = {node.node_id for node in graph.nodes}
         if set(roles) != expected_ids:
             raise TypeError("launch plan roles do not match its graph")
@@ -2460,8 +2635,8 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
             graph = GraphSpec.from_dict(raw_graph)
         except (TypeError, ValueError) as exc:
             raise TypeError(f"launch plan contains invalid graph: {exc}") from exc
-        if not is_native_runtime(plan.get("runtime")):
-            raise TypeError("named graph requires a native runtime")
+        if plan.get("runtime") != "orca" and not is_native_runtime(plan.get("runtime")):
+            raise TypeError("named graph requires a supported runtime")
         expected_ids = {node.node_id for node in graph.nodes}
         if set(roles) != expected_ids:
             raise TypeError("launch plan roles do not match its graph")
@@ -2569,6 +2744,9 @@ def _codex_auth_path() -> Path:
 
 def _start_prerequisites(plan: dict[str, object]) -> None:
     runtime = plan.get("runtime")
+    scoped_acp = is_native_runtime(runtime) or (
+        runtime == "orca" and isinstance(plan.get("graph"), (GraphSpec, Mapping))
+    )
     if is_native_runtime(runtime):
         require_binary(runtime)
     elif plan.get("runtime") == "orca":
@@ -2601,8 +2779,10 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         provider = launch.get("provider")
         if provider not in ("claude", "codex") or not isinstance(provider, str):
             raise ConfigError("selected ACP provider is unsupported")
-        if provider == "codex" and not is_native_runtime(runtime):
-            raise ConfigError("scoped Codex ACP requires a native runtime")
+        if provider == "codex" and not scoped_acp:
+            raise ConfigError(
+                "scoped Codex ACP requires a native or named Orca runtime"
+            )
         groups.setdefault(provider, []).append(launch)
     if not os.access(mcp_server_path(), os.X_OK):
         raise ConfigError(
@@ -2615,7 +2795,7 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         try:
             if provider == "codex":
                 selected[provider] = CodexAcpExecutables.resolve()
-            elif is_native_runtime(runtime):
+            elif scoped_acp:
                 selected[provider] = NativeAcpExecutables.resolve()
             else:
                 selected[provider] = AcpExecutables.resolve()
@@ -2623,7 +2803,7 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
             raise ConfigError(
                 f"selected {provider} ACP dependencies are unavailable: {exc}"
             ) from exc
-    minimum = (22, 0, 0) if is_native_runtime(runtime) else (22, 13, 0)
+    minimum = (22, 0, 0) if scoped_acp else (22, 13, 0)
     for node in sorted({binding.node for binding in selected.values()}):
         try:
             result = subprocess.run(
@@ -2719,11 +2899,34 @@ def _runtime_engine(
     config_path = plan.get("config_path")
     if not isinstance(config_path, str):
         raise TypeError("launch plan contains invalid config path")
+    raw_graph = plan.get("graph")
+    graph = (
+        raw_graph
+        if isinstance(raw_graph, GraphSpec)
+        else GraphSpec.from_dict(raw_graph)
+        if raw_graph is not None
+        else None
+    )
+    if graph is not None and graph.main_node is None:
+        raise ConfigError("Orca requires an explicit Main node")
+    main_role = (
+        graph.main_node.node_id if graph is not None and graph.main_node else "main"
+    )
 
     def main_command_factory(socket_path: Path) -> str:
         launch_plan = dict(plan)
         launch_plan["orca_socket"] = str(socket_path)
-        return role_command(launch_plan, "main")
+        roles = launch_plan.get("roles")
+        launch = roles.get(main_role) if isinstance(roles, Mapping) else None
+        provider = launch.get("provider") if isinstance(launch, Mapping) else None
+        if not isinstance(provider, str):
+            raise ConfigError(f"launch plan is missing {main_role}.provider")
+        return role_command(
+            launch_plan,
+            main_role,
+            executable=_resolve_orca_main_executable(provider),
+            environment=acp_environment(),
+        )
 
     backend = OrcaBackend(
         OrcaClient(),
@@ -2739,14 +2942,22 @@ def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
     raw = plan.get("graph")
     if raw is None:
         return
-    if not is_native_runtime(plan.get("runtime")):
-        raise ConfigError("named graph requires a native runtime")
+    if plan.get("runtime") != "orca" and not is_native_runtime(plan.get("runtime")):
+        raise ConfigError("named graph requires a supported runtime")
     try:
         graph = raw if isinstance(raw, GraphSpec) else GraphSpec.from_dict(raw)
     except (TypeError, ValueError) as exc:
         raise ConfigError(
             f"launch plan contains an invalid named graph: {exc}"
         ) from exc
+
+    if plan.get("runtime") == "orca" and (
+        graph.coordination.mode != "agent"
+        or graph.coordination.dispatch_mode != "serial"
+    ):
+        raise ConfigError(
+            "named Orca execution currently requires agent/serial coordination"
+        )
 
     if (
         graph.coordination.mode == "agent"
@@ -2804,11 +3015,6 @@ def manage_team(
         if not isinstance(body, str) or not body.strip():
             raise RuntimeFailure(
                 ErrorCode.INVALID_REQUEST, "answer requires a non-empty body"
-            )
-        if has_consultation_id and not is_native_runtime(plan.get("runtime")):
-            raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST,
-                "consultation answers require a named native backend",
             )
     _ensure_orca_platform()
     start_spec = _start_spec(plan, attach=False)
@@ -3364,8 +3570,10 @@ def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, obje
         raise ConfigError("AGENT_TEAM_STATE_PATH is required")
     path = Path(raw_path)
     state = read_state(path)
-    if is_native_runtime(state["runtime"]):
-        from .native_mcp import execute_tool
+    if is_native_runtime(state["runtime"]) or (
+        state["runtime"] == "orca" and state["version"] == NAMED_STATE_VERSION
+    ):
+        from .runtime_mcp import execute_tool
 
         return execute_tool(name, arguments, path)
     from .mcp_server import execute_tool as execute_orca_tool

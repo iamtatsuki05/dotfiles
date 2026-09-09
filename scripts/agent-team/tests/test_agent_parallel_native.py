@@ -12,7 +12,7 @@ import test_named_native_backend as named_support
 from agent_team import contracts, task_verification
 from agent_team import native_backend as native
 from agent_team.contracts import RuntimeFailure, TaskDispatch
-from agent_team.native_mcp import NativeMcpSession
+from agent_team.runtime_mcp import RuntimeMcpSession
 
 
 class AgentParallelNativeTest(unittest.TestCase):
@@ -73,7 +73,7 @@ class AgentParallelNativeTest(unittest.TestCase):
         )
 
     def mcp(self):
-        session = NativeMcpSession.__new__(NativeMcpSession)
+        session = RuntimeMcpSession.__new__(RuntimeMcpSession)
         session.path = self.path
         session.run_id = native.runtime_read_state(self.path)["run_id"]
         session.runtime = self.backend.runtime
