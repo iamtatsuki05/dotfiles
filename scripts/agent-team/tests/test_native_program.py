@@ -114,9 +114,9 @@ class CanonicalBackend:
 class NativeProgramTest(unittest.TestCase):
     def module(self):
         try:
-            return importlib.import_module("agent_team.native_program")
+            return importlib.import_module("agent_team.program_driver")
         except ModuleNotFoundError:
-            self.fail("native program coordinator entrypoint is not implemented")
+            self.fail("common program coordinator driver is not implemented")
 
     def test_program_drives_canonical_tasks_through_all_waves_without_main(self):
         module = self.module()

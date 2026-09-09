@@ -85,7 +85,22 @@ class OrcaNamedDispatchTest(TestCase):
             "worktree_id": "wt-1",
             "main_terminal": "main-terminal",
             "launcher_path": "/private/agent-team",
-            "graph": {"coordination": {"mode": "agent", "dispatch_mode": "serial"}},
+            "graph": {
+                "nodes": [
+                    {"node_id": "lead", "kind": "main"},
+                    {"node_id": "worker-a", "kind": "worker"},
+                ],
+                "edges": [
+                    {"source": "lead", "target": "worker-a", "kind": "delegates-to"}
+                ],
+                "coordination": {
+                    "mode": "agent",
+                    "dispatch_mode": "serial",
+                    "entry_nodes": ["lead"],
+                    "max_active": 1,
+                },
+                "routes": [],
+            },
             "roles": {},
             "tasks": {},
             "role_specs": {

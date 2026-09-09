@@ -2914,8 +2914,6 @@ def _runtime_engine(
         if raw_graph is not None
         else None
     )
-    if graph is not None and graph.main_node is None:
-        raise ConfigError("Orca requires an explicit Main node")
     main_role = (
         graph.main_node.node_id if graph is not None and graph.main_node else "main"
     )
@@ -2938,7 +2936,11 @@ def _runtime_engine(
     backend = OrcaBackend(
         OrcaClient(),
         launcher_path=launcher_path() if not resume_existing else None,
-        main_command_factory=main_command_factory,
+        main_command_factory=(
+            main_command_factory
+            if graph is None or graph.coordination.mode == "agent"
+            else None
+        ),
         prepare_start=lambda: prepare_codex_homes_with_rollback(plan),
         resume_existing=resume_existing,
     )
@@ -2958,8 +2960,10 @@ def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
             f"launch plan contains an invalid named graph: {exc}"
         ) from exc
 
-    if plan.get("runtime") == "orca" and graph.coordination.mode != "agent":
-        raise ConfigError("named Orca execution currently requires agent coordination")
+    if graph.coordination.mode == "program" and not parse_task_specs(
+        plan.get("task_specs", [])
+    ):
+        raise ConfigError("program execution requires declared TaskSpecs")
 
     if (
         graph.coordination.mode == "agent"
@@ -3535,6 +3539,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_context_arguments(graph)
     graph.add_argument("--team", action="append", required=True)
     graph.add_argument("--format", choices=("json", "ascii", "mermaid"), required=True)
+    orca_program = subparsers.add_parser("_orca-program-run", help=argparse.SUPPRESS)
+    orca_program.add_argument("--state", required=True, type=Path)
+    orca_program.add_argument("--run-id", required=True)
+    orca_program.add_argument("--launch-nonce", required=True)
     acp = subparsers.add_parser("_acp-run", help=argparse.SUPPRESS)
     acp.add_argument("role")
     acp.add_argument("--state", type=Path, required=True)
@@ -3656,6 +3664,10 @@ def main(argv: list[str] | None = None) -> int:
                     f"{row['harness_id']}: {available}, {execution} ({row['command']})"
                 )
         return 0
+    if args.command == "_orca-program-run":
+        from . import orca_program
+
+        return orca_program.run(args.state, args.run_id, args.launch_nonce)
     if args.command == "_acp-run":
         try:
             return acp_run(

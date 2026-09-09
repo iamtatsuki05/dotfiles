@@ -64,12 +64,15 @@ def _validate_named_orca_state(
             ErrorCode.IDENTITY_MISMATCH,
             "Orca completion role is not present in the saved graph",
         ) from exc
-    if graph.coordination.mode != "agent" or graph.coordination.dispatch_mode != (
+    if graph.coordination.mode not in {
+        "agent",
+        "program",
+    } or graph.coordination.dispatch_mode != (
         "parallel" if state["version"] == 5 else "serial"
     ):
         _fail(
             ErrorCode.INVALID_REQUEST,
-            "Orca completion requires agent coordination matching the state version",
+            "Orca completion requires coordination matching the state version",
         )
     if role_kind not in _ACP_ROLES or node.kind.value != role_kind:
         _fail(

@@ -42,6 +42,7 @@ class OrcaQuestionTest(TestCase):
         self.state = {
             "version": 4,
             "runtime": "orca",
+            "main_terminal": "main-terminal",
             "run_id": "run-1",
             "workspace": str(self.root),
             "state_path": str(self.path),

@@ -12,7 +12,9 @@ native `agent`/`parallel`は`agent_batch`を、program構成は`program_wave`を
 名前付きOrcaは`agent`/`serial`（state version 4）と`agent`/`parallel`（state version 5）を受け付けます。
 Mainはdirect Claude・permission `orchestrator`、Planner、Worker、Reviewerはscoped Claude ACPを使い、Workerには宣言済みTaskSpecが必要です。
 名前付きOrcaのparallelは共通TaskBatch contractとRun単位のFIFO Deliveryを使い、schedulerを追加しません。
-Orcaのprogram構成は依存確認や資源作成の前に拒否します。Codex ACPの公開設定も拒否します。
+名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使います。
+どちらもTaskSpec共通のprogram policy/driverへ接続していますが、実Orca・実モデルのprogram受入は実施していません。
+Codex ACPの公開設定は引き続き拒否します。
 providerを呼ばないparallel protocol proofとserialの過去証拠は[アーキテクチャ](architecture_JA.md)に記載し、実モデルparallel受入は未実施です。
 既存のfocused contract testとboundedな端末・fake providerの記録は、それぞれの過去runに限定した証拠です。実モデルのparallel受入も未実施です。
 
@@ -46,6 +48,16 @@ agent構成にはMainを1つだけ置き、Mainだけを開始点にします。
 native programの保存stateでは、coordinatorを`coordinator_terminal`、`coordinator_argv`、
 `coordinator_process`、`coordinator_pid`で保持します。これはMainのterminal、argv、processの別名ではありません。
 記録済みcoordinatorだけがprogram waveを進め、`status`、`stop`、ユーザーの回答は明示した外部操作として残します。
+
+名前付きOrcaのprogramは、nativeとは別のMainなしcontroller variantを使います。固定argvのPython
+`_orca-program-run`を`coordinator_argv`に保存し、`coordinator_process`には`pid`、`process_group_id`、
+`launch_nonce`、`argv`、`phase`、`exit_code`、`cli_cleanup_confirmed`を記録します。
+`cli_cleanup_confirmed`は実行中はnull、終了時はOrcaClient/ProcessRunnerが作る別CLI groupの回収結果を示すboolです。
+通常のStopは、この回収確認、終了記録、PID不在、coordinatorのgroup内に生存processがないことを確認してから端末を閉じます。
+同期的なMCPのCLI呼び出しもcoordinatorと同じgroupを使います。
+親が起動意図を保存してからchildがPID/PGIDとkernel argvを自己登録し、
+durable readiness後に`SIGUSR1`を1回だけ送ります。保存済みcoordinatorだけがtaskを進められ、外部の`status`、
+`attach --coordinator`、`answer`、`stop`は管理操作として使います。childは保存stateと、この通知の両方を確認してから進行を開始します。
 
 taskには[TaskSpecのfield](configuration_JA.md#taskspec-catalog-is-optional-required-for-native-task-dispatch)を使います。
 routeには`task_id`と、次の少なくとも一組を指定します。
@@ -262,8 +274,8 @@ max_active = 2
 全memberの準備後にだけ共有`delivery_ack`を1回呼びます。未回答questionは共有ACKを止めますが、`stop`中も安全なpeerの資源cleanupは進められます。
 unknownなreplyまたはACK effectは保持し、自動再送しません。envelopeとproofの境界は[アーキテクチャ](architecture_JA.md)を参照してください。
 
-この経路はdirect Claude Mainとscoped Claude ACP assignmentだけを使います。名前付きagentのserial/parallel例では`runtime = "orca"`を選べます。
-program例はnative terminal設定のままで、Orcaは選択できません。providerを呼ばないproofはprotocol evidenceであり、実モデルや全suiteの受入ではありません。
+この経路はdirect Claude Mainとscoped Claude ACP assignmentだけを使います。名前付きagentとprogramのserial/parallel例では`runtime = "orca"`を選べます。
+program例は上記のMainなしcoordinator variantを使います。providerを呼ばないproofはprotocol evidenceであり、実モデルや全suiteの受入ではありません。
 
 ## Mainなしのparallel programを実行する
 
@@ -277,15 +289,16 @@ dispatch_mode = "parallel"
 max_active = 2
 ```
 
-native coordinatorは一般schedulerではなく、明示されたcoordinator pathとして`max_active`まで独立したassignmentを受け付けます。nodeが使用中、上限到達中、
+nativeまたは名前付きOrcaのcoordinatorは一般schedulerではなく、明示されたcoordinator pathとして`max_active`まで独立したassignmentを受け付けます。nodeが使用中、上限到達中、
 またはWorkerの`allowed_paths`がactive Workerのscopeと重なる場合はadmissionを拒否します。
 pending user questionは自分のassignmentだけを止め、条件を満たす独立candidateは継続できます。
 `task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
 version 5 stateはassignmentごとにresult、question、Delivery stageを保持します。canonical waveは全writer完了後にsealし、
-同じ統合revisionをreviewし、宣言したfixed argvを検証してから次のwaveへ進みます。focused contract testとboundedな
-実端末・fake providerのcaseはprogram coordinatorに限定した過去の証拠であり、[アーキテクチャ](architecture_JA.md)に記載するMain parallel live受入とは別です。実モデルのparallel受入は実施していません。
+同じ統合revisionをreviewし、宣言したfixed argvを検証してから次のwaveへ進みます。focused contract testに加え、Python 3.11と3.13でmocked-wire parallel pipelineを各1回通過しています。
+これはprogram coordinatorの実装証拠であり、[アーキテクチャ](architecture_JA.md)に記載するMain parallel live受入とは別です。実モデルのparallel受入は実施していません。
 
-coordinatorは既存のnative supervisorを使い、Main modelを追加しません。確認が必要な場合は`--coordinator`でterminalへattachします。
+native programは既存のnative supervisorを使い、名前付きOrcaのprogramは上記の固定argv Python coordinatorを使います。
+どちらもMain modelを追加しません。確認が必要な場合は`--coordinator`で選択したterminalへattachします。
 
 ```bash
 agent-team attach --config /path/to/config-v5.toml \
@@ -300,7 +313,17 @@ agent-team answer --state /path/to/state.json \
   --message-id ID --body "回答"
 ```
 
-Reviewerの相談は、名前付きnativeの`agent`と`program`で使える別の操作です。`status`にはopaqueな相談ID、task/stage、
+名前付きOrcaの質問も`--message-id`を使いますが、1件のOrca messageに全フォーム項目をまとめます。
+保存した`orca_question`とOrcaの回答receiptを照合してから、共有ACKを行います。
+回答は、coordinatorが表示する`answer_template`とキーが完全に一致するJSON objectで指定してください。
+例えば、表示されたキーが`question_0_custom`の場合は次の形です。
+
+```bash
+agent-team answer --state /path/to/state.json \
+  --message-id ID --body '{"question_0_custom":"回答"}'
+```
+
+Reviewerの相談は、名前付きnativeとOrcaの`agent`と`program`で使える別の操作です。`status`にはopaqueな相談ID、task/stage、
 review findings、回答済みかどうかを表示します。IDはrun、TaskSpec digest、review stage、正確なreview Dispatchに束縛されます。
 回答本文は16,000文字以内で、同じIDと同じ本文の再送だけがidempotentです。異なる本文や古いIDは拒否します。
 回答だけで承認・完了にはせず、元のwriterを再dispatchし、boundedなreviewをもう一度行います。review roundの上限は維持し、
@@ -332,7 +355,7 @@ agent-team start --config /path/to/config-v5.toml \
 `graph`とversion 5の`start`には`--team`が必須で、別名や大文字・小文字の変換をせず完全一致で選びます。
 graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serial、agent/parallel、program/serial、
 program/parallel構成は、起動条件を満たした後で`--dry-run`を外すと起動します。
-agent serialとagent parallelの例では`runtime = "orca"`も選択できます。Orcaのprogram構成は拒否します。native `agent`/`parallel`でTaskSpec catalogが空なら、
+agentとprogramのserial/parallel例では`runtime = "orca"`も選択できます。名前付きOrcaのprogram/serialはstate version 4、program/parallelはstate version 5です。native `agent`/`parallel`でTaskSpec catalogが空なら、
 依存関係やprofile確認より前に拒否します。
 検査コマンドはproviderを起動しません。
 
@@ -346,7 +369,7 @@ stateは`$XDG_STATE_HOME/agent-team/<derived-team-id>/state.json`に保存し、
 既定の保存先は`~/.local/state/agent-team/`です。`status`、`attach`、`stop`に`--state`を渡すと、
 configを再読込せず、その保存済みrunを管理できます。
 
-configはversion 5、名前付きserial stateはversion 4です。nativeのagent/parallel・program/parallelと、名前付きOrcaのagent/parallelはstate version 5を使います。
+configはversion 5、名前付きserial stateはversion 4です。nativeと名前付きOrcaの`program`/`serial`もstate version 4を使います。nativeのagent/parallel・program/parallelと、名前付きOrcaのagent/parallel・program/parallelはstate version 5を使います。
 名前付きOrcaのparallelでは共有の`orca_delivery_batch`も保持します。
 `role_specs`は全nodeを、`roles`は実行中のassignmentとnodeごとのDelivery stateを保持します。
 従来の固定role stateは変換しません。

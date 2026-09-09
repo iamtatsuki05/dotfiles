@@ -248,10 +248,14 @@ class _RecordingBackend(BackendPort):
     def start(self, spec: StartSpec) -> StartResult:
         self.start_spec = spec
         self.last_start_response = {"status": "started", "team_id": spec.team_id}
+        program = spec.graph is not None and spec.graph.coordination.mode == "program"
         return StartResult(
             team_id=spec.team_id,
             run_id=RunRef("run-v5"),
-            main_terminal_id=TerminalRef("main-terminal-v5"),
+            main_terminal_id=None if program else TerminalRef("main-terminal-v5"),
+            coordinator_terminal_id=TerminalRef("coordinator-terminal-v5")
+            if program
+            else None,
             state_path=spec.state_path,
         )
 
@@ -484,21 +488,31 @@ class ConfigV5CliTest(unittest.TestCase):
         )
         self.assertIsNone(backend.start_spec.graph.main_node)
 
-    def test_orca_named_program_start_reports_unconnected_mode_without_fallback(
+    def test_orca_named_program_start_passes_selected_graph_without_main(
         self,
     ) -> None:
         self.config_path.write_text(_v5_config_text(runtime="orca"), encoding="utf-8")
+        backend = _RecordingBackend()
         with (
             mock.patch.object(cli, "_start_prerequisites") as prerequisites,
-            mock.patch.object(cli, "_runtime_engine") as runtime,
+            mock.patch.object(
+                cli, "_runtime_engine", return_value=(WorkflowEngine(backend), backend)
+            ) as runtime,
         ):
             result, stdout, stderr = self.run_cli("start", "--team", "program")
 
-        self.assertEqual(result, 1)
-        self.assertEqual(stdout, "")
-        self.assertIn("named", stderr.lower())
-        prerequisites.assert_not_called()
-        runtime.assert_not_called()
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(json.loads(stdout)["status"], "started")
+        prerequisites.assert_called_once()
+        runtime.assert_called_once()
+        self.assertEqual(runtime.call_args.args[0]["runtime"], "orca")
+        assert backend.start_spec is not None
+        assert backend.start_spec.graph is not None
+        self.assertEqual(backend.start_spec.graph.coordination.mode, "program")
+        self.assertEqual(
+            backend.start_spec.graph.coordination.dispatch_mode, "parallel"
+        )
+        self.assertIsNone(backend.start_spec.graph.main_node)
 
     def test_normal_start_passes_typed_named_start_spec_through_workflow_engine(
         self,

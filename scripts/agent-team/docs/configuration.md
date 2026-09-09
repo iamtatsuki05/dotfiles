@@ -19,8 +19,10 @@ accept agent/program and serial/parallel teams. Named Orca accepts
 `agent`/`serial` with state version 4 and `agent`/`parallel` with state
 version 5, using direct Claude Main and scoped Claude ACP background roles. The
 parallel path reuses the common TaskBatch and review contracts; its Run-level
-FIFO Delivery is described in [Architecture](architecture.md). Orca program
-modes remain rejected, and real-model parallel acceptance is pending.
+FIFO Delivery is described in [Architecture](architecture.md). Named Orca
+`program`/`serial` uses state version 4 and `program`/`parallel` uses state
+version 5; both use the common TaskSpec program policy and driver. Real
+Orca/model program acceptance and real-model parallel acceptance are pending.
 The version-3 reference
 below retains its fixed Main role and does not express a Mainless program graph.
 

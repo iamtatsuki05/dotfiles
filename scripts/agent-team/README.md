@@ -24,9 +24,11 @@ Version-5 named Orca `agent`/`serial` and `agent`/`parallel` teams can use
 direct Claude Main and scoped Claude ACP background roles. Planner/Reviewer
 stay read-only; Worker dispatch requires a declared TaskSpec; review and
 fixed-argv verification use the same task rules as native teams. The latest
-serial live attempt reached Main startup and prompt acceptance before a usage
-limit; no TaskDispatch was observed. See [Architecture](docs/architecture.md) for the
-separate serial evidence and the provider-free parallel protocol proof.
+named-Orca `agent`/`parallel` run, `run_fc73773d2cf5`, reached Main
+prompt acceptance before Fable's usage limit; no TaskDispatch was observed.
+The owned Stop and absence checks completed as recorded in private validation records. This is separate from the program modes. See
+[Architecture](docs/architecture.md) for the serial evidence, program
+coordinator contract, and provider-free parallel protocol proof.
 Codex ACP remains disabled in public configuration.
 See [Version-5 configuration](docs/configuration-v5.md).
 
@@ -88,9 +90,13 @@ The bounded tmux acceptance and the cooperative test status are recorded in
 coordination is connected without a Main role, and native
 `program`/`parallel` has implementation, focused contract coverage, and bounded
 real-terminal/fake-provider acceptance.
-The existing real-model serial trial stopped at a provider usage limit before
-implementation, review, and verification. Real-model parallel acceptance, all-harness coverage, Codex authentication,
-and shared Orca/native progression remain separate evidence gates.
+Named Orca `program`/`serial` uses state version 4 and
+`program`/`parallel` uses state version 5; both are connected to the common
+TaskSpec program policy and driver. Their Mainless fixed-argv coordinator is
+implemented and test-connected, but real Orca/model program acceptance has not
+been run. Real-model parallel acceptance, all-harness coverage, Codex
+authentication, and shared Orca/native progression remain separate evidence
+gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
 routes in native `agent`/`serial` and Main-coordinated `agent`/`parallel`
@@ -568,8 +574,10 @@ cleanup result requires user consultation and remains retained.
   Orca accepts `agent`/`serial` and `agent`/`parallel`, with direct Claude Main
   and scoped Claude ACP background roles using the declared TaskSpec rules.
   Named Orca `agent`/`parallel` uses state version 5 and the common TaskBatch
-  contract. Orca program modes remain rejected before dependency probes or
-  resource creation. Version-3 native runtimes require
+  contract. Named Orca `program`/`serial` uses state version 4 and
+  `program`/`parallel` uses state version 5; both use the common TaskSpec
+  program policy and driver with a Mainless fixed-argv Python coordinator.
+  Real Orca/model program acceptance remains unverified. Version-3 native runtimes require
   Main and allow optional verified Claude ACP Planner/Reviewer roles plus a
   scoped Claude ACP Worker. Version-5 native `agent`/`serial` and
   `agent`/`parallel` teams keep Main; version-5 `program`/`serial` and
@@ -587,7 +595,7 @@ cleanup result requires user consultation and remains retained.
   the user's overall goal is complete.
 - Version-5 native `agent`/`parallel` and `program`/`parallel` state keep a result, question, and
   pending Delivery container for each active node. Named Orca `agent`/`parallel`
-  instead uses one Run-level `orca_delivery_batch` envelope with per-role
+  and `program`/`parallel` use one Run-level `orca_delivery_batch` envelope with per-role
   journals. `max_active`, exact node identity, and non-overlapping Worker write
   scopes control admission. A pending user question blocks its own assignment;
   in the Orca batch it also blocks the shared ACK, while safe peer cleanup may

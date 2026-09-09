@@ -18,6 +18,11 @@ from .locking import _LifecycleReservation
 from .native_acp_dependencies import NativeAcpDependencyError, NativeAcpExecutables
 from .native_controller import ControllerKeys, controller_keys
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
+from .orca_controller import (
+    _validate_controller_state,
+    controller_key,
+    is_program,
+)
 from .task_execution import (
     parse_review,
     validate_saved_tasks,
@@ -791,8 +796,10 @@ def resolve_state_role(state: Mapping[str, object], node_id: str) -> RoleTarget:
         and graph.coordination.dispatch_mode != "parallel"
     ):
         raise RuntimeValidationError("parallel state requires parallel coordination")
-    if state.get("runtime") == "orca" and graph.coordination.mode != "agent":
-        raise RuntimeValidationError("Orca named state requires agent coordination")
+    if state.get("runtime") == "orca":
+        # Keep Orca's exact controller identity coupled to the graph mode.  A
+        # program node must not be silently routed through the Main alias.
+        controller_key(state)
     try:
         target = graph.node(node_id)
     except KeyError as exc:
@@ -1472,16 +1479,18 @@ def _validate_orca_effect(
     if "pending_orca_effect" not in owner:
         return
     effect = owner["pending_orca_effect"]
-    if not isinstance(effect, Mapping) or set(effect) != {
+    controller_field = controller_key(state)
+    required_fields = {
         "operation",
         "run_id",
-        "main_terminal",
+        controller_field,
         "delivery_id",
         "message_id",
         "body_sha256",
-    }:
+    }
+    if not isinstance(effect, Mapping) or set(effect) != required_fields:
         raise RuntimeValidationError("Orca pending effect fields are invalid")
-    if any(effect[key] != state.get(key) for key in ("run_id", "main_terminal")):
+    if any(effect[key] != state.get(key) for key in ("run_id", controller_field)):
         raise RuntimeValidationError("Orca pending effect Run identity changed")
     delivery_id = effect["delivery_id"]
     if (
@@ -2330,9 +2339,6 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
                 "native",
                 "native_result",
                 "native_question",
-                "coordinator_terminal",
-                "coordinator_argv",
-                "coordinator_process",
                 "coordinator_pid",
                 "main_argv",
                 "main_process",
@@ -2369,7 +2375,7 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
         "roles",
     )
     if orca:
-        required = (*required, "main_terminal", "worktree_id", "orca_socket")
+        required = (*required, "worktree_id", "orca_socket")
     for key in required:
         value = state.get(key)
         if key in {"graph", "role_specs", "roles"}:
@@ -2391,8 +2397,9 @@ def _validate_named_state(path: Path, state: object) -> dict[str, object]:
         and graph.coordination.dispatch_mode != "parallel"
     ):
         raise RuntimeValidationError("version-5 state requires parallel coordination")
-    if orca and graph.coordination.mode != "agent":
-        raise RuntimeValidationError("Orca named state requires agent coordination")
+    if orca:
+        is_program(state)
+        _validate_controller_state(state)
     node_by_id = {node.node_id: node for node in graph.nodes}
     role_specs = state["role_specs"]
     assert isinstance(role_specs, dict)

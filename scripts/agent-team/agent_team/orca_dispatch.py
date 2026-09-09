@@ -39,6 +39,7 @@ from .contracts import (
     TerminalRef,
 )
 from .native_acp_dependencies import CodexAcpExecutables, NativeAcpExecutables
+from .orca_controller import controller_terminal
 from .runtime import (
     MAX_PROMPT_CHARS,
     RuntimeValidationError,
@@ -69,6 +70,8 @@ _FROZEN_RUN_FIELDS = (
     "state_path",
     "worktree_id",
     "main_terminal",
+    "coordinator_terminal",
+    "coordinator_argv",
     "graph",
     "role_specs",
     "task_specs",
@@ -521,7 +524,7 @@ def start_assignment(
     run_id = _required_string(state, "run_id")
     team_id = _required_string(state, "team_id")
     worktree_id = _required_string(state, "worktree_id")
-    main_terminal = _required_string(state, "main_terminal")
+    main_terminal = controller_terminal(state)
     spec = _role_spec(state, target)
     prepared_state, prepared_record = _prepare_task(state, request, task_record)
     selected, adapter = _preflight_role(state, target, spec)

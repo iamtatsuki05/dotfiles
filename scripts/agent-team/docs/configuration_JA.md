@@ -14,7 +14,8 @@ nodeごとの設定、複数のWorker/Reviewer、TaskSpecの担当指定には�
 [Version 5の設定](configuration-v5_JA.md)を使います。nativeではagent/program、serial/parallelの各構成を受け付けます。
 名前付きOrcaは、state version 4の`agent`/`serial`とstate version 5の`agent`/`parallel`を、direct Claude Mainとscoped Claude ACPのbackground roleで実行します。
 parallel経路はTaskBatchとreviewの共通contractを使い、Run単位のFIFO Deliveryを[アーキテクチャ](architecture_JA.md)に記載します。
-Orcaのprogram構成は引き続き拒否し、実モデルparallel受入は未実施です。以下は
+名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、TaskSpec共通のprogram policy/driverへ接続しています。
+実Orca・実モデルのprogram受入と実モデルparallel受入は未実施です。以下は
 固定Main roleを持つversion 3のリファレンスで、Mainなしのprogram graphは表現しません。
 
 ## canonical configから始める

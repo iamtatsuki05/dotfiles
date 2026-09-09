@@ -125,6 +125,39 @@ def _text(value: object) -> str:
     return value
 
 
+def _is_orca(state: Mapping[str, object]) -> bool:
+    return state.get("runtime") == "orca"
+
+
+def _delivery_keys(state: Mapping[str, object]) -> tuple[str, str]:
+    """Return the selected runtime's result and question field names."""
+
+    return (
+        ("orca_result", "orca_question")
+        if _is_orca(state)
+        else (
+            "native_result",
+            "native_question",
+        )
+    )
+
+
+def _validate_delivery_namespace(
+    state: Mapping[str, object], assignment: Mapping[str, object]
+) -> None:
+    """Reject a state that projects one runtime's Delivery into the other."""
+
+    result_key, question_key = _delivery_keys(state)
+    foreign_result = "native_result" if result_key == "orca_result" else "orca_result"
+    foreign_question = (
+        "native_question" if question_key == "orca_question" else "orca_question"
+    )
+    if foreign_result in state or foreign_question in state:
+        raise ValueError("delivery_namespace_mismatch")
+    if foreign_result in assignment or foreign_question in assignment:
+        raise ValueError("delivery_namespace_mismatch")
+
+
 def _load(
     state: Mapping[str, object],
 ) -> tuple[GraphSpec, tuple[TaskSpec, ...], Mapping[str, object]]:
@@ -177,6 +210,7 @@ def _active(
     if not isinstance(node_id, str) or not isinstance(raw, Mapping):
         raise TypeError("assignment_invalid")
     assignment = cast(Mapping[str, object], raw)
+    _validate_delivery_namespace(state, assignment)
     if assignment.get("role") != node_id:
         raise ValueError("assignment_identity_mismatch")
     return _node(graph, assignment, "role"), assignment
@@ -196,6 +230,7 @@ def _parallel_active(
         if not isinstance(node_id, str) or not isinstance(raw, Mapping):
             raise TypeError("assignment_invalid")
         assignment = cast(Mapping[str, object], raw)
+        _validate_delivery_namespace(state, assignment)
         if assignment.get("role") != node_id:
             raise ValueError("assignment_identity_mismatch")
         target = _node(graph, assignment, "role")
@@ -210,7 +245,7 @@ def _parallel_active(
     return tuple(active)
 
 
-def _parallel_delivery_actions(
+def _native_parallel_delivery_actions(
     tasks: Mapping[str, object],
     active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
 ) -> tuple[tuple[ProgramAction, ...], tuple[ProgramAction, ...]]:
@@ -305,6 +340,268 @@ def _parallel_delivery_actions(
                 )
             )
     return tuple(completions + answered_questions), tuple(unanswered_questions)
+
+
+def _orca_batch_actions(
+    state: Mapping[str, object],
+    graph: GraphSpec,
+    tasks: Mapping[str, object],
+    active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
+) -> tuple[tuple[ProgramAction, ...], tuple[ProgramAction, ...]]:
+    """Drain one Run-level FIFO batch without acknowledging individual roles."""
+
+    if state.get("pending_orca_effect") is not None:
+        return (
+            (ProgramAction("pause", message="orca_delivery_batch_effect_unconfirmed"),),
+            (),
+        )
+    batch_value = state.get("orca_delivery_batch")
+    if batch_value is None:
+        for role, assignment, task in active:
+            if assignment.get("pending_orca_effect") is not None:
+                return (
+                    (
+                        ProgramAction(
+                            "pause",
+                            task_id=task.task_id,
+                            role=role,
+                            message="orca_delivery_batch_effect_unconfirmed",
+                        ),
+                    ),
+                    (),
+                )
+            if assignment.get("pending_delivery_id") is not None:
+                return (
+                    (
+                        ProgramAction(
+                            "pause",
+                            task_id=task.task_id,
+                            role=role,
+                            message="orca_delivery_batch_missing",
+                        ),
+                    ),
+                    (),
+                )
+            question = assignment.get("orca_question")
+            if assignment.get("orca_result") is not None or (
+                isinstance(question, Mapping)
+                and question.get("phase") in {"asking", "recorded"}
+            ):
+                return (
+                    (
+                        ProgramAction(
+                            "wait",
+                            task_id=task.task_id,
+                            role=role,
+                            stage=_stage_for(role, _record(tasks, task.task_id)),
+                            message="delivery_observation_required",
+                        ),
+                    ),
+                    (),
+                )
+        return (), ()
+    if not isinstance(batch_value, Mapping):
+        return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+    batch = cast(Mapping[str, object], batch_value)
+    phase = batch.get("phase")
+    if phase != "observed":
+        return (
+            (
+                ProgramAction(
+                    "pause",
+                    message=(
+                        "orca_delivery_batch_effect_unconfirmed"
+                        if phase == "acknowledging"
+                        else "orca_delivery_batch_invalid"
+                    ),
+                ),
+            ),
+            (),
+        )
+    delivery_id = batch.get("delivery_id")
+    members_value = batch.get("members")
+    if (
+        not isinstance(delivery_id, str)
+        or not delivery_id
+        or not isinstance(members_value, list)
+        or not members_value
+    ):
+        return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+    if state.get("pending_orca_effect") is not None:
+        return (
+            (ProgramAction("pause", message="orca_delivery_batch_effect_unconfirmed"),),
+            (),
+        )
+    for role, assignment, task in active:
+        if assignment.get("pending_orca_effect") is not None:
+            return (
+                (
+                    ProgramAction(
+                        "pause",
+                        task_id=task.task_id,
+                        role=role,
+                        message="orca_delivery_batch_effect_unconfirmed",
+                    ),
+                ),
+                (),
+            )
+    active_by_role = {
+        role.node_id: (role, assignment, task) for role, assignment, task in active
+    }
+    member_roles: set[str] = set()
+    drains: list[ProgramAction] = []
+    unanswered: list[ProgramAction] = []
+    ready_members = 0
+    for raw_member in members_value:
+        if not isinstance(raw_member, Mapping):
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        member = cast(Mapping[str, object], raw_member)
+        node_id = member.get("role")
+        role_kind = member.get("role_kind")
+        if not isinstance(node_id, str) or not isinstance(role_kind, str):
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        if node_id in member_roles:
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        member_roles.add(node_id)
+        try:
+            role = NodeRef(node_id, Role(role_kind))
+            if graph.node(node_id) != role:
+                raise ValueError("batch_node_identity_mismatch")
+        except (TypeError, ValueError, KeyError):
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        current = active_by_role.get(node_id)
+        if current is None:
+            return (
+                ProgramAction(
+                    "pause",
+                    role=role,
+                    message="orca_delivery_batch_assignment_unknown",
+                ),
+            ), ()
+        active_role, assignment, task = current
+        if active_role != role or assignment.get("pending_delivery_id") != delivery_id:
+            return (
+                ProgramAction(
+                    "pause",
+                    task_id=task.task_id,
+                    role=role,
+                    message="orca_delivery_batch_identity_mismatch",
+                ),
+            ), ()
+        for field in (
+            "role_kind",
+            "task_id",
+            "dispatch_id",
+            "terminal_handle",
+            "launch_nonce",
+        ):
+            if member.get(field) != assignment.get(field):
+                return (
+                    (
+                        ProgramAction(
+                            "pause",
+                            task_id=task.task_id,
+                            role=role,
+                            message="orca_delivery_batch_identity_mismatch",
+                        ),
+                    ),
+                    (),
+                )
+        if assignment.get("pending_orca_effect") is not None:
+            return (
+                (
+                    ProgramAction(
+                        "pause",
+                        task_id=task.task_id,
+                        role=role,
+                        message="orca_delivery_batch_effect_unconfirmed",
+                    ),
+                ),
+                (),
+            )
+        kind = member.get("kind")
+        stage = assignment.get("pending_delivery_stage")
+        action_stage = _stage_for(role, _record(tasks, task.task_id))
+        if kind == "worker_done":
+            if assignment.get("pending_delivery_kind") != "worker_done":
+                return (
+                    ProgramAction("pause", message="orca_delivery_batch_invalid"),
+                ), ()
+            if stage in {"observed", "read"}:
+                drains.append(
+                    ProgramAction(
+                        "wait",
+                        task_id=task.task_id,
+                        role=role,
+                        stage=action_stage,
+                        message="completion_drain_required",
+                    )
+                )
+            elif stage == "released":
+                ready_members += 1
+            else:
+                return (
+                    ProgramAction("pause", message="orca_delivery_batch_invalid"),
+                ), ()
+            continue
+        if kind != "question" or assignment.get("pending_delivery_kind") != "question":
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        if stage != "observed":
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        question = assignment.get("orca_question")
+        if not isinstance(question, Mapping):
+            return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+        if member.get("message_id") != question.get("message_id"):
+            return (
+                (
+                    ProgramAction(
+                        "pause",
+                        task_id=task.task_id,
+                        role=role,
+                        message="orca_delivery_batch_identity_mismatch",
+                    ),
+                ),
+                (),
+            )
+        if question.get("phase") == "replied":
+            ready_members += 1
+        elif question.get("phase") == "observed":
+            unanswered.append(
+                ProgramAction(
+                    "wait_user",
+                    task_id=task.task_id,
+                    role=role,
+                    stage=action_stage,
+                    message="question_answer_required",
+                )
+            )
+        else:
+            return (
+                ProgramAction(
+                    "pause",
+                    task_id=task.task_id,
+                    role=role,
+                    message="orca_delivery_batch_invalid",
+                ),
+            ), ()
+    if drains:
+        return tuple(drains), tuple(unanswered)
+    if unanswered:
+        return (), tuple(unanswered)
+    if ready_members == len(members_value):
+        return (ProgramAction("acknowledge"),), ()
+    return (ProgramAction("pause", message="orca_delivery_batch_invalid"),), ()
+
+
+def _parallel_delivery_actions(
+    state: Mapping[str, object],
+    graph: GraphSpec,
+    tasks: Mapping[str, object],
+    active: tuple[tuple[NodeRef, Mapping[str, object], TaskSpec], ...],
+) -> tuple[tuple[ProgramAction, ...], tuple[ProgramAction, ...]]:
+    if _is_orca(state):
+        return _orca_batch_actions(state, graph, tasks, active)
+    return _native_parallel_delivery_actions(tasks, active)
 
 
 def _parallel_admit(
@@ -418,6 +715,9 @@ def _pending(
     tasks: Mapping[str, object],
     active: tuple[NodeRef, Mapping[str, object]] | None,
 ) -> ProgramAction | None:
+    result_key, question_key = _delivery_keys(state)
+    if _is_orca(state) and state.get("pending_orca_effect") is not None:
+        return ProgramAction("pause", message="orca_delivery_effect_unconfirmed")
     pending_id = state.get("pending_delivery_id")
     if pending_id is None:
         if active is not None:
@@ -431,7 +731,7 @@ def _pending(
                 stage=_stage_for(role, record),
                 message="active_assignment_drain_required",
             )
-        if state.get("native_result") is not None:
+        if state.get(result_key) is not None:
             return ProgramAction("pause", message="completion_delivery_required")
         return None
     if not isinstance(pending_id, str) or not pending_id:
@@ -455,12 +755,46 @@ def _pending(
         )
     if kind != "question" or stage != "observed":
         return ProgramAction("pause", message="pending_delivery_unknown")
-    raw_question = state.get("native_question")
+    raw_question: object
+    if _is_orca(state) and active is not None:
+        raw_question = active[1].get(question_key)
+    else:
+        raw_question = state.get(question_key)
     if not isinstance(raw_question, Mapping):
         return ProgramAction("reject", message="question_outbox_missing")
     question = cast(Mapping[str, object], raw_question)
-    if question.get("delivery_id") != pending_id:
+    if not _is_orca(state) and question.get("delivery_id") != pending_id:
         return ProgramAction("reject", message="question_delivery_mismatch")
+    if _is_orca(state):
+        question_phase = question.get("phase")
+        orca_question_role: NodeRef | None = (
+            active[0]
+            if active is not None
+            else (
+                _node(graph, question, "role")
+                if question.get("role") is not None
+                else None
+            )
+        )
+        task_id = question.get("task_id")
+        if not isinstance(task_id, str) and active is not None:
+            assignment_task = active[1].get("task_spec")
+            task_id = TaskSpec.from_dict(assignment_task).task_id
+        if question_phase == "replied":
+            return ProgramAction("acknowledge")
+        if question_phase == "observed":
+            return ProgramAction(
+                "wait_user",
+                task_id=task_id if isinstance(task_id, str) else None,
+                role=orca_question_role,
+                message="question_answer_required",
+            )
+        return ProgramAction(
+            "pause",
+            task_id=task_id if isinstance(task_id, str) else None,
+            role=orca_question_role,
+            message="question_delivery_invalid",
+        )
     ids = question.get("message_ids")
     answers = question.get("answers")
     if not isinstance(ids, (list, tuple)) or not isinstance(answers, Mapping):
@@ -1028,9 +1362,15 @@ def select_action(state: Mapping[str, object]) -> ProgramAction:
         graph, catalog, tasks = _load(state)
         if state.get("version") == 5:
             active_parallel = _parallel_active(state, graph, catalog)
-            drain, unanswered = _parallel_delivery_actions(tasks, active_parallel)
+            drain, unanswered = _parallel_delivery_actions(
+                state, graph, tasks, active_parallel
+            )
             if drain:
                 return drain[0]
+            if _is_orca(state) and "orca_delivery_batch" in state:
+                if unanswered:
+                    return unanswered[0]
+                return ProgramAction("pause", message="orca_delivery_batch_invalid")
             wave = _wave(state)
             if wave is None:
                 return ProgramAction("reject", message="program_wave_required")

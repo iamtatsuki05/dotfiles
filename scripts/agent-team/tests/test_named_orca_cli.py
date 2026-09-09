@@ -89,37 +89,49 @@ class NamedOrcaCliTest(unittest.TestCase):
         self.assertIn("あなたのnode IDはleadです", " ".join(argv))
         self.assertNotIn("mcp__agent_team__task_batch_open", " ".join(argv))
 
-    def test_unsupported_coordination_fails_before_dependencies_or_runtime(
-        self,
-    ) -> None:
-        graph = GraphSpec.from_dict(self.plan["graph"])
-        for mode, entry_nodes in (
-            ("program", ["implementation-a", "implementation-b"]),
-        ):
-            with self.subTest(mode=mode):
-                raw_graph = graph.as_dict()
-                if mode == "program":
-                    raw_graph["nodes"] = [
-                        node for node in raw_graph["nodes"] if node["kind"] != "main"
-                    ]
-                    raw_graph["edges"] = [
-                        edge for edge in raw_graph["edges"] if edge["source"] != "lead"
-                    ]
-                raw_graph["coordination"] = {
-                    "mode": mode,
-                    "entry_nodes": entry_nodes,
-                    "dispatch_mode": "parallel",
-                    "max_active": 2,
-                }
-                plan = {**self.plan, "graph": raw_graph}
-                with (
-                    mock.patch.object(cli, "_start_prerequisites") as prerequisites,
-                    mock.patch.object(cli, "_runtime_engine") as runtime,
-                    self.assertRaisesRegex(cli.ConfigError, "agent coordination"),
-                ):
-                    cli.start_team(plan, attach=False)
-                prerequisites.assert_not_called()
-                runtime.assert_not_called()
+    def _program_plan(self, dispatch_mode: str) -> dict[str, object]:
+        raw = GraphSpec.from_dict(self.plan["graph"]).as_dict()
+        raw["nodes"] = [node for node in raw["nodes"] if node["kind"] != "main"]
+        raw["edges"] = [edge for edge in raw["edges"] if edge["source"] != "lead"]
+        raw["coordination"] = {
+            "mode": "program",
+            "entry_nodes": ["implementation-a", "implementation-b"],
+            "dispatch_mode": dispatch_mode,
+            "max_active": 1 if dispatch_mode == "serial" else 2,
+        }
+        return {
+            **self.plan,
+            "graph": raw,
+            "roles": {
+                key: value for key, value in self.plan["roles"].items() if key != "lead"
+            },
+        }
+
+    def test_program_without_tasks_fails_before_dependencies_or_runtime(self) -> None:
+        for mode in ("serial", "parallel"):
+            plan = {**self._program_plan(mode), "task_specs": []}
+            with (
+                mock.patch.object(cli, "_start_prerequisites") as prerequisites,
+                mock.patch.object(cli, "_runtime_engine") as runtime,
+                self.assertRaisesRegex(cli.ConfigError, "declared TaskSpecs"),
+            ):
+                cli.start_team(plan, attach=False)
+            prerequisites.assert_not_called()
+            runtime.assert_not_called()
+
+    def test_program_engine_never_builds_a_main_command(self) -> None:
+        for mode in ("serial", "parallel"):
+            plan = self._program_plan(mode)
+            cli._require_named_runtime_plan(plan)
+            with (
+                mock.patch("agent_team.backend.OrcaBackend") as backend_class,
+                mock.patch.object(
+                    cli, "_resolve_orca_main_executable"
+                ) as main_executable,
+            ):
+                cli._runtime_engine(plan, resume_existing=False)
+            self.assertIsNone(backend_class.call_args.kwargs["main_command_factory"])
+            main_executable.assert_not_called()
 
     def test_parallel_orca_start_exposes_batch_tools_and_declared_tasks(self) -> None:
         text = (

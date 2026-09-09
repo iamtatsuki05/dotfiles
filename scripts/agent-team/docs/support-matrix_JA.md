@@ -30,8 +30,10 @@ Version 5の名前付きOrca `agent`/`serial`はstate version 4、`agent`/`paral
 scoped Claude ACPをTaskSpecのdispatch、review、固定argv検証、Run単位のFIFO Deliveryへ接続します。
 Mainはdirect Claude、Planner、Worker、Reviewerのassignmentはscoped Claude ACPです。`role_wait`はRun全体のDeliveryを返し、
 Mainは各ownerを処理してから共有`delivery_ack`を1回呼びます。Codex ACPは設定の読み込み時に拒否し、質問も無効です。
-Orcaのprogram構成は起動前に拒否します。providerを呼ばないprotocol proofは[アーキテクチャ](architecture_JA.md)に記載し、
-実モデルの名前付きOrca parallel受入は未実施です。serialの実機試験はMain起動とprompt受付までで、TaskDispatchには到達していません。
+名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、Mainなしの固定argv Python coordinatorを
+TaskSpec共通のprogram policy/driverへ接続しています。coordinator identityとreadiness/ownership fenceは[アーキテクチャ](architecture_JA.md)に記載します。
+focusedな実装testは接続済みですが、実Orca・実モデルのprogram受入は未実施です。既存の`agent`/`parallel` run
+`run_fc73773d2cf5`はMainのprompt受付後、Fableの利用上限によりTaskDispatch 0件で停止し、所有Stopと不在確認を内部の検証記録で完了しています。
 上表のregistry情報と、追加の制御を持たないadapterに対する安全性の判定は変えていません。
 
 ### native Claudeのquestion status
@@ -84,7 +86,7 @@ private parallel Stopはidentity不明またはcleanup未確認のnodeを保持�
 
 program contract focused testでは、serialとparallelのadmission、state、Delivery順序、wave遷移、private Stopを確認しています。
 過去のboundedな実端末・fake providerのcoverageは[アーキテクチャ](architecture_JA.md)に記載しています。これは実providerや実モデルの安全判定ではなく、
-今回のMain parallel live受入とは別です。実モデルのparallel受入は未実施です。
+今回のMain parallel live受入とは別です。Python 3.11と3.13でmocked-wire parallel pipelineを各1回通過していますが、実モデルのparallel受入は未実施です。
 
 実機のserial program試験`b239945b-283e-403b-aba5-84ba984c8469`では、2問へ回答し、同じACP sessionで処理した後、ClaudeがFableの利用上限で失敗しました。
 実装、review、verificationには到達していません。公開stopと独立したprocess/path確認は成功しましたが、observerのcommand identity errorにより
