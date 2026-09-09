@@ -58,7 +58,7 @@ Deliveryの待機・読み取りとstatus/attachの照合中は、stateの排他
 
 ### 名前付きOrca直列実行の検証
 
-正式な`tests/run.sh`は、Python 3.13.15で570.951秒、3.11.15で533.847秒かかり、両方とも成功しました。
+下記のplatform用テスト修正後、正式な`tests/run.sh`はPython 3.13.15で728.473秒、3.11.15で736.282秒かかり、両方とも成功しました。
 各環境でパッケージ1,192件、CLI 33件、MCP 33件、compact runner 8件と、適用対象のshell・source state・rendered home・Nix検証を実行しました。
 実行中はsource manifestの222項目が不変でした。ログには意図した負例の出力とplatformによるskipも含まれます。
 この検証だけでは、Orcaでの実機全工程を確認したことにはなりません。
@@ -68,7 +68,7 @@ runtimeの76ファイルはsource・wheel・導入先で一致し、sdist、著�
 隔離したCLI検証ではruntime stateを作らず、検証後に環境を削除しました。buildとCIの対象commitは
 [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)に記載します。
 
-実機試験はOrca 1.4.190と選択したClaude Code 2.1.263で2回行いました。
+最初の実機試験2回は、Orca 1.4.190と選択したClaude Code 2.1.263で行いました。
 最初の`run_a372c9ef428f`は新規repositoryのtrust画面で停止し、名前付きチームの進行には到達していません。
 公開stopは成功し、通常のClaudeの確認対象4pathに変化はありませんでした。
 2回目の`run_70c45e0282db`では、既に信頼済みのrepositoryに専用worktreeを作成しました。
@@ -86,6 +86,18 @@ Orcaには閉じた端末の履歴情報が残る場合があります。再試�
 Keychainの内容は比較しておらず、OAuth subjectの試験前後の同一性も完全には確認できていません。
 既存のTeam subscription認証のstatusは、実際の課金記録の確認とは区別します。login、trust付与、権限・課金契約の変更は要求していません。
 名前付きOrcaの実モデル全工程と、残るbackend・harnessの受入条件は未達です。
+
+以前の表示にあった再開時刻を過ぎてから、3回目の`run_6389a0782d6b`を実行しました。
+Mainはpromptを受け付けましたが、再びFableの利用上限が表示され、自動再開時刻は2026-09-09の14:10 JSTに変わりました。
+TaskDispatchとモデル応答は0件です。自動再開前に公開stopが成功し、記録した3 PID、そのプロセスグループ、稼働中のMain端末、stateの不在を独立に確認しました。
+今回はaccount UUIDとorganization UUIDのhashを試験前後に取得し、両方の一致を確認しています。
+settingsファイルのhashとrepositoryのtrust値は不変で、確認対象のcredentialsファイルも不在のままでした。
+Keychainの内容と実際の課金は未確認です。再試験用worktree、初期shell、選択済みの導入環境は保持しています。
+
+最初のCIでは、`38f6ec9`の新しい依存確認テスト1件がUbuntuの両Python版で失敗しました。
+実装は既存仕様どおり`orca-ide`を選んでいましたが、テストがmacOSの`orca`を期待していたためです。
+テストを両platformの明示的な期待値に直し、SDK欠如時のエラーとfallback未使用の確認を維持しました。
+runtimeの動作は変更せず、正式なlocal検証を両Pythonで再実行して成功を確認しています。
 
 ### 実験的なnative terminal runtime
 
