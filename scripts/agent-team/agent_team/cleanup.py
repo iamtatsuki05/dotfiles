@@ -488,7 +488,7 @@ def validated_assignments(
                 local_stage = raw_stage
             validate_background_assignment(
                 resolve_state_role(state, role_name)
-                if state.get("runtime") == "orca" and state.get("version") == 4
+                if state.get("runtime") == "orca" and state.get("version") in {4, 5}
                 else role_name,
                 raw_assignment,
                 state_path=state_path,

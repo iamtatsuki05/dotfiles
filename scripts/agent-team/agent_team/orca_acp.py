@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import NoReturn, cast
 
+from . import orca_delivery
 from .contracts import ErrorCode, RuntimeFailure
 from .locking import _LifecycleReservation
 from .named_graph import GraphSpec, NamedGraphError
@@ -50,10 +51,10 @@ def _required_string(value: object, field: str) -> str:
 def _validate_named_orca_state(
     state: Mapping[str, object], *, role: str, role_kind: str
 ) -> dict[str, object]:
-    if state.get("version") != 4 or state.get("runtime") != "orca":
+    if state.get("version") not in {4, 5} or state.get("runtime") != "orca":
         _fail(
             ErrorCode.IDENTITY_MISMATCH,
-            "Orca completion requires named serial state version 4",
+            "Orca completion requires named state version 4 or 5",
         )
     try:
         graph = GraphSpec.from_dict(state.get("graph"))
@@ -63,13 +64,12 @@ def _validate_named_orca_state(
             ErrorCode.IDENTITY_MISMATCH,
             "Orca completion role is not present in the saved graph",
         ) from exc
-    if (
-        graph.coordination.mode != "agent"
-        or graph.coordination.dispatch_mode != "serial"
+    if graph.coordination.mode != "agent" or graph.coordination.dispatch_mode != (
+        "parallel" if state["version"] == 5 else "serial"
     ):
         _fail(
             ErrorCode.INVALID_REQUEST,
-            "Orca completion requires agent/serial coordination",
+            "Orca completion requires agent coordination matching the state version",
         )
     if role_kind not in _ACP_ROLES or node.kind.value != role_kind:
         _fail(
@@ -260,8 +260,6 @@ def publish_completion(
                 ErrorCode.IDENTITY_MISMATCH,
                 "Orca completion must not use native_result",
             )
-        if "orca_result" in state:
-            _fail(ErrorCode.IDENTITY_MISMATCH, "Orca completion was already published")
         assignment, task = _assignment_for_completion(
             state,
             role=role,
@@ -272,6 +270,9 @@ def publish_completion(
             terminal_handle=terminal_handle,
             launch_nonce=launch_nonce,
         )
+        delivery = cast(dict[str, object], orca_delivery.container(state, role))
+        if "orca_result" in delivery:
+            _fail(ErrorCode.IDENTITY_MISMATCH, "Orca completion was already published")
         stop_requested = state.get("orca_stop_requested")
         if stop_requested is not None and type(stop_requested) is not bool:
             _fail(ErrorCode.IDENTITY_MISMATCH, "Orca stop request flag is invalid")
@@ -318,7 +319,7 @@ def publish_completion(
             result["logical_task_id"] = task.task_id
         if evidence is not None:
             result["task_evidence"] = evidence
-        state["orca_result"] = result
+        delivery["orca_result"] = result
         write_state(
             state_path,
             state,

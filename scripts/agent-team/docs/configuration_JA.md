@@ -12,7 +12,9 @@ roleを起動する前に拒否します。topology schemaとresourceを起動�
 [Version 4の設定](configuration-v4_JA.md)を参照してください。
 nodeごとの設定、複数のWorker/Reviewer、TaskSpecの担当指定には、
 [Version 5の設定](configuration-v5_JA.md)を使います。nativeではagent/program、serial/parallelの各構成を受け付けます。
-名前付きOrcaはscoped ACPのbackground roleを使う`agent`/`serial`だけを受け付け、実モデル全工程の受入は未達です。以下は
+名前付きOrcaは、state version 4の`agent`/`serial`とstate version 5の`agent`/`parallel`を、direct Claude Mainとscoped Claude ACPのbackground roleで実行します。
+parallel経路はTaskBatchとreviewの共通contractを使い、Run単位のFIFO Deliveryを[アーキテクチャ](architecture_JA.md)に記載します。
+Orcaのprogram構成は引き続き拒否し、実モデルparallel受入は未実施です。以下は
 固定Main roleを持つversion 3のリファレンスで、Mainなしのprogram graphは表現しません。
 
 ## canonical configから始める
@@ -359,14 +361,15 @@ evidence、fixed verification argvを追加・変更できません。native con
 なければ、read-onlyの`role_prompt`は使えますが、structured task dispatchは拒否します。
 固定version 3のOrca configではtop-levelの`tasks`を拒否し、version 5の名前付きOrcaではteamのcatalogを使います。
 
-native task lifecycleの順序は次のとおりです。
+nativeと名前付きOrca version 5のtask lifecycleは通常の10 toolを使います。明示的な`agent`/`parallel`では11個目の`task_batch_open`を追加し、
+Mainがdispatch前に宣言済みbatchを開きます。serial、program、default、declaration-onlyでは、この追加toolを表示しません。処理順は次のとおりです。
 
 1. 宣言済みTaskSpecをPlanner、Worker、Reviewerへ渡すため`task_dispatch`を呼びます。
 2. `role_wait`、`role_read`、`role_release`、`delivery_ack`の順にresultを処理します。
 3. `task_get`で保存済みstage、review evidence、verification evidenceを確認します。
 4. Planner/Workerの成功は`awaiting_plan_review`または`awaiting_implementation_review`になります。
 5. Reviewerは`task_id`、`stage`、`revision`、`decision`、`findings`だけのexact JSONを返します。
-6. `approve`は次のstageへ進み、`request_changes`は元のwriterへ戻り、`consult`は名前付きnative graphのuser相談を保存します。
+6. `approve`は次のstageへ進み、`request_changes`は元のwriterへ戻り、`consult`は名前付きgraphのuser相談を保存します。
 7. implementation approval後に`task_verify`が宣言済みfixed argvを実行します。
 
 `role_wait`がnativeの`question`を返した場合、Mainは各eventの`message_id`へ`message_reply`を送り、
@@ -381,6 +384,11 @@ batchです。消費済みreceiptにはidentityとhashだけを残します。pr
 review roundが残っていれば、元のwriterを再実行してからreviewをやり直します。上限到達後は回答を保存しても再dispatchを許可しません。
 回答だけで承認にはならず、review roundもリセットしません。
 ACP questionは引き続き`answer --message-id ID --body ...`を使い、program coordinatorはbatch内の全questionへの回答後にだけackします。
+
+名前付きOrcaの`agent`/`parallel`では、`role_wait`が他nodeのownerを含むRun全体のFIFO Deliveryを返します。
+Mainは各memberを保存済みDispatchへ照合し、ownerごとに`role_read`/`role_release`または正確な`message_reply`を処理して、
+全memberの準備後に共有`delivery_ack`を1回だけ呼びます。未回答questionはwhole-batch ACKを止めますが、`stop`中も安全なpeerのcleanupは進められます。
+unknownなreply/ACK effectは自動再送せず保持します。version 3と名前付きserialの挙動は変わりません。
 
 planとimplementationのreview roundは別々に数え、どちらも`max_review_rounds`に従います。
 implementation reviewはReviewer assignment準備時のworkspace revisionに束縛されます。

@@ -6,7 +6,7 @@
 ## runtimeを明示的に選択する
 
 `agent-team`はオーケストレーションとAgent実行を分け、設定の`runtime`でbackendを選択します。
-version 3の`runtime = "orca"`は既存の4 role固定構成を使い、version 5は名前付きOrcaの`agent`/`serial`にも対応します。
+version 3の`runtime = "orca"`は既存の4 role固定構成を使い、version 5は名前付きOrcaの`agent`/`serial`と`agent`/`parallel`にも対応します。
 version 3の`runtime = "tmux"`、`"herdr"`、`"zellij"`は実験的なnative pathで、direct Claude Mainを必須とし、verified Claude ACPの
 Planner、Worker、Reviewerを任意に追加できます。native Workerのassignmentにはconfigの
 `[[tasks]]` catalogにあるTaskSpecとの完全一致が必要です。その他の未対応native profileは、
@@ -34,6 +34,7 @@ flowchart TD
 ### 名前付きOrcaにも共通のタスク規則を適用する
 
 Version 5の名前付きOrca `agent`/`serial`は、`runtime = "orca"`を持つversion 4のstateを保存します。
+名前付き`agent`/`parallel`は同じruntime tagを持つversion 5のstateを使います。
 Mainはdirect Claude、background nodeはscoped Claude ACPを使い、node IDと役割の設定を固定します。
 Codex ACPの内部実装もありますが、公開設定では拒否します。
 `orca_dispatch`はOrcaのTaskとterminalを作り、Dispatchの識別情報を保存してからrunnerの起動commandを送ります。
@@ -55,6 +56,35 @@ Deliveryの待機・読み取りとstatus/attachの照合中は、stateの排他
 起動途中の失敗も`pending_role_start`へ残します。これらの記録だけで外部操作の完了を証明せず、不明な操作の自動復旧も行いません。
 停止ではproviderの終了確認を待ち、既存の完了Deliveryを消費するか、該当するcontext-only Dispatchと所有端末を停止します。
 各経路の契約テストは成功しています。直近の実機試験ではMain起動とprompt受付まで確認しましたが、名前付きOrcaの実モデル全工程は未確認です。
+
+### 名前付きOrcaのagent/parallelはRun単位で受領する
+
+名前付きOrcaの`agent`/`parallel`はstate version 5を使い、TaskSpec、TaskBatch、レビュー、検証の規則を共有します。
+direct ClaudeのMainが`task_batch_open`で対象batchを開き、Planner、Worker、Reviewerはscoped Claude ACPで動きます。
+Orcaの`program`構成は引き続き拒否します。
+
+`role_wait`には実行中のnodeを指定しますが、返すのはRun内で最も古い未ACKのDeliveryに含まれる全eventです。
+他のnodeのeventも含みます。runtimeは各messageを保存済みのTask、Dispatch、端末、結果または質問のoutboxと照合し、
+保存前にもassignmentの世代を再確認します。Mainは返されたeventの識別情報とTaskDispatchのreceiptを使い、操作対象のnodeを選びます。
+
+rootの`orca_delivery_batch`には、共有Delivery ID、各ownerの識別情報、messageの件数とhash、phase、長さを制限したerrorを保存します。
+nodeごとのstateには結果、質問、未確定のreply effectを保持します。Mainは完了した全ownerをread/releaseし、すべての質問に回答してから、
+Delivery全体を1回だけACKします。未知または矛盾するmessageがあれば、既知のmemberも部分的には処理せず、不正なbatchとして保持します。
+古い待機応答を新しいassignmentへ保存することも拒否します。
+
+未回答の質問や結果未確定のreply/ACKがある間は、共有ACKを行えません。
+`stop`はproviderの終了を確認できたpeerの所有資源を解放できますが、未解決のbatchとownerは保持します。
+ACKの応答を受け取れなかった場合も、送信記録と全ownerを残し、自動再送しません。
+
+providerを呼ばない試験`run_2f5e3cc0197f`では、異なる2件のDispatchから送ったmessageが、2回のcheckで同じDeliveryとして返ることを確認しました。
+両ownerのread/releaseと端末closeの後、1回のACKで未読が0になりました。PID、process group、待機用scriptが残っていないことも別途照合しています。
+内部の検証記録は`orca-fifo-protocol-complete-proof.json`で、配布物には含めていません。この試験で確認したのはOrcaのFIFOと終了処理で、実モデルの全工程や認証動作は対象外です。
+
+最終の正式な`tests/run.sh`は、Python 3.13.15で732.993秒、3.11.15で642.654秒かかり、両方とも成功しました。
+対象はpackage 1,246件、CLI 33件、MCP 33件、compact runner 8件と、shell・設定の検証です。
+各回で同じ233ファイルが変更されていないことを確認しています。独立レビューで見つかった古い不正batchの保存、
+activeな質問と通知対象結果の同居、回答receiptの上書きは、この最終検証前に修正しました。
+検証後の更新は文書だけで、実装とテストの内容は同じです。名前付きOrcaの実モデルparallel受入は未完了です。
 
 ### 名前付きOrca直列実行の検証
 
@@ -120,15 +150,17 @@ detached mode、persistent clientなし、`--max-panes 1`なしを使います�
 terminalを1つと既知のsuppressed `zellij:link` pluginだけを受け入れ、未知のpane/pluginはunknownのままにします。
 
 HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serialとagent/parallel、program/serial、
-program/parallel構成をversion 5で接続しています。agent/parallelはMainが正確なTaskSpec IDの`agent_batch`を明示してから
+program/parallel構成をversion 5で接続しています。nativeのagent/parallelはMainが正確なTaskSpec IDの`agent_batch`を明示してから
 named writerとReviewerをdispatchします。program構成にはMain roleを置かず、選択したterminal上で既存の`native_main`
 supervisorが固定argvの`_program-run` coordinatorを監督します。2つのmodeの間にschedulerや暗黙の変換はありません。
-Orcaのprogram・parallel構成と10 harnessの大半は、現在の実行対象外です。2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
+名前付きOrcaのagent/parallelは上記のversion 5 Run FIFO contractを使います。Orcaのprogram構成と10 harnessの大半は、現在の実行対象外です。
+2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
 
 native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。名前付きnativeのReviewer相談回答と
 serial/parallel program coordinatorもfocused testで接続しています。boundedな端末・fake providerのparallel coverageは下記に
-過去runの証拠として記載し、今回のMain parallel live受入は下記にまとめます。実モデルのparallel受入、名前付きOrca、全ハーネスへの対応は引き続き未完了です。
+過去runの証拠として記載し、今回のMain parallel live受入は下記にまとめます。実モデルのparallel受入と全ハーネスへの対応は引き続き未完了です。
+上記の名前付きOrca protocol proofはprovider-freeであり、実モデル受入のgateを閉じるものではありません。
 
 ### 名前付きnodeとTaskSpecの担当指定
 
@@ -138,8 +170,8 @@ provider/model/effort/prompt/permissionはnodeごとに保持します。Mainは
 taskのrouteは計画・実装それぞれのwriterとreviewerを指定します。計画担当の組を宣言した場合は、
 計画の承認後に実装へ進みます。その組を省略したrouteではPlannerを省けます。
 
-configはversion 5、名前付きnativeのserial stateはversion 4、agent/parallelとprogram/parallel stateはversion 5です。
-graphと`role_specs`は設定済みの全nodeを含み、version 5の`roles`にはactive assignmentとnodeごとのresult、question、
+configはversion 5、名前付きserial stateはversion 4、名前付きOrcaの`agent`/`parallel`とnativeのagent/parallel・program/parallel stateはversion 5です。
+名前付きOrca parallel stateはRun単位の`orca_delivery_batch`を所有します。graphと`role_specs`は設定済みの全nodeを含み、version 5の`roles`にはactive assignmentとnodeごとのresult、question、
 pending Delivery containerを保存します。native runtimeのTask UUIDと論理的な`TaskSpec.task_id`は別物で、
 dispatch IDが結果と対象taskを結び付けます。stateの読み取り、通知の保存、taskの遷移では、ID・kindの欠落や不一致を拒否します。
 version 3のstateは従来の契約を維持し、自動移行しません。
@@ -175,8 +207,8 @@ implementation routeの中間plan reviewはwriter phaseで行い、plan-only rou
 その1回のrequestが、`completed`済みpeerを含む正確なpeer集合のreopenと要求したwriterのdispatchを原子的に行います。peerは自動dispatchしません。
 公開reopen toolはなく、`task_batch_open`で未完了batchをreopenまたは置換することもできません。不正なTaskSpec、route、message、review limit、dependency inputではstateを変更しません。
 parallelの`role_prompt`はread-only調査も含めて拒否し、serialのread-only `role_prompt`は維持します。`task_batch_open`はparallel Mainの
-明示的な`--tools`と`--allowedTools`にだけ追加します。今回のMain parallel live受入は下記に記載します。名前付きOrca、
-Orca/native shared progression、実Main Astra/provider受入は未解決です。
+明示的な`--tools`と`--allowedTools`にだけ追加します。今回のMain parallel live受入は下記に記載します。実モデルの名前付きOrca、
+Orca/native shared progression、実Main Astra/provider受入は未解決です。provider-freeの名前付きOrca protocol proofは上記に記載しています。
 
 Reviewerの相談は、名前付きnativeで独立した操作として扱います。`status`にはopaqueな相談ID、findings、task/stage、回答状態を表示し、
 `answer --consultation-id ID --body ...`で`agent`と`program`の両方へ回答できます。IDはrun、TaskSpec digest、review stage、正確なreview Dispatchに束縛し、
@@ -343,7 +375,8 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 | `agent_team/cleanup.py` | private stop journal、startup recovery sidecar、local cleanup/rollbackのexact phaseを担当する。 |
 | `agent_team/mcp_protocol.py` | 共通MCP schema、JSON-RPC framing、backendに依存しない遅延serveを担当する。 |
 | `agent_team/mcp_server.py`, `runtime_mcp.py` | Mainのtool入力を解釈する。固定Orcaは`mcp_server`、nativeと名前付きOrcaは共通の`runtime_mcp`と選択したbackendを使う。 |
-| `agent_team/orca_dispatch.py`, `orca_acp.py`, `orca_tasks.py`, `orca_questions.py` | scoped ACPをOrcaのTask・Dispatch・terminalに結び付け、結果、質問、停止、Deliveryの処理順を強制する。 |
+| `agent_team/orca_dispatch.py`, `orca_acp.py`, `orca_tasks.py`, `orca_questions.py` | scoped ACPをOrcaのTask・Dispatch・terminalに結び付け、結果、質問、停止、Deliveryの処理順を強制する。version 5のparallel stateではrootの`orca_delivery_batch`とroleごとのjournalも管理する。 |
+| `agent_team/orca_delivery.py`, `orca_parallel_stop.py` | OrcaのDelivery ownerを選び、parallel Runの停止時にbatchを処理する。 |
 | `agent_team/role_snapshot.py`, `task_verification.py` | 選択した設定のsnapshotと承認済みrevisionの検証をnative・名前付きOrcaで共有する。 |
 | `agent_team/task_spec.py` | immutable TaskSpecのexact schemaとpath/verification fieldを検証する。 |
 | `agent_team/task_execution.py` | TaskSpec digest、dependency admission、review decision、stage別round limitを保存する。 |
@@ -386,7 +419,7 @@ canonical configのMainはdirect Claudeとして起動します。`agent_team` M
 bundled defaultでは、MainとPlannerに`fable`、WorkerとReviewerに`gpt-6-astra`を使います。
 role graphは、このlaunch configのmodel選択を変更しません。
 
-通常のMCP serverが公開するtoolは10個です。native `agent`/`parallel` stateでは、
+通常のMCP serverが公開するtoolは10個です。version 5のnativeまたは名前付きOrcaの`agent`/`parallel`では、
 11個目の`task_batch_open`だけを追加します。他のmodeでは広告しません。
 
 - `task_get`
@@ -399,13 +432,13 @@ role graphは、このlaunch configのmodel選択を変更しません。
 - `role_release`
 - `delivery_ack`
 - `message_reply`
-- `task_batch_open`（native `agent`/`parallel`だけ）
+- `task_batch_open`（version 5のnativeまたは名前付きOrcaの`agent`/`parallel`だけ）
 
 このMCP経由では、任意commandや任意role名を指定できません。nativeの`task_dispatch`は
 configに宣言したTaskSpecとの完全一致だけを受け付けます。固定したsurfaceによって、Agentの
 出力とprocess controlの権限を分離します。
 
-Claude Mainの起動では、選択したgraphがnative `agent`/`parallel`の場合だけ、
+Claude Mainの起動では、選択したversion 5 graphがnativeまたは名前付きOrcaの`agent`/`parallel`の場合だけ、
 `task_batch_open`を明示的な`--tools`と`--allowedTools`の両方へ追加します。
 serial、program、declaration-onlyのtool listは変わりません。
 
@@ -793,7 +826,7 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 - 実装・review・fixed argv検証まで通る実モデルprogram run。下記のserial試験はprovider failureで停止しました
 - 実モデルのread-only plan-only run
 - 実モデルのnative `program`/`parallel`受入
-- 実モデル/providerを使うnative `agent`/`parallel`受入、名前付きOrca構成、Orcaとnativeの共有progression
+- 実モデル/providerを使うnative `agent`/`parallel`受入、実モデルの名前付きOrca構成、Orcaとnativeの共有progression
 - crashやcleanup不明後の自動recovery
 
 ## 意図的な対象外

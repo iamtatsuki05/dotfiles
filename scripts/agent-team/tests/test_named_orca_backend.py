@@ -21,6 +21,8 @@ from agent_team.contracts import (
     RoleSpec,
     RuntimeFailure,
     Status,
+    TaskBatchOpen,
+    TaskDispatch,
 )
 from agent_team.locking import _LifecycleReservation
 from agent_team.named_graph import GraphEdge, TaskRoute
@@ -224,19 +226,54 @@ class NamedOrcaBackendTest(unittest.TestCase):
         self.client.terminal_switch = terminal_switch
         self.assertEqual(self.backend.request(Attach(self.lead)).role, self.lead)
 
-    def test_parallel_graph_is_rejected_before_dependency_probe(self):
+    def test_parallel_graph_saves_version5_and_resumes_the_same_snapshot(self):
         graph = replace(
             self.spec.graph,
             coordination=replace(
                 self.spec.graph.coordination, dispatch_mode="parallel", max_active=2
             ),
         )
-        with (
-            mock.patch.object(backend_module, "preflight_scoped_role") as preflight,
-            self.assertRaises(RuntimeFailure) as raised,
-        ):
-            self.backend.start(replace(self.spec, graph=graph))
-        self.assertIs(raised.exception.code, ErrorCode.INVALID_REQUEST)
-        preflight.assert_not_called()
-        self.assertEqual(self.client.calls, [])
-        self.assertFalse(self.spec.state_path.parent.exists())
+        self.spec = replace(self.spec, graph=graph)
+        state = self.start()
+        self.assertEqual(state["version"], 5)
+        self.assertEqual(state["graph"], graph.as_dict())
+        self.assertEqual(state["roles"], {})
+        self.assertNotIn("pending_delivery_id", state)
+        resumed = OrcaBackend(cast(OrcaClient, self.client), resume_existing=True)
+        with mock.patch.object(
+            backend_module, "preflight_scoped_role", side_effect=self.scoped_preflight
+        ) as preflight:
+            resumed.start(self.spec)
+        self.assertEqual(preflight.call_count, 2)
+        self.assertTrue(
+            all(call.kwargs["preflight"] is False for call in preflight.call_args_list)
+        )
+        self.assertEqual(resumed.request(Attach(self.lead)).role, self.lead)
+
+    def test_parallel_first_task_is_admitted_from_real_empty_saved_state(self):
+        self.spec = replace(
+            self.spec,
+            graph=replace(
+                self.spec.graph,
+                coordination=replace(
+                    self.spec.graph.coordination, dispatch_mode="parallel", max_active=2
+                ),
+            ),
+        )
+        self.start()
+        self.backend.request(TaskBatchOpen(("task-1",)))
+        request = TaskDispatch(
+            NodeRef("worker-a", Role.WORKER), _task(), "Implement the declared task."
+        )
+        with mock.patch(
+            "agent_team.orca_dispatch.start_assignment",
+            return_value=mock.sentinel.assignment,
+        ) as start:
+            self.assertIs(self.backend.request(request), mock.sentinel.assignment)
+        start.assert_called_once()
+        self.assertEqual(start.call_args.args[:1], (self.spec.state_path,))
+        self.assertEqual(start.call_args.args[1]["roles"], {})
+        self.assertEqual(start.call_args.args[2], request)
+        self.assertEqual(
+            start.call_args.kwargs["task_record"]["spec"], _task().as_dict()
+        )

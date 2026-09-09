@@ -13,22 +13,20 @@ and Reviewer roles. Native
 Worker assignments require a config-declared TaskSpec and use the scoped Claude
 ACP policy; only the terminal driver changes. Native `program`/`parallel` admits
 independent assignments up to `max_active` and stores delivery state per node.
-Version-5 native `agent`/`parallel` also supports Main-coordinated named nodes.
-Main must explicitly open each exact batch with `task_batch_open` before any
-dispatch. There is no automatic scheduler or implicit program mode. The
-implementation and focused contract checks are available; bounded live
-Main-parallel acceptance is recorded in [Architecture](docs/architecture.md).
-Named Orca
-parallel execution remains outside the supported target. Existing bounded
-terminal/fake-provider and real-model records remain historical, scoped
-evidence as described in Architecture.
+Version-5 native and named Orca `agent`/`parallel` support Main-coordinated
+named nodes. Main opens each exact batch with `task_batch_open` before
+dispatch; both paths use the common TaskSpec, TaskBatch, review, and verification
+rules. The implementation and bounded evidence are recorded in
+[Architecture](docs/architecture.md). Real-model parallel acceptance remains
+pending.
 
-Version-5 named Orca `agent`/`serial` teams can use direct Claude Main and
-scoped Claude ACP background roles. Planner/Reviewer stay read-only; Worker dispatch requires a
-declared TaskSpec; review and fixed-argv verification use the same task rules
-as native teams. Contract tests pass. In the latest live attempt, Main started
-and accepted the prompt before a usage limit; no TaskDispatch was observed.
-See [Architecture](docs/architecture.md) for validation and live evidence.
+Version-5 named Orca `agent`/`serial` and `agent`/`parallel` teams can use
+direct Claude Main and scoped Claude ACP background roles. Planner/Reviewer
+stay read-only; Worker dispatch requires a declared TaskSpec; review and
+fixed-argv verification use the same task rules as native teams. The latest
+serial live attempt reached Main startup and prompt acceptance before a usage
+limit; no TaskDispatch was observed. See [Architecture](docs/architecture.md) for the
+separate serial evidence and the provider-free parallel protocol proof.
 Codex ACP remains disabled in public configuration.
 See [Version-5 configuration](docs/configuration-v5.md).
 
@@ -107,8 +105,10 @@ acceptance selected Claude Fable explicitly for all five nodes. The native
 parallel path has focused contract coverage and bounded terminal/fake-provider
 acceptance, but this real run was native agent/serial acceptance. Real-model
 parallel acceptance remains pending. The bounded Main-parallel live acceptance
-is recorded in [Architecture](docs/architecture.md). Named Orca supports only
-`agent`/`serial`; its real-model workflow remains unverified. Named Reviewer consultation answers are available through a
+is recorded in [Architecture](docs/architecture.md). The same document records
+the named-Orca provider-free protocol proof. Named Orca supports
+`agent`/`serial` and `agent`/`parallel`; its real-model workflow remains
+unverified. Named Reviewer consultation answers are available through a
 bounded opaque ID. Resuming requires the original writer and another review
 within the round limit; reaching the limit keeps the task unresolved even after
 an answer is saved.
@@ -499,7 +499,7 @@ Invalid TaskSpec, route, message, review-limit, or dependency requests leave
 the state unchanged.
 
 For Claude Main, the additional `task_batch_open` tool is added only when the
-selected native team is `agent`/`parallel`, and then only to the explicit
+selected version-5 team is native or named Orca `agent`/`parallel`, and then only to the explicit
 `--tools` and `--allowedTools` lists. The default, serial, program, and
 declaration-only tool catalogs do not advertise it.
 
@@ -552,8 +552,9 @@ Reviewer output is one exact JSON object with `task_id`, `stage`, `revision`,
 same workspace revision. `completed` is reported only after every declared
 fixed argv command passes and cleanup is confirmed. See
 [Configuration](docs/configuration.md#taskspec-catalog-is-optional-required-for-native-task-dispatch) for
-the complete field contract and the default ten-tool catalog; native
-`agent`/`parallel` adds `task_batch_open` as the eleventh tool.
+the complete field contract and the default ten-tool catalog. Explicit
+version-5 `agent`/`parallel` graphs, native or named Orca, add `task_batch_open`
+as the eleventh tool.
 If verification fails with complete evidence and confirmed cleanup, Worker may
 be retried within the implementation review-round limit. An unconfirmed
 cleanup result requires user consultation and remains retained.
@@ -564,9 +565,11 @@ cleanup result requires user consultation and remains retained.
   format fails before launch. The launcher never silently switches backends or
   transports.
 - Bundled version-3 Orca keeps its fixed four-role contract. Version-5 named
-  Orca accepts `agent`/`serial`, direct Claude Main, and scoped Claude ACP
-  background roles with the declared TaskSpec rules. Orca program and parallel
-  modes fail before dependency probes or resource creation. Version-3 native runtimes require
+  Orca accepts `agent`/`serial` and `agent`/`parallel`, with direct Claude Main
+  and scoped Claude ACP background roles using the declared TaskSpec rules.
+  Named Orca `agent`/`parallel` uses state version 5 and the common TaskBatch
+  contract. Orca program modes remain rejected before dependency probes or
+  resource creation. Version-3 native runtimes require
   Main and allow optional verified Claude ACP Planner/Reviewer roles plus a
   scoped Claude ACP Worker. Version-5 native `agent`/`serial` and
   `agent`/`parallel` teams keep Main; version-5 `program`/`serial` and
@@ -583,12 +586,14 @@ cleanup result requires user consultation and remains retained.
   Native `last_ack` stores one receipt marker and does not mean that a Task or
   the user's overall goal is complete.
 - Version-5 native `agent`/`parallel` and `program`/`parallel` state keep a result, question, and
-  pending Delivery container for each active node. `max_active`, exact node
-  identity, and non-overlapping Worker write scopes control admission. A pending
-  user question blocks its own assignment but does not block an independent
-  admitted peer. Public `stop` sets `native.phase=stopping` and privately
-  drains safe peers in Read → Release → Ack order; unknown identity, missing
-  typed results, or unproven cleanup retain that node while safe peers continue.
+  pending Delivery container for each active node. Named Orca `agent`/`parallel`
+  instead uses one Run-level `orca_delivery_batch` envelope with per-role
+  journals. `max_active`, exact node identity, and non-overlapping Worker write
+  scopes control admission. A pending user question blocks its own assignment;
+  in the Orca batch it also blocks the shared ACK, while safe peer cleanup may
+  continue during `stop`. Unknown identity, missing typed results, unknown
+  reply/ACK effects, or unproven cleanup retain the affected state. Native and
+  serial Delivery semantics remain unchanged.
 - Native Claude questions use the existing `AskUserQuestion` form elicitation
   through the pinned ACP 0.70.0 / SDK 1.3.0 path. Consumed receipts retain
   identities and hashes. The protected outbox may retain raw question and

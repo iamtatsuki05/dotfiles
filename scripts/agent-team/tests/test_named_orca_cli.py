@@ -94,7 +94,6 @@ class NamedOrcaCliTest(unittest.TestCase):
     ) -> None:
         graph = GraphSpec.from_dict(self.plan["graph"])
         for mode, entry_nodes in (
-            ("agent", ["lead"]),
             ("program", ["implementation-a", "implementation-b"]),
         ):
             with self.subTest(mode=mode):
@@ -116,11 +115,40 @@ class NamedOrcaCliTest(unittest.TestCase):
                 with (
                     mock.patch.object(cli, "_start_prerequisites") as prerequisites,
                     mock.patch.object(cli, "_runtime_engine") as runtime,
-                    self.assertRaisesRegex(cli.ConfigError, "agent/serial"),
+                    self.assertRaisesRegex(cli.ConfigError, "agent coordination"),
                 ):
                     cli.start_team(plan, attach=False)
                 prerequisites.assert_not_called()
                 runtime.assert_not_called()
+
+    def test_parallel_orca_start_exposes_batch_tools_and_declared_tasks(self) -> None:
+        text = (
+            _v5_config_text(runtime="orca")
+            .replace('dispatch_mode = "serial"', 'dispatch_mode = "parallel"')
+            .replace("max_active = 1", "max_active = 2")
+        )
+        config = cli.load_v5_config_data(self.config_path, tomllib.loads(text))
+        plan = cli._v5_runtime_plan(config, self.workspace, "build")
+        self.assertIn(
+            "mcp__agent_team__task_batch_open", " ".join(plan["roles"]["lead"]["argv"])
+        )
+        backend = _RecordingBackend()
+        with (
+            mock.patch.object(cli, "_start_prerequisites"),
+            mock.patch.object(
+                cli, "_runtime_engine", return_value=(WorkflowEngine(backend), backend)
+            ),
+        ):
+            cli.start_team(plan, attach=False)
+        self.assertEqual(
+            backend.start_spec.graph.coordination.dispatch_mode, "parallel"
+        )
+        with (
+            mock.patch.object(cli, "_start_prerequisites") as prerequisites,
+            self.assertRaisesRegex(cli.ConfigError, "declared TaskSpecs"),
+        ):
+            cli.start_team({**plan, "task_specs": []}, attach=False)
+        prerequisites.assert_not_called()
 
     def test_management_uses_the_saved_named_snapshot(self) -> None:
         self.config_path.write_text("invalid replacement config", encoding="utf-8")

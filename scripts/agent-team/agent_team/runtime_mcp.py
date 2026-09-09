@@ -90,7 +90,8 @@ class RuntimeMcpSession:
 
         runtime = state.get("runtime")
         if not is_native_runtime(runtime) and not (
-            runtime == "orca" and state.get("version") == NAMED_STATE_VERSION
+            runtime == "orca"
+            and state.get("version") in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
         ):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH, "MCP requires a supported typed runtime"

@@ -54,12 +54,15 @@ verified workspace-write Worker and read-only Reviewer.
 
 ## Native Claude ACP
 
-Version-5 named Orca uses the scoped Claude ACP profile described below.
-The internal Codex path remains disabled in public configuration. Named Orca launches each assignment
-in an owned Orca terminal and retains Orca Task/Dispatch/Delivery identities;
-it does not use the fixed version-3 `acpx` client. The input graph must be
-`agent`/`serial`. This connection has contract-test coverage and awaits live
-Orca acceptance.
+Version-5 named Orca uses the scoped Claude ACP profile described below for
+`agent`/`serial` state version 4 and `agent`/`parallel` state version 5. The
+internal Codex path remains disabled in public configuration. Named Orca
+launches each assignment in an owned Orca terminal and retains Orca
+Task/Dispatch/Delivery identities; it does not use the fixed version-3 `acpx`
+client. Main is direct Claude, and Planner, Worker, and Reviewer assignments
+use scoped Claude ACP. The provider-free parallel protocol proof is recorded
+in [Architecture](architecture.md); real-model parallel acceptance remains
+pending.
 
 Native tmux, Herdr, and Zellij use a separate client with one public ACP connection per assignment.
 It selects Node.js, `@agentclientprotocol/claude-agent-acp@0.70.0`, and that
@@ -146,6 +149,20 @@ auto-dispatched. There is no public reopen tool, and `task_batch_open` cannot
 reopen or replace an unfinished batch. The additional `task_batch_open` tool is
 present only in the explicit Claude Main `--tools` and `--allowedTools` lists
 for this mode.
+
+### Named Orca parallel FIFO Delivery
+
+Named Orca `agent`/`parallel` reuses the TaskBatch and ACP assignment contracts
+but has one Run-level FIFO Delivery. `role_wait` returns all normalized events
+in that Delivery, including other node owners. Main matches each event to its
+stored Task/Dispatch identity, then applies `role_read`/`role_release` or an
+exact `message_reply` per owner before issuing one shared `delivery_ack`.
+The root `orca_delivery_batch` envelope and per-role journals retain the
+Run-level and owner-level evidence. An unanswered question blocks the shared
+ACK, while `stop` may clean up safe peers. Unknown reply or ACK effects are
+retained and never replayed automatically. Serial and native semantics are
+unchanged; see [Architecture](architecture.md) for the exact envelope and
+provider-free proof.
 
 The real-model tmux run `dc101afd-87bf-4697-9bbb-0d1339d381a8` confirmed a full
 question round trip with Fable at high effort, Planner omitted, and the same

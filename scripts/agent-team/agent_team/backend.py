@@ -76,6 +76,7 @@ from .orca import (
 from .role_snapshot import preflight_scoped_role, role_spec_snapshot
 from .runtime import (
     NAMED_STATE_VERSION,
+    PARALLEL_STATE_VERSION,
     STATE_VERSION,
     RuntimeValidationError,
     StatePublishError,
@@ -100,12 +101,9 @@ def _named_role_specs(
         validate_graph(graph, spec.task_specs)
     except (TypeError, ValueError) as exc:
         raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
-    if (
-        graph.coordination.mode != "agent"
-        or graph.coordination.dispatch_mode != "serial"
-    ):
+    if graph.coordination.mode != "agent":
         raise RuntimeFailure(
-            ErrorCode.INVALID_REQUEST, "named Orca requires agent/serial coordination"
+            ErrorCode.INVALID_REQUEST, "named Orca requires agent coordination"
         )
     if set(spec.role_specs) != set(graph.nodes):
         raise RuntimeFailure(
@@ -591,7 +589,7 @@ class OrcaBackend(BackendPort):
         if (
             state is not None
             and state.get("runtime") == "orca"
-            and state.get("version") == NAMED_STATE_VERSION
+            and state.get("version") in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
         ):
             from .orca_tasks import OrcaTasks
 
@@ -738,7 +736,10 @@ class OrcaBackend(BackendPort):
     def stop(self) -> StopResult:
         self._ensure_supported_platform()
         state = self._require_state()
-        if state.get("runtime") == "orca" and state.get("version") == 4:
+        if state.get("runtime") == "orca" and state.get("version") in {
+            NAMED_STATE_VERSION,
+            PARALLEL_STATE_VERSION,
+        }:
             from .orca_tasks import OrcaTasks
 
             return OrcaTasks(self).stop()
@@ -866,9 +867,10 @@ class OrcaBackend(BackendPort):
                             dispatch_id=dispatch_id, cwd=workspace
                         )
                         self._require_worker_stop(stop_verdict, dispatch_id=dispatch_id)
-                        if state.get(
-                            "version"
-                        ) == NAMED_STATE_VERSION and not isinstance(
+                        if state.get("version") in {
+                            NAMED_STATE_VERSION,
+                            PARALLEL_STATE_VERSION,
+                        } and not isinstance(
                             stop_verdict, WorkerStopContextOnlyVerdict
                         ):
                             raise OrcaProtocolError(
@@ -1046,7 +1048,9 @@ class OrcaBackend(BackendPort):
                 if local_stage == "pending" and execution == "background":
                     entry["local"] = cleanup_assignment_phase(
                         resolve_state_role(state, role_name)
-                        if state.get("runtime") == "orca" and state.get("version") == 4
+                        if state.get("runtime") == "orca"
+                        and state.get("version")
+                        in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
                         else role_name,
                         assignment,
                         state_path=state_path,
@@ -1063,7 +1067,9 @@ class OrcaBackend(BackendPort):
                     local_stage = "prompt_started"
                 entry["local"] = cleanup_assignment_phase(
                     resolve_state_role(state, role_name)
-                    if state.get("runtime") == "orca" and state.get("version") == 4
+                    if state.get("runtime") == "orca"
+                    and state.get("version")
+                    in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
                     else role_name,
                     assignment,
                     state_path=state_path,
@@ -1136,10 +1142,10 @@ class OrcaBackend(BackendPort):
     def _status(self) -> StatusReceipt:
         self._ensure_supported_platform()
         state = self._require_state()
-        if (
-            state.get("runtime") == "orca"
-            and state.get("version") == NAMED_STATE_VERSION
-        ):
+        if state.get("runtime") == "orca" and state.get("version") in {
+            NAMED_STATE_VERSION,
+            PARALLEL_STATE_VERSION,
+        }:
             from .orca_tasks import OrcaTasks
 
             return OrcaTasks(self).status()
@@ -1210,10 +1216,10 @@ class OrcaBackend(BackendPort):
     def _attach(self, request: Attach) -> AttachReceipt:
         self._ensure_supported_platform()
         state = self._require_state()
-        if (
-            state.get("runtime") == "orca"
-            and state.get("version") == NAMED_STATE_VERSION
-        ):
+        if state.get("runtime") == "orca" and state.get("version") in {
+            NAMED_STATE_VERSION,
+            PARALLEL_STATE_VERSION,
+        }:
             from .orca_tasks import OrcaTasks
 
             return OrcaTasks(self).attach(request)
@@ -1714,7 +1720,14 @@ class OrcaBackend(BackendPort):
                     role_spec.acp_executables
                 )
         state: dict[str, object] = {
-            "version": NAMED_STATE_VERSION if spec.graph is not None else STATE_VERSION,
+            "version": (
+                PARALLEL_STATE_VERSION
+                if spec.graph is not None
+                and spec.graph.coordination.dispatch_mode == "parallel"
+                else NAMED_STATE_VERSION
+                if spec.graph is not None
+                else STATE_VERSION
+            ),
             "runtime": "orca",
             "team_id": spec.team_id,
             "workspace": str(spec.workspace.resolve()),
@@ -1932,7 +1945,11 @@ class OrcaBackend(BackendPort):
         if spec.graph is not None and any(
             state.get(key) != value
             for key, value in {
-                "version": NAMED_STATE_VERSION,
+                "version": (
+                    PARALLEL_STATE_VERSION
+                    if spec.graph.coordination.dispatch_mode == "parallel"
+                    else NAMED_STATE_VERSION
+                ),
                 "runtime": "orca",
                 "graph": spec.graph.as_dict(),
                 "task_specs": [task.as_dict() for task in spec.task_specs],

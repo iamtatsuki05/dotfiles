@@ -44,6 +44,7 @@ from .native_question_channel import (
     validate_question_request,
 )
 from .orca import orca_executable
+from .orca_delivery import container as select_delivery_container
 from .runtime import read_state as _runtime_read_state
 from .runtime import write_state as _runtime_write_state
 
@@ -206,8 +207,9 @@ def _assignment(
     checked = _required_identity(identity)
     if state.get("runtime") != "orca":
         raise OrcaQuestionError("question state runtime is not Orca")
-    if state.get("version") != 4:
-        raise OrcaQuestionError("question state version is not named Orca serial")
+    version = state.get("version")
+    if version not in {4, 5}:
+        raise OrcaQuestionError("question state version is not named Orca")
     if state.get("run_id") != checked["run_id"]:
         raise OrcaQuestionError("question Run identity changed")
     roles = state.get("roles")
@@ -229,6 +231,7 @@ def _assignment(
     if assignment.get("launcher_owned_terminal") is not True:
         raise OrcaQuestionError("question terminal ownership is unproven")
     _validate_named_profile(state, checked, assignment)
+    _delivery_container(state, assignment)
     return cast(dict[str, object], assignment)
 
 
@@ -243,6 +246,12 @@ def _validate_named_profile(
         node = graph.node(identity["role"])
     except (KeyError, TypeError, ValueError) as exc:
         raise OrcaQuestionError("question graph identity is invalid") from exc
+    expected_dispatch = "serial" if state.get("version") == 4 else "parallel"
+    if (
+        graph.coordination.mode != "agent"
+        or graph.coordination.dispatch_mode != expected_dispatch
+    ):
+        raise OrcaQuestionError("question graph coordination is not an Orca graph")
     if node.kind.value != identity["role_kind"]:
         raise OrcaQuestionError("question node kind changed")
     role_specs = state.get("role_specs")
@@ -298,6 +307,21 @@ def _question_value(assignment: Mapping[str, object]) -> dict[str, object] | Non
     if set(value) != QUESTION_FIELDS:
         raise OrcaQuestionError("orca_question fields are invalid")
     return cast(dict[str, object], value)
+
+
+def _delivery_container(
+    state: Mapping[str, object], assignment: Mapping[str, object]
+) -> dict[str, object]:
+    node_id = assignment.get("role")
+    if node_id is not None and not isinstance(node_id, str):
+        raise OrcaQuestionError("question assignment role is invalid")
+    try:
+        selected = select_delivery_container(state, node_id)
+    except (TypeError, ValueError) as exc:
+        raise OrcaQuestionError(str(exc)) from exc
+    if not isinstance(selected, dict):
+        raise OrcaQuestionError("question Delivery container is invalid")
+    return selected
 
 
 def _validate_message_id(value: object, field: str) -> str | None:
@@ -357,11 +381,12 @@ def _validate_outbox_value(
     error = question.get("error")
     if error is not None:
         _text(error, "error", maximum=MAX_ERROR_CHARS)
-    pending_id = state.get("pending_delivery_id")
-    pending_kind = state.get("pending_delivery_kind")
-    pending_stage = state.get("pending_delivery_stage")
-    pending_questions = state.get("pending_question_ids")
-    replied_questions = state.get("replied_question_ids")
+    delivery = _delivery_container(state, assignment)
+    pending_id = delivery.get("pending_delivery_id")
+    pending_kind = delivery.get("pending_delivery_kind")
+    pending_stage = delivery.get("pending_delivery_stage")
+    pending_questions = delivery.get("pending_question_ids")
+    replied_questions = delivery.get("replied_question_ids")
     if pending_id is not None:
         if pending_kind != "question" or pending_stage != "observed":
             raise OrcaQuestionError("question outbox does not match pending Delivery")
@@ -427,7 +452,8 @@ def _begin_in_state(
             assignment.pop(QUESTION_KEY, None)
         else:
             raise OrcaQuestionError("another Orca question is pending")
-    if state.get("pending_delivery_id") is not None:
+    delivery = _delivery_container(state, assignment)
+    if delivery.get("pending_delivery_id") is not None:
         raise OrcaQuestionError("a Delivery is already pending")
     session_id = request.session_id
     saved_session = assignment.get(SESSION_KEY)
@@ -822,21 +848,22 @@ def observe_question(
     phase = question.get("phase")
     if phase not in {"asking", "observed", "replied"}:
         raise OrcaQuestionError("question is not observable")
-    pending = state.get("pending_delivery_id")
+    delivery = _delivery_container(state, assignment)
+    pending = delivery.get("pending_delivery_id")
     if pending is not None and (
         pending != delivery_id
-        or state.get("pending_delivery_kind") != "question"
-        or state.get("pending_delivery_stage") != "observed"
+        or delivery.get("pending_delivery_kind") != "question"
+        or delivery.get("pending_delivery_stage") != "observed"
     ):
         raise OrcaQuestionError("question Delivery identity changed")
     question["message_id"] = message_id
     question["thread_id"] = message_id
     question["phase"] = "observed" if phase == "asking" else phase
-    state["pending_delivery_id"] = delivery_id
-    state["pending_delivery_kind"] = "question"
-    state["pending_delivery_stage"] = "observed"
-    state["pending_question_ids"] = [message_id]
-    state["replied_question_ids"] = [message_id] if phase == "replied" else []
+    delivery["pending_delivery_id"] = delivery_id
+    delivery["pending_delivery_kind"] = "question"
+    delivery["pending_delivery_stage"] = "observed"
+    delivery["pending_question_ids"] = [message_id]
+    delivery["replied_question_ids"] = [message_id] if phase == "replied" else []
     _validate_outbox_value(state, assignment)
     return NormalizedEvent.question(
         identity=_event_identity(state, assignment),
@@ -892,11 +919,14 @@ def accept_reply(
     answer_message_id = _text(
         response_message.get("id"), "answer_message_id", maximum=256
     )
+    if question.get("answer_message_id") not in {None, answer_message_id}:
+        raise OrcaQuestionError("question reply receipt identity changed")
     question["phase"] = "replied"
     question["answers"] = parsed
     question["answer_sha256"] = _digest_answers(parsed)
     question["answer_message_id"] = answer_message_id
-    replied = state.get("replied_question_ids")
+    delivery = _delivery_container(state, assignment)
+    replied = delivery.get("replied_question_ids")
     if not isinstance(replied, list):
         raise OrcaQuestionError("pending question replies are invalid")
     if message_id not in replied:
@@ -910,14 +940,15 @@ def acknowledge_question(
 ) -> dict[str, str]:
     delivery_id = _text(delivery_id, "delivery_id", maximum=256)
     question = validate_outbox(state, assignment)
+    delivery = _delivery_container(state, assignment)
     if (
         question is None
         or question.get("phase") != "replied"
-        or state.get("pending_delivery_id") != delivery_id
-        or state.get("pending_delivery_kind") != "question"
-        or state.get("pending_delivery_stage") != "observed"
-        or state.get("pending_question_ids") != [question.get("message_id")]
-        or state.get("replied_question_ids") != [question.get("message_id")]
+        or delivery.get("pending_delivery_id") != delivery_id
+        or delivery.get("pending_delivery_kind") != "question"
+        or delivery.get("pending_delivery_stage") != "observed"
+        or delivery.get("pending_question_ids") != [question.get("message_id")]
+        or delivery.get("replied_question_ids") != [question.get("message_id")]
     ):
         raise OrcaQuestionError("question Delivery is not ready for acknowledgment")
     answers = cast(dict[str, str], question["answers"])
@@ -929,7 +960,7 @@ def acknowledge_question(
         "pending_question_ids",
         "replied_question_ids",
     ):
-        state.pop(key, None)
+        delivery.pop(key, None)
     _validate_outbox_value(state, assignment)
     return answers
 

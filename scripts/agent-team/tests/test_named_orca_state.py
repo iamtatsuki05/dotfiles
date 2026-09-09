@@ -174,14 +174,14 @@ class NamedOrcaStateTest(unittest.TestCase):
             state = _state(root)
             self._assert_valid(state)
 
-    def test_rejects_orca_version5_and_program_or_parallel_graphs(self) -> None:
+    def test_rejects_orca_program_and_mismatched_state_graph_versions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cases = (
                 {
                     **_state(root),
                     "version": 5,
-                    "graph": _graph(dispatch_mode="parallel").as_dict(),
+                    "graph": _graph(dispatch_mode="serial").as_dict(),
                 },
                 {**_state(root), "graph": _graph(mode="program").as_dict()},
                 {**_state(root), "graph": _graph(dispatch_mode="parallel").as_dict()},
