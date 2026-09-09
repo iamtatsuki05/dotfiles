@@ -3504,7 +3504,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'alias = "mise-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
   assert_not_contains "$MISE_CONFIG" 'git-head-commit-rest'
-  assert_contains "$MISE_CONFIG" 'node = "22"'
+  assert_contains "$MISE_CONFIG" 'node = "24"'
   assert_contains "$MISE_CONFIG" 'go = "1.25"'
   assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
   assert_contains "$MISE_CONFIG" 'python = "3.13"'
