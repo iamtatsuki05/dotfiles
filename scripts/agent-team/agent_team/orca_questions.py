@@ -44,7 +44,9 @@ from .native_question_channel import (
     validate_question_request,
 )
 from .orca import orca_executable
+from .orca_controller import controller_terminal
 from .orca_delivery import container as select_delivery_container
+from .runtime import RuntimeValidationError
 from .runtime import read_state as _runtime_read_state
 from .runtime import write_state as _runtime_write_state
 
@@ -246,9 +248,13 @@ def _validate_named_profile(
         node = graph.node(identity["role"])
     except (KeyError, TypeError, ValueError) as exc:
         raise OrcaQuestionError("question graph identity is invalid") from exc
+    try:
+        controller_terminal(state)
+    except RuntimeValidationError as exc:
+        raise OrcaQuestionError(str(exc)) from exc
     expected_dispatch = "serial" if state.get("version") == 4 else "parallel"
     if (
-        graph.coordination.mode != "agent"
+        graph.coordination.mode not in {"agent", "program"}
         or graph.coordination.dispatch_mode != expected_dispatch
     ):
         raise OrcaQuestionError("question graph coordination is not an Orca graph")

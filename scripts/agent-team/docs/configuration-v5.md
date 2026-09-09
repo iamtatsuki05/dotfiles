@@ -17,11 +17,13 @@ Named Orca accepts `agent`/`serial` (state version 4) and `agent`/`parallel`
 (state version 5) with direct Claude Main (`orchestrator`) and scoped Claude
 ACP for Planner, Worker, and Reviewer. Worker dispatch requires an exact
 declared TaskSpec. Named Orca parallel uses the common TaskBatch contract and
-one Run-level FIFO Delivery; it does not add a scheduler. Orca program modes
-fail before dependency probes or resource creation. Codex ACP configurations
-remain rejected. The provider-free parallel protocol proof and the separate
-serial evidence are recorded in [Architecture](architecture.md); real-model
-named-Orca parallel acceptance remains pending.
+one Run-level FIFO Delivery; it does not add a scheduler. Named Orca
+`program`/`serial` uses state version 4 and `program`/`parallel` uses state
+version 5. Both are connected to the common TaskSpec program policy and
+driver, but real Orca/model program acceptance has not been run. Codex ACP
+configurations remain rejected. The provider-free parallel protocol proof and
+the separate serial evidence are recorded in [Architecture](architecture.md);
+real-model named-Orca parallel acceptance remains pending.
 Existing focused checks and bounded terminal/fake-provider records are
 historical, scoped evidence; real-model parallel acceptance remains pending.
 
@@ -63,6 +65,20 @@ The saved state uses `coordinator_terminal`, `coordinator_argv`,
 `main_terminal`, `main_argv`, or `main_process`. Only the recorded coordinator
 may advance a program wave. `status`, `stop`, and user answers remain available
 as explicit external operations.
+
+Named Orca program runs use a separate Mainless controller variant. The fixed
+Python `_orca-program-run` argv is saved in `coordinator_argv`; the process
+receipt in `coordinator_process` contains exactly `pid`, `process_group_id`,
+`launch_nonce`, `argv`, `phase`, `exit_code`, and `cli_cleanup_confirmed`.
+The latter is null while running; after exit it records cleanup of the separate
+CLI groups created by OrcaClient/ProcessRunner. Normal Stop also requires the
+exit receipt, coordinator PID absence, and no live member of its process group
+before closing the terminal. Synchronous MCP CLI calls inherit that group.
+The parent saves startup
+intent, the child registers its PID/PGID and kernel argv, and one `SIGUSR1` is
+sent only after durable readiness. Only that recorded coordinator may advance
+tasks; external `status`, `attach --coordinator`, `answer`, and `stop` remain
+available for management. The child requires that signal as well as the saved readiness state.
 
 Each task uses the [TaskSpec fields](configuration.md#taskspec-catalog-is-optional-required-for-native-task-dispatch).
 Each route requires `task_id` and at least one complete pair:
@@ -310,10 +326,10 @@ resources. Unknown reply or ACK effects are retained and never replayed.
 The exact envelope and proof boundary are documented in [Architecture](architecture.md).
 
 This path uses direct Claude Main and scoped Claude ACP assignments only.
-`runtime = "orca"` is valid for named agent serial and parallel examples;
-program examples remain native-terminal configurations and cannot select Orca.
-The provider-free proof is protocol evidence, not real-model or full-suite
-acceptance.
+`runtime = "orca"` is valid for named agent and program serial/parallel
+examples. The program examples use the Mainless coordinator variant described
+above. The provider-free proof is protocol evidence, not real-model or
+full-suite acceptance.
 
 ## Run a Mainless parallel program
 
@@ -328,8 +344,9 @@ dispatch_mode = "parallel"
 max_active = 2
 ```
 
-The native coordinator admits independent assignments up to `max_active`; this
-is an explicit coordinator path, not a general-purpose scheduler. A
+The selected native or named-Orca coordinator admits independent assignments
+up to `max_active`; this is an explicit coordinator path, not a general-purpose
+scheduler. A
 candidate is rejected while its node is busy, the cap is full, or its Worker
 `allowed_paths` overlap an active Worker scope. A pending user question blocks
 its own assignment; an independent candidate may continue when admission still
@@ -338,13 +355,15 @@ and Delivery is drained. State version 5 keeps each assignment's result, questio
 Delivery stage separately. The canonical wave still seals after all writers
 finish, reviews the same integrated revision, and runs the declared fixed-argv
 verification before the next wave. Focused contract checks and earlier bounded
-real-terminal/fake-provider cases cover this path; they are historical evidence
-for the program coordinator and do not replace the separate Main-parallel live
+real-terminal/fake-provider cases cover this path; Python 3.11 and 3.13 each
+pass one mocked-wire pipeline. These are implementation evidence for the
+program coordinator and do not replace the separate Main-parallel live
 acceptance recorded in [Architecture](architecture.md). Real-model parallel
 acceptance has not been run.
 
-The coordinator uses the existing native supervisor; it does not add a Main
-model. Attach to that terminal with `--coordinator` when inspection is needed:
+Native program uses the existing native supervisor; named Orca program uses
+the fixed-argv Python coordinator described above. Neither adds a Main model.
+Attach to the selected terminal with `--coordinator` when inspection is needed:
 
 ```bash
 agent-team attach --config /path/to/config-v5.toml \
@@ -360,8 +379,19 @@ agent-team answer --state /path/to/state.json \
   --message-id ID --body "answer"
 ```
 
-Reviewer consultation is a separate named-native operation for `agent` and
-`program` teams. `status` exposes the opaque consultation ID, task/stage, review
+Named Orca questions also use `--message-id`, but one Orca message contains
+all form fields. Its `orca_question` outbox and Orca reply receipt are checked
+before the shared ACK. Supply a JSON object with exactly the keys printed in
+the coordinator's `answer_template`. For example, if the displayed key is
+`question_0_custom`:
+
+```bash
+agent-team answer --state /path/to/state.json \
+  --message-id ID --body '{"question_0_custom":"answer"}'
+```
+
+Reviewer consultation is a separate operation for named native and Orca
+`agent` and `program` teams. `status` exposes the opaque consultation ID, task/stage, review
 findings, and whether an answer is saved. The ID is bound to the run, TaskSpec digest,
 review stage, and exact review Dispatch. The body is limited to 16,000
 characters; replaying the same ID and body is idempotent, while a different
@@ -400,10 +430,10 @@ agent-team start --config /path/to/config-v5.toml \
 `teams` lists every parsed team. `validate` can omit `--team` to check all teams.
 `graph` and version-5 `start` require `--team`; selection is exact, without
 aliases or case conversion. Graph formats are `json`, `ascii`, and `mermaid`.
-For the native agent/serial, agent/parallel, program/serial, or
+For the native or named-Orca agent/serial, agent/parallel, program/serial, or
 program/parallel example, remove `--dry-run` to start after meeting the
-prerequisites. The agent serial and agent parallel examples can select
-`runtime = "orca"`; Orca program modes remain rejected. An empty TaskSpec catalog also fails before
+prerequisites. Named Orca program/serial uses state version 4 and program/parallel
+uses state version 5. An empty TaskSpec catalog also fails before
 dependency or profile checks for native `agent`/`parallel`.
 Inspection does not start providers.
 
@@ -419,9 +449,10 @@ State is stored at `$XDG_STATE_HOME/agent-team/<derived-team-id>/state.json`,
 defaulting to `~/.local/state/agent-team/`. Use `status`, `attach`, or `stop`
 with `--state` to manage that saved run without rereading its config.
 
-The config version is 5. Named serial state uses version 4. Native
-`agent`/`parallel` and `program`/`parallel`, and named Orca `agent`/`parallel`,
-use state version 5. Named Orca parallel also retains the shared
+The config version is 5. Named serial state uses version 4. Native and named
+Orca `program`/`serial` also use state version 4. Native
+`agent`/`parallel` and `program`/`parallel`, and named Orca `agent`/`parallel`
+and `program`/`parallel`, use state version 5. Named Orca parallel also retains the shared
 `orca_delivery_batch`. `role_specs` holds all nodes, while
 `roles` holds active assignments and their per-node delivery state. Older
 fixed-role state is not converted. See [Architecture](architecture.md) for

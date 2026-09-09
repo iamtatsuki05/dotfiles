@@ -67,6 +67,7 @@ from .contracts import (
 from .locking import _LifecycleReservation
 from .mcp_protocol import MAX_READ_LINES, MAX_TIMEOUT_MS, MIN_TIMEOUT_MS
 from .named_graph import GraphSpec
+from .orca_controller import controller_key, controller_terminal, is_program
 from .parallel_admission import admission_blocker
 from .runtime import (
     MAX_PROMPT_CHARS,
@@ -127,7 +128,7 @@ def _completion_identity(
 
 
 def _is_parallel_state(state: Mapping[str, object]) -> bool:
-    """Recognize the named Orca v5 agent/parallel state shape.
+    """Recognize the named Orca v5 parallel state shape.
 
     Full graph and state validation remains owned by the runtime validator and
     ``task_execution``.  This small discriminator only chooses the v4 serial
@@ -141,7 +142,7 @@ def _is_parallel_state(state: Mapping[str, object]) -> bool:
         state.get("runtime") == "orca"
         and state.get("version") == 5
         and isinstance(coordination, Mapping)
-        and coordination.get("mode") == "agent"
+        and coordination.get("mode") in {"agent", "program"}
         and coordination.get("dispatch_mode") == "parallel"
     )
 
@@ -206,10 +207,10 @@ class OrcaTasks:
                 _fail(ErrorCode.INVALID_REQUEST, "typed Orca tasks require named state")
             if parallel:
                 try:
-                    if not is_agent_parallel(state):
+                    if not (is_agent_parallel(state) or is_program(state)):
                         _fail(
                             ErrorCode.INVALID_REQUEST,
-                            "typed Orca tasks require agent parallel state",
+                            "typed Orca tasks require named parallel state",
                         )
                 except RuntimeFailure:
                     raise
@@ -235,7 +236,10 @@ class OrcaTasks:
                         ErrorCode.BUSY,
                         "Orca reply or acknowledgement effect is unconfirmed",
                     )
-                if "pending_role_start" in state:
+                if (
+                    "pending_role_start" in state
+                    or "pending_coordinator_start" in state
+                ):
                     _fail(ErrorCode.BUSY, "Orca startup cleanup is pending")
                 if self.stopping:
                     if state.get("orca_stop_requested") is not True:
@@ -260,7 +264,7 @@ class OrcaTasks:
         state["pending_orca_effect"] = {
             "operation": operation,
             "run_id": state["run_id"],
-            "main_terminal": state["main_terminal"],
+            controller_key(state): controller_terminal(state),
             "delivery_id": state["pending_delivery_id"],
             "message_id": message_id,
             "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest()
@@ -285,7 +289,7 @@ class OrcaTasks:
         assignment["pending_orca_effect"] = {
             "operation": "reply",
             "run_id": state["run_id"],
-            "main_terminal": state["main_terminal"],
+            controller_key(state): controller_terminal(state),
             "delivery_id": assignment["pending_delivery_id"],
             "message_id": message_id,
             "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
@@ -305,6 +309,7 @@ class OrcaTasks:
         status = (
             "cleanup_pending"
             if "pending_role_start" in state
+            or "pending_coordinator_start" in state
             or "pending_orca_effect" in state
             or parallel_cleanup_pending
             or batch_unconfirmed
@@ -319,6 +324,11 @@ class OrcaTasks:
             "status": status,
             "team_id": team_id,
             "run_id": run_id,
+            **(
+                {"pending_coordinator_start": state["pending_coordinator_start"]}
+                if "pending_coordinator_start" in state
+                else {}
+            ),
             **(
                 {"pending_role_start": state["pending_role_start"]}
                 if "pending_role_start" in state
@@ -417,7 +427,7 @@ class OrcaTasks:
                     ErrorCode.BUSY,
                     "Orca reply or acknowledgement effect is unconfirmed",
                 )
-            if "pending_role_start" in state:
+            if "pending_role_start" in state or "pending_coordinator_start" in state:
                 _fail(ErrorCode.BUSY, "Orca startup cleanup is pending")
             if any(
                 _object(record, "task").get("status") == "verifying"
@@ -430,7 +440,10 @@ class OrcaTasks:
             journal_path = cleanup_journal_path(self.path)
             if journal_path.exists() or journal_path.is_symlink():
                 journal = load_cleanup_journal(state, self.path)
-                if journal["main"] in {"started", "unknown"} or any(
+                if journal["coordinator" if is_program(state) else "main"] in {
+                    "started",
+                    "unknown",
+                } or any(
                     _object(entry, "cleanup assignment")["remote"]
                     in {"worker_started", "terminal_started", "unknown"}
                     for entry in cast(list[object], journal["assignments"])
@@ -505,6 +518,7 @@ class OrcaTasks:
             with draining.transaction() as state:
                 delivery_id = _string(state.get("pending_delivery_id"), "Delivery ID")
             draining.ack(DeliveryAck(DeliveryRef(delivery_id)))
+        self.backend._await_program_exit()
         with draining.transaction():
             return self.backend._stop_locked()
 
@@ -523,7 +537,7 @@ class OrcaTasks:
             run_id=_string(state.get("run_id"), "run_id"),
             team_id=_string(state.get("team_id"), "team_id"),
             workspace=workspace,
-            coordinator_handle=_string(state.get("main_terminal"), "main_terminal"),
+            coordinator_handle=controller_terminal(state),
         )
         if role is not None:
             assignment = (
@@ -1008,7 +1022,7 @@ class OrcaTasks:
                 "orchestration",
                 "check",
                 "--terminal",
-                str(state["main_terminal"]),
+                controller_terminal(state),
                 "--run",
                 str(state["run_id"]),
                 "--wait",
@@ -1164,7 +1178,7 @@ class OrcaTasks:
                 "orchestration",
                 "check",
                 "--terminal",
-                str(state["main_terminal"]),
+                controller_terminal(state),
                 "--run",
                 str(state["run_id"]),
                 "--wait",
@@ -1702,7 +1716,7 @@ class OrcaTasks:
                     "--run",
                     str(state["run_id"]),
                     "--from",
-                    str(state["main_terminal"]),
+                    controller_terminal(state),
                     "--json",
                 ],
             )
@@ -1777,7 +1791,7 @@ class OrcaTasks:
                 "--run",
                 str(state["run_id"]),
                 "--from",
-                str(state["main_terminal"]),
+                controller_terminal(state),
                 "--json",
             ],
         )
@@ -1859,7 +1873,7 @@ class OrcaTasks:
                     "orchestration",
                     "check",
                     "--terminal",
-                    str(state["main_terminal"]),
+                    controller_terminal(state),
                     "--run",
                     str(state["run_id"]),
                     "--ack",
@@ -1954,7 +1968,7 @@ class OrcaTasks:
                     "orchestration",
                     "check",
                     "--terminal",
-                    str(current["main_terminal"]),
+                    controller_terminal(current),
                     "--run",
                     str(current["run_id"]),
                     "--ack",

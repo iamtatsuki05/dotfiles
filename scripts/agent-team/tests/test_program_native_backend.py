@@ -321,7 +321,7 @@ class ProgramNativeBackendTest(unittest.TestCase):
     def test_human_consultation_reply_is_allowed_without_progress_ownership(self):
         import test_named_task_routing as routing
 
-        from agent_team import native_program, task_execution
+        from agent_team import program_driver, task_execution
         from agent_team.contracts import (
             TaskConsultationReply,
             TaskGet,
@@ -371,7 +371,7 @@ class ProgramNativeBackendTest(unittest.TestCase):
             task_receipt.record["consultation"]["consultation_id"],
             question["consultation_id"],
         )
-        notice = native_program._notice(
+        notice = program_driver._notice(
             state, reason="reviewer_consultation_required", task_id=task.task_id
         )
         self.assertEqual(

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Final, cast
 
 from .contracts import ErrorCode, RoleTarget, RuntimeFailure
+from .orca_controller import controller_key, controller_terminal, is_program
 from .runtime import (
     RuntimeValidationError,
     remove_prompt_file,
@@ -312,8 +313,8 @@ def load_cleanup_journal(
         "team_id": state_string(state, "team_id"),
         "run_id": state_string(state, "run_id"),
         "worktree_id": state_string(state, "worktree_id"),
-        "main_terminal": state_string(state, "main_terminal"),
-        "main": "pending",
+        controller_key(state): controller_terminal(state),
+        ("coordinator" if is_program(state) else "main"): "pending",
         "assignments": [
             {**record, "remote": "pending", "local": "pending"}
             for record in expected_records
@@ -333,13 +334,18 @@ def validate_cleanup_journal(
             ErrorCode.BACKEND_PROTOCOL_FAILURE,
             "agent-team cleanup journal version is unsupported",
         )
-    for key in ("team_id", "run_id", "worktree_id", "main_terminal"):
+    for key in ("team_id", "run_id", "worktree_id", controller_key(state)):
         if journal.get(key) != state_string(state, key):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
                 "agent-team cleanup journal identity does not match state",
             )
-    if journal.get("main") not in {"pending", "started", "done", "unknown"}:
+    if journal.get("coordinator" if is_program(state) else "main") not in {
+        "pending",
+        "started",
+        "done",
+        "unknown",
+    }:
         raise RuntimeFailure(
             ErrorCode.BACKEND_PROTOCOL_FAILURE,
             "agent-team cleanup journal has an invalid Main stage",

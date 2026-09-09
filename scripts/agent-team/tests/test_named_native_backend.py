@@ -225,21 +225,18 @@ class NamedNativeBackendTest(unittest.TestCase):
                 self.assertEqual(self.fixture.state_path.read_bytes(), before)
         native.runtime_write_state(self.fixture.state_path, original)
 
-    def test_orca_rejects_program_contract_before_runtime_access(self) -> None:
+    def test_orca_cannot_resume_native_program_state(self) -> None:
         from agent_team.backend import OrcaBackend
 
         spec = self.start(program=True)
-        backend = OrcaBackend(mock.Mock())
-        with (
-            mock.patch.object(
-                backend,
-                "_ensure_supported_platform",
-                side_effect=AssertionError("runtime accessed"),
-            ),
-            self.assertRaises(RuntimeFailure) as failure,
-        ):
+        client = mock.Mock()
+        backend = OrcaBackend(client, resume_existing=True)
+        before = self.fixture.state_path.read_bytes()
+        with self.assertRaises(RuntimeFailure) as failure:
             backend.start(spec)
-        self.assertEqual(failure.exception.code, contracts.ErrorCode.INVALID_REQUEST)
+        self.assertEqual(failure.exception.code, contracts.ErrorCode.IDENTITY_MISMATCH)
+        self.assertEqual(self.fixture.state_path.read_bytes(), before)
+        self.assertEqual(client.mock_calls, [])
 
     def test_named_completion_keeps_read_release_ack_order(self) -> None:
         self.start()

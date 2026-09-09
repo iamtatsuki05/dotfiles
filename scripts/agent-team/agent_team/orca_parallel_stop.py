@@ -1,4 +1,4 @@
-"""Bounded Stop coordination for named Orca agent/parallel runs.
+"""Bounded Stop coordination for named Orca parallel runs.
 
 The Run Delivery is a shared FIFO object.  Stop may drain completion owners
 individually, but it must leave a question, an invalid/unknown batch, or an
@@ -126,7 +126,7 @@ def _snapshot(tasks: OrcaTasks) -> dict[str, object]:
 
 def _stop_fence(tasks: OrcaTasks) -> None:
     with tasks.transaction(progress=False) as state:
-        if "pending_role_start" in state:
+        if "pending_role_start" in state or "pending_coordinator_start" in state:
             _fail(ErrorCode.BUSY, "Orca startup cleanup is pending")
         records = state.get("tasks")
         if isinstance(records, Mapping) and any(
@@ -661,6 +661,7 @@ def stop_parallel(tasks: OrcaTasks) -> StopResult:
             raise first_error
         if _batch(state) is None and not evidence_remains:
             try:
+                draining.backend._await_program_exit()
                 with draining.transaction(progress=False):
                     return draining.backend._stop_locked()
             except RuntimeFailure as exc:

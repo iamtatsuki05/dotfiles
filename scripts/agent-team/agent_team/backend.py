@@ -12,7 +12,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sys
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final, cast
@@ -36,14 +38,21 @@ from .cleanup import (
 )
 from .contracts import (
     Attach,
+    AttachCoordinator,
     AttachReceipt,
     BackendPort,
     BackendRequest,
     BackendResult,
+    CoordinatorAttachReceipt,
+    DeliveryAck,
     ErrorCode,
     NodeRef,
     Role,
+    RolePrompt,
+    RoleRead,
+    RoleRelease,
     RoleTarget,
+    RoleWait,
     RunRef,
     RuntimeFailure,
     StartResult,
@@ -51,6 +60,9 @@ from .contracts import (
     Status,
     StatusReceipt,
     StopResult,
+    TaskBatchOpen,
+    TaskDispatch,
+    TaskVerify,
     TerminalRef,
     role_id,
     role_kind,
@@ -72,6 +84,13 @@ from .orca import (
     WorkerStopUnknownVerdict,
     WorkerStopVerdict,
     _required_string,
+)
+from .orca_controller import (
+    controller_key,
+    is_program,
+)
+from .orca_controller import (
+    controller_terminal as saved_controller_terminal,
 )
 from .role_snapshot import preflight_scoped_role, role_spec_snapshot
 from .runtime import (
@@ -101,10 +120,6 @@ def _named_role_specs(
         validate_graph(graph, spec.task_specs)
     except (TypeError, ValueError) as exc:
         raise RuntimeFailure(ErrorCode.INVALID_REQUEST, str(exc)) from exc
-    if graph.coordination.mode != "agent":
-        raise RuntimeFailure(
-            ErrorCode.INVALID_REQUEST, "named Orca requires agent coordination"
-        )
     if set(spec.role_specs) != set(graph.nodes):
         raise RuntimeFailure(
             ErrorCode.INVALID_REQUEST, "node specs must match the selected graph"
@@ -135,13 +150,21 @@ def _named_role_specs(
     return normalized_specs
 
 
+def _program_spec(spec: StartSpec) -> bool:
+    return spec.graph is not None and spec.graph.coordination.mode == "program"
+
+
+def _controller_spec_key(spec: StartSpec) -> str:
+    return "coordinator_terminal" if _program_spec(spec) else "main_terminal"
+
+
 def _startup_recovery_payload(
     *,
     phase: str,
     spec: StartSpec,
     workspace: Path,
     worktree_id: str,
-    main_terminal: str | None,
+    controller_terminal: str | None,
     terminal_closed: bool,
     local_tracked: tuple[tuple[str, bool, str], ...],
     state_published: bool = False,
@@ -152,7 +175,7 @@ def _startup_recovery_payload(
         "team_id": spec.team_id,
         "workspace": str(workspace),
         "worktree_id": worktree_id,
-        "main_terminal": main_terminal,
+        _controller_spec_key(spec): controller_terminal,
         "terminal_closed": terminal_closed,
         "local_tracked": [
             {"path": path, "existed": existed, "kind": kind}
@@ -165,13 +188,13 @@ def _startup_recovery_payload(
 
 
 def _main_start_marker(
-    *, phase: str, run_id: str, main_terminal: str, command_sha256: str
+    *, phase: str, run_id: str, controller_terminal: str, command_sha256: str
 ) -> dict[str, object]:
     return {
         "role": Role.MAIN.value,
         "phase": phase,
         "run_id": run_id,
-        "main_terminal": main_terminal,
+        "main_terminal": controller_terminal,
         "command_sha256": command_sha256,
     }
 
@@ -222,8 +245,9 @@ class OrcaBackend(BackendPort):
         reservation.acquire()
         try:
             if self._resume_existing:
-                return self._resume(spec)
-            return self._start_new(spec)
+                result = self._resume(spec)
+            else:
+                result = self._start_new(spec)
         finally:
             if not self._resume_existing and not spec.state_path.exists():
                 recovery_path = startup_recovery_path(spec.state_path)
@@ -233,6 +257,9 @@ class OrcaBackend(BackendPort):
                     except OSError:
                         pass
             reservation.release()
+        if not self._resume_existing and _program_spec(spec):
+            self._await_program_start(spec)
+        return result
 
     def _start_new(self, spec: StartSpec) -> StartResult:
         workspace = self._validated_workspace(spec)
@@ -265,18 +292,33 @@ class OrcaBackend(BackendPort):
                 "agent-team startup recovery is pending",
             )
         worktree_id, socket_path = self._ensure_orca_ready(workspace)
-        if self._main_command_factory is None:
-            raise RuntimeFailure(
-                ErrorCode.INVALID_REQUEST,
-                "OrcaBackend start requires a Main command factory",
-            )
-        try:
-            main_command = self._main_command_factory(socket_path)
-            if not isinstance(main_command, str) or not main_command:
-                raise ValueError("Main command must be a non-empty string")
-            command_sha256 = hashlib.sha256(main_command.encode("utf-8")).hexdigest()
-        except Exception as exc:
-            raise self._runtime_failure(exc, "Main command preparation failed") from exc
+        program = _program_spec(spec)
+        controller_name = "coordinator" if program else "main"
+        program_environment: dict[str, str] | None = None
+        nonce = secrets.token_hex(16) if program else ""
+        main_command = ""
+        command_sha256 = ""
+        if program:
+            from .orca_program import launch_environment
+
+            program_environment = launch_environment()
+        else:
+            if self._main_command_factory is None:
+                raise RuntimeFailure(
+                    ErrorCode.INVALID_REQUEST,
+                    "OrcaBackend start requires a Main command factory",
+                )
+            try:
+                main_command = self._main_command_factory(socket_path)
+                if not isinstance(main_command, str) or not main_command:
+                    raise ValueError("Main command must be a non-empty string")
+                command_sha256 = hashlib.sha256(
+                    main_command.encode("utf-8")
+                ).hexdigest()
+            except Exception as exc:
+                raise self._runtime_failure(
+                    exc, "Main command preparation failed"
+                ) from exc
         prepare_cleanup: Callable[[], None] | None = None
         local_tracked: tuple[tuple[str, bool, str], ...] = ()
         if self._prepare_start is not None:
@@ -292,8 +334,8 @@ class OrcaBackend(BackendPort):
                     exc, "team startup preparation failed"
                 ) from exc
 
-        main_terminal: str | None = None
-        main_terminal_verified = False
+        controller_terminal: str | None = None
+        controller_terminal_verified = False
         terminal_create_started = False
         state_published = False
         state_write_succeeded = False
@@ -305,7 +347,7 @@ class OrcaBackend(BackendPort):
                     spec=spec,
                     workspace=workspace,
                     worktree_id=worktree_id,
-                    main_terminal=None,
+                    controller_terminal=None,
                     terminal_closed=False,
                     local_tracked=local_tracked,
                 ),
@@ -313,11 +355,11 @@ class OrcaBackend(BackendPort):
             terminal_create_started = True
             created = self._client.terminal_create(
                 worktree_id=worktree_id,
-                title=f"{spec.team_id}-main",
+                title=f"{spec.team_id}-{controller_name}",
                 command=None,
                 cwd=workspace,
             )
-            main_terminal = _required_string(
+            controller_terminal = _required_string(
                 created, ("terminal", "handle"), "orca terminal create"
             )
             created_worktree = _required_string(
@@ -330,7 +372,7 @@ class OrcaBackend(BackendPort):
                     spec=spec,
                     workspace=workspace,
                     worktree_id=worktree_id,
-                    main_terminal=main_terminal,
+                    controller_terminal=controller_terminal,
                     terminal_closed=False,
                     local_tracked=local_tracked,
                 ),
@@ -341,19 +383,19 @@ class OrcaBackend(BackendPort):
                     "Orca terminal worktree does not match agent-team state",
                 )
             self._verify_terminal(
-                terminal_id=main_terminal,
+                terminal_id=controller_terminal,
                 workspace=workspace,
                 worktree_id=worktree_id,
-                title=f"{spec.team_id}-main",
+                title=f"{spec.team_id}-{controller_name}",
             )
-            main_terminal_verified = True
+            controller_terminal_verified = True
             objective = (
                 f"{spec.team_id}: Planner / Worker / Reviewer coordination for "
                 f"{workspace}"
             )
             run_id = self._client.run_create(
                 objective=objective,
-                terminal_id=main_terminal,
+                terminal_id=controller_terminal,
                 cwd=workspace,
             )
             if not run_id:
@@ -362,7 +404,7 @@ class OrcaBackend(BackendPort):
                 run_id=run_id,
                 team_id=spec.team_id,
                 workspace=workspace,
-                coordinator_handle=main_terminal,
+                coordinator_handle=controller_terminal,
                 expected_objective=objective,
             )
             state = self._state_for_start(
@@ -370,14 +412,27 @@ class OrcaBackend(BackendPort):
                 worktree_id=worktree_id,
                 socket_path=socket_path,
                 run_id=run_id,
-                main_terminal=main_terminal,
+                controller_terminal=controller_terminal,
             )
-            state["pending_role_start"] = _main_start_marker(
-                phase="main_prepared",
-                run_id=run_id,
-                main_terminal=main_terminal,
-                command_sha256=command_sha256,
-            )
+            if program:
+                from .orca_program import launch_argv, launch_command, startup_marker
+
+                state["coordinator_argv"] = launch_argv(spec.state_path, run_id, nonce)
+                state["coordinator_process"] = None
+                state["pending_coordinator_start"] = startup_marker(
+                    state, "prepared", nonce
+                )
+                assert program_environment is not None
+                main_command = launch_command(
+                    cast(list[str], state["coordinator_argv"]), program_environment
+                )
+            else:
+                state["pending_role_start"] = _main_start_marker(
+                    phase="main_prepared",
+                    run_id=run_id,
+                    controller_terminal=controller_terminal,
+                    command_sha256=command_sha256,
+                )
             try:
                 write_state(spec.state_path, state, reservation_held=True)
             except StatePublishError:
@@ -387,37 +442,50 @@ class OrcaBackend(BackendPort):
                 raise OrcaProtocolError(str(exc)) from exc
             state_write_succeeded = True
 
-            state["pending_role_start"] = _main_start_marker(
-                phase="main_send_started",
-                run_id=run_id,
-                main_terminal=main_terminal,
-                command_sha256=command_sha256,
-            )
+            if program:
+                state["pending_coordinator_start"] = startup_marker(
+                    state, "send_started", nonce
+                )
+            else:
+                state["pending_role_start"] = _main_start_marker(
+                    phase="main_send_started",
+                    run_id=run_id,
+                    controller_terminal=controller_terminal,
+                    command_sha256=command_sha256,
+                )
             write_state(
                 spec.state_path, state, require_existing=True, reservation_held=True
             )
             send_verdict = self._client.terminal_send(
-                terminal_id=main_terminal,
+                terminal_id=controller_terminal,
                 text=main_command,
                 cwd=workspace,
             )
             self._require_terminal_send(
-                send_verdict, terminal_id=main_terminal, text=main_command
+                send_verdict, terminal_id=controller_terminal, text=main_command
             )
-            state["pending_role_start"] = _main_start_marker(
-                phase="main_sent",
-                run_id=run_id,
-                main_terminal=main_terminal,
-                command_sha256=command_sha256,
-            )
+            if program:
+                state["pending_coordinator_start"] = startup_marker(
+                    state, "sent", nonce
+                )
+            else:
+                state["pending_role_start"] = _main_start_marker(
+                    phase="main_sent",
+                    run_id=run_id,
+                    controller_terminal=controller_terminal,
+                    command_sha256=command_sha256,
+                )
             write_state(
                 spec.state_path, state, require_existing=True, reservation_held=True
             )
-            self._client.terminal_wait(terminal_id=main_terminal, cwd=workspace)
-            state.pop("pending_role_start", None)
-            write_state(
-                spec.state_path, state, require_existing=True, reservation_held=True
-            )
+            if not program:
+                self._client.terminal_wait(
+                    terminal_id=controller_terminal, cwd=workspace
+                )
+                state.pop("pending_role_start", None)
+                write_state(
+                    spec.state_path, state, require_existing=True, reservation_held=True
+                )
         except BaseException as start_error:
             if state_published or state_write_succeeded:
                 self._preserve_published_startup_marker(
@@ -425,7 +493,7 @@ class OrcaBackend(BackendPort):
                     spec=spec,
                     workspace=workspace,
                     worktree_id=worktree_id,
-                    main_terminal=main_terminal,
+                    controller_terminal=controller_terminal,
                     local_tracked=local_tracked,
                 )
             if state_published or isinstance(start_error, StatePublishError):
@@ -440,20 +508,20 @@ class OrcaBackend(BackendPort):
             cleanup_errors: list[str] = []
             close_succeeded = not terminal_create_started
             local_cleanup_failed = False
-            if main_terminal is not None and main_terminal_verified:
+            if controller_terminal is not None and controller_terminal_verified:
                 try:
                     self._verify_terminal(
-                        terminal_id=main_terminal,
+                        terminal_id=controller_terminal,
                         workspace=workspace,
                         worktree_id=worktree_id,
-                        title=f"{spec.team_id}-main",
+                        title=f"{spec.team_id}-{controller_name}",
                     )
                     close_verdict = self._client.terminal_close(
-                        terminal_id=main_terminal,
+                        terminal_id=controller_terminal,
                         cwd=workspace,
                     )
                     self._require_terminal_close(
-                        close_verdict, terminal_id=main_terminal
+                        close_verdict, terminal_id=controller_terminal
                     )
                     close_succeeded = True
                 except (
@@ -484,7 +552,7 @@ class OrcaBackend(BackendPort):
                         _startup_recovery_payload(
                             phase=(
                                 "terminal_create_unknown"
-                                if main_terminal is None
+                                if controller_terminal is None
                                 else (
                                     "local_rollback_pending"
                                     if close_succeeded
@@ -494,7 +562,7 @@ class OrcaBackend(BackendPort):
                             spec=spec,
                             workspace=workspace,
                             worktree_id=worktree_id,
-                            main_terminal=main_terminal,
+                            controller_terminal=controller_terminal,
                             terminal_closed=close_succeeded,
                             local_tracked=local_tracked,
                         ),
@@ -514,7 +582,7 @@ class OrcaBackend(BackendPort):
                                 spec=spec,
                                 workspace=workspace,
                                 worktree_id=worktree_id,
-                                main_terminal=main_terminal,
+                                controller_terminal=controller_terminal,
                                 terminal_closed=True,
                                 local_tracked=local_tracked,
                             ),
@@ -534,14 +602,24 @@ class OrcaBackend(BackendPort):
             ) from start_error
 
         try:
-            remove_startup_recovery(recovery_path)
+            if program:
+                self._preserve_published_startup_marker(
+                    recovery_path=recovery_path,
+                    spec=spec,
+                    workspace=workspace,
+                    worktree_id=worktree_id,
+                    controller_terminal=controller_terminal,
+                    local_tracked=local_tracked,
+                )
+            else:
+                remove_startup_recovery(recovery_path)
         except (RuntimeFailure, OSError):
             self._preserve_published_startup_marker(
                 recovery_path=recovery_path,
                 spec=spec,
                 workspace=workspace,
                 worktree_id=worktree_id,
-                main_terminal=main_terminal,
+                controller_terminal=controller_terminal,
                 local_tracked=local_tracked,
             )
 
@@ -549,16 +627,21 @@ class OrcaBackend(BackendPort):
         result = StartResult(
             team_id=spec.team_id,
             run_id=RunRef(run_id),
-            main_terminal_id=TerminalRef(main_terminal),
+            main_terminal_id=None if program else TerminalRef(controller_terminal),
+            coordinator_terminal_id=TerminalRef(controller_terminal)
+            if program
+            else None,
             state_path=spec.state_path,
         )
         focus_warning: str | None = None
         if spec.attach:
             try:
                 switch_verdict = self._client.terminal_switch(
-                    terminal_id=main_terminal, cwd=workspace
+                    terminal_id=controller_terminal, cwd=workspace
                 )
-                self._require_terminal_switch(switch_verdict, terminal_id=main_terminal)
+                self._require_terminal_switch(
+                    switch_verdict, terminal_id=controller_terminal
+                )
             except OrcaCommandError:
                 focus_warning = "Orca could not focus Main (command failure)"[
                     :MAX_FOCUS_WARNING_CHARS
@@ -573,14 +656,149 @@ class OrcaBackend(BackendPort):
             "team_id": spec.team_id,
             "workspace": str(workspace),
             "run_id": run_id,
-            "main_terminal": main_terminal,
+            _controller_spec_key(spec): controller_terminal,
             "state_path": str(spec.state_path),
         }
         if focus_warning is not None:
             self.last_start_response["focus_warning"] = focus_warning
         return result
 
+    def _await_program_start(self, spec: StartSpec) -> None:
+        from .orca_program import START_WAIT_SECONDS, notify_ready, process_running
+
+        deadline = time.monotonic() + START_WAIT_SECONDS
+        while True:
+            reservation = _LifecycleReservation(spec.state_path, create_parent=False)
+            try:
+                reservation.acquire_for_publication()
+                state = self._reload_state_locked()
+                marker = state.get("pending_coordinator_start")
+                process = state.get("coordinator_process")
+                if (
+                    state.get("orca_stop_requested") is True
+                    or not isinstance(marker, Mapping)
+                    or marker.get("phase") != "sent"
+                ):
+                    raise RuntimeFailure(
+                        ErrorCode.IDENTITY_MISMATCH,
+                        "Orca program startup marker changed",
+                    )
+                if isinstance(process, Mapping):
+                    if process.get("phase") != "running" or not process_running(state):
+                        raise RuntimeFailure(
+                            ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                            "Orca program startup process is unconfirmed",
+                        )
+                    state.pop("pending_coordinator_start")
+                    write_state(
+                        spec.state_path,
+                        state,
+                        require_existing=True,
+                        reservation_held=True,
+                    )
+                    remove_startup_recovery(startup_recovery_path(spec.state_path))
+                    notify_ready(state)
+                    self._state = state
+                    return
+            except RuntimeFailure as exc:
+                if exc.code not in {ErrorCode.BUSY, ErrorCode.TEAM_ALREADY_RUNNING}:
+                    raise
+            finally:
+                reservation.release()
+            if time.monotonic() >= deadline:
+                raise RuntimeFailure(
+                    ErrorCode.BACKEND_PROTOCOL_FAILURE,
+                    "Orca program readiness is unconfirmed",
+                )
+            time.sleep(0.05)
+
+    def program_snapshot(self) -> dict[str, object]:
+        import copy
+
+        from .orca_program import require_owner
+
+        state = self._reload_state_locked()
+        if state.get("orca_stop_requested") is True:
+            raise RuntimeFailure(ErrorCode.TEAM_NOT_RUNNING, "Orca program is stopping")
+        require_owner(state)
+        if not is_program(state):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "this team has no program coordinator"
+            )
+        return copy.deepcopy(state)
+
+    def program_transition(self, transition: str) -> None:
+        from .orca_program import require_owner
+        from .orca_tasks import OrcaTasks
+        from .task_execution import transition_program_wave
+        from .workspace_revision import snapshot_revision
+
+        tasks = OrcaTasks(self)
+        with tasks.transaction() as state:
+            require_owner(state)
+            revision = (
+                snapshot_revision(Path(str(state["workspace"])))
+                if transition == "seal_wave"
+                else None
+            )
+            transition_program_wave(state, transition, revision=revision)
+            tasks.save(state)
+
+    def _attach_coordinator(self) -> CoordinatorAttachReceipt:
+        state = self._reload_state_locked()
+        if not is_program(state):
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, "this team has no program coordinator"
+            )
+        terminal = saved_controller_terminal(state)
+        workspace = Path(str(state["workspace"]))
+        self._verify_run(
+            run_id=str(state["run_id"]),
+            team_id=str(state["team_id"]),
+            workspace=workspace,
+            coordinator_handle=terminal,
+        )
+        self._verify_terminal(
+            terminal_id=terminal,
+            workspace=workspace,
+            worktree_id=str(state["worktree_id"]),
+            title=str(state["team_id"]) + "-coordinator",
+        )
+        verdict = self._client.terminal_switch(terminal_id=terminal, cwd=workspace)
+        self._require_terminal_switch(verdict, terminal_id=terminal)
+        self.last_attach_response = {
+            "status": "attached",
+            "team_id": state["team_id"],
+            "run_id": state["run_id"],
+            "coordinator_terminal": terminal,
+        }
+        return CoordinatorAttachReceipt(
+            TerminalRef(terminal), RunRef(str(state["run_id"]))
+        )
+
     def request(self, request: BackendRequest) -> BackendResult:
+        if isinstance(request, AttachCoordinator):
+            return self._attach_coordinator()
+        if (
+            self._state is not None
+            and is_program(self._state)
+            and isinstance(
+                request,
+                (
+                    TaskDispatch,
+                    TaskVerify,
+                    TaskBatchOpen,
+                    RolePrompt,
+                    RoleWait,
+                    RoleRead,
+                    RoleRelease,
+                    DeliveryAck,
+                ),
+            )
+        ):
+            from .orca_program import require_owner
+
+            require_owner(self._reload_state_locked())
         if isinstance(request, Status):
             return self._status()
         if isinstance(request, Attach):
@@ -621,7 +839,7 @@ class OrcaBackend(BackendPort):
                 "agent-team startup recovery identity does not match the request",
             )
         worktree_id = recovery.get("worktree_id")
-        main_terminal = recovery.get("main_terminal")
+        controller_terminal = recovery.get(_controller_spec_key(spec))
         terminal_closed = recovery.get("terminal_closed")
         if not isinstance(worktree_id, str) or not isinstance(terminal_closed, bool):
             raise RuntimeFailure(
@@ -632,19 +850,21 @@ class OrcaBackend(BackendPort):
             rollback_startup_recovery(spec.state_path.parent, recovery)
             remove_startup_recovery(recovery_path)
             return
-        if main_terminal is None:
+        if controller_terminal is None:
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "agent-team startup recovery terminal identity is unknown",
             )
-        if not isinstance(main_terminal, str) or not main_terminal:
+        if not isinstance(controller_terminal, str) or not controller_terminal:
             raise RuntimeFailure(
                 ErrorCode.BACKEND_PROTOCOL_FAILURE,
                 "agent-team startup recovery identity is invalid",
             )
         self._verify_worktree(workspace=workspace, worktree_id=worktree_id)
         try:
-            shown = self._client.terminal_show(terminal_id=main_terminal, cwd=workspace)
+            shown = self._client.terminal_show(
+                terminal_id=controller_terminal, cwd=workspace
+            )
         except OrcaCommandError as exc:
             if not exc.not_found:
                 raise RuntimeFailure(
@@ -661,7 +881,7 @@ class OrcaBackend(BackendPort):
                 "agent-team startup recovery result is unknown",
             ) from exc
         self._verify_terminal(
-            terminal_id=main_terminal,
+            terminal_id=controller_terminal,
             workspace=workspace,
             worktree_id=worktree_id,
             title=f"{spec.team_id}-main",
@@ -673,6 +893,8 @@ class OrcaBackend(BackendPort):
         )
 
     def _retry_published_startup_marker(self, state: Mapping[str, object]) -> None:
+        if is_program(state):
+            return
         if "pending_role_start" in state:
             return
         state_path = self._state_path(state)
@@ -683,7 +905,7 @@ class OrcaBackend(BackendPort):
         if (
             recovery.get("team_id") != state.get("team_id")
             or recovery.get("worktree_id") != state.get("worktree_id")
-            or recovery.get("main_terminal") != state.get("main_terminal")
+            or recovery.get(controller_key(state)) != state.get(controller_key(state))
         ):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
@@ -713,7 +935,7 @@ class OrcaBackend(BackendPort):
         spec: StartSpec,
         workspace: Path,
         worktree_id: str,
-        main_terminal: str | None,
+        controller_terminal: str | None,
         local_tracked: tuple[tuple[str, bool, str], ...],
     ) -> None:
         try:
@@ -724,7 +946,7 @@ class OrcaBackend(BackendPort):
                     spec=spec,
                     workspace=workspace,
                     worktree_id=worktree_id,
-                    main_terminal=main_terminal,
+                    controller_terminal=controller_terminal,
                     terminal_closed=False,
                     local_tracked=local_tracked,
                     state_published=True,
@@ -736,6 +958,13 @@ class OrcaBackend(BackendPort):
     def stop(self) -> StopResult:
         self._ensure_supported_platform()
         state = self._require_state()
+        recovery = startup_recovery_path(self._state_path(state))
+        if is_program(state) and (
+            state.get("pending_coordinator_start") is not None
+            or recovery.exists()
+            or recovery.is_symlink()
+        ):
+            return self._stop_starting_program()
         if state.get("runtime") == "orca" and state.get("version") in {
             NAMED_STATE_VERSION,
             PARALLEL_STATE_VERSION,
@@ -752,6 +981,49 @@ class OrcaBackend(BackendPort):
         finally:
             reservation.release()
 
+    def _stop_starting_program(self) -> StopResult:
+        from .orca_program import START_WAIT_SECONDS
+
+        path = self._state_path(self._require_state())
+        deadline = time.monotonic() + START_WAIT_SECONDS
+        while True:
+            reservation = _LifecycleReservation(path, create_parent=False)
+            try:
+                reservation.acquire_for_publication()
+            except RuntimeFailure as exc:
+                reservation.release()
+                if (
+                    exc.code is not ErrorCode.TEAM_ALREADY_RUNNING
+                    or time.monotonic() >= deadline
+                ):
+                    raise
+                time.sleep(0.05)
+                continue
+            try:
+                state = self._reload_state_locked()
+                if (
+                    not is_program(state)
+                    or state.get("roles")
+                    or state.get("tasks")
+                    or "pending_role_start" in state
+                ):
+                    raise RuntimeFailure(
+                        ErrorCode.ORDER_VIOLATION,
+                        "Orca startup Stop requires an undispatched program",
+                    )
+                state["orca_stop_requested"] = True
+                write_state(path, state, require_existing=True, reservation_held=True)
+                return self._stop_locked()
+            finally:
+                reservation.release()
+
+    def _await_program_exit(self) -> None:
+        from .orca_program import wait_for_exit
+
+        state = self._reload_state_locked()
+        if is_program(state):
+            wait_for_exit(self._state_path(state), state)
+
     def _stop_locked(self) -> StopResult:
         state = self._reload_state_locked()
         if "pending_role_start" in state:
@@ -760,6 +1032,20 @@ class OrcaBackend(BackendPort):
                 "agent-team role startup cleanup is pending; use status to inspect "
                 "the retained ownership evidence",
             )
+        if is_program(state):
+            from .orca_program import exit_cleanup_confirmed
+
+            recovery = startup_recovery_path(self._state_path(state))
+            starting = (
+                state.get("pending_coordinator_start") is not None
+                or recovery.exists()
+                or recovery.is_symlink()
+            )
+            if not starting and not exit_cleanup_confirmed(state):
+                raise RuntimeFailure(
+                    ErrorCode.BUSY,
+                    "Orca coordinator exit and CLI cleanup are unconfirmed",
+                )
         self._retry_published_startup_marker(state)
         state_path = self._state_path(state)
         state_file_identity = self._state_file_identity(state_path)
@@ -783,7 +1069,7 @@ class OrcaBackend(BackendPort):
 
             def mark_absent_remote_stages(*, include_main: bool) -> None:
                 if include_main:
-                    journal["main"] = "unknown"
+                    journal["coordinator" if is_program(state) else "main"] = "unknown"
                 for role_name, _, _, _, _, _ in validated:
                     entry = journal_assignment(journal, role_name)
                     if entry.get("remote") in {"pending", "worker_done"}:
@@ -796,7 +1082,7 @@ class OrcaBackend(BackendPort):
                 journal_assignment(journal, role).get("remote") != "done"
                 for role, _, _, _, _, _ in validated
             )
-            main_stage = journal.get("main")
+            main_stage = journal.get("coordinator" if is_program(state) else "main")
             if pending_remote or main_stage == "pending":
                 try:
                     self._verify_worktree(workspace=workspace, worktree_id=worktree_id)
@@ -804,10 +1090,10 @@ class OrcaBackend(BackendPort):
                         run_id=run_id,
                         team_id=team_id,
                         workspace=workspace,
-                        coordinator_handle=state_string(state, "main_terminal"),
+                        coordinator_handle=saved_controller_terminal(state),
                     )
                     self._verify_terminal(
-                        terminal_id=state_string(state, "main_terminal"),
+                        terminal_id=saved_controller_terminal(state),
                         workspace=workspace,
                         worktree_id=worktree_id,
                         title=f"{team_id}-main",
@@ -965,7 +1251,7 @@ class OrcaBackend(BackendPort):
                     entry["remote"] = "done"
                     save_journal()
 
-            main_stage = journal.get("main")
+            main_stage = journal.get("coordinator" if is_program(state) else "main")
             if main_stage in {"started", "unknown"}:
                 raise RuntimeFailure(
                     ErrorCode.BACKEND_PROTOCOL_FAILURE,
@@ -973,17 +1259,17 @@ class OrcaBackend(BackendPort):
                 )
             if main_stage == "pending":
                 self._assert_state_current(state_path, state, state_file_identity)
-                main_terminal = state_string(state, "main_terminal")
+                controller_terminal = saved_controller_terminal(state)
                 try:
                     self._verify_worktree(workspace=workspace, worktree_id=worktree_id)
                     self._verify_run(
                         run_id=run_id,
                         team_id=team_id,
                         workspace=workspace,
-                        coordinator_handle=main_terminal,
+                        coordinator_handle=controller_terminal,
                     )
                     self._verify_terminal(
-                        terminal_id=main_terminal,
+                        terminal_id=controller_terminal,
                         workspace=workspace,
                         worktree_id=worktree_id,
                         title=f"{team_id}-main",
@@ -997,40 +1283,54 @@ class OrcaBackend(BackendPort):
                         "agent-team lifecycle identity absence is unconfirmed process stop",
                     ) from exc
                 self._assert_state_current(state_path, state, state_file_identity)
-                journal["main"] = "started"
+                journal["coordinator" if is_program(state) else "main"] = "started"
                 save_journal()
                 try:
                     close_verdict = self._client.terminal_close(
-                        terminal_id=main_terminal,
+                        terminal_id=controller_terminal,
                         cwd=workspace,
                     )
                     self._require_terminal_close(
                         close_verdict,
-                        terminal_id=main_terminal,
+                        terminal_id=controller_terminal,
                     )
                 except OrcaCommandError as exc:
                     if exc.not_found:
-                        journal["main"] = "unknown"
+                        journal["coordinator" if is_program(state) else "main"] = (
+                            "unknown"
+                        )
                         save_journal()
                         raise RuntimeFailure(
                             ErrorCode.BACKEND_PROTOCOL_FAILURE,
                             "agent-team Main terminal is gone; process stop is unconfirmed",
                         )
-                    journal["main"] = "pending"
+                    journal["coordinator" if is_program(state) else "main"] = "pending"
                     save_journal()
                     raise RuntimeFailure(
                         ErrorCode.BACKEND_PROTOCOL_FAILURE,
                         "agent-team Main terminal close command failed",
                     )
                 except (OrcaProtocolError, OrcaTransportError):
-                    journal["main"] = "unknown"
+                    journal["coordinator" if is_program(state) else "main"] = "unknown"
                     save_journal()
                     raise RuntimeFailure(
                         ErrorCode.BACKEND_PROTOCOL_FAILURE,
                         "agent-team Main terminal close effect is unknown",
                     )
-                journal["main"] = "done"
+                journal["coordinator" if is_program(state) else "main"] = "done"
                 save_journal()
+
+            if is_program(state):
+                from .orca_program import process_running
+
+                deadline = time.monotonic() + 3.0
+                while process_running(state):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeFailure(
+                            ErrorCode.BUSY,
+                            "Orca coordinator process cleanup is unconfirmed",
+                        )
+                    time.sleep(0.02)
 
             for (
                 role_name,
@@ -1129,11 +1429,16 @@ class OrcaBackend(BackendPort):
                 worktree_id=state_string(state, "worktree_id"),
             )
         run_id = state_string(state, "run_id")
-        main_terminal = state_string(state, "main_terminal")
+        controller_terminal = saved_controller_terminal(state)
         result = StartResult(
             team_id=spec.team_id,
             run_id=RunRef(run_id),
-            main_terminal_id=TerminalRef(main_terminal),
+            main_terminal_id=None
+            if is_program(state)
+            else TerminalRef(controller_terminal),
+            coordinator_terminal_id=TerminalRef(controller_terminal)
+            if is_program(state)
+            else None,
             state_path=spec.state_path,
         )
         self._state = state
@@ -1177,7 +1482,7 @@ class OrcaBackend(BackendPort):
         workspace = self._workspace(state)
         run_id = state_string(state, "run_id")
         worktree_id = state_string(state, "worktree_id")
-        main_terminal = state_string(state, "main_terminal")
+        controller_terminal = saved_controller_terminal(state)
         self._verify_worktree(
             workspace=workspace,
             worktree_id=worktree_id,
@@ -1186,11 +1491,11 @@ class OrcaBackend(BackendPort):
             run_id=run_id,
             team_id=state_string(state, "team_id"),
             workspace=workspace,
-            coordinator_handle=main_terminal,
+            coordinator_handle=controller_terminal,
         )
         try:
             terminal = self._verify_terminal(
-                terminal_id=main_terminal,
+                terminal_id=controller_terminal,
                 workspace=workspace,
                 worktree_id=worktree_id,
                 title=f"{state_string(state, 'team_id')}-main",
@@ -1204,14 +1509,30 @@ class OrcaBackend(BackendPort):
                 "worker-list response has invalid workers",
             )
         team_id = state_string(state, "team_id")
+        process = state.get("coordinator_process")
+        status = (
+            "coordinator_exited"
+            if is_program(state)
+            and isinstance(process, Mapping)
+            and process.get("phase") == "exited"
+            else "running"
+        )
+        if is_program(state) and status == "running":
+            from .orca_program import process_running
+
+            if not process_running(state):
+                status = "coordinator_unavailable"
         self.last_status_response = {
-            "status": "running",
+            "status": status,
             "team_id": team_id,
             "run": run,
-            "main": terminal,
+            ("coordinator" if is_program(state) else "main"): terminal,
             "workers": workers,
         }
-        return StatusReceipt("running", team_id, RunRef(run_id))
+        if is_program(state):
+            self.last_status_response["coordinator_process"] = process
+            self.last_status_response["program_wave"] = state.get("program_wave")
+        return StatusReceipt(status, team_id, RunRef(run_id))
 
     def _attach(self, request: Attach) -> AttachReceipt:
         self._ensure_supported_platform()
@@ -1251,7 +1572,7 @@ class OrcaBackend(BackendPort):
             run_id=run_id,
             team_id=state_string(state, "team_id"),
             workspace=workspace,
-            coordinator_handle=state_string(state, "main_terminal"),
+            coordinator_handle=saved_controller_terminal(state),
         )
         if role_kind(role) is Role.MAIN:
             terminal_title = f"{state_string(state, 'team_id')}-main"
@@ -1451,6 +1772,8 @@ class OrcaBackend(BackendPort):
 
     @staticmethod
     def _require_main_start_complete(state: Mapping[str, object]) -> None:
+        if state.get("pending_coordinator_start") is not None:
+            raise RuntimeFailure(ErrorCode.BUSY, "Orca coordinator startup is pending")
         pending = state.get("pending_role_start")
         if isinstance(pending, Mapping) and pending.get("role") == Role.MAIN.value:
             raise RuntimeFailure(
@@ -1694,7 +2017,7 @@ class OrcaBackend(BackendPort):
         worktree_id: str,
         socket_path: Path,
         run_id: str,
-        main_terminal: str,
+        controller_terminal: str,
     ) -> dict[str, object]:
         role_specs: dict[str, dict[str, object]] = {}
         for role, role_spec in spec.role_specs.items():
@@ -1737,7 +2060,7 @@ class OrcaBackend(BackendPort):
             "worktree_id": worktree_id,
             "orca_socket": str(socket_path),
             "run_id": run_id,
-            "main_terminal": main_terminal,
+            _controller_spec_key(spec): controller_terminal,
             "role_specs": role_specs,
             "roles": {},
         }
@@ -1750,6 +2073,10 @@ class OrcaBackend(BackendPort):
                     "tasks": {},
                 }
             )
+        if _program_spec(spec):
+            from .task_execution import new_program_wave
+
+            state["program_wave"] = new_program_wave(state)
         return state
 
     @staticmethod
@@ -1796,6 +2123,8 @@ class OrcaBackend(BackendPort):
             "run_id",
             "worktree_id",
             "main_terminal",
+            "coordinator_terminal",
+            "coordinator_argv",
             "version",
             "runtime",
             "orca_socket",
@@ -1879,7 +2208,7 @@ class OrcaBackend(BackendPort):
     def _terminal_for_role(cls, state: Mapping[str, object], role: RoleTarget) -> str:
         cls._require_target(state, role)
         if role_kind(role) is Role.MAIN:
-            return state_string(state, "main_terminal")
+            return saved_controller_terminal(state)
         assignment = cls._assignment_for_role(state, role)
         terminal = assignment.get("terminal_handle")
         if not isinstance(terminal, str) or not terminal:

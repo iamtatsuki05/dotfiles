@@ -6,7 +6,8 @@
 ## runtimeを明示的に選択する
 
 `agent-team`はオーケストレーションとAgent実行を分け、設定の`runtime`でbackendを選択します。
-version 3の`runtime = "orca"`は既存の4 role固定構成を使い、version 5は名前付きOrcaの`agent`/`serial`と`agent`/`parallel`にも対応します。
+version 3の`runtime = "orca"`は既存の4 role固定構成を使い、version 5は名前付きOrcaの`agent`/`serial`、`agent`/`parallel`、
+`program`/`serial`、`program`/`parallel`にも対応します。
 version 3の`runtime = "tmux"`、`"herdr"`、`"zellij"`は実験的なnative pathで、direct Claude Mainを必須とし、verified Claude ACPの
 Planner、Worker、Reviewerを任意に追加できます。native Workerのassignmentにはconfigの
 `[[tasks]]` catalogにあるTaskSpecとの完全一致が必要です。その他の未対応native profileは、
@@ -61,7 +62,8 @@ Deliveryの待機・読み取りとstatus/attachの照合中は、stateの排他
 
 名前付きOrcaの`agent`/`parallel`はstate version 5を使い、TaskSpec、TaskBatch、レビュー、検証の規則を共有します。
 direct ClaudeのMainが`task_batch_open`で対象batchを開き、Planner、Worker、Reviewerはscoped Claude ACPで動きます。
-Orcaの`program`構成は引き続き拒否します。
+名前付きOrcaの`program`/`serial`と`program`/`parallel`も、TaskSpec共通のprogram policy/driverへ接続しています。
+実Orca・実モデルのprogram受入は未実施です。
 
 `role_wait`には実行中のnodeを指定しますが、返すのはRun内で最も古い未ACKのDeliveryに含まれる全eventです。
 他のnodeのeventも含みます。runtimeは各messageを保存済みのTask、Dispatch、端末、結果または質問のoutboxと照合し、
@@ -80,11 +82,39 @@ providerを呼ばない試験`run_2f5e3cc0197f`では、異なる2件のDispatch
 両ownerのread/releaseと端末closeの後、1回のACKで未読が0になりました。PID、process group、待機用scriptが残っていないことも別途照合しています。
 内部の検証記録は`orca-fifo-protocol-complete-proof.json`で、配布物には含めていません。この試験で確認したのはOrcaのFIFOと終了処理で、実モデルの全工程や認証動作は対象外です。
 
-最終の正式な`tests/run.sh`は、Python 3.13.15で732.993秒、3.11.15で642.654秒かかり、両方とも成功しました。
+公開済みのagent/parallel実装に対する`tests/run.sh`は、Python 3.13.15で732.993秒、3.11.15で642.654秒かかり、両方とも成功しました。
 対象はpackage 1,246件、CLI 33件、MCP 33件、compact runner 8件と、shell・設定の検証です。
 各回で同じ233ファイルが変更されていないことを確認しています。独立レビューで見つかった古い不正batchの保存、
 activeな質問と通知対象結果の同居、回答receiptの上書きは、この最終検証前に修正しました。
 検証後の更新は文書だけで、実装とテストの内容は同じです。名前付きOrcaの実モデルparallel受入は未完了です。
+
+### 名前付きOrcaのprogramはMainなしcoordinatorを使う
+
+名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を保存します。
+どちらもMainなしで、選択したterminal上の固定argv Python `_orca-program-run` coordinatorを使います。
+保存するcontroller identityは`coordinator_terminal`、`coordinator_argv`、`coordinator_process`です。
+`coordinator_process`のreceipt fieldは`pid`、`process_group_id`、`launch_nonce`、`argv`、`phase`、`exit_code`、`cli_cleanup_confirmed`に固定します。
+これはOrca program専用のvariantで、nativeの`coordinator_pid`などのcontroller metadataとは別です。
+
+親は固定argvの起動意図を先に保存し、childはPID、process group、launch nonce、kernel argvを登録します。
+親は起動準備の保存が確定した後、`SIGUSR1`を1回だけ送ります。childはファイルの変化だけでは進行を開始しません。
+保存済みcoordinatorだけがtaskを進められます。外部の`status`、`attach --coordinator`、`answer`、`stop`は保存stateを操作しますが、coordinatorの所有権は持ちません。
+
+serialの質問は各assignmentに束縛します。parallelのDeliveryはRun全体のbatchとして扱います。完了したownerをread/releaseし、すべての質問に回答してから、共有ACKを1回だけ送ります。
+未知または未確認のACK/reply、owner不在、その他のidentity不一致はstateを保持し、waveを進めません。
+nativeと名前付きOrcaのprogram pathは、同じTaskSpec、review、固定argv検証、wave gateを共通driverで適用します。
+
+`cli_cleanup_confirmed`は実行中は`null`、終了記録ではboolです。対象はOrcaClientがProcessRunnerで作る別process groupです。
+この経路の回収が一度でも未確認になった場合は、
+後の呼び出しが成功しても`false`を維持します。通常の`stop`はlifecycle lockの外で、coordinatorの終了記録、
+CLIの回収成功、PIDの不在とprocess groupの終了を待ってから、端末を閉じてstateを削除します。
+同期的な`mcp_server.run_orca`はcoordinatorと同じprocess groupで動くため、そちらの生存processも別に確認します。
+終了記録なしにPIDだけが消えた場合は、未確認としてstateを残します。未dispatchの起動はreadiness fenceでCLI未開始を保証するため、別に停止できます。
+
+program実装に対する正式な`tests/run.sh`は、Python 3.13.15で573.899秒、3.11.15で554.908秒かかり、両方とも成功しました。
+各回の対象はパッケージ1,293件、CLI 33件、MCP 33件、compact runner 8件と、適用対象のリポジトリ検証です。
+両方の実行中にsource manifestの244項目が変わっていないことも確認しています。
+macOSのtcsh/csh runtimeのskipは残っており、全shellや実Orca・実モデルのprogram受入を実証したものではありません。
 
 ### 名前付きOrca直列実行の検証
 
@@ -149,18 +179,21 @@ Zellij driverは`0.44.1`でcompatibilityを確認した対象です。preflight�
 detached mode、persistent clientなし、`--max-panes 1`なしを使います。Main metadataを保持し、
 terminalを1つと既知のsuppressed `zellij:link` pluginだけを受け入れ、未知のpane/pluginはunknownのままにします。
 
-HerdrとZellijはnative terminal driverとして利用できます。名前付きnodeのagent/serialとagent/parallel、program/serial、
-program/parallel構成をversion 5で接続しています。nativeのagent/parallelはMainが正確なTaskSpec IDの`agent_batch`を明示してから
+HerdrとZellijはnative terminal driverとして利用できます。version 5の名前付きgraph設定でagent/serial、agent/parallel、program/serial、
+program/parallel構成を接続しています。program/serial stateはversion 4、program/parallel stateはversion 5です。nativeのagent/parallelはMainが正確なTaskSpec IDの`agent_batch`を明示してから
 named writerとReviewerをdispatchします。program構成にはMain roleを置かず、選択したterminal上で既存の`native_main`
 supervisorが固定argvの`_program-run` coordinatorを監督します。2つのmodeの間にschedulerや暗黙の変換はありません。
-名前付きOrcaのagent/parallelは上記のversion 5 Run FIFO contractを使います。Orcaのprogram構成と10 harnessの大半は、現在の実行対象外です。
+名前付きOrcaのagent/parallelは上記のversion 5 Run FIFO contractを使い、program/serialとprogram/parallelも共通のprogram policy/driverへ接続しています。
+10 harnessの大半は現在の実行対象外です。
 2つのsystemで同じWorkerを分担すると、完了判定とcleanupの責任が曖昧になります。
 
 native Claude ACPの質問応答は、既存のTask/Dispatch内で動きます。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。名前付きnativeのReviewer相談回答と
 serial/parallel program coordinatorもfocused testで接続しています。boundedな端末・fake providerのparallel coverageは下記に
-過去runの証拠として記載し、今回のMain parallel live受入は下記にまとめます。実モデルのparallel受入と全ハーネスへの対応は引き続き未完了です。
-上記の名前付きOrca protocol proofはprovider-freeであり、実モデル受入のgateを閉じるものではありません。
+過去runの証拠として記載し、今回のMain parallel live受入は下記にまとめます。Python 3.11と3.13でmocked-wire parallel pipelineを各1回通過し、
+serialの承認・差し戻し、`/usr/bin/true`検証、実Pythonの自己登録・readiness待機testも通過しています。実モデルのparallel受入と全ハーネスへの対応は引き続き未完了です。
+既存の名前付きOrca `agent`/`parallel` run `run_fc73773d2cf5`はMainのprompt受付後、Fableの利用上限によりTaskDispatch 0件で停止し、
+所有Stopと不在確認を内部の検証記録で完了しています。実Orca・実モデルのprogram runは実施していません。上記の名前付きOrca protocol proofはprovider-freeであり、実モデル受入のgateを閉じるものではありません。
 
 ### 名前付きnodeとTaskSpecの担当指定
 
@@ -170,7 +203,7 @@ provider/model/effort/prompt/permissionはnodeごとに保持します。Mainは
 taskのrouteは計画・実装それぞれのwriterとreviewerを指定します。計画担当の組を宣言した場合は、
 計画の承認後に実装へ進みます。その組を省略したrouteではPlannerを省けます。
 
-configはversion 5、名前付きserial stateはversion 4、名前付きOrcaの`agent`/`parallel`とnativeのagent/parallel・program/parallel stateはversion 5です。
+configはversion 5、名前付きserialと名前付きOrcaの`program`/`serial` stateはversion 4です。名前付きOrcaの`agent`/`parallel`・`program`/`parallel`とnativeのagent/parallel・program/parallel stateはversion 5です。
 名前付きOrca parallel stateはRun単位の`orca_delivery_batch`を所有します。graphと`role_specs`は設定済みの全nodeを含み、version 5の`roles`にはactive assignmentとnodeごとのresult、question、
 pending Delivery containerを保存します。native runtimeのTask UUIDと論理的な`TaskSpec.task_id`は別物で、
 dispatch IDが結果と対象taskを結び付けます。stateの読み取り、通知の保存、taskの遷移では、ID・kindの欠落や不一致を拒否します。
@@ -360,13 +393,15 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 | `agent_team/config_v4.py`, `topology.py` | 名前付きteam一覧を検証し、graphを描画する。起動可能な項目は、対応するversion-3起動設定を明示参照する。 |
 | `agent_team/config_roles.py`, `config_v5.py`, `named_graph.py` | nodeごとの役割設定、graphの識別子、taskの担当を検証し、選択したversion 5のteamを起動設定に変換する。graph描画も担う。 |
 | `agent_team/cli.py` | config/引数をparse・検証し、`WorkflowEngine(OrcaBackend)`または選択したnative terminal backendを選び、互換JSONを描画し、ACP turnを実行する。 |
-| `agent_team/backend.py` | Orcaの`start`/`status`/`attach`/`stop` adapter、state v3のidentity検証、互換receiptを担当する。 |
+| `agent_team/backend.py` | Orcaのlifecycle操作、state v3/v4/v5のidentity検証、選択したMainまたはprogram coordinatorを管理する。 |
 | `agent_team/native_backend.py` | 共通nativeの`start`/`status`/`attach`/`stop`、native ACP assignment、完了通知、cleanup確認を担当する。 |
 | `agent_team/native_terminal.py` | 共通terminalのreceipt、inspection、presence、close protocolを定義する。 |
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | NativeBackendを選択したterminal driverへ束縛する。 |
 | `agent_team/herdr.py`, `zellij.py` | Herdrのversion 0.8.2/protocol 20のhandshakeと、0.44.1でcompatibilityを確認したZellijのidentity/cleanup contractを検証する。 |
 | `agent_team/native_main.py` | 所有するnative Mainのprocess group、またはprogram coordinator childを監督し、終了receiptを保存する。 |
-| `agent_team/native_program.py`, `program_policy.py` | Main modelや別task ledgerを作らず、保存済みnative `program` graphをserialまたはparallelのTaskSpec waveとして進める。 |
+| `agent_team/native_program.py` | 保存済みnative coordinatorを検証し、共通program driverを呼び出す。 |
+| `agent_team/program_policy.py`, `program_driver.py` | 保存済みtask stateを使い、nativeと名前付きOrcaのprogram構成で、直列・並列のTaskSpec waveを進める操作を選択・実行する。 |
+| `agent_team/orca_controller.py`, `orca_program.py` | OrcaのMainとprogramの識別情報を分け、固定argv Python coordinatorの起動、準備完了、process所有権を検証する。 |
 | `agent_team/native_delivery.py` | version 3/4のroot Deliveryと、version 5のnodeごとのresult、question、pending Delivery containerを解決する。 |
 | `agent_team/parallel_admission.py` | version 5の`max_active`、exact node、重ならないWorker scopeのadmissionを検査する。 |
 | `agent_team/orca.py` | 固定Orca argv/envelope decoderを担当する。MCP role操作は持たない。 |
@@ -390,7 +425,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 | `agent_team/codex_preflight.py`, `codex_acp.py` | 既存の認証file・設定を検証し、Codex専用の起動fileを固定する。公開設定ではCodex ACPを無効にしている。 |
 | `agent_team/codex_scoped_launch.mjs`, `codex_scoped_inspect.mjs`, `codex_scoped_transport.mjs`, `codex_scoped_bridge.mjs` | app-serverの起動設定を固定し、有効な設定の検査、通信の制限、file tool要求の仲介を担う。[Codex ACPの実装状況](acp_JA.md#範囲を制限したcodex-acpの実装公開設定では未有効)を参照。 |
 | `agent_team/runtime.py` | identity、private file、state v3/v4/v5、command、environment、cleanupの安全helperを共有する。state writeは、callerがreservationを保持していない限り共有lockを取得する。 |
-| `agent_team/process_identity.py` | LinuxとmacOSでprocessのexact argvを読み、表示文字列に依存しないnative所有権検査を提供する。 |
+| `agent_team/process_identity.py` | LinuxとmacOSでprocessのexact argvを読み、表示文字列に依存しないnativeとOrcaの所有権検査を提供する。 |
 | `agent_team/registry.py` | 認識済みharnessと検証済みrole profileを記録し、別providerへのfallthroughを行わない。 |
 | `agent_team/adapters.py` | provider非依存のbackground seam、出力制限付きprocess runner、exact identity検証、Copilot/OpenCode read-only adapterを提供する。Orca lifecycleの権限は持たない。 |
 | `agent_team/acp_dependencies.py` | 選択したACPの依存関係だけを解決し、exact package manifestと、absoluteな実行ファイルpath・SHA-256 fingerprintを検証する。 |
@@ -772,11 +807,15 @@ in-bandのpolicyを置きます。Read/Glob/Grepは保護pathやlink・file type
 workspace内を読め、TaskSpecのpath一覧では制限しません。Write/Editは`allowed_paths`内に
 限定し、書き込みでは`forbidden_paths`を優先します。Bash、terminal、その他のRPCは拒否しますが、
 同じuserのhostile processによる同時file差し替えをkernel levelで防ぐものではありません。
-Orcaのworkspace-writeはprovider native permissionを使うdirect Codexであり、nativeの書き込みは
-scoped Workerに限定します。
+固定version 3のOrcaでは、workspace-writeにprovider native permissionを使うdirect Codexを使用します。
+名前付きOrcaとnative terminal構成はscoped ACP Workerを使います。
 質問応答は追加のcommunicationだけであり、TaskSpecのfile scopeを広げたり、Bash、terminal、
 その他のexternal toolを有効にしたりしません。question socketは所有するassignmentのprivateなsocketで、
 Claudeだけに有効です。Codexのquestion capabilityは無効のままです。
+
+Orca programのreadinessは、OSの同じユーザーを信頼する前提です。`SIGUSR1`は送信元を認証しないため、
+同じユーザーで動く別processも通知を送ったり、private stateを書き換えたりできます。
+この通知は、親の保存処理が未完了のまま進むことを防ぐ追加条件です。上記のprocess identityやtool権限の検証は別に行います。
 
 以前のモデルを使わないtmuxの端末試験は、OrcaとCodexがない環境、空白を含むworkspace path、
 削除済みconfigで確認しました。2026-09-07には、Python 3.13.15のwheel-only環境で、実際の

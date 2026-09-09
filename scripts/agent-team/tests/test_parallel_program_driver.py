@@ -4,7 +4,7 @@ import hashlib
 import unittest
 from typing import cast
 
-from agent_team import native_program
+from agent_team import program_driver
 from agent_team.contracts import (
     AckReceipt,
     BackendRequest,
@@ -736,7 +736,7 @@ class ParallelProgramDriverTest(unittest.TestCase):
 
         backend = Backend()
         role = NodeRef("worker-a", Role.WORKER)
-        native_program._wait_or_read(
+        program_driver._wait_or_read(
             backend,
             {"version": 5, "roles": {"worker-a": {"role": "worker-a"}}},
             role,
@@ -774,7 +774,7 @@ class ParallelProgramDriverTest(unittest.TestCase):
                 return AckReceipt(True)
 
         backend = Backend()
-        native_program._acknowledge(backend, state, role_b)
+        program_driver._acknowledge(backend, state, role_b)
 
         self.assertEqual(backend.requests, [DeliveryAck(DeliveryRef("delivery-b"))])
 
@@ -818,7 +818,7 @@ class ParallelProgramDriverTest(unittest.TestCase):
             },
         )
 
-        notice = native_program._notice(
+        notice = program_driver._notice(
             state,
             reason="question_answer_required",
             task_id="task-b",
@@ -853,7 +853,7 @@ class ParallelProgramDriverTest(unittest.TestCase):
         self.assertEqual(action.kind, "wait_user")
         self.assertEqual(action.message, "review_round_limit")
 
-        notice = native_program._notice(
+        notice = program_driver._notice(
             state, reason=action.message, task_id=action.task_id, role=action.role
         )
 
@@ -883,7 +883,7 @@ class ParallelProgramDriverTest(unittest.TestCase):
             },
         )
 
-        notice = native_program._notice(
+        notice = program_driver._notice(
             state,
             reason="reviewer_consultation_required",
             task_id="task-a",

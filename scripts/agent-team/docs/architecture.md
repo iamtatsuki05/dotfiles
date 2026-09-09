@@ -8,7 +8,8 @@
 `agent-team` separates orchestration from agent execution and selects the
 backend from the configuration's `runtime` field. Version-3 `runtime = "orca"`
 keeps the fixed four-role contract; version 5 also connects named Orca
-`agent`/`serial` and `agent`/`parallel` graphs. Version-3 `runtime = "tmux"`, `"herdr"`, or `"zellij"`
+`agent`/`serial`, `agent`/`parallel`, `program`/`serial`, and
+`program`/`parallel` graphs. Version-3 `runtime = "tmux"`, `"herdr"`, or `"zellij"`
 selects an experimental native
 path that requires direct Claude Main and accepts optional verified Claude ACP
 Planner, Worker, and Reviewer roles. Native Worker assignments require an
@@ -77,7 +78,9 @@ a real-model named Orca workflow remains unverified.
 Named Orca `agent`/`parallel` uses state version 5 and the common TaskSpec,
 TaskBatch, review, and verification rules. Direct Claude Main opens each
 batch with `task_batch_open`; Planner, Worker, and Reviewer assignments use
-scoped Claude ACP. Orca `program` graphs remain rejected.
+scoped Claude ACP. Named Orca `program`/`serial` and `program`/`parallel` are
+connected through the common TaskSpec program policy and driver; their real
+Orca/model acceptance remains pending.
 
 `role_wait` takes a valid active node and returns all normalized events from
 the oldest unacknowledged Run Delivery, including events from other nodes.
@@ -108,7 +111,8 @@ messages. Independent checks found no owned PID, process group, or idle
 script. This test establishes Orca's FIFO and cleanup protocol; it does not
 establish a real-model workflow or authentication behavior.
 
-The final formal `tests/run.sh` passed on Python 3.13.15 and 3.11.15 in
+For the published agent/parallel milestone, `tests/run.sh` passed on
+Python 3.13.15 and 3.11.15 in
 732.993 and 642.654 seconds respectively. Each run included 1,246 package,
 33 CLI, 33 MCP, and 8 compact runner tests, followed by shell/configuration
 checks; the same 233 source files stayed unchanged throughout. Independent
@@ -116,6 +120,51 @@ reviews led to fixes for stale invalid-batch publication, conflicting active
 question/result state, and answer receipt replacement before these final runs.
 Only documentation was updated afterward; runtime and test contents stayed
 unchanged. Real-model named-Orca parallel acceptance remains pending.
+
+### Named Orca program uses a Mainless coordinator
+
+Named Orca `program`/`serial` stores state version 4 and `program`/`parallel`
+stores state version 5. Both modes are Mainless: a fixed-argv Python
+`_orca-program-run` coordinator runs under the selected terminal. The saved
+controller identity uses `coordinator_terminal`, `coordinator_argv`, and
+`coordinator_process`, whose exact receipt fields are `pid`,
+`process_group_id`, `launch_nonce`, `argv`, `phase`, `exit_code`, and
+`cli_cleanup_confirmed`. These
+fields are an Orca program variant and are kept separate from native
+`coordinator_pid` and related controller metadata.
+
+The parent records the startup intent before sending the fixed argv; the child
+registers its PID, process group, launch nonce, and kernel argv. After durable
+readiness, the parent sends one `SIGUSR1` readiness signal. The child cannot advance on file visibility alone. Only the recorded
+coordinator may advance tasks. External
+`status`, `attach --coordinator`, `answer`, and `stop` operations manage the
+saved state; they do not become coordinator owners.
+
+Serial questions belong to their assignment. Parallel program Delivery is
+processed as one Run-wide batch: read and release each completion owner,
+answer every question, then send one shared ACK. Unknown or unconfirmed ACK/reply effects, missing owners,
+and other identity mismatches retain the state and do not advance the wave.
+The shared driver applies the same TaskSpec, review, fixed-argv verification,
+and wave gates to native and named Orca program paths.
+
+`cli_cleanup_confirmed` is `null` while the coordinator runs and a boolean in
+its exit receipt. It covers the separate process groups created by
+OrcaClient through ProcessRunner. Any unconfirmed cleanup in that path remains false,
+even after a later successful call. Normal `stop` waits outside the lifecycle
+lock for the coordinator's exit receipt, confirmed CLI cleanup, and PID/group
+exit before closing the terminal and removing state. The synchronous
+`mcp_server.run_orca` calls inherit the coordinator group; that group is
+checked for remaining live processes separately from the CLI receipt. A disappeared PID
+without that receipt is retained as unconfirmed. An undispatched startup can
+be stopped separately because readiness fences prevent CLI calls from starting.
+
+The program implementation passed the formal `tests/run.sh` on Python
+3.13.15 in 573.899 seconds and Python 3.11.15 in 554.908 seconds. Each run
+included 1,293 package tests, 33 CLI tests, 33 MCP tests, 8 compact-runner
+tests, and the applicable repository checks. All 244 source-manifest entries
+were unchanged during both runs. The macOS tcsh/csh runtime skips remain
+explicit; these results do not establish every shell or real Orca/model
+program acceptance.
 
 ### Named Orca serial validation
 
@@ -201,7 +250,9 @@ client and no `--max-panes 1`. It holds Main metadata and accepts one terminal
 plus the expected suppressed `zellij:link` plugin; unknown panes/plugins remain
 unknown.
 
-Named agent/serial and agent/parallel graphs are connected through version 5.
+The version-5 named graph configuration connects agent/serial, agent/parallel,
+program/serial, and program/parallel graphs; program/serial state remains
+version 4 and program/parallel state uses version 5.
 Native agent/parallel is Main-coordinated: Main explicitly opens an `agent_batch` of
 exact TaskSpec IDs before dispatching named writers and reviewers. Named Orca
 agent/parallel uses the version-5 Run FIFO contract described above. Native
@@ -209,19 +260,26 @@ program/parallel is a separate Mainless version-5 program mode; it does not
 create a second task ledger. The selected terminal hosts the existing
 `native_main` supervisor, which supervises the fixed `_program-run` coordinator
 argv. There is no automatic scheduler or implicit conversion between the two
-modes. Orca program graphs and most of the ten harnesses remain outside the
-current execution target. Giving two systems ownership of the same worker would make
-completion and cleanup ambiguous.
+modes. Most of the ten harnesses remain outside the current execution target.
+Giving two systems ownership of the same worker would make completion and
+cleanup ambiguous.
 
 Native Claude ACP questions stay within the existing Task/Dispatch assignment.
 Real-model question acceptance covers tmux; Herdr and Zellij have fake-provider
 contract coverage for this feature. The named-native Reviewer consultation
 answer path and serial/parallel program coordinator are connected by focused
-tests. Earlier bounded terminal/fake-provider parallel coverage is recorded
+tests. Python 3.11 and 3.13 each have one passing mocked-wire parallel
+pipeline; serial approval/request-changes coverage, `/usr/bin/true`
+verification, and real-Python self-registration and readiness-wait tests also
+pass. Earlier bounded terminal/fake-provider parallel coverage is recorded
 below as historical evidence for its own program scope. The bounded live
 Main-parallel acceptance is recorded below; real-model parallel acceptance and
-all-harness requirements remain pending. The named Orca protocol proof above
-is provider-free and does not close the real-model acceptance gate.
+all-harness requirements remain pending. The existing named-Orca
+`agent`/`parallel` run `run_fc73773d2cf5` reached Main prompt acceptance,
+then observed zero TaskDispatches at the Fable usage limit; the owned Stop and
+absence checks completed in private validation records. No actual Orca/model program
+run has been performed. The named Orca protocol proof above is provider-free
+and does not close the real-model acceptance gate.
 
 ### Named nodes and explicit TaskSpec routes
 
@@ -233,9 +291,10 @@ node IDs in MCP requests, and task routes bind each plan or implementation
 stage to a particular writer/reviewer pair. A declared plan pair must be
 approved before implementation; a route without that pair can omit Planner.
 
-The configuration version is 5. Named serial state uses version 4; named Orca
-`agent`/`parallel` and native `agent`/`parallel` or `program`/`parallel` state
-use version 5. Named Orca parallel state owns the Run-level
+The configuration version is 5. Named serial state and named Orca
+`program`/`serial` state use version 4; named Orca `agent`/`parallel` and
+`program`/`parallel`, and native `agent`/`parallel` or `program`/`parallel`
+state use version 5. Named Orca parallel state owns the Run-level
 `orca_delivery_batch`. The graph and `role_specs` cover all configured nodes.
 Version-5 `roles` retains active
 assignments with a per-node result, question, and pending Delivery container.
@@ -519,13 +578,15 @@ change those earlier outcomes.
 | `agent_team/config_v4.py`, `topology.py` | Validate named team catalogs and render their graphs. Runnable catalog entries explicitly reference a matching version-3 launch configuration. |
 | `agent_team/config_roles.py`, `config_v5.py`, `named_graph.py` | Validate node-local role settings, exact graph identities and task routes; compile selected version-5 teams and render their graphs. |
 | `agent_team/cli.py` | Parses and validates config/arguments, selects `WorkflowEngine(OrcaBackend)` or the selected native terminal backend, renders compatibility JSON, and runs ACP turns. |
-| `agent_team/backend.py` | Owns the Orca `start`/`status`/`attach`/`stop` workflow adapter, state-v3 identity checks, and compatibility receipts. |
+| `agent_team/backend.py` | Owns Orca lifecycle operations, state-v3/v4/v5 identity checks, and the selected Main or program coordinator. |
 | `agent_team/native_backend.py` | Owns the shared native `start`/`status`/`attach`/`stop` path, ACP assignments, completion publication, and cleanup checks. |
 | `agent_team/native_terminal.py` | Defines the shared terminal receipt, inspection, presence, and close protocol. |
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | Bind NativeBackend to the selected terminal driver. |
 | `agent_team/herdr.py`, `zellij.py` | Verify the exact Herdr 0.8.2/protocol-20 handshake and the Zellij driver identity/cleanup contract tested with 0.44.1. |
 | `agent_team/native_main.py` | Supervises the owned native Main process group or the program coordinator child and publishes its exit receipt. |
-| `agent_team/native_program.py`, `program_policy.py` | Drive a saved native `program` graph through serial or parallel TaskSpec waves without a Main model or a second task ledger. |
+| `agent_team/native_program.py` | Validates the saved native coordinator and enters the common program driver. |
+| `agent_team/program_policy.py`, `program_driver.py` | Select and apply serial or parallel TaskSpec wave actions for native and named Orca program runs, using the saved task state. |
+| `agent_team/orca_controller.py`, `orca_program.py` | Keep Orca Main and program identities separate; launch and validate the fixed-argv Python coordinator, readiness, and process ownership. |
 | `agent_team/native_delivery.py` | Resolves version-3/4 root deliveries and version-5 per-node result, question, and pending Delivery containers. |
 | `agent_team/parallel_admission.py` | Applies version-5 `max_active`, exact-node, and non-overlapping Worker-scope admission checks. |
 | `agent_team/orca.py` | Owns the fixed Orca argv/envelope decoder. It does not own MCP role operations. |
@@ -549,7 +610,7 @@ change those earlier outcomes.
 | `agent_team/codex_preflight.py`, `codex_acp.py` | Validate existing file authentication/configuration and bind private Codex launch artifacts. The public Codex ACP profile remains disabled. |
 | `agent_team/codex_scoped_launch.mjs`, `codex_scoped_inspect.mjs`, `codex_scoped_transport.mjs`, `codex_scoped_bridge.mjs` | Fix app-server startup, inspect effective configuration, and mediate bounded ACP/app-server traffic and file-tool requests. See the [Codex ACP implementation status](acp.md#scoped-codex-acp-implementation-not-enabled). |
 | `agent_team/runtime.py` | Shares identity, private-file, state-v3/v4/v5, command, environment, and cleanup safety helpers; state writes take the shared reservation unless the caller already holds it. |
-| `agent_team/process_identity.py` | Reads exact argv tuples on Linux and macOS so native ownership checks do not rely on display text. |
+| `agent_team/process_identity.py` | Reads exact argv tuples on Linux and macOS so native and Orca ownership checks do not rely on display text. |
 | `agent_team/registry.py` | Records recognized harnesses and exact verified role profiles; it never falls through to another provider. |
 | `agent_team/adapters.py` | Provides the provider-independent background seam, bounded process runner, exact identity checks, and Copilot/OpenCode read-only adapters. It has no Orca lifecycle authority. |
 | `agent_team/acp_dependencies.py` | Resolves selected ACP dependencies, verifies exact package manifests, and records absolute executable paths with SHA-256 fingerprints. |
@@ -1053,12 +1114,19 @@ the workspace with protected-path and link/file-type checks; they are not
 limited by TaskSpec path lists. Write/Edit are limited to `allowed_paths`,
 with `forbidden_paths` taking precedence for writes. Bash, terminal, and other RPC calls are
 denied. The policy does not provide kernel-level protection from a hostile
-same-user concurrent file swap. Orca workspace-write remains direct Codex with
-provider-native permissions; native write is limited to the scoped Worker.
+same-user concurrent file swap. Fixed version-3 Orca workspace-write uses
+direct Codex with provider-native permissions. Named Orca and native terminal
+teams use the scoped ACP Worker.
 Question handling is additional communication only: it does not widen
 TaskSpec file scope or enable Bash, terminal, or other external tools. The
 question socket is private to the owned assignment and is enabled for Claude
 only; Codex question capability remains disabled.
+
+Orca program readiness assumes that the OS user is trusted. `SIGUSR1` does not
+authenticate its sender; another process under the same user can send that
+signal or modify the private state files. The signal prevents advancement on
+incomplete parent publication and does not replace the process-identity or
+scoped-tool checks above.
 
 The earlier model-free tmux terminal lifecycle was verified with Orca and Codex absent,
 including a workspace path containing spaces and a deleted config. On

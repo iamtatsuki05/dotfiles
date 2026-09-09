@@ -34,11 +34,16 @@ Delivery. Main is direct Claude; Planner, Worker, and Reviewer assignments use
 scoped Claude ACP. `role_wait` returns the whole Run Delivery, and Main
 processes each owner before one shared `delivery_ack`. Codex ACP remains
 rejected by configuration parsing and its questions remain disabled. Orca
-program modes are rejected before launch. The provider-free protocol proof is
-recorded in [Architecture](architecture.md); real-model named-Orca parallel
-acceptance is pending. The serial live attempt reached Main startup and prompt
-acceptance but no TaskDispatch. This does not change the static registry or the
-safety findings for unwrapped adapters in the table above.
+`program`/`serial` uses state version 4 and `program`/`parallel` uses state
+version 5. Both connect the Mainless fixed-argv Python coordinator to the
+common TaskSpec program policy and driver. The coordinator identity and
+readiness/ownership fences are described in [Architecture](architecture.md).
+Focused implementation tests are connected, but real Orca/model program
+acceptance is pending. The existing `agent`/`parallel` run
+`run_fc73773d2cf5` reached Main prompt acceptance before Fable's usage
+limit with zero TaskDispatches; owned Stop and absence checks completed in
+private validation records. This does not change the static registry or the safety
+findings for unwrapped adapters in the table above.
 
 ### Native Claude question status
 
@@ -123,7 +128,8 @@ Delivery ordering, wave transitions, and private Stop handling. Earlier bounded
 real-terminal/fake-provider acceptance is recorded in Architecture as
 historical, scoped evidence; this is not real-provider or real-model safety
 evidence and does not replace the bounded live Main-parallel acceptance in
-[Architecture](architecture.md). Real-model parallel acceptance is pending.
+[Architecture](architecture.md). Python 3.11 and 3.13 each pass one
+mocked-wire parallel pipeline; real-model parallel acceptance is pending.
 
 The real serial program trial
 `b239945b-283e-403b-aba5-84ba984c8469` answered two questions in the same ACP
