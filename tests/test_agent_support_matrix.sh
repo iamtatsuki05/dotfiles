@@ -13,6 +13,10 @@ readonly SCHEDULER_ADAPTERS="$REPO_ROOT/dotfiles/.agent/skills/agent-job-schedul
 readonly SCHEDULER_SETTINGS="$REPO_ROOT/dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/src/agent_job_scheduler/settings.py"
 readonly MISE_CONFIG="$REPO_ROOT/config/mise/config.toml"
 readonly MISE_TEMPLATE="$REPO_ROOT/home/.chezmoitemplates/mise-config.toml"
+readonly AGENT_TEAM_PROJECT="$REPO_ROOT/scripts/agent-team"
+readonly AGENT_TEAM_REGISTRY="$AGENT_TEAM_PROJECT/agent_team/registry.py"
+readonly SAFETY_MATRIX_JSON="$AGENT_TEAM_PROJECT/docs/harness-safety-matrix.json"
+readonly SAFETY_MATRIX_TEST="$AGENT_TEAM_PROJECT/tests/test_harness_matrix_docs.py"
 
 source "$TEST_DIR/lib/assertions.sh"
 
@@ -94,11 +98,48 @@ test_agent_job_scheduler_code_supports_matrix_agents() {
   assert_not_contains "$SCHEDULER_SETTINGS" "Agent.AGENT_SWARM.value"
 }
 
+test_agent_team_registry_and_docs_cover_managed_agents() {
+  local agent
+
+  assert_file "$AGENT_TEAM_REGISTRY"
+  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok; do
+    assert_contains "$AGENT_TEAM_REGISTRY" "\"$agent\""
+  done
+  assert_file "$AGENT_TEAM_PROJECT/docs/support-matrix.md"
+  assert_file "$AGENT_TEAM_PROJECT/docs/support-matrix_JA.md"
+  assert_file "$AGENT_TEAM_PROJECT/docs/acp.md"
+  assert_file "$AGENT_TEAM_PROJECT/docs/acp_JA.md"
+  assert_file "$AGENT_TEAM_PROJECT/docs/background-adapters.md"
+  assert_file "$AGENT_TEAM_PROJECT/docs/background-adapters_JA.md"
+  assert_file "$SAFETY_MATRIX_JSON"
+  assert_file "$SAFETY_MATRIX_TEST"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "recognized"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "runnable"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "Current 17-cell safety matrix"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "candidate_count = 0"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "candidate unsupported"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "Static registry snapshot (not safety status)"
+  assert_contains "$AGENT_TEAM_PROJECT/docs/support-matrix.md" "direct=\`not-run\`"
+  assert_contains "$SAFETY_MATRIX_JSON" '"schema_version": 1'
+  assert_contains "$SAFETY_MATRIX_JSON" '"profile_count": 17'
+  assert_contains "$SAFETY_MATRIX_JSON" '"candidate_count": 0'
+  assert_contains "$SAFETY_MATRIX_JSON" '"cell_digest"'
+  assert_contains "$SAFETY_MATRIX_JSON" '"safe_reproduction": "static-reference"'
+  assert_contains "$SAFETY_MATRIX_JSON" '"historical_evidence"'
+  assert_contains "$SAFETY_MATRIX_JSON" '"source_verification": "caller-supplied-unverified"'
+  assert_not_contains "$SAFETY_MATRIX_JSON" '"historical_observation"'
+  assert_contains "$SAFETY_MATRIX_JSON" '"permission": "not-applicable"'
+  assert_contains "$AGENT_TEAM_PROJECT/docs/acp.md" "acpx@0.13.2"
+  assert_contains "$AGENT_TEAM_PROJECT/README.md" "support-matrix.md"
+  assert_contains "$AGENT_TEAM_PROJECT/README_JA.md" "support-matrix_JA.md"
+}
+
 main() {
   test_support_matrix_documents_managed_agents
   test_review_agent_code_supports_matrix_agents
   test_waza_cli_agent_code_supports_matrix_agents
   test_agent_job_scheduler_code_supports_matrix_agents
+  test_agent_team_registry_and_docs_cover_managed_agents
   echo "agent support matrix tests passed"
 }
 

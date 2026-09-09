@@ -226,7 +226,10 @@ class AgentRunCompactTest(unittest.TestCase):
                 "-c",
                 (
                     "import os, pathlib, time; "
-                    f"pathlib.Path({str(child_pid_file)!r}).write_text(str(os.getpid())); "
+                    f"pid_file = pathlib.Path({str(child_pid_file)!r}); "
+                    "pending = pid_file.with_suffix('.pending'); "
+                    "pending.write_text(str(os.getpid())); "
+                    "pending.replace(pid_file); "
                     "time.sleep(30)"
                 ),
             ],
@@ -253,9 +256,18 @@ class AgentRunCompactTest(unittest.TestCase):
 
     @staticmethod
     def _terminate_if_running(process: subprocess.Popen[str]) -> None:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=3)
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=3)
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
 
 
 if __name__ == "__main__":

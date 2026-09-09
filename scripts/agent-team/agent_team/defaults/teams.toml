@@ -1,0 +1,82 @@
+version = 4
+runtime = "orca"
+
+[teams.agent-team]
+name = "Agent Team"
+launch_config = "config.toml"
+
+[[teams.agent-team.nodes]]
+id = "main"
+label = "Main"
+main = true
+[teams.agent-team.nodes.profile]
+provider = "claude"
+transport = "direct"
+permission = "orchestrator"
+
+[[teams.agent-team.nodes]]
+id = "planner"
+label = "Planner"
+main = false
+[teams.agent-team.nodes.profile]
+provider = "claude"
+transport = "acp"
+permission = "read-only"
+
+[[teams.agent-team.nodes]]
+id = "worker"
+label = "Worker"
+main = false
+[teams.agent-team.nodes.profile]
+provider = "codex"
+transport = "direct"
+permission = "workspace-write"
+
+[[teams.agent-team.nodes]]
+id = "reviewer"
+label = "Reviewer"
+main = false
+[teams.agent-team.nodes.profile]
+provider = "codex"
+transport = "direct"
+permission = "read-only"
+
+[[teams.agent-team.edges]]
+source = "main"
+target = "planner"
+kind = "delegates-to"
+
+[[teams.agent-team.edges]]
+source = "main"
+target = "worker"
+kind = "delegates-to"
+
+[[teams.agent-team.edges]]
+source = "main"
+target = "reviewer"
+kind = "delegates-to"
+
+[[teams.agent-team.edges]]
+source = "planner"
+target = "reviewer"
+kind = "reviewed-by"
+
+[[teams.agent-team.edges]]
+source = "worker"
+target = "reviewer"
+kind = "reviewed-by"
+
+[[teams.agent-team.edges]]
+source = "planner"
+target = "main"
+kind = "escalates-to"
+
+[[teams.agent-team.edges]]
+source = "worker"
+target = "main"
+kind = "escalates-to"
+
+[[teams.agent-team.edges]]
+source = "reviewer"
+target = "main"
+kind = "escalates-to"

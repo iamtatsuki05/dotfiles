@@ -30,7 +30,7 @@ create_agent_fixture_repo() {
   local repo="$1"
 
   mkdir -p \
-    "$repo/scripts" \
+    "$repo/scripts/agent-team" \
     "$repo/dotfiles/.agent/apps/claude" \
     "$repo/dotfiles/.agent/apps/copilot" \
     "$repo/dotfiles/.agent/apps/codex" \
@@ -42,6 +42,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
     "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint" \
     "$repo/dotfiles/.agent/apps/grok" \
+    "$repo/dotfiles/.agent/apps/agent-team" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills" \
     "$repo/dotfiles/.agent/pets"
@@ -49,6 +50,9 @@ create_agent_fixture_repo() {
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
   cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
+  cp -R "$REPO_ROOT/scripts/agent-team/." "$repo/scripts/agent-team/"
+  cp "$REPO_ROOT/dotfiles/.agent/apps/agent-team/config.toml" "$repo/dotfiles/.agent/apps/agent-team/config.toml"
+  cp -R "$REPO_ROOT/dotfiles/.agent/apps/agent-team/prompts" "$repo/dotfiles/.agent/apps/agent-team/"
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
@@ -63,6 +67,7 @@ create_agent_fixture_repo() {
   chmod +x \
     "$repo/scripts/agent-run-compact" \
     "$repo/scripts/setup_agent_files.sh" \
+    "$repo/scripts/agent-team/agent-team" \
     "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'
@@ -350,6 +355,10 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.grok/config.toml" 'Authorization = "Bearer ${DEVIN_API_KEY}"'
   assert_symlink_target "$home_dir/.codex/config.toml" "$repo/dotfiles/.agent/apps/codex/config.toml"
   assert_symlink_target "$home_dir/.codex/hooks.json" "$repo/dotfiles/.agent/apps/codex/hooks.json"
+  assert_symlink_target "$home_dir/.local/bin/agent-team" "$repo/scripts/agent-team/agent-team"
+  assert_executable "$home_dir/.local/bin/agent-team"
+  assert_symlink_target "$xdg_config_home/agent-team" "$repo/dotfiles/.agent/apps/agent-team"
+  [[ ! -e "$home_dir/.local/bin/agent_team_runtime.py" ]] || fail "legacy runtime link must be removed"
   assert_symlink_target "$home_dir/.codex/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   assert_symlink_target "$home_dir/.codex/hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   assert_contains "$home_dir/.codex/hooks.json" '"SessionStart"'
@@ -487,6 +496,103 @@ test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts() 
   assert_not_exists "$home_dir/.claude/skills"
   assert_not_exists "$home_dir/.codex/AGENTS.md"
 
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_fails_when_agent_team_command_link_conflicts() {
+  local repo
+  local home_dir
+  local output
+  local exit_status
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.local/bin/agent-team"
+  print -r -- 'keep' > "$home_dir/.local/bin/agent-team/local-file"
+
+  set +e
+  output="$(HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" 2>&1)"
+  exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected agent-team command link conflict to fail"
+  assert_contains_text "$output" "required command link"
+  assert_file "$home_dir/.local/bin/agent-team/local-file"
+
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_removes_only_the_legacy_managed_runtime_link() {
+  local repo
+  local home_dir
+  local legacy_link
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  legacy_link="$home_dir/.local/bin/agent_team_runtime.py"
+  mkdir -p "${legacy_link:h}"
+  ln -s "$repo/scripts/agent_team_runtime.py" "$legacy_link"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" \
+      "$repo/scripts/setup_agent_files.sh" --repo-root "$repo"
+
+  assert_not_exists "$legacy_link"
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_preserves_a_foreign_runtime_link() {
+  local repo
+  local home_dir
+  local foreign_target
+  local runtime_link
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  foreign_target="$home_dir/foreign-runtime.py"
+  runtime_link="$home_dir/.local/bin/agent_team_runtime.py"
+  mkdir -p "${runtime_link:h}"
+  print -r -- '# foreign' > "$foreign_target"
+  ln -s "$foreign_target" "$runtime_link"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" \
+      "$repo/scripts/setup_agent_files.sh" --repo-root "$repo"
+
+  assert_symlink_target "$runtime_link" "$foreign_target"
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_preserves_an_existing_agent_team_config_directory() {
+  local repo
+  local home_dir
+  local xdg_config_home
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  xdg_config_home="$home_dir/.config"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$xdg_config_home/agent-team"
+  print -r -- 'keep' > "$xdg_config_home/agent-team/local.toml"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" \
+      "$repo/scripts/setup_agent_files.sh" --repo-root "$repo"
+
+  assert_file "$xdg_config_home/agent-team/local.toml"
+  [[ ! -L "$xdg_config_home/agent-team" ]] || fail "existing config directory must not be replaced"
   rm -rf "$repo" "$home_dir"
 }
 
@@ -840,6 +946,10 @@ main() {
   test_agent_sync_fails_when_hermes_skill_symlink_points_at_a_foreign_target
   test_agent_sync_fails_when_required_claude_skill_link_conflicts
   test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts
+  test_agent_sync_fails_when_agent_team_command_link_conflicts
+  test_agent_sync_removes_only_the_legacy_managed_runtime_link
+  test_agent_sync_preserves_a_foreign_runtime_link
+  test_agent_sync_preserves_an_existing_agent_team_config_directory
   test_agent_sync_uses_declarative_link_specs
   test_agent_sync_installs_missing_hermes_mcp_dependency
   test_agent_sync_replaces_existing_codex_config_with_managed_symlink
