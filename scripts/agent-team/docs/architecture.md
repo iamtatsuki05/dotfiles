@@ -8,7 +8,7 @@
 `agent-team` separates orchestration from agent execution and selects the
 backend from the configuration's `runtime` field. Version-3 `runtime = "orca"`
 keeps the fixed four-role contract; version 5 also connects named Orca
-`agent`/`serial` graphs. Version-3 `runtime = "tmux"`, `"herdr"`, or `"zellij"`
+`agent`/`serial` and `agent`/`parallel` graphs. Version-3 `runtime = "tmux"`, `"herdr"`, or `"zellij"`
 selects an experimental native
 path that requires direct Claude Main and accepts optional verified Claude ACP
 Planner, Worker, and Reviewer roles. Native Worker assignments require an
@@ -39,7 +39,8 @@ flowchart TD
 ### Named Orca uses the common task rules
 
 Version-5 named Orca `agent`/`serial` uses version-4 state tagged
-`runtime = "orca"`. Main is direct Claude. Background nodes use the selected
+`runtime = "orca"`; named `agent`/`parallel` uses version-5 state with the
+same runtime tag. Main is direct Claude. Background nodes use the selected
 scoped Claude ACP profile, with exact node IDs and frozen role
 settings. Internal Codex ACP bindings are implemented, but public configuration
 still rejects them. `orca_dispatch` creates the Orca Task and terminal, stores the
@@ -70,6 +71,51 @@ for confirmed provider cleanup, then drains existing completion Delivery or
 stops the exact context-only Dispatch and closes owned terminals. These paths
 have contract tests. The latest live attempt reached Main startup and prompt acceptance;
 a real-model named Orca workflow remains unverified.
+
+### Named Orca agent/parallel uses one Run FIFO
+
+Named Orca `agent`/`parallel` uses state version 5 and the common TaskSpec,
+TaskBatch, review, and verification rules. Direct Claude Main opens each
+batch with `task_batch_open`; Planner, Worker, and Reviewer assignments use
+scoped Claude ACP. Orca `program` graphs remain rejected.
+
+`role_wait` takes a valid active node and returns all normalized events from
+the oldest unacknowledged Run Delivery, including events from other nodes.
+The runtime validates each message against its saved Task, Dispatch, terminal,
+and local result or question outbox, and rechecks the assignment generation
+before saving. Main maps the returned event identities to its TaskDispatch
+receipts to choose the node for each operation.
+
+The root `orca_delivery_batch` records the shared Delivery ID, exact owner
+identities, message count and hash, phase, and a bounded error. Per-node state
+retains each result, question, and pending reply effect. Main reads and
+releases every completion owner, replies to every question, then acknowledges
+the whole Delivery once. Unknown or conflicting members preserve an invalid
+batch without partially observing known members. A stale response cannot write
+that batch onto a new assignment.
+
+An unanswered question or an unconfirmed reply/ACK blocks the shared ACK.
+`stop` may close a peer's owned resources after confirming its provider cleanup,
+while retaining the unresolved batch and owners. An ACK with a lost response
+retains its intent and all owners; it is not automatically sent again.
+
+The provider-free protocol test `run_2f5e3cc0197f` used two distinct Dispatches.
+Its private validation record is `orca-fifo-protocol-complete-proof.json`,
+which is not included in the distribution. Two
+checks returned the same Delivery and both messages. After both owners were
+read and released and their terminals closed, one ACK left zero unread
+messages. Independent checks found no owned PID, process group, or idle
+script. This test establishes Orca's FIFO and cleanup protocol; it does not
+establish a real-model workflow or authentication behavior.
+
+The final formal `tests/run.sh` passed on Python 3.13.15 and 3.11.15 in
+732.993 and 642.654 seconds respectively. Each run included 1,246 package,
+33 CLI, 33 MCP, and 8 compact runner tests, followed by shell/configuration
+checks; the same 233 source files stayed unchanged throughout. Independent
+reviews led to fixes for stale invalid-batch publication, conflicting active
+question/result state, and answer receipt replacement before these final runs.
+Only documentation was updated afterward; runtime and test contents stayed
+unchanged. Real-model named-Orca parallel acceptance remains pending.
 
 ### Named Orca serial validation
 
@@ -156,13 +202,14 @@ plus the expected suppressed `zellij:link` plugin; unknown panes/plugins remain
 unknown.
 
 Named agent/serial and agent/parallel graphs are connected through version 5.
-Agent/parallel is Main-coordinated: Main explicitly opens an `agent_batch` of
-exact TaskSpec IDs before dispatching named writers and reviewers. Native
+Native agent/parallel is Main-coordinated: Main explicitly opens an `agent_batch` of
+exact TaskSpec IDs before dispatching named writers and reviewers. Named Orca
+agent/parallel uses the version-5 Run FIFO contract described above. Native
 program/parallel is a separate Mainless version-5 program mode; it does not
 create a second task ledger. The selected terminal hosts the existing
 `native_main` supervisor, which supervises the fixed `_program-run` coordinator
 argv. There is no automatic scheduler or implicit conversion between the two
-modes. Orca program/parallel graphs and most of the ten harnesses remain outside the
+modes. Orca program graphs and most of the ten harnesses remain outside the
 current execution target. Giving two systems ownership of the same worker would make
 completion and cleanup ambiguous.
 
@@ -172,8 +219,9 @@ contract coverage for this feature. The named-native Reviewer consultation
 answer path and serial/parallel program coordinator are connected by focused
 tests. Earlier bounded terminal/fake-provider parallel coverage is recorded
 below as historical evidence for its own program scope. The bounded live
-Main-parallel acceptance is recorded below; real-model parallel acceptance,
-named Orca, and all-harness requirements remain pending.
+Main-parallel acceptance is recorded below; real-model parallel acceptance and
+all-harness requirements remain pending. The named Orca protocol proof above
+is provider-free and does not close the real-model acceptance gate.
 
 ### Named nodes and explicit TaskSpec routes
 
@@ -185,9 +233,11 @@ node IDs in MCP requests, and task routes bind each plan or implementation
 stage to a particular writer/reviewer pair. A declared plan pair must be
 approved before implementation; a route without that pair can omit Planner.
 
-The configuration version is 5. Named serial state uses version 4; native
-`agent`/`parallel` and `program`/`parallel` state use version 5. The graph and
-`role_specs` cover all configured nodes. Version-5 `roles` retains active
+The configuration version is 5. Named serial state uses version 4; named Orca
+`agent`/`parallel` and native `agent`/`parallel` or `program`/`parallel` state
+use version 5. Named Orca parallel state owns the Run-level
+`orca_delivery_batch`. The graph and `role_specs` cover all configured nodes.
+Version-5 `roles` retains active
 assignments with a per-node result, question, and pending Delivery container.
 Native runtime Task UUIDs differ from logical `TaskSpec.task_id`; dispatch IDs
 bind their results to the right logical task. State readers, publishers, and
@@ -254,9 +304,9 @@ review-limit, or dependency input leaves the state unchanged.
 Parallel `role_prompt` is rejected, including read-only research; serial
 read-only `role_prompt` remains available. `task_batch_open` is advertised only
 in the explicit parallel Main `--tools` and `--allowedTools` lists. The bounded
-live Main-parallel acceptance is recorded below. Named Orca,
+live Main-parallel acceptance is recorded below. Real-model named Orca,
 shared Orca/native progression, and real Main Astra/provider acceptance remain
-gaps.
+gaps; the provider-free named-Orca protocol proof is recorded above.
 
 Reviewer consultation is a separate named-native operation. `status` exposes
 the opaque consultation ID, findings, task/stage, and answer state. The CLI
@@ -484,7 +534,8 @@ change those earlier outcomes.
 | `agent_team/cleanup.py` | Owns the private stop journal, startup-recovery sidecar, and exact local cleanup/rollback phases. |
 | `agent_team/mcp_protocol.py` | Owns shared MCP schemas, JSON-RPC framing, and lazy backend-independent serving. |
 | `agent_team/mcp_server.py`, `runtime_mcp.py` | Decode Main tools. Fixed Orca uses `mcp_server`; native and named Orca use the shared `runtime_mcp` framing and selected backend. |
-| `agent_team/orca_dispatch.py`, `orca_acp.py`, `orca_tasks.py`, `orca_questions.py` | Bind scoped ACP assignments to Orca Task/Dispatch/terminal identities and enforce result, question, stop, and Delivery ordering. |
+| `agent_team/orca_dispatch.py`, `orca_acp.py`, `orca_tasks.py`, `orca_questions.py` | Bind scoped ACP assignments to Orca Task/Dispatch/terminal identities and enforce result, question, stop, and Delivery ordering. Version-5 parallel state adds the root `orca_delivery_batch` and per-role journals. |
+| `agent_team/orca_delivery.py`, `orca_parallel_stop.py` | Select Orca delivery owners and drain parallel Run batches during Stop. |
 | `agent_team/role_snapshot.py`, `task_verification.py` | Share selected profile snapshots and approved-revision verification between native and named Orca. |
 | `agent_team/task_spec.py` | Validates the exact immutable TaskSpec schema and its path/verification fields. |
 | `agent_team/task_execution.py` | Persists TaskSpec digests, dependency admission, review decisions, and per-stage round limits. |
@@ -533,8 +584,9 @@ The bundled defaults use `fable` for Main and Planner and `gpt-6-astra` for
 Worker and Reviewer. The role graph does not change those launch-config model
 choices.
 
-The default MCP server exposes ten tools. In native `agent`/`parallel` state it
-adds the eleventh tool `task_batch_open`; no other mode advertises it.
+The default MCP server exposes ten tools. Explicit version-5
+`agent`/`parallel` graphs, native or named Orca, add the eleventh tool
+`task_batch_open`; no other mode advertises it.
 
 - `task_get`
 - `task_verify`
@@ -546,7 +598,7 @@ adds the eleventh tool `task_batch_open`; no other mode advertises it.
 - `role_release`
 - `delivery_ack`
 - `message_reply`
-- `task_batch_open` (native `agent`/`parallel` only)
+- `task_batch_open` (explicit version-5 native or named Orca `agent`/`parallel` only)
 
 Main cannot choose an arbitrary command or role name through this MCP surface.
 For native runtimes, `task_dispatch` accepts only an exact TaskSpec from the
@@ -554,8 +606,8 @@ config-declared catalog. The fixed surface keeps agent output separate from
 process-control authority.
 
 For the Claude Main launch, `task_batch_open` is included only in the explicit
-`--tools` and `--allowedTools` lists when the selected graph is native
-`agent`/`parallel`. The serial, program, and declaration-only lists remain
+`--tools` and `--allowedTools` lists when the selected version-5 graph is
+native or named Orca `agent`/`parallel`. The serial, program, and declaration-only lists remain
 unchanged.
 
 ## Orca direct roles use Orca-supervised terminals
@@ -1075,8 +1127,8 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
   fixed-argv verification; the bounded trial above stopped at provider failure
 - A real-model read-only plan-only run
 - A live real-model native `program`/`parallel` acceptance
-- Real-model/provider-backed native `agent`/`parallel` acceptance; named Orca
-  execution and shared Orca/native progression remain gaps
+- Real-model/provider-backed native `agent`/`parallel` acceptance; real-model
+  named Orca execution and shared Orca/native progression remain gaps
 - Automatic recovery after crash or unproven cleanup
 
 ## Intentional exclusions

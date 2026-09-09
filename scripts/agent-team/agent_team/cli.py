@@ -1362,7 +1362,8 @@ def _native_acp_result_body(output: str, failure: str | None, *, maximum: int) -
 
 def _uses_scoped_acp(state: Mapping[str, object]) -> bool:
     return is_native_runtime(state.get("runtime")) or (
-        state.get("runtime") == "orca" and state.get("version") == NAMED_STATE_VERSION
+        state.get("runtime") == "orca"
+        and state.get("version") in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
     )
 
 
@@ -1618,7 +1619,10 @@ def _publish_orca_validation_failure(
     launch_nonce: str,
     error: BaseException,
 ) -> None:
-    if state.get("runtime") != "orca" or state.get("version") != NAMED_STATE_VERSION:
+    if state.get("runtime") != "orca" or state.get("version") not in {
+        NAMED_STATE_VERSION,
+        PARALLEL_STATE_VERSION,
+    }:
         return
     try:
         selected = _state_role_target(state, role)
@@ -2341,7 +2345,10 @@ def _acp_run_turn(
                     else {}
                 ),
             )
-        elif state["runtime"] == "orca" and state.get("version") == NAMED_STATE_VERSION:
+        elif state["runtime"] == "orca" and state.get("version") in {
+            NAMED_STATE_VERSION,
+            PARALLEL_STATE_VERSION,
+        }:
             from .orca_acp import publish_completion as publish_orca_completion
 
             outcome = publish_orca_completion(
@@ -2951,13 +2958,8 @@ def _require_named_runtime_plan(plan: Mapping[str, object]) -> None:
             f"launch plan contains an invalid named graph: {exc}"
         ) from exc
 
-    if plan.get("runtime") == "orca" and (
-        graph.coordination.mode != "agent"
-        or graph.coordination.dispatch_mode != "serial"
-    ):
-        raise ConfigError(
-            "named Orca execution currently requires agent/serial coordination"
-        )
+    if plan.get("runtime") == "orca" and graph.coordination.mode != "agent":
+        raise ConfigError("named Orca execution currently requires agent coordination")
 
     if (
         graph.coordination.mode == "agent"
@@ -3197,11 +3199,25 @@ def run_v4_command(args: argparse.Namespace, config: V4Config) -> int:
     raise ConfigError(f"command {args.command} requires config version 3")
 
 
-def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
+def _v5_role_instructions(node: V5Node, team: V5Team, *, runtime: str) -> str:
     base = node.role_spec.prompt_path.read_text(encoding="utf-8").rstrip()
     if node.ref.kind is not Role.MAIN:
         return base
     parallel = team.graph.coordination.dispatch_mode == "parallel"
+    orca_parallel = parallel and runtime == "orca"
+    delivery_contract = (
+        "Orcaのrole_waitはRunの通知を一つのDeliveryとして返し、指定したnode以外のeventも含みます。"
+        "task_dispatchで得たtask_id、dispatch_id、terminal_idとevent.identityを照合して各eventのnodeを特定し、"
+        "OrcaのTask IDは通知の照合に使います。task_getとtask_verifyには起動時TaskSpecのtask_idを使ってください。"
+        "全eventを保持して処理してください。全完了のreadとrelease、全質問へのreplyがそろった後で、"
+        "そのDelivery全体を一度だけackします。途中で次のrole_waitを呼んではいけません。"
+        "質問への回答を待つ間も同じDeliveryの別nodeの結果をreadとreleaseできますが、"
+        "質問が未回答ならDelivery全体のackはできません。"
+        "replyまたはackの応答が不明になった場合は、同じ操作を再送してはいけません。"
+        "保存状態と対象IDを保持し、未完了としてユーザーによる照合を待ちます。\n"
+        if orca_parallel
+        else ""
+    )
     batch_contract = (
         "並列実行では最初に、独立して開始できるTaskSpecのtask_id一覧をtask_batch_openに渡し、"
         "同じ集合として記録します。依存先は集合の外でcompletedになっている必要があります。"
@@ -3263,14 +3279,28 @@ def _v5_role_instructions(node: V5Node, team: V5Team) -> str:
         "plan_writerがnullの場合だけ、implementation_writerから始めます。"
         "task_dispatchのtaskには対応するTaskSpec全体を渡してください。\n"
         + batch_contract
+        + delivery_contract
         + "role_waitのkindがworker_doneなら、role_readで結果を読み、role_releaseで"
-        "所有リソースを解放し、最後にdelivery_ackで通知全体を確認済みにします。"
+        + (
+            "所有リソースを解放します。同じDelivery内の全完了を解放し、全質問に回答した後にdelivery_ackで通知全体を確認済みにします。"
+            if orca_parallel
+            else "所有リソースを解放し、最後にdelivery_ackで通知全体を確認済みにします。"
+        )
         + completion_order
         + "失敗した操作は未処理として保持し、"
         "後続の操作で飛ばしてはいけません。\n"
         "kindがquestionなら完了ではありません。全eventのmessage_idにmessage_replyで回答し、"
-        "全質問に回答した後でdelivery_ackを呼びます。その後、同じnodeを再待機します。"
-        "回答は受領確認後に同じACP sessionへ返されます。"
+        + (
+            "全質問に回答し、同じDelivery内の全完了を解放した後でdelivery_ackを呼びます。"
+            if orca_parallel
+            else "全質問に回答した後でdelivery_ackを呼びます。"
+        )
+        + (
+            "その後、質問したnodeを再待機します。完了通知を処理して解放したnodeにはrole_waitを呼びません。"
+            if orca_parallel
+            else "その後、同じnodeを再待機します。"
+        )
+        + "回答は受領確認後に同じACP sessionへ返されます。"
         + question_scope
         + "根拠を持って答えられる内容には回答し、"
         "ユーザーだけが決められる事項は提示して実際の回答を待ちます。"
@@ -3324,7 +3354,7 @@ def _v5_runtime_plan(
     roles: dict[str, dict[str, object]] = {}
     for node in selected.nodes:
         ref, spec = node.ref, node.role_spec
-        instructions = _v5_role_instructions(node, selected)
+        instructions = _v5_role_instructions(node, selected, runtime=config.runtime)
         execution = profile_execution(
             spec.provider, ref.kind.value, spec.transport, spec.permission
         )
@@ -3555,13 +3585,25 @@ def _mcp_tools() -> list[dict[str, object]]:
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"named state graph is invalid: {exc}") from exc
     selected = tuple(node.node_id for node in graph.nodes if node.kind is not Role.MAIN)
-    return tools(
+    catalog = tools(
         selected,
         agent_parallel=(
             state["version"] == PARALLEL_STATE_VERSION
             and graph.coordination.mode == "agent"
         ),
     )
+    if state["runtime"] == "orca" and state["version"] == PARALLEL_STATE_VERSION:
+        for tool in catalog:
+            if tool["name"] == "role_wait":
+                tool["description"] = (
+                    "指定nodeを入口としてRunのDelivery全体を待ちます。別nodeの通知も含みます。"
+                    "各event.identityから担当nodeを特定し、全eventを処理してから一度だけackしてください。"
+                )
+            elif tool["name"] == "delivery_ack":
+                tool["description"] = (
+                    "RunのDelivery全体を一度だけackします。含まれる全完了のread/releaseと全質問へのreplyが必要です。"
+                )
+    return catalog
 
 
 def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -3571,7 +3613,8 @@ def _execute_mcp_tool(name: str, arguments: dict[str, object]) -> dict[str, obje
     path = Path(raw_path)
     state = read_state(path)
     if is_native_runtime(state["runtime"]) or (
-        state["runtime"] == "orca" and state["version"] == NAMED_STATE_VERSION
+        state["runtime"] == "orca"
+        and state["version"] in {NAMED_STATE_VERSION, PARALLEL_STATE_VERSION}
     ):
         from .runtime_mcp import execute_tool
 

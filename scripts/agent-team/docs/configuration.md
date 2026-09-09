@@ -15,8 +15,12 @@ unsupported combinations fail before any role starts. See
 schema and pure inspection commands.
 For node-local settings, multiple Workers/Reviewers, and explicit TaskSpec
 routes, use [Version-5 configuration](configuration-v5.md). Native terminals
-accept agent/program and serial/parallel teams. Named Orca accepts only
-`agent`/`serial` with scoped ACP background roles; its live acceptance is pending.
+accept agent/program and serial/parallel teams. Named Orca accepts
+`agent`/`serial` with state version 4 and `agent`/`parallel` with state
+version 5, using direct Claude Main and scoped Claude ACP background roles. The
+parallel path reuses the common TaskBatch and review contracts; its Run-level
+FIFO Delivery is described in [Architecture](architecture.md). Orca program
+modes remain rejected, and real-model parallel acceptance is pending.
 The version-3 reference
 below retains its fixed Main role and does not express a Mainless program graph.
 
@@ -409,14 +413,18 @@ remains available, but structured task dispatch is rejected. The `tasks` field
 is rejected by the fixed version-3 Orca config loader. Version-5 named Orca
 uses the selected team catalog.
 
-The native task lifecycle uses the ten public tools:
+The native and named-Orca version-5 task lifecycle uses the default ten-tool
+MCP catalog. An explicit `agent`/`parallel` graph adds `task_batch_open` as the
+eleventh tool; Main opens its declared batch before dispatch. Serial, program,
+default, and declaration-only catalogs do not advertise that tool. The steps
+are:
 
 1. `task_dispatch` assigns the declared TaskSpec to Planner, Worker, or Reviewer.
 2. `role_wait`, `role_read`, `role_release`, and `delivery_ack` consume the result in that order.
 3. `task_get` returns the durable stage, review evidence, and verification evidence.
 4. A Planner or Worker result moves to `awaiting_plan_review` or `awaiting_implementation_review`.
 5. Reviewer output is exact JSON with `task_id`, `stage`, `revision`, `decision`, and `findings`.
-6. `approve` advances the stage; `request_changes` returns to the original writer; `consult` records a bounded user consultation for a named native graph.
+6. `approve` advances the stage; `request_changes` returns to the original writer; `consult` records a bounded user consultation for a named graph.
 7. After implementation approval, `task_verify` runs every declared fixed argv command.
 
 If `role_wait` returns a native `question`, Main calls `message_reply` once for
@@ -441,6 +449,14 @@ another review. At the limit, the answer is saved but redispatch stays blocked.
 The answer is not an implicit approval and does not reset review-round limits. ACP questions continue to use
 `answer --message-id ID --body ...` and the program coordinator acknowledges
 only after every question in the batch is answered.
+
+For named Orca `agent`/`parallel`, `role_wait` returns the complete Run FIFO
+Delivery, including other node owners. Main matches each member to its stored
+Dispatch, performs `role_read`/`role_release` or an exact `message_reply` per
+owner, and calls one shared `delivery_ack` after every member is ready. An
+unanswered question blocks the whole-batch ACK; `stop` may still clean up safe
+peers. Unknown reply or ACK effects are retained without automatic replay.
+Version-3 and named serial behavior remains unchanged.
 
 Plan and implementation review rounds are counted separately and both obey
 `max_review_rounds`. Implementation review captures the workspace revision when

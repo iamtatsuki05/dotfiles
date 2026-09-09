@@ -48,10 +48,11 @@ Codexを使います。
 ## native runtimeのClaude ACP
 
 Version 5の名前付きOrcaも、この節で説明するscoped Claude ACPを使います。
-Codexの内部実装も接続していますが、公開設定では無効です。
-assignmentごとに所有するOrca terminalで実行し、OrcaのTask・Dispatch・Deliveryを維持します。
-固定version 3の`acpx` clientは使いません。受け付けるgraphは`agent`/`serial`です。
-接続の契約テストはありますが、Orca実モデル全工程の受入は未達です。
+`agent`/`serial`はstate version 4、`agent`/`parallel`はstate version 5です。
+Codexの内部実装も接続していますが、公開設定では無効です。assignmentごとに所有するOrca terminalで実行し、
+OrcaのTask・Dispatch・Deliveryを維持します。固定version 3の`acpx` clientは使いません。Mainはdirect Claude、
+Planner、Worker、Reviewerはscoped Claude ACPです。providerを呼ばないparallel protocol proofは[アーキテクチャ](architecture_JA.md)に記載し、
+実モデルparallel受入は未実施です。
 
 native tmux、Herdr、Zellijでは専用clientが、assignmentごとに公開ACPの接続を1本使います。
 必要な依存はNode.js、`@agentclientprotocol/claude-agent-acp@0.70.0`、そのadapterに
@@ -111,6 +112,15 @@ plan-onlyのfinal reviewではplan本文SHA-256と`workspace_revision`を分け�
 回答を保存し、全roleとDeliveryを消費し、全memberにreview roundが残る場合だけ、Mainが元のwriterへ`task_dispatch`を呼びます。そのrequestが`completed`済みpeerを含む
 正確なpeer集合のreopenと要求したwriterのdispatchを原子的に行います。peerを自動dispatchせず、公開reopen toolもありません。
 `task_batch_open`で未完了batchをreopenまたは置換することもできません。このtoolはClaude Mainの明示的な`--tools`と`--allowedTools`にだけ存在します。
+
+### 名前付きOrcaのparallel FIFO Delivery
+
+名前付きOrcaの`agent`/`parallel`はTaskBatchとACP assignmentのcontractを再利用しますが、Run単位のFIFO Deliveryを1つ使います。
+`role_wait`は他nodeのownerを含むDelivery内の正規化済みeventをすべて返します。Mainは各eventを保存済みTask/Dispatch identityへ照合し、
+ownerごとに`role_read`/`role_release`または正確な`message_reply`を処理してから、共有`delivery_ack`を1回呼びます。
+rootの`orca_delivery_batch` envelopeとroleごとのjournalに、Run単位とowner単位の証拠を保持します。未回答questionは共有ACKを止めますが、
+`stop`中も安全なpeerのcleanupは進められます。unknownなreply/ACK effectは保持し、自動再送しません。
+serialとnativeのsemanticsは変えません。正確なenvelopeとprovider-free proofは[アーキテクチャ](architecture_JA.md)を参照してください。
 
 実モデルを使ったtmuxのrun `dc101afd-87bf-4697-9bbb-0d1339d381a8`では、Fable・effort `high`を使い、Plannerを省略して質問応答を一巡させました。
 Mainの回答と受領確認後、同じWorkerのACPセッションが再開し、Reviewer承認、同一リビジョンの固定コマンド検証、Task完了、公開`stop`まで確認しています。

@@ -9,10 +9,11 @@ Mainが正確なTaskSpec IDのbatchを明示してからdispatchします。`pro
 program構成にはMain roleを置きません。選択したnative terminal上で既存の`native_main` supervisorが、
 固定argvの`_program-run` coordinatorを監督します。専用のMain role spec、model、CLIは作りません。
 native `agent`/`parallel`は`agent_batch`を、program構成は`program_wave`を使い、schedulerは追加しません。
-名前付きOrcaは`agent`/`serial`を受け付けます。Mainはdirect Claude・permission `orchestrator`、
-Planner、Worker、Reviewerはscoped Claude ACPを使い、Workerには宣言済みTaskSpecが必要です。
-Orcaのprogram・parallel構成は依存確認や資源作成の前に拒否し、名前付き構成の実モデル全工程の受入は未達です。Codex ACPの公開設定も拒否します。
-今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。
+名前付きOrcaは`agent`/`serial`（state version 4）と`agent`/`parallel`（state version 5）を受け付けます。
+Mainはdirect Claude・permission `orchestrator`、Planner、Worker、Reviewerはscoped Claude ACPを使い、Workerには宣言済みTaskSpecが必要です。
+名前付きOrcaのparallelは共通TaskBatch contractとRun単位のFIFO Deliveryを使い、schedulerを追加しません。
+Orcaのprogram構成は依存確認や資源作成の前に拒否します。Codex ACPの公開設定も拒否します。
+providerを呼ばないparallel protocol proofとserialの過去証拠は[アーキテクチャ](architecture_JA.md)に記載し、実モデルparallel受入は未実施です。
 既存のfocused contract testとboundedな端末・fake providerの記録は、それぞれの過去runに限定した証拠です。実モデルのparallel受入も未実施です。
 
 同梱のversion 3設定は、Main/PlannerにClaude `fable`、Worker/Reviewerにdirect Codex
@@ -224,8 +225,8 @@ max_active = 2
 runtimeは任意順の空でない一意な一覧を受け付け、保存する`task_ids`をcatalog順に正規化し、dependencyがbatchの外でcompletedになっていることを要求します。
 選択したtaskには最初はrecordがありません。その後Mainがrouteごとに`task_dispatch`を呼びます。admissionでは
 `max_active`、正確なnode identity、Workerの`allowed_paths`の非重複を確認します。schedulerや暗黙のtask開始はありません。
-追加tool `task_batch_open`はこの明示的なnative `agent`/`parallel` stateでだけ広告され、Claude Mainの起動時に
-`--tools`と`--allowedTools`の両方へ追加されます。
+追加tool `task_batch_open`は、version 5のnativeまたは名前付きOrcaの明示的な`agent`/`parallel` graphで表示し、
+Claude Mainの起動時に`--tools`と`--allowedTools`の両方へ追加します。serial、program、default、declaration-onlyでは表示しません。
 
 最初のfinal review dispatchは、全writerとDeliveryがdrainした後にbatchをsealします。同じsealed workspace revisionを
 全Reviewerが承認してから、roleとDeliveryをdrainしてfixed argvの検証へ進みます。mixed routeの中間plan reviewは
@@ -239,6 +240,30 @@ roleとDeliveryをdrainし、必要なconsultationへの回答と全memberの残
 
 実装とfocused contract testがあります。今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。過去のprogramと
 fake-provider IDは、それぞれのscopeに限定したhistorical evidenceです。
+
+## 名前付きOrcaのparallel agentを実行する
+
+上の完全なagent/serial例から、Main、名前付きWorker/Reviewer node、TaskSpec、route、重ならないWorker scopeを残します。
+runtimeをOrcaに変更し、coordination tableだけを次のように置き換えます。
+
+```toml
+version = 5
+runtime = "orca"
+
+[teams.all-claude.coordination]
+mode = "agent"
+entry_nodes = ["main"]
+dispatch_mode = "parallel"
+max_active = 2
+```
+
+この構成はstate version 5を作ります。Mainは宣言済みTaskSpec IDを`task_batch_open`へ渡してから、選択したrouteをdispatchします。
+`role_wait`はRun全体のFIFO Deliveryを返すため、Mainは各eventを保存済みDispatchへ照合し、ownerごとに`role_read`/`role_release`または`message_reply`を処理し、
+全memberの準備後にだけ共有`delivery_ack`を1回呼びます。未回答questionは共有ACKを止めますが、`stop`中も安全なpeerの資源cleanupは進められます。
+unknownなreplyまたはACK effectは保持し、自動再送しません。envelopeとproofの境界は[アーキテクチャ](architecture_JA.md)を参照してください。
+
+この経路はdirect Claude Mainとscoped Claude ACP assignmentだけを使います。名前付きagentのserial/parallel例では`runtime = "orca"`を選べます。
+program例はnative terminal設定のままで、Orcaは選択できません。providerを呼ばないproofはprotocol evidenceであり、実モデルや全suiteの受入ではありません。
 
 ## Mainなしのparallel programを実行する
 
@@ -307,7 +332,7 @@ agent-team start --config /path/to/config-v5.toml \
 `graph`とversion 5の`start`には`--team`が必須で、別名や大文字・小文字の変換をせず完全一致で選びます。
 graphの形式は`json`、`ascii`、`mermaid`です。上のnative agent/serial、agent/parallel、program/serial、
 program/parallel構成は、起動条件を満たした後で`--dry-run`を外すと起動します。
-serialの例では`runtime = "orca"`も選択できます。Orcaのprogram・parallel構成は拒否します。native `agent`/`parallel`でTaskSpec catalogが空なら、
+agent serialとagent parallelの例では`runtime = "orca"`も選択できます。Orcaのprogram構成は拒否します。native `agent`/`parallel`でTaskSpec catalogが空なら、
 依存関係やprofile確認より前に拒否します。
 検査コマンドはproviderを起動しません。
 
@@ -321,7 +346,8 @@ stateは`$XDG_STATE_HOME/agent-team/<derived-team-id>/state.json`に保存し、
 既定の保存先は`~/.local/state/agent-team/`です。`status`、`attach`、`stop`に`--state`を渡すと、
 configを再読込せず、その保存済みrunを管理できます。
 
-configはversion 5、名前付きnativeのserial stateはversion 4、agent/parallelとprogram/parallel stateはversion 5です。
+configはversion 5、名前付きserial stateはversion 4です。nativeのagent/parallel・program/parallelと、名前付きOrcaのagent/parallelはstate version 5を使います。
+名前付きOrcaのparallelでは共有の`orca_delivery_batch`も保持します。
 `role_specs`は全nodeを、`roles`は実行中のassignmentとnodeごとのDelivery stateを保持します。
 従来の固定role stateは変換しません。
 識別子の照合、質問、完了通知、レビュー、検証、後始末の契約は、[アーキテクチャ](architecture_JA.md)を参照してください。

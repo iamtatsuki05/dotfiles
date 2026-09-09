@@ -10,23 +10,20 @@ native runtimeの`tmux`、`herdr`、`zellij`では、agent teamはdirect Claude 
 どちらも設定したClaude ACPのPlanner、Worker、Reviewerを動かします。native Workerはconfigに宣言した
 TaskSpecとscoped Claude ACP policyを使い、terminal driverだけがruntimeごとに変わります。
 native `program`/`parallel`は`max_active`まで独立したassignmentを受け付け、nodeごとにDelivery stateを保存します。
-Version 5のnative `agent`/`parallel`では、Mainが名前付きnodeを明示的に調整できます。
-Mainはdispatchの前に`task_batch_open`で対象batchを明示的に開く必要があります。
-自動schedulerや暗黙のprogram modeはありません。実装とfocused contract testがあり、今回のMain parallel live受入は
-[アーキテクチャ](docs/architecture_JA.md)に記載します。名前付きOrcaのparallelは対象外です。
-既存のboundedな端末・fake providerおよび実モデルの記録は、アーキテクチャに記載した過去runの
-限定された証拠として扱います。
+Version 5のnativeと名前付きOrcaの`agent`/`parallel`では、Mainが名前付きnodeを調整します。
+Mainはdispatch前に`task_batch_open`で対象batchを開き、両経路で共通のTaskSpec、TaskBatch、レビュー、検証の規則を使います。
+実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。実モデルでのparallel受入は未完了です。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
 HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契約を検証しています。
 
-Version 5の名前付きOrca構成では、`agent`/`serial`を選択できます。Mainはdirect Claude、
+Version 5の名前付きOrca構成では、`agent`/`serial`と`agent`/`parallel`を選択できます。Mainはdirect Claude、
 Planner/ReviewerはClaude ACPの読み取り専用、WorkerはTaskSpecで許可した範囲だけを書き込むClaude ACPを使います。
 Workerには宣言済みTaskSpecが必要で、レビューと固定argv検証にはnativeと共通の規則を適用します。
-契約テストは成功していますが、直近の実機試験は利用上限によりMain起動とprompt受付までで、TaskDispatchには到達していません。
-正式検証と実機の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載します。Codex ACPは公開設定では無効です。
-設定方法は[Version 5の設定](docs/configuration-v5_JA.md)を参照してください。
+直近のserial実機試験は利用上限によりMain起動とprompt受付までで、TaskDispatchには到達していません。serialの過去証拠と
+providerを呼ばないparallel protocol proofは[アーキテクチャ](docs/architecture_JA.md)にまとめています。
+Codex ACPは公開設定では無効です。設定方法は[Version 5の設定](docs/configuration-v5_JA.md)を参照してください。
 
 初めて使う場合は、「managed commandを導入する」「起動前の条件を満たす」
 「teamを起動する」を読んでください。実装や設定を変える場合は、詳細ドキュメントも
@@ -80,7 +77,8 @@ program parallelは`program_wave` coordinatorを使う別のstate identityです
 2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
 既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。この実モデルrunはnativeのagent/serial受入です。
 native parallelにはfocused contract testとboundedな端末coverageがありますが、実モデルのparallel受入は未実施です。
-今回のMain parallel live受入は[アーキテクチャ](docs/architecture_JA.md)に記載します。名前付きOrcaは`agent`/`serial`だけを受け付け、実モデルの全工程は未確認です。
+今回のMain parallel live受入と、名前付きOrcaのprovider-free protocol proofは[アーキテクチャ](docs/architecture_JA.md)に記載します。
+名前付きOrcaは`agent`/`serial`と`agent`/`parallel`を受け付けますが、実モデルの全工程は未確認です。
 名前付き構成のReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
 回数上限に達している場合は、回答を保存してもtaskは未解決のままです。
 
@@ -418,7 +416,7 @@ Mainが元のwriterへ`task_dispatch`を呼びます。その1回のrequestが�
 `task_batch_open`で未完了batchをreopenまたは置換することもできません。
 不正なTaskSpec、route、message、review limit、dependencyの要求ではstateを変更しません。
 
-Claude Mainの追加tool `task_batch_open`は、native `agent`/`parallel`を選択した場合だけ、
+Claude Mainの追加tool `task_batch_open`は、version 5のnativeまたは名前付きOrcaの`agent`/`parallel`を選択した場合だけ、
 明示的な`--tools`と`--allowedTools`の両方へ追加します。default、serial、program、
 declaration-onlyのtool catalogには表示しません。
 
@@ -458,7 +456,7 @@ planとimplementationのreviewは`max_review_rounds`を別々に数えます。R
 implementation reviewと`task_verify`は同じworkspace revisionに束縛されます。宣言済みの
 fixed argvが全件成功し、cleanupが確認できた場合だけ`completed`として報告します。
 [設定リファレンス](docs/configuration_JA.md#taskspec-catalog-is-optional-required-for-native-task-dispatch)に全fieldと、通常の10 toolをまとめています。
-native `agent`/`parallel`では11個目の`task_batch_open`を追加します。
+version 5のnativeまたは名前付きOrcaの`agent`/`parallel`では、11個目の`task_batch_open`を追加します。
 verificationがevidence付きで失敗してもcleanupが確認できれば、implementationのreview round上限内で
 Workerへretryできます。cleanupが不明な場合はユーザー判断が必要で、stateを保持します。
 
@@ -466,9 +464,9 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
 
 - 未対応のruntime、provider、transport、permission、config version、state formatは、起動前に
   拒否します。別backendや別transportへ自動で切り替えません。
-- 同梱のversion 3 Orcaは4 role固定です。version 5の名前付きOrcaは`agent`/`serial`、direct ClaudeのMain、
-  scoped Claude ACPのbackground roleを受け付け、宣言済みTaskSpecの規則を適用します。
-  Orcaのprogram・parallel構成は、依存確認や資源作成の前に拒否します。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
+- 同梱のversion 3 Orcaは4 role固定です。version 5の名前付きOrcaは`agent`/`serial`と`agent`/`parallel`、
+  direct ClaudeのMain、scoped Claude ACPのbackground roleを受け付け、宣言済みTaskSpecの規則を適用します。
+  名前付きOrcaの`agent`/`parallel`はstate version 5と共通TaskBatch contractを使います。Orcaのprogram構成は、依存確認や資源作成の前に拒否します。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
   Planner/Reviewerと、scoped Claude ACPのworkspace-write Workerを任意に追加できます。version 5の
   native `agent`/`serial`と`agent`/`parallel`はMainを使い、`program`/`serial`と`program`/`parallel`は保存済みcoordinatorを使います。
   native Workerの`task_dispatch`にはconfigの`[[tasks]]` entryとの一致が必要で、その他の未対応profileは起動処理の効果が発生する前に拒否します。
@@ -479,10 +477,10 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
   順序は`role_read` → `role_release` → `delivery_ack`です。nativeの`last_ack`は1つのreceipt
   markerを記録するだけで、Taskやユーザーのgoal全体の完了を意味しません。
 - version 5のnative `agent`/`parallel`と`program`/`parallel` stateは、activeなnodeごとにresult、question、
-  pending Deliveryのcontainerを持ちます。`max_active`、正確なnode identity、重ならないWorker write scopeで
-  admissionを判定します。pending questionは自分のassignmentだけを止め、条件を満たす独立peerは継続できます。
-  public `stop`は`native.phase=stopping`を保存し、安全なpeerをRead → Release → Ackの順でprivateにdrainします。
-  identity不明、typed result不足、cleanup未確認のnodeは保持したまま、安全なpeerの処理を続けます。
+  pending Deliveryのcontainerを持ちます。名前付きOrcaの`agent`/`parallel`は、rootの`orca_delivery_batch` envelopeと
+  roleごとのjournalを使います。`max_active`、正確なnode identity、重ならないWorker write scopeでadmissionを判定します。
+  Orcaではpending questionが共有ACKを止めますが、`stop`中も安全なpeerのcleanupは進められます。identity不明、typed result不足、
+  reply/ACK effect不明、cleanup未確認のstateは保持します。nativeとserialのDelivery semanticsは変わりません。
 - native Claudeのquestionは、pinned ACP 0.70.0 / SDK 1.3.0の既存`AskUserQuestion` form elicitationを
   使います。消費済みreceiptにはidentityとhashだけを残します。protected outboxには、公開失敗から
   復旧できるよう、次のquestionまたはterminal completionまでquestion/answer本文を保持する場合があります。

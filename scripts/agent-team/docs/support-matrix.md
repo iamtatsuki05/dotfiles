@@ -27,16 +27,18 @@ login, downloads packages, starts a process, or writes a workspace.
 
 ### Named Orca execution status
 
-Version-5 Orca `agent`/`serial` connects scoped Claude ACP
-to named TaskSpec dispatch, review, fixed-argv verification, and
-read → release → ACK. Claude also supports question forms through Main;
-Codex ACP is connected internally but still rejected by configuration parsing;
-its questions also remain disabled. Program and parallel Orca execution are
-rejected before launch. Named Orca has contract-test coverage. As of 2026-09-09,
-the latest live attempt reached Main startup and prompt acceptance but no TaskDispatch;
-no complete named Orca workflow has been verified. See [Architecture](architecture.md)
-for the startup and cleanup evidence. This does not change the static registry
-or the safety findings for unwrapped adapters in the table above.
+Version-5 named Orca `agent`/`serial` uses state version 4. Named
+`agent`/`parallel` uses state version 5 and connects scoped Claude ACP to
+TaskSpec dispatch, review, fixed-argv verification, and a Run-level FIFO
+Delivery. Main is direct Claude; Planner, Worker, and Reviewer assignments use
+scoped Claude ACP. `role_wait` returns the whole Run Delivery, and Main
+processes each owner before one shared `delivery_ack`. Codex ACP remains
+rejected by configuration parsing and its questions remain disabled. Orca
+program modes are rejected before launch. The provider-free protocol proof is
+recorded in [Architecture](architecture.md); real-model named-Orca parallel
+acceptance is pending. The serial live attempt reached Main startup and prompt
+acceptance but no TaskDispatch. This does not change the static registry or the
+safety findings for unwrapped adapters in the table above.
 
 ### Native Claude question status
 
@@ -91,9 +93,10 @@ Parallel `role_prompt` is rejected, including read-only research; serial
 read-only `role_prompt` is unchanged. `task_batch_open` is advertised only in
 the explicit Claude Main `--tools` and `--allowedTools` lists for this mode.
 The bounded live Main-parallel acceptance is recorded in [Architecture](architecture.md).
-Named Orca, shared Orca/native progression, other harnesses, real Main Astra,
-and real-model parallel acceptance remain gaps. This is an implementation
-status, not a new `Verified` safety result.
+Named Orca's provider-free protocol proof is documented there; shared
+Orca/native progression, other harnesses, real Main Astra, and real-model
+parallel acceptance remain gaps. This is an implementation status, not a new
+`Verified` safety result.
 
 ### Native program status
 

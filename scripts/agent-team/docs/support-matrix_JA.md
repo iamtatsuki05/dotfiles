@@ -26,11 +26,12 @@ package download、process起動、workspace書き込みは行いません。
 
 ### 名前付きOrcaの実行範囲
 
-Version 5のOrca `agent`/`serial`では、scoped Claude ACPを名前付きTaskSpecの起動、レビュー、
-固定argv検証、read → release → ACKへ接続しています。ClaudeはMain経由の質問フォームも使えますが、
-Codex ACPは内部に接続していても設定の読み込み時に拒否し、質問も無効です。Orcaのprogram・parallel実行は起動前に拒否します。
-契約テストは成功しています。2026-09-09時点の直近の実機試験はMain起動とprompt受付までで、TaskDispatchには到達しておらず、全工程の完走は未確認です。
-起動と後始末の証拠は[アーキテクチャ](architecture_JA.md)に記載します。
+Version 5の名前付きOrca `agent`/`serial`はstate version 4、`agent`/`parallel`はstate version 5を使います。
+scoped Claude ACPをTaskSpecのdispatch、review、固定argv検証、Run単位のFIFO Deliveryへ接続します。
+Mainはdirect Claude、Planner、Worker、Reviewerのassignmentはscoped Claude ACPです。`role_wait`はRun全体のDeliveryを返し、
+Mainは各ownerを処理してから共有`delivery_ack`を1回呼びます。Codex ACPは設定の読み込み時に拒否し、質問も無効です。
+Orcaのprogram構成は起動前に拒否します。providerを呼ばないprotocol proofは[アーキテクチャ](architecture_JA.md)に記載し、
+実モデルの名前付きOrca parallel受入は未実施です。serialの実機試験はMain起動とprompt受付までで、TaskDispatchには到達していません。
 上表のregistry情報と、追加の制御を持たないadapterに対する安全性の判定は変えていません。
 
 ### native Claudeのquestion status
@@ -66,8 +67,8 @@ message、review limit、dependency inputではstateを変更しません。
 
 parallelの`role_prompt`はread-only調査も含めて拒否し、serialのread-only `role_prompt`は維持します。
 `task_batch_open`はこのmodeのClaude Main起動時に、明示的な`--tools`と`--allowedTools`へだけ追加します。
-今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。名前付きOrca、Orca/native shared progression、他harness、
-実Main Astra、実モデルparallel受入は未解決です。これは実装状況であり、新しい`Verified` safety resultではありません。
+今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。名前付きOrcaのprovider-free protocol proofも同文書にあります。
+Orca/native shared progression、他harness、実Main Astra、実モデルparallel受入は未解決です。これは実装状況であり、新しい`Verified` safety resultではありません。
 
 ### native programの状態
 

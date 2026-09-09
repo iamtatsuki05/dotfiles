@@ -13,12 +13,15 @@ terminal runs the coordinator under the existing `native_main` supervisor with
 the fixed `_program-run` argv. It does not create a separate Main role spec,
 model, CLI, or scheduler. The two modes have separate state identities:
 `agent`/`parallel` uses `agent_batch`, while program modes use `program_wave`.
-Named Orca accepts `agent`/`serial` with direct Claude Main (`orchestrator`)
-and scoped Claude ACP for Planner, Worker, and Reviewer. Worker
-dispatch requires an exact declared TaskSpec. Orca program and parallel modes
-fail before dependency probes or resource creation; live named Orca acceptance
-is pending. Codex ACP configurations remain rejected. The bounded live
-Main-parallel acceptance is recorded in [Architecture](architecture.md).
+Named Orca accepts `agent`/`serial` (state version 4) and `agent`/`parallel`
+(state version 5) with direct Claude Main (`orchestrator`) and scoped Claude
+ACP for Planner, Worker, and Reviewer. Worker dispatch requires an exact
+declared TaskSpec. Named Orca parallel uses the common TaskBatch contract and
+one Run-level FIFO Delivery; it does not add a scheduler. Orca program modes
+fail before dependency probes or resource creation. Codex ACP configurations
+remain rejected. The provider-free parallel protocol proof and the separate
+serial evidence are recorded in [Architecture](architecture.md); real-model
+named-Orca parallel acceptance remains pending.
 Existing focused checks and bounded terminal/fake-provider records are
 historical, scoped evidence; real-model parallel acceptance remains pending.
 
@@ -252,8 +255,10 @@ outside it. All selected tasks start without
 records. Main then uses `task_dispatch` for each route. Admission still checks
 `max_active`, exact node identity, and disjoint Worker `allowed_paths`; there is
 no scheduler or implicit task start. The additional `task_batch_open` tool is
-advertised only for this explicit native `agent`/`parallel` state and is added
-to Claude Main's `--tools` and `--allowedTools` lists only in that launch.
+advertised only for explicit version-5 native or named Orca
+`agent`/`parallel` graphs and added to Claude Main's `--tools` and
+`--allowedTools` lists in that launch. Serial, program, default, and
+declaration-only catalogs do not advertise it.
 
 The first final-review dispatch seals the batch only after all writers and
 Delivery have drained. Same-revision reviewers must all approve before the
@@ -277,6 +282,38 @@ The serial read-only `role_prompt` behavior is unchanged.
 The implementation and focused contract checks are available. The bounded live
 acceptance for this Main-parallel phase is recorded in [Architecture](architecture.md).
 Earlier program and fake-provider IDs remain historical evidence for their own scopes.
+
+## Run a named Orca parallel agent
+
+Starting from the complete agent/serial example above, keep the Main, named
+Worker/Reviewer nodes, TaskSpecs, routes, and disjoint Worker scopes. Select
+Orca and replace only the coordination table:
+
+```toml
+version = 5
+runtime = "orca"
+
+[teams.all-claude.coordination]
+mode = "agent"
+entry_nodes = ["main"]
+dispatch_mode = "parallel"
+max_active = 2
+```
+
+This creates state version 5. Main calls `task_batch_open` with the declared
+TaskSpec IDs, then dispatches the selected routes. `role_wait` returns the
+whole Run FIFO Delivery, so Main matches every event to its stored Dispatch,
+handles each owner with `role_read`/`role_release` or `message_reply`, and
+calls one shared `delivery_ack` only after every member is ready. An unanswered
+question blocks that shared ACK, although `stop` may clean up safe peer
+resources. Unknown reply or ACK effects are retained and never replayed.
+The exact envelope and proof boundary are documented in [Architecture](architecture.md).
+
+This path uses direct Claude Main and scoped Claude ACP assignments only.
+`runtime = "orca"` is valid for named agent serial and parallel examples;
+program examples remain native-terminal configurations and cannot select Orca.
+The provider-free proof is protocol evidence, not real-model or full-suite
+acceptance.
 
 ## Run a Mainless parallel program
 
@@ -365,8 +402,8 @@ agent-team start --config /path/to/config-v5.toml \
 aliases or case conversion. Graph formats are `json`, `ascii`, and `mermaid`.
 For the native agent/serial, agent/parallel, program/serial, or
 program/parallel example, remove `--dry-run` to start after meeting the
-prerequisites. The serial example can also select `runtime = "orca"`; Orca
-program and parallel modes remain rejected. An empty TaskSpec catalog also fails before
+prerequisites. The agent serial and agent parallel examples can select
+`runtime = "orca"`; Orca program modes remain rejected. An empty TaskSpec catalog also fails before
 dependency or profile checks for native `agent`/`parallel`.
 Inspection does not start providers.
 
@@ -382,8 +419,10 @@ State is stored at `$XDG_STATE_HOME/agent-team/<derived-team-id>/state.json`,
 defaulting to `~/.local/state/agent-team/`. Use `status`, `attach`, or `stop`
 with `--state` to manage that saved run without rereading its config.
 
-The config version is 5; named native serial state uses version 4, while native
-`agent`/`parallel` and `program`/`parallel` state use version 5. `role_specs` holds all nodes, while
+The config version is 5. Named serial state uses version 4. Native
+`agent`/`parallel` and `program`/`parallel`, and named Orca `agent`/`parallel`,
+use state version 5. Named Orca parallel also retains the shared
+`orca_delivery_batch`. `role_specs` holds all nodes, while
 `roles` holds active assignments and their per-node delivery state. Older
 fixed-role state is not converted. See [Architecture](architecture.md) for
 identity checks and the question, completion, review, verification, and cleanup
