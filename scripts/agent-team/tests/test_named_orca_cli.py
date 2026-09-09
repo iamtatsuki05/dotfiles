@@ -6,11 +6,12 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from test_config_v5_cli import _RecordingBackend, _v5_config_text
 
-from agent_team import cli, runtime_mcp
+from agent_team import cli, orca, runtime_mcp
 from agent_team.contracts import NodeRef, Role, TaskGet, TaskStatusReceipt
 from agent_team.named_graph import GraphSpec
 from agent_team.native_acp_dependencies import NativeAcpDependencyError
@@ -171,37 +172,44 @@ class NamedOrcaCliTest(unittest.TestCase):
     def test_named_claude_dependency_failure_does_not_use_acpx_or_another_runtime(
         self,
     ) -> None:
-        with (
-            mock.patch.object(cli, "require_binary") as require,
-            mock.patch.object(cli, "mcp_server_path", return_value=Path(__file__)),
-            mock.patch.object(cli.os, "access", return_value=True),
-            mock.patch.object(
-                cli.NativeAcpExecutables,
-                "resolve",
-                side_effect=NativeAcpDependencyError("selected SDK is missing"),
-            ) as scoped,
-            mock.patch.object(
-                cli.AcpExecutables,
-                "resolve",
-                side_effect=AssertionError("acpx fallback"),
-            ) as acpx,
-            mock.patch.object(
-                cli.CodexAcpExecutables,
-                "resolve",
-                side_effect=AssertionError("unselected Codex"),
-            ) as codex,
-            self.assertRaisesRegex(
-                cli.ConfigError, "selected claude ACP dependencies.*selected SDK"
-            ),
-        ):
-            cli._start_prerequisites(self.plan)
-        scoped.assert_called_once_with()
-        acpx.assert_not_called()
-        codex.assert_not_called()
-        self.assertEqual(
-            {call.args[0] for call in require.call_args_list}, {"orca", "claude"}
-        )
-        self.assertFalse((self.root / "state").exists())
+        for platform, command in (("darwin", "orca"), ("linux", "orca-ide")):
+            with self.subTest(platform=platform):
+                with (
+                    mock.patch.object(orca, "sys", SimpleNamespace(platform=platform)),
+                    mock.patch.object(cli, "require_binary") as require,
+                    mock.patch.object(
+                        cli, "mcp_server_path", return_value=Path(__file__)
+                    ),
+                    mock.patch.object(cli.os, "access", return_value=True),
+                    mock.patch.object(
+                        cli.NativeAcpExecutables,
+                        "resolve",
+                        side_effect=NativeAcpDependencyError("selected SDK is missing"),
+                    ) as scoped,
+                    mock.patch.object(
+                        cli.AcpExecutables,
+                        "resolve",
+                        side_effect=AssertionError("acpx fallback"),
+                    ) as acpx,
+                    mock.patch.object(
+                        cli.CodexAcpExecutables,
+                        "resolve",
+                        side_effect=AssertionError("unselected Codex"),
+                    ) as codex,
+                    self.assertRaisesRegex(
+                        cli.ConfigError,
+                        "selected claude ACP dependencies.*selected SDK",
+                    ),
+                ):
+                    cli._start_prerequisites(self.plan)
+                scoped.assert_called_once_with()
+                acpx.assert_not_called()
+                codex.assert_not_called()
+                self.assertEqual(
+                    {call.args[0] for call in require.call_args_list},
+                    {command, "claude"},
+                )
+                self.assertFalse((self.root / "state").exists())
 
 
 if __name__ == "__main__":

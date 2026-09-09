@@ -73,8 +73,8 @@ a real-model named Orca workflow remains unverified.
 
 ### Named Orca serial validation
 
-The formal `tests/run.sh` passed on Python 3.13.15 (570.951 seconds) and
-3.11.15 (533.847 seconds). Each run completed 1,192 package tests, 33 CLI tests,
+After the platform-test correction below, the formal `tests/run.sh` passed on
+Python 3.13.15 (728.473 seconds) and 3.11.15 (736.282 seconds). Each run completed 1,192 package tests, 33 CLI tests,
 33 MCP tests, 8 compact-runner tests, and the applicable shell, source-state,
 rendered-home, and Nix checks. All 222 source-manifest entries stayed unchanged.
 The log also contains an expected negative-fixture message and platform skips;
@@ -87,7 +87,7 @@ passed. The isolated CLI checks created no runtime state, and the environment
 was removed afterward. Build and CI results in [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7)
 identify the commit they validate.
 
-Two attempts used real Orca 1.4.190 and selected Claude Code 2.1.263. The first,
+The first two attempts used real Orca 1.4.190 and selected Claude Code 2.1.263. The first,
 `run_a372c9ef428f`, stopped at the new repository's trust dialog before a named
 workflow. Public stop succeeded; the four selected normal Claude path fingerprints
 were unchanged. The second, `run_70c45e0282db`, used a dedicated worktree of an
@@ -113,6 +113,23 @@ before/after identity could not be verified. Existing Team subscription auth
 status does not prove actual billing, and no login, trust grant, permission, or
 billing-plan change was requested. Named Orca's real-model workflow remains
 unverified, as do the other outstanding backend and harness requirements.
+
+A third attempt, `run_6389a0782d6b`, started after the previously displayed
+reset time. Main accepted the prompt but again reported a Fable usage limit,
+now with an automatic retry at 14:10 JST on 2026-09-09. No TaskDispatch or model
+response occurred. Public stop succeeded before that retry; independent checks
+found all three recorded PIDs, their process group, the live Main terminal,
+and state absent. In this attempt, both account and organization UUID hashes
+were captured before and after and matched. Settings-file hashes and the
+repository trust fingerprint were unchanged, and the selected credentials file
+remained absent. Keychain contents and actual billing were still unverified.
+The retry worktree, initial shell, and selected install were retained.
+
+The first CI run at `38f6ec9` failed one new dependency test on both Ubuntu
+Python versions: the test expected the macOS command `orca`, while the existing
+Linux resolver correctly selected `orca-ide`. The test now covers both platform
+commands explicitly, preserving the missing-SDK and no-fallback assertions.
+Runtime behavior was unchanged; both formal local suites passed again.
 
 ### Experimental native terminal runtimes
 
