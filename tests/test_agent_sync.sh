@@ -785,6 +785,19 @@ assert "CHANGES.md" not in payload["additional_context"]
 '
 }
 
+test_agent_context_reminder_is_silent_without_git_or_agent_dir() {
+  local plain_dir output
+  plain_dir="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-test-plain-XXXXXX")"
+
+  output="$(printf '%s\n' '{"hook_event_name":"SessionStart","cwd":"'"$plain_dir"'"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  rm -rf "$plain_dir"
+
+  if [[ -n "$output" ]]; then
+    print -r -- "expected no reminder output outside git/.agent workspaces, got: $output" >&2
+    return 1
+  fi
+}
+
 test_agent_context_reminder_detects_managed_dotfiles_agent_dir() {
   local repo
   local output
@@ -853,6 +866,7 @@ main() {
   test_agent_sync_wrapper_delegates_to_setup_script
   test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
+  test_agent_context_reminder_is_silent_without_git_or_agent_dir
   test_agent_context_reminder_detects_managed_dotfiles_agent_dir
   echo "agent sync tests passed"
 }

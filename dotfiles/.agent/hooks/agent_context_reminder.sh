@@ -121,6 +121,10 @@ if agent_dir:
         f"- この workspace には .agent metadata がある。session directory は {sessions_path}/<YYYY-MM-DD-HHMMSS>-<short-slug>-<agent-id>/ に作り、checkpoint.md の運用は AGENTS.md「作業ログ・引き継ぎ」に従う。"
     )
 
+# 動的情報が 1 つもない cwd では見出しだけの注入になるため何も出さない。
+if len(lines) == 1:
+    sys.exit(0)
+
 context = "\n".join(lines)
 
 # Claude Code / Codex は正規イベント名を送る。Codex は stdout を厳密な schema で
