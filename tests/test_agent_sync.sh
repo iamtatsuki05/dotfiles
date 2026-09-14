@@ -684,11 +684,20 @@ test_agent_prompt_separates_task_boundary_triggers_from_signals() {
   assert_contains "$agents_file" 'message 数や compaction 回数だけでは分割しない'
 }
 
-test_agent_prompt_probes_shared_causes_before_parallel_dispatch() {
-  local agents_file="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
+test_agent_context_defaults_to_single_agent_with_review_exception() {
+  python3 - "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh" <<'PYTEST'
+import json
+import subprocess
+import sys
 
-  assert_contains "$agents_file" '共通原因の probe を main agent または1体で先に実施'
-  assert_contains "$agents_file" '結果を確認してから後続を分岐'
+for event in ("SessionStart", "UserPromptSubmit", "beforeSubmitPrompt", "SubagentStart"):
+    result = subprocess.run(["bash", sys.argv[1]], input=json.dumps({"hook_event_name": event}),
+                            text=True, capture_output=True, check=True)
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "通常の調査・設計・実装・検証はメインの agent が単体で進める" in context, event
+    assert "独立レビュー、またはユーザーが明示的に委譲を依頼した場合" in context, event
+    assert "同じ wave でまとめて起動" not in context, event
+PYTEST
 }
 
 test_agent_sync_wrapper_delegates_to_setup_script() {
@@ -734,8 +743,8 @@ assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
 assert "checkpoint.md" in context
 assert "まとまった変更や検証" in context
-assert "最初の待機前" in context
-assert "1つでもあれば直列" in context
+assert "メインの agent が単体で進める" in context
+assert "独立レビュー" in context
 assert "CHANGES.md" not in context
 '
 
@@ -848,7 +857,7 @@ main() {
   test_claude_stop_hook_contract_covers_completion_and_safety_boundaries
   test_codex_subagent_defaults_match_configured_contract
   test_agent_prompt_separates_task_boundary_triggers_from_signals
-  test_agent_prompt_probes_shared_causes_before_parallel_dispatch
+  test_agent_context_defaults_to_single_agent_with_review_exception
   test_agent_sync_wrapper_delegates_to_setup_script
   test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
