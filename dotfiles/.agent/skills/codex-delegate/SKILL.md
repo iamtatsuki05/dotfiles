@@ -1,13 +1,6 @@
 ---
 name: codex-delegate
-description: >-
-  Delegate a coding task to the OpenAI Codex CLI as a background implementer, then review its diff and
-  land it yourself. Use this whenever the user wants to hand implementation work to Codex — phrasings
-  like "have Codex do X", "delegate this to Codex", "run it through Codex", or "use Codex to
-  implement/fix/refactor" — or to run a queue of coding tasks through Codex while staying the reviewer.
-  Prefer it over a one-shot Codex forwarder (such as the codex-rescue agent) when the user will review
-  the diff and commit it themselves. DO NOT USE for tasks small enough to do inline, or when the user
-  wants the code written directly without delegating.
+description: Delegate a coding task to the OpenAI Codex CLI as a background implementer, then review its diff and land it yourself. Use when the user asks to have Codex do, delegate to, or run work through Codex, including a queue of tasks. Not for tasks small enough to do inline or when the user wants the code written directly.
 license: MIT
 compatibility: Requires the `codex` CLI (OpenAI Codex) installed and authenticated, Node 18+, and git. The orchestrating agent must be able to run shell commands and read files. Shell examples assume bash/zsh (macOS/Linux, or Git Bash/WSL on Windows).
 metadata:

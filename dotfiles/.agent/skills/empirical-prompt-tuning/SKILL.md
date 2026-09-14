@@ -1,6 +1,6 @@
 ---
 name: empirical-prompt-tuning
-description: agent 向けテキスト指示（skill / slash command / task プロンプト / CLAUDE.md 節 / コード生成プロンプト）を、バイアスを排した実行者に動かしてもらい、両面（実行者の自己申告 + 指示側メトリクス）で評価して反復改善する手法。改善が頭打ちになるまで回す。プロンプトや skill を新規作成・大幅改訂した直後、またはエージェントの挙動が期待通りにならない原因を指示側の曖昧さに求めたいときに使う。
+description: skill、slash command、CLAUDE.md 節などの agent 向け指示を、白紙の実行者に動かして自己申告と指示側メトリクスの両面で評価し、頭打ちまで反復改善する。指示の新規作成・大幅改訂の直後や、agent の挙動不良の原因を指示の曖昧さに求めるときに使う。
 ---
 
 # Empirical Prompt Tuning
