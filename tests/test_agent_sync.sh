@@ -733,9 +733,10 @@ assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
 assert "checkpoint.md" in context
-assert "まとまった変更や検証" in context
-assert "最初の待機前" in context
-assert "1つでもあれば直列" in context
+assert "AGENTS.md" in context
+assert "最初の待機前" not in context
+assert "参考情報として扱い" not in context
+assert "read-only reviewer" not in context
 assert "CHANGES.md" not in context
 '
 
