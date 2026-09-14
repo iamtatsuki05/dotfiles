@@ -691,10 +691,13 @@ print(float(sys.argv[2]) - float(sys.argv[1]))
 PY
 )"
 
+  # 各 review は sleep 1 なので直列なら 10 秒以上かかる。閾値はその半分にして、
+  # 遅い CI runner (macos-15-intel で 2〜3.5 秒) の process 起動 overhead を吸収しつつ
+  # 並列実行であることだけを確認する。
   python3 - "$elapsed" <<'PY' || fail "expected parallel review execution, elapsed=${elapsed}s"
 import sys
 elapsed = float(sys.argv[1])
-raise SystemExit(0 if elapsed < 1.8 else 1)
+raise SystemExit(0 if elapsed < 5.0 else 1)
 PY
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
