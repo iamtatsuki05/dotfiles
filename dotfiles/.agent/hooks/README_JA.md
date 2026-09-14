@@ -19,6 +19,13 @@ agent 固有の hook 登録は `../apps/` 配下にあり、agent によって J
 
 ## 日本語 lint
 
+shellの入口はsymlinkの実体を解決し、その隣の`japanese_prose_lint.py`を読み込みます。
+Pythonの本文をファイルに置くことで、Darwinのpipe容量による大きなBashヒアドキュメントの停止を避け、
+標準入力のhook payloadも保持します。agentごとのsymlinkは引き続きshellを指します。
+手動でコピーする場合は、両ファイルを同じディレクトリに置いてください。
+Pythonはisolated modeで起動し、workspace、`PYTHONPATH`、user-siteのpackageを
+importの探索先から除外します。
+
 Markdown または plain text を共通 profile で検査します。
 
 ```bash

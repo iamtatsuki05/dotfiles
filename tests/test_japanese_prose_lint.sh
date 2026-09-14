@@ -591,6 +591,36 @@ PY
   grep -q -- 'tool_result_persist' "$OPENCLAW_PLUGIN" || fail "OpenClaw feedback hook is missing"
 }
 
+test_linked_hook_preserves_input_from_another_directory() {
+  local document
+  local output
+  local payload
+
+  make_fixture
+  document="$FIXTURE_DIR/note.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  mkdir "$FIXTURE_DIR/linked hooks"
+  print -r -- 'raise RuntimeError("workspace stdlib module executed")' > "$FIXTURE_DIR/argparse.py"
+  ln -s "$LINTER" "$FIXTURE_DIR/linked hooks/lint alias.sh"
+  payload='{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"'"$document"'"}}'
+
+  (
+    cd "$FIXTURE_DIR"
+    print -r -- "$payload" | zsh './linked hooks/lint alias.sh' --hook-agent claude
+  ) > "$output"
+
+  python3 - "$output" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    result = json.load(stream)
+assert result["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+assert "JP003" in result["hookSpecificOutput"]["additionalContext"]
+PY
+
+  rm -rf "$FIXTURE_DIR"
+}
+
 test_plugin_adapters_append_model_visible_feedback() {
   local document
   local fake_home
@@ -661,6 +691,7 @@ main() {
   test_claude_runs_lint_after_document_edits
   test_hook_adapters_follow_each_agent_contract
   test_all_agents_register_a_feedback_capable_path
+  test_linked_hook_preserves_input_from_another_directory
   test_plugin_adapters_append_model_visible_feedback
   print -r -- "japanese prose lint tests passed"
 }

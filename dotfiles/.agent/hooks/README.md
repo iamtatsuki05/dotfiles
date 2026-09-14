@@ -20,6 +20,13 @@ Japanese prose lint runs automatically for all supported agents. Claude Code, Co
 
 ## Japanese prose lint
 
+The shell entrypoint loads `japanese_prose_lint.py` beside its resolved source
+path. Keeping the Python code in a file avoids Darwin pipe limits for large
+Bash heredocs and preserves hook input on stdin. Agent-specific symlinks still
+point to the shell entrypoint; copy both files together for manual installation.
+Python starts in isolated mode, excluding the workspace, `PYTHONPATH`, and
+user-site packages from import resolution.
+
 Run the shared profile against Markdown or plain text:
 
 ```bash
