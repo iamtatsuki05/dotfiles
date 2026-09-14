@@ -671,7 +671,7 @@ from pathlib import Path
 config = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert config["agents"]["default_subagent_model"] == "gpt-6-astra"
 assert config["agents"]["default_subagent_reasoning_effort"] == "low"
-assert config["agents"]["max_concurrent_threads_per_session"] == 100
+assert config["agents"]["max_concurrent_threads_per_session"] == 25
 PY
 }
 
