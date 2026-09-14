@@ -471,7 +471,7 @@
       "repository": "https://github.com/coji/natural-japanese.git",
       "branch": "main",
       "pinned_commit": "0f1cc1c5a4e2aa7590598c88a15c213a60d9545a",
-      "local_tree_sha256": "108ffb03b32a9b70cb7ada9c34b653b6d93aadcc48426b8d948b66f2a0495af3",
+      "local_tree_sha256": "d6bb569d2c77c73af3c80bbd733339cdce3908597e07cd695a155bf469a25c4c",
       "mappings": [
         {
           "source_path": "skills/natural-japanese",
@@ -492,7 +492,7 @@
         {
           "local_path": "dotfiles/.agent/skills/natural-japanese/SKILL.md",
           "old": "description: 仕事の日本語文書を読みやすくわかりやすく書く・直すためのスキル。議事録（文字起こしからの議事録化を含む）、調査レポート・分析レポート、社内ガイド・マニュアル、リサーチメモ・ディスカッションペーパー・企画書・提案書・報告書・メール、スライド構成案といったビジネス文書の作成・校正、「結論から書いて」「論旨を明確に」「見出しを端的に」「専門用語をわかりやすく説明して」といった指示のいずれでも使用する。AI臭さの除去（「AIっぽい」「AI臭い」「機械翻訳っぽい」「不自然」「もっと自然な日本語に」「機械っぽい」「人間っぽくして」「単調」「〜することができる、と言えるだろう、のような言い回し」といった直接・間接・口語の指摘、AIで書いたと言われた/疑われた）、読みにくい・わかりにくい文章の改善依頼（語順がおかしい、一文が長い、何が言いたいか分からない、読点の位置がおかしい等）、note記事やブログ記事・エッセイの新規執筆（任意のテーマをゼロから書く・書き起こす依頼を含む）、既存文章のリライト・推敲、AI臭さの診断・採点（「この文章AIが書いた？」「AI臭さをスコアで出して」「どれくらいAIっぽいか判定して」という書き換えを伴わない依頼）、自分の文体を学ばせたい・プロファイル化したいという要望（過去の文章を読ませて自分らしく書いてほしいという依頼も含む）にも対応する。禁止語の除去、リズムの単調さ・段落構造の均質さ・英語統語の直訳調に加え、語順・読点・一文一義・主語述語の距離といった読みやすさの原則にも対応する。技術文書の章構成やMarkdownフォーマットの整形自体（一文一行化・引用ブロック・脚注記法など）は対象外——それは別スキルの領域であり、本スキルは文章の自然さ・読みやすさ・わかりやすさに特化する。",
-          "new": "description: 仕事の日本語文書(議事録、レポート、社内ガイド、企画書・提案書、メール、スライド原稿、note・ブログ記事)の執筆・校正・リライト、AI 臭さの除去や診断・採点、読みにくい文の改善、文体のプロファイル化に使う。Markdown 整形や章構成の変更は対象外。",
+          "new": "description: 仕事の日本語文書(議事録、レポート、社内ガイド、企画書・提案書、メール、スライド原稿、note・ブログ記事)の執筆・校正・リライト、AI 臭さの除去や診断・採点、読みにくい文の改善、文体のプロファイル化に使う。技術文書の章構成や Markdown 記法の整形自体は対象外。",
           "expected_count": 1
         }
       ],
@@ -592,7 +592,7 @@
       "repository": "https://github.com/amElnagdy/delegate-skills.git",
       "branch": "master",
       "pinned_commit": "b781ee2e23089630e2fbee1cfd6174afe4edeb76",
-      "local_tree_sha256": "7178be8c63d8dd518b0d800cd11fc406a9c953ffc3879b3ad6b1f19138378628",
+      "local_tree_sha256": "964eba15fc8f4f60fc01837b9841441c3764efeb28db0489296baacd704b34e1",
       "mappings": [
         {
           "source_path": "skills/codex-delegate",
@@ -627,7 +627,7 @@
         {
           "local_path": "dotfiles/.agent/skills/codex-delegate/SKILL.md",
           "old": "description: >-\n  Delegate a coding task to the OpenAI Codex CLI as a background implementer, then review its diff and\n  land it yourself. Use this whenever the user wants to hand implementation work to Codex — phrasings\n  like \"have Codex do X\", \"delegate this to Codex\", \"run it through Codex\", or \"use Codex to\n  implement/fix/refactor\" — or to run a queue of coding tasks through Codex while staying the reviewer.\n  Prefer it over a one-shot Codex forwarder (such as the codex-rescue agent) when the user will review\n  the diff and commit it themselves. DO NOT USE for tasks small enough to do inline, or when the user\n  wants the code written directly without delegating.",
-          "new": "description: Delegate a coding task to the OpenAI Codex CLI as a background implementer, then review its diff and land it yourself. Use when the user asks to have Codex do, delegate to, or run work through Codex, including a queue of tasks. Not for tasks small enough to do inline or when the user wants the code written directly.",
+          "new": "description: Delegate a coding task to the OpenAI Codex CLI as a background implementer, then review its diff and land it yourself. Use when the user asks to hand implementation work to Codex (\"have Codex do X\", \"delegate this to Codex\", \"run it through Codex\"), including a queue of tasks. Not for tasks small enough to do inline or when the user wants the code written directly.",
           "expected_count": 1
         },
         {

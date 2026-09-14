@@ -1,6 +1,6 @@
 ---
 name: natural-japanese
-description: 仕事の日本語文書(議事録、レポート、社内ガイド、企画書・提案書、メール、スライド原稿、note・ブログ記事)の執筆・校正・リライト、AI 臭さの除去や診断・採点、読みにくい文の改善、文体のプロファイル化に使う。Markdown 整形や章構成の変更は対象外。
+description: 仕事の日本語文書(議事録、レポート、社内ガイド、企画書・提案書、メール、スライド原稿、note・ブログ記事)の執筆・校正・リライト、AI 臭さの除去や診断・採点、読みにくい文の改善、文体のプロファイル化に使う。技術文書の章構成や Markdown 記法の整形自体は対象外。
 license: MIT
 metadata:
   invocation: "Supports write and score requests in quick, full, or experimental mode."
