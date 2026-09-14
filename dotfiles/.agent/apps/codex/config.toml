@@ -40,6 +40,9 @@ default_subagent_model = "gpt-6-astra"
 default_subagent_reasoning_effort = "low"
 
 [features]
+# wait_agent の下限・既定値: 親が 10 秒待機を繰り返すと timeout ごとに親モデルが再実行され、育った context 全体が再入力されて利用枠を消耗するため 120 秒に揃える
+multi_agent_v2.min_wait_timeout_ms = 120000
+multi_agent_v2.default_wait_timeout_ms = 120000
 context_management.experimental_mode = true
 fast_mode = true
 external_migration = true
