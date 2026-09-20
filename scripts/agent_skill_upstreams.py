@@ -89,9 +89,18 @@ def relative_path(value: str, field_name: str) -> Path:
     return path
 
 
+GIST_REPOSITORY_RE = re.compile(r"^https://gist\.github\.com/[0-9a-f]{32}\.git$")
+
+
 def require_https_github_url(value: str) -> None:
-    if not value.startswith("https://github.com/") or not value.endswith(".git"):
-        raise UpstreamError(f"repository must be an https GitHub .git URL: {value}")
+    if value.startswith("https://github.com/") and value.endswith(".git"):
+        return
+    if GIST_REPOSITORY_RE.match(value):
+        return
+    raise UpstreamError(
+        "repository must be https://github.com/<owner>/<repo>.git or "
+        f"https://gist.github.com/<32-hex-id>.git (no owner segment): {value}"
+    )
 
 
 def validate_review_agent(review_agent: str) -> None:

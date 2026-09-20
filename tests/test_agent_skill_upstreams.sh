@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 10"
+  assert_contains_text "$output" "registered upstream skills: 13"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -30,6 +30,9 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "pstack-principles"
   assert_contains_text "$output" "delegate-skills"
   assert_contains_text "$output" "chatgpt-pro-line"
+  assert_contains_text "$output" "cognitive-rhythm-writing"
+  assert_contains_text "$output" "japanese-tech-writing"
+  assert_contains_text "$output" "k16shikano-gist-license"
 }
 
 test_pstack_principles_preserve_explicit_invocation() {
@@ -346,7 +349,10 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -366,6 +372,13 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
   assert_contains_text "$output" "Skill ID: delegate-skills"
   assert_contains_text "$output" "candidate_commit: 1515151515151515151515151515151515151515"
+  assert_contains_text "$output" "Skill ID: cognitive-rhythm-writing"
+  assert_contains_text "$output" "Repository: https://gist.github.com/eb2929f13ed19c97188393d297be8432.git"
+  assert_contains_text "$output" "candidate_commit: 1717171717171717171717171717171717171717"
+  assert_contains_text "$output" "Skill ID: japanese-tech-writing"
+  assert_contains_text "$output" "candidate_commit: 1818181818181818181818181818181818181818"
+  assert_contains_text "$output" "Skill ID: k16shikano-gist-license"
+  assert_contains_text "$output" "candidate_commit: 1919191919191919191919191919191919191919"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -383,6 +396,9 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
   print -r -- "reviewed delegate-skills" > "$report_dir/delegate-skills.md"
   print -r -- "reviewed chatgpt-pro-line" > "$report_dir/chatgpt-pro-line.md"
+  print -r -- "reviewed cognitive-rhythm-writing" > "$report_dir/cognitive-rhythm-writing.md"
+  print -r -- "reviewed japanese-tech-writing" > "$report_dir/japanese-tech-writing.md"
+  print -r -- "reviewed k16shikano-gist-license" > "$report_dir/k16shikano-gist-license.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -400,7 +416,10 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -418,6 +437,9 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "pstack-principles: plan update"
   assert_contains_text "$output" "stop-slop: plan update"
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
+  assert_contains_text "$output" "cognitive-rhythm-writing: plan update"
+  assert_contains_text "$output" "candidate=1717171717171717171717171717171717171717"
+  assert_contains_text "$output" "k16shikano-gist-license: plan update"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -613,7 +635,10 @@ EOF'
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -678,7 +703,10 @@ PY
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -740,7 +768,10 @@ EOF'
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 2>&1
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 2>&1
   )"
   local exit_status=$?
   set -e
@@ -812,6 +843,47 @@ EOF'
   rm -rf "$review_dir"
 }
 
+test_repository_url_accepts_github_and_gist_only() {
+  python3 - "$SCRIPT" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("agent_skill_upstreams", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+module.require_https_github_url("https://github.com/example/fixture.git")
+module.require_https_github_url("https://gist.github.com/eb2929f13ed19c97188393d297be8432.git")
+for rejected in (
+    "https://gist.github.com/k16shikano/eb2929f13ed19c97188393d297be8432.git",
+    "https://gist.github.com/eb2929f13ed19c97188393d297be8432",
+    "https://gitlab.com/example/fixture.git",
+    "git@github.com:example/fixture.git",
+):
+    try:
+        module.require_https_github_url(rejected)
+    except module.UpstreamError:
+        continue
+    raise SystemExit(f"unexpectedly accepted repository url: {rejected}")
+PY
+}
+
+test_k16shikano_gist_skills_keep_license_and_cross_reference() {
+  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+  local skill_name
+  for skill_name in cognitive-rhythm-writing japanese-tech-writing; do
+    assert_file "$skills_root/$skill_name/SKILL.md"
+    assert_file "$skills_root/$skill_name/LICENSE"
+    assert_file "$skills_root/$skill_name/LICENSE-NOTICE.ja.md"
+    assert_contains "$skills_root/$skill_name/SKILL.md" "name: $skill_name"
+    assert_contains "$skills_root/$skill_name/SKILL.md" "license: Unlicense"
+    assert_contains "$skills_root/$skill_name/LICENSE" "released into the public domain"
+    assert_contains "$skills_root/$skill_name/LICENSE-NOTICE.ja.md" "public gist"
+  done
+  cmp -s "$skills_root/cognitive-rhythm-writing/LICENSE" "$skills_root/japanese-tech-writing/LICENSE" || fail "Unlicense copies differ"
+  assert_contains "$skills_root/cognitive-rhythm-writing/SKILL.md" '../japanese-tech-writing/SKILL.md'
+}
+
 test_mise_has_agent_skill_update_task() {
   local mise_config="$REPO_ROOT/config/mise/config.toml"
 
@@ -845,6 +917,8 @@ main() {
   test_update_blocks_when_agent_review_does_not_approve
   test_update_accepts_approve_with_changes_when_no_blocking_findings
   test_update_can_limit_to_one_skill_with_specific_commit
+  test_repository_url_accepts_github_and_gist_only
+  test_k16shikano_gist_skills_keep_license_and_cross_reference
   test_mise_has_agent_skill_update_task
 }
 

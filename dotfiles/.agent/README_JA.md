@@ -159,7 +159,7 @@ AI CLI を起動せず対象 suite だけ確認する場合は `--dry-run` を�
 
 ## 外部 skill upstream
 
-他人の skill を vendoring している場合は `skills/upstreams.json` で管理します。この manifest には upstream の GitHub repository、branch、固定 commit、local path、local tree hash を記録します。
+他人の skill を vendoring している場合は `skills/upstreams.json` で管理します。この manifest には upstream の GitHub repository(public gist を含む)、branch、固定 commit、local path、local tree hash を記録します。
 
 よく使うコマンド:
 
