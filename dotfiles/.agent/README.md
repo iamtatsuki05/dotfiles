@@ -159,7 +159,7 @@ Use `--dry-run` to inspect suites without invoking an AI CLI. Results are writte
 
 ## External Skill Upstreams
 
-Vendored third-party skills are tracked in `skills/upstreams.json`. The manifest records the upstream GitHub repository, branch, pinned commit, local paths, and local tree hash.
+Vendored third-party skills are tracked in `skills/upstreams.json`. The manifest records the upstream GitHub repository (or public gist), branch, pinned commit, local paths, and local tree hash.
 
 Common commands:
 

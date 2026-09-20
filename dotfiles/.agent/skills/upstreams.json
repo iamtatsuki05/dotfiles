@@ -776,6 +776,109 @@
         "last_reviewed_at": "2026-09-06T07:32:40+00:00",
         "review_report": ".agent/work/sessions/2026-09-06-pstack-pr-codex/upstream-review.md"
       }
+    },
+    {
+      "id": "cognitive-rhythm-writing",
+      "description": "k16shikano の gist から vendoring した、説明的な日本語文章に緩急(認知モードの切替と未回収の緊張)を設計する規範。",
+      "repository": "https://gist.github.com/eb2929f13ed19c97188393d297be8432.git",
+      "branch": "main",
+      "pinned_commit": "a3b1e26beced71d582e13314fb6f5b179b023c76",
+      "local_tree_sha256": "704643bc9076780af387ff2351888e5c0bde6e471d404185d93394a75514aa36",
+      "source_url": "https://gist.github.com/k16shikano/eb2929f13ed19c97188393d297be8432",
+      "provenance_note": "public gist の SKILL.md を単独で vendoring する。本文は upstream のまま。upstream の frontmatter に license が無いため、作者の gist 一括 license 宣言(k16shikano-gist-license entry)を指す license 行を local_text_replacements で追加する。本文が参照する ../japanese-tech-writing/SKILL.md は同じ flat layout に vendoring した japanese-tech-writing entry で解決する。LICENSE と LICENSE-NOTICE.ja.md は k16shikano-gist-license entry が配置する。description 末尾には discovery 境界(shaping-japanese-longform / natural-japanese との分担、作業ログ等では使わない)を 1 文追加する。",
+      "mappings": [
+        {
+          "source_path": "SKILL.md",
+          "local_path": "dotfiles/.agent/skills/cognitive-rhythm-writing/SKILL.md"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/cognitive-rhythm-writing/SKILL.md",
+          "old": "name: cognitive-rhythm-writing\ndescription:",
+          "new": "name: cognitive-rhythm-writing\nlicense: Unlicense（https://gist.github.com/k16shikano/67625f2a7d96e3bbdfae8d571a936063）\ndescription:",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/cognitive-rhythm-writing/SKILL.md",
+          "old": "診断・修正するときに使用する。\n",
+          "new": "診断・修正するときに使用する。この skill を使うのは、読み物として書き下ろす文章の生成と診断に限る。原文の事実・感情・問いを増やさない既存原稿のリライトは `shaping-japanese-longform`、業務文書と文の自然さは `natural-japanese` が担当する。作業ログ、reviewer 報告、commit message、コードや設定には使わない。\n",
+          "expected_count": 1
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "claude-code",
+        "last_reviewed_commit": "a3b1e26beced71d582e13314fb6f5b179b023c76",
+        "last_reviewed_at": "2026-09-20T17:08:31+00:00",
+        "review_report": ".agent/work/sessions/2026-09-21-015133-k16shikano-writing-skills-claude/subagents/k16shikano-gist-security-review.md"
+      }
+    },
+    {
+      "id": "japanese-tech-writing",
+      "description": "k16shikano の gist から vendoring した、日本語の技術文書・書籍原稿の文章規範(段落構成、論証の厳密さ、読み手の負荷、演出の抑制、LLM 調と翻訳調の禁止、冗長の排除)。",
+      "repository": "https://gist.github.com/fd287c3133457c4fd8f5601d34aa817d.git",
+      "branch": "main",
+      "pinned_commit": "8f2d57610a73efc97d743c9b0b0ecb1002e09fa4",
+      "local_tree_sha256": "aaa62eee4164486125b7b818708195e084abffc6a95bba755484c4e648287e79",
+      "source_url": "https://gist.github.com/k16shikano/fd287c3133457c4fd8f5601d34aa817d",
+      "provenance_note": "public gist の SKILL.md を vendoring し、本文は無変更、description 末尾にだけ discovery 境界(敬体の業務文書は natural-japanese、原文保存の構成整理は shaping-japanese-longform、作業ログ等では使わない)を 1 文追加する。upstream の frontmatter が Unlicense と作者の license gist を明記している。LICENSE と LICENSE-NOTICE.ja.md は k16shikano-gist-license entry が配置する。文の自然さや業務文書は natural-japanese、構成だけの整理は shaping-japanese-longform が担当し、この skill は技術書の章・記事・解説文の論証と文体規範を担当する。",
+      "mappings": [
+        {
+          "source_path": "SKILL.md",
+          "local_path": "dotfiles/.agent/skills/japanese-tech-writing/SKILL.md"
+        }
+      ],
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/japanese-tech-writing/SKILL.md",
+          "old": "推敲・リライトするときに使用する。\n",
+          "new": "推敲・リライトするときに使用する。この skill を使うのは、常体の技術書・技術記事・解説文に限る。敬体の業務文書（日報・報告書・メール・スライド原稿）は `natural-japanese`、原文保存が要件の構成整理は `shaping-japanese-longform` が担当する。作業ログ、reviewer 報告、commit message、コードや設定には使わない。\n",
+          "expected_count": 1
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "claude-code",
+        "last_reviewed_commit": "8f2d57610a73efc97d743c9b0b0ecb1002e09fa4",
+        "last_reviewed_at": "2026-09-20T17:08:32+00:00",
+        "review_report": ".agent/work/sessions/2026-09-21-015133-k16shikano-writing-skills-claude/subagents/k16shikano-gist-security-review.md"
+      }
+    },
+    {
+      "id": "k16shikano-gist-license",
+      "description": "k16shikano の public gist 全体に適用される Unlicense 宣言。cognitive-rhythm-writing と japanese-tech-writing の LICENSE / attribution として同梱する。",
+      "repository": "https://gist.github.com/67625f2a7d96e3bbdfae8d571a936063.git",
+      "branch": "main",
+      "pinned_commit": "1092e6b60296c760071c308624e344469ec345cf",
+      "local_tree_sha256": "a0f71a5ad4864b817dc1bc36c792cda40dca466f87a301f8eff0f76094e88fe3",
+      "source_url": "https://gist.github.com/k16shikano/67625f2a7d96e3bbdfae8d571a936063",
+      "provenance_note": "作者の Readme.ja.md は public gist すべてに Unlicense を適用すると宣言している。LICENSE(Unlicense 本文)と Readme.ja.md(適用範囲の宣言、LICENSE-NOTICE.ja.md として配置)を両 skill directory に複製し、skill 本体とは別 entry で pinned commit を追跡する。",
+      "mappings": [
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/cognitive-rhythm-writing/LICENSE"
+        },
+        {
+          "source_path": "Readme.ja.md",
+          "local_path": "dotfiles/.agent/skills/cognitive-rhythm-writing/LICENSE-NOTICE.ja.md"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/japanese-tech-writing/LICENSE"
+        },
+        {
+          "source_path": "Readme.ja.md",
+          "local_path": "dotfiles/.agent/skills/japanese-tech-writing/LICENSE-NOTICE.ja.md"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "claude-code",
+        "last_reviewed_commit": "1092e6b60296c760071c308624e344469ec345cf",
+        "last_reviewed_at": "2026-09-20T16:59:19+00:00",
+        "review_report": ".agent/work/sessions/2026-09-21-015133-k16shikano-writing-skills-claude/subagents/k16shikano-gist-security-review.md"
+      }
     }
   ]
 }

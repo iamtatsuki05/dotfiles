@@ -90,6 +90,9 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `pstack-principles` | `cursor/plugins` | `principle-make-operations-idempotent/`, `principle-separate-before-serializing-shared-state/` | 再実行時の安全性と共有状態の分離に関する2原則。本文・MIT LICENSEは原文のまま。frontmatterを移植し、ローカルの `agents/openai.yaml` でCodexを明示呼び出し専用にする。他の実行環境ではこの制限が適用されない場合がある。 |
 | `delegate-skills` | `amElnagdy/delegate-skills` | `codex-delegate/`、`claude-delegate/` | 1 つの bounded なコーディング作業を別 process の Codex CLI / Claude Code に relay 経由で任せ、diff を自分で review して commit する。relay は commit しない。local safety overlay で read-only 既定と権限 bypass flag の禁止を固定。 |
 | `chatgpt-pro-line` | `pauljunsukhan/codex-chatgpt-pro-plugin` | `chatgpt-pro-line/` | ログイン済みの専用 Chrome profile(CDP、127.0.0.1)経由で ChatGPT Pro に設計・調査・デバッグ方針を尋ね、receipt と transcript を残す。runtime のみ vendoring(self-test と Codex MCP 設定は除外)。local overlay で明示依頼の限定、repo context upload の都度承認、`.devspace/` を commit しない規則を固定。 |
+| `japanese-tech-writing` | `k16shikano` gist `fd287c31…` | `japanese-tech-writing/` | 日本語の技術書の章・記事・解説文の文章規範(段落構成、論証の厳密さ、読み手の負荷、演出の抑制、LLM 調・翻訳調の禁止、冗長の排除)。本文は原文のまま。description 末尾に discovery 境界を 1 文追加。業務文書と文の自然さは `natural-japanese`、構成だけの整理は `shaping-japanese-longform`。 |
+| `cognitive-rhythm-writing` | `k16shikano` gist `eb2929f1…` | `cognitive-rhythm-writing/` | 読み物として読ませる説明文に、認知モードの切替と未回収の緊張で緩急を設計する規範。`japanese-tech-writing` と併用する前提。本文は原文のまま。frontmatter に license 行と、description 末尾の discovery 境界 1 文を追加。 |
+| `k16shikano-gist-license` | `k16shikano` gist `67625f2a…` | 上記 2 skill の `LICENSE`、`LICENSE-NOTICE.ja.md` | 作者の public gist 全体に適用される Unlicense 宣言。skill 本体とは別 entry で pinned commit を追跡する。 |
 
 ### mattpocock group
 
