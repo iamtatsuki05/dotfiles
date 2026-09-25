@@ -73,6 +73,10 @@ hook は `scripts/apply_updates.sh` を呼び、chezmoi ファイル、AI agent 
 hook 自体を同期します。nix-darwin / Home Manager の switch、Homebrew の削除、
 mise tool の導入は実行しません。
 
+Agent 同期でも、不足した Hermes MCP 依存パッケージを自動導入しなくなりました。
+必要な場合は `zsh dotfiles/.agent/sync.sh --install-deps` を明示して実行します。パッケージのダウンロードを伴う場合があります。
+
+
 手動で入れ直す場合は、次を実行します。
 
 ```sh
