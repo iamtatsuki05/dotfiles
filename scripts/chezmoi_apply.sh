@@ -13,6 +13,7 @@ source "$LIB_DIR/setup_profile.sh"
 REPO_ROOT="$DEFAULT_REPO_ROOT"
 MANAGER_FILE="$XDG_CONFIG_HOME/dotfiles/manager"
 PROFILE_FILE="$DEFAULT_PROFILE_FILE"
+NO_INSTALL=0
 DRY_RUN=0
 VERIFY=0
 MARK_DEFAULT=0
@@ -25,6 +26,7 @@ Usage:
   zsh scripts/chezmoi_apply.sh --mark-default
 
 Options:
+  --no-install         Require an already installed chezmoi executable.
   --dry-run            Show the chezmoi apply plan without writing home files.
   --verify             Exit 1 when deployed home files differ, without writing them.
   --mark-default       Mark chezmoi as the default dotfiles manager for this machine.
@@ -41,6 +43,9 @@ EOF
 parse_args() {
   while (($#)); do
     case "$1" in
+      --no-install)
+        NO_INSTALL=1
+        ;;
       --dry-run)
         DRY_RUN=1
         ;;
@@ -191,7 +196,7 @@ run_chezmoi() {
     return $?
   fi
 
-  if has_mise_command; then
+  if (( ! NO_INSTALL )) && has_mise_command; then
     DOTFILES_PROFILE="$DOTFILES_PROFILE" DOTFILES_REPO_ROOT="$REPO_ROOT" mise exec chezmoi@latest -- chezmoi "$@"
     return $?
   fi

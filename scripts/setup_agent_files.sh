@@ -5,6 +5,8 @@ set -euo pipefail
 readonly SCRIPT_DIR="${0:A:h}"
 DEFAULT_REPO_ROOT="${SCRIPT_DIR:h}"
 REPO_ROOT="$DEFAULT_REPO_ROOT"
+DRY_RUN=0
+INSTALL_DEPS=0
 AGENT_DIR=""
 APPS_DIR=""
 readonly SECRETS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
@@ -15,6 +17,8 @@ Usage:
   zsh scripts/setup_agent_files.sh [--repo-root PATH]
 
 Options:
+  --dry-run        Preview changes without writing files or installing dependencies.
+  --install-deps   Also install missing Hermes MCP dependencies (may access network).
   --repo-root PATH  Override repository root. Intended for tests.
   -h, --help        Show this help.
 EOF
@@ -23,6 +27,12 @@ EOF
 parse_args() {
   while (($#)); do
     case "$1" in
+      --dry-run)
+        DRY_RUN=1
+        ;;
+      --install-deps)
+        INSTALL_DEPS=1
+        ;;
       --repo-root)
         shift
         if ((! $#)); then
@@ -55,6 +65,11 @@ parse_args() {
 link_symlink() {
   local src="$1"
   local dst="$2"
+
+  if (( DRY_RUN )); then
+    print -r -- "link: $dst -> $src (existing files/symlinks may be replaced)"
+    return 0
+  fi
 
   if [ -L "$dst" ]; then
     if [[ "$dst" -ef "$src" ]]; then
@@ -99,7 +114,11 @@ remove_managed_symlink() {
   for allowed in "$@"; do
     allowed_abs="${allowed:A}"
     if [[ "$target" == "$allowed" || "$target" == "$allowed/"* || "$target_abs" == "$allowed_abs" || "$target_abs" == "$allowed_abs/"* ]]; then
-      rm -f "$dst"
+      if (( DRY_RUN )); then
+        print -r -- "remove managed link: $dst"
+      else
+        rm -f "$dst"
+      fi
       return 0
     fi
   done
@@ -108,7 +127,11 @@ remove_managed_symlink() {
 ensure_dir() {
   local dir="$1"
   if [ ! -d "$dir" ]; then
-    mkdir -p "$dir"
+    if (( DRY_RUN )); then
+      print -r -- "mkdir: $dir"
+    else
+      mkdir -p "$dir"
+    fi
   fi
 }
 
@@ -126,6 +149,7 @@ sync_link_specs() {
 
 require_shared_skill_link() {
   local dst="$1"
+  (( DRY_RUN )) && return 0
 
   if [[ -L "$dst" && "$dst" -ef "$AGENT_DIR/skills" ]]; then
     return 0
@@ -185,9 +209,12 @@ shared_link_specs() {
 # The shared tree is exposed to Hermes read-only through skills.external_dirs.
 ensure_hermes_local_skills_dir() {
   local dst="$HOME/.hermes/skills"
-
   if [[ -L "$dst" ]]; then
     if [[ ! -e "$dst" || "$dst" -ef "$AGENT_DIR/skills" ]]; then
+      if (( DRY_RUN )); then
+        print -r -- "replace managed link with Hermes-owned directory: $dst"
+        return 0
+      fi
       rm -f "$dst"
     else
       echo "ERROR: $dst must be a real directory owned by Hermes, but it is a symlink to an unmanaged target: $(readlink "$dst")" >&2
@@ -216,7 +243,11 @@ sync_hook_files_from_dir() {
   for hook_file in "$source_dir"/*.sh; do
     [ -f "$hook_file" ] || continue
     hook_name="${hook_file:t}"
-    chmod +x "$hook_file"
+    if (( DRY_RUN )); then
+      print -r -- "chmod +x: $hook_file"
+    else
+      chmod +x "$hook_file"
+    fi
     link_symlink "$hook_file" "$hooks_dir/$hook_name"
   done
 }
@@ -304,6 +335,11 @@ write_env_file_from_secrets() {
   local env_file="$1"
   shift
   if [[ ! -f "$SECRETS_FILE" ]]; then
+    return 0
+  fi
+
+  if (( DRY_RUN )); then
+    print -r -- "sync env (values hidden, mode 600): $env_file"
     return 0
   fi
 
@@ -411,7 +447,13 @@ main() {
   sync_hooks
   sync_tool_configs
   sync_agent_env_files
-  sync_hermes_mcp_dependency
+  if (( INSTALL_DEPS )); then
+    if (( DRY_RUN )); then
+      print -r -- "check/install missing Hermes MCP dependencies"
+    else
+      sync_hermes_mcp_dependency
+    fi
+  fi
 }
 
 main "$@"
