@@ -539,6 +539,13 @@ EOF
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
+  assert_not_exists "$uv_log"
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" --install-deps --dry-run >/dev/null
+  assert_not_exists "$uv_log"
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" --install-deps >/dev/null
+
   assert_file "$uv_log"
   assert_contains "$uv_log" "pip install --python $hermes_install/hermes-agent/bin/python mcp>=1.24,<2"
 

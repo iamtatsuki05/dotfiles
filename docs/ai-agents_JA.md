@@ -29,6 +29,16 @@ zsh tests/test_agent_sync.sh
 zsh tests/test_agent_support_matrix.sh
 ```
 
+Agent 関連だけを反映する入口は `zsh main.sh --only agent` です。
+`--dry-run` を付けると、秘密値を表示せず配置予定を確認できます。
+`zsh dotfiles/.agent/sync.sh --dry-run` も同じ同期処理を使います。
+
+単独の同期コマンドでは、依存パッケージを自動導入しません。
+従来の Hermes MCP 依存導入も必要なら `zsh dotfiles/.agent/sync.sh --install-deps` を使います。
+この指定は環境を変更し、ネットワークにアクセスする場合があります。
+`main.sh` の全体セットアップはこの指定を明示して従来の動作を維持します。
+設定・秘密情報の反映範囲は[導入ガイド](getting-started_JA.md)を参照してください。
+
 ファイルの同期が成功しても、起動中の agent process が設定を再読込したとは
 限りません。対象 client の仕様に応じて再起動または reload し、live config は
 別に確認してください。
