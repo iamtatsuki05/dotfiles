@@ -539,63 +539,6 @@ class OrcaQuestionTest(TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 orca_questions._parse_ask_envelope(bad, 0)
 
-    def test_ask_result_accepts_orca_legacy_compatibility_and_drops_it(self) -> None:
-        answered = {
-            "answer": "yes",
-            "answerMessageId": "answer-1",
-            "messageId": "message-1",
-            "threadId": "message-1",
-            "timedOut": False,
-            "cancelled": False,
-            "connectionLost": False,
-            "timeoutMs": 500,
-        }
-        with_ack = {
-            **answered,
-            "legacyCompatibility": {
-                "replayed": False,
-                "answerAcknowledgement": {
-                    "questionId": "message-1",
-                    "answerMessageId": "answer-1",
-                },
-            },
-        }
-        self.assertEqual(orca_questions._parse_ask_result(with_ack, 0), answered)
-        pending = {
-            **answered,
-            "answer": None,
-            "timedOut": True,
-        }
-        del pending["answerMessageId"]
-        timed_out = {
-            **pending,
-            "legacyCompatibility": {"replayed": True, "ackMessageIds": []},
-        }
-        self.assertEqual(orca_questions._parse_ask_result(timed_out, 1), pending)
-        for bad in (
-            {**answered, "legacyCompatibility": []},
-            {**answered, "legacyCompatibility": {"unknown": 1}},
-            {**answered, "legacyCompatibility": {"replayed": "no"}},
-            {
-                **answered,
-                "legacyCompatibility": {
-                    "answerAcknowledgement": {
-                        "questionId": "other",
-                        "answerMessageId": "answer-1",
-                    }
-                },
-            },
-            {
-                **pending,
-                "legacyCompatibility": {
-                    "resumeRequired": True,
-                    "resumeCommand": "orca orchestration ask --resume message-1",
-                },
-            },
-        ):
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                orca_questions._parse_ask_result(bad, 0 if bad.get("answer") else 1)
-
     def test_ask_result_parser_allows_pending_nonzero_only_for_pending_flags(
         self,
     ) -> None:

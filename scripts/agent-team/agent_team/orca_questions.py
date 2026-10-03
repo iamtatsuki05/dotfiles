@@ -560,58 +560,9 @@ def _parse_ask_envelope(payload: object, returncode: int) -> dict[str, object]:
     return _parse_ask_result(payload.get("result"), returncode)
 
 
-_LEGACY_COMPATIBILITY_FIELDS: Final = frozenset(
-    {
-        "replayed",
-        "answerAcknowledgement",
-        "ackMessageIds",
-        "resumeRequired",
-        "resumeCommand",
-    }
-)
-
-
-def _without_legacy_compatibility(payload: dict[str, object]) -> dict[str, object]:
-    """Validate and drop the ``legacyCompatibility`` object Orca 1.4.199 adds.
-
-    The Orca CLI itself acknowledges an answered question through it; the
-    agent-team exchange only needs the canonical answer fields.
-    """
-
-    if "legacyCompatibility" not in payload:
-        return payload
-    legacy = payload["legacyCompatibility"]
-    if not isinstance(legacy, dict) or not set(legacy) <= _LEGACY_COMPATIBILITY_FIELDS:
-        raise OrcaQuestionError("Orca ask legacyCompatibility is invalid")
-    if legacy.get("resumeRequired") is not None:
-        raise OrcaQuestionError(
-            "Orca ask requested a compatibility resume, which is unsupported"
-        )
-    if "replayed" in legacy and type(legacy["replayed"]) is not bool:
-        raise OrcaQuestionError("Orca ask legacyCompatibility.replayed is invalid")
-    acknowledgement = legacy.get("answerAcknowledgement")
-    if acknowledgement is not None and (
-        not isinstance(acknowledgement, dict)
-        or set(acknowledgement) != {"questionId", "answerMessageId"}
-        or acknowledgement.get("questionId") != payload.get("messageId")
-        or acknowledgement.get("answerMessageId") != payload.get("answerMessageId")
-    ):
-        raise OrcaQuestionError("Orca ask answer acknowledgement does not match")
-    ack_ids = legacy.get("ackMessageIds")
-    if ack_ids is not None and (
-        not isinstance(ack_ids, list)
-        or any(not isinstance(item, str) for item in ack_ids)
-    ):
-        raise OrcaQuestionError("Orca ask legacyCompatibility.ackMessageIds is invalid")
-    return {
-        key: value for key, value in payload.items() if key != "legacyCompatibility"
-    }
-
-
 def _parse_ask_result(payload: object, returncode: int) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise OrcaQuestionError("Orca ask response is not an object")
-    payload = _without_legacy_compatibility(payload)
     base_fields = {
         "answer",
         "messageId",
@@ -651,7 +602,7 @@ def _parse_ask_result(payload: object, returncode: int) -> dict[str, object]:
         raise OrcaQuestionError("Orca ask success result is incomplete")
     if returncode == 0:
         _text(payload.get("answerMessageId"), "answerMessageId", maximum=256)
-    return payload
+    return cast(dict[str, object], payload)
 
 
 def _ask_orca(

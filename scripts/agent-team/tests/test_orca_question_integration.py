@@ -136,7 +136,6 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
-            "legacyCompatibility": {"replayed": False, "ackMessageIds": []},
         }
         success_result = {
             "answer": answer_body,
@@ -147,13 +146,6 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
-            "legacyCompatibility": {
-                "replayed": False,
-                "answerAcknowledgement": {
-                    "questionId": question_message_id,
-                    "answerMessageId": answer_message_id,
-                },
-            },
         }
 
         def ask_process(
@@ -492,7 +484,6 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
-            "legacyCompatibility": {"replayed": False, "ackMessageIds": []},
         }
         success_result = {
             "answer": answer_body,
@@ -503,13 +494,6 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
-            "legacyCompatibility": {
-                "replayed": False,
-                "answerAcknowledgement": {
-                    "questionId": question_message_id,
-                    "answerMessageId": answer_message_id,
-                },
-            },
         }
 
         def ask_process(
@@ -790,7 +774,6 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
-            "legacyCompatibility": {"replayed": False, "ackMessageIds": []},
         }
         success_result = {
             "answer": answer_body,
@@ -801,13 +784,6 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
-            "legacyCompatibility": {
-                "replayed": False,
-                "answerAcknowledgement": {
-                    "questionId": question_message_id,
-                    "answerMessageId": answer_message_id,
-                },
-            },
         }
 
         def ask_process(
