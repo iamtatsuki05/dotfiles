@@ -776,6 +776,9 @@ def _validate_managed_file(path: Path, relative: str) -> bool:
     ):
         return True
     try:
+        # A FIFO or device here would block or misread; only plain files hold JSON.
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return False
         data = path.read_bytes()
         if len(data) > 4 * 1024 * 1024:
             return False
@@ -1307,13 +1310,14 @@ class HerdrDriver:
                     )
                 except HerdrError:
                     return None
-                if not entry.is_dir(
-                    follow_symlinks=False
-                ) and not _validate_managed_file(path, relative):
+                is_directory = entry.is_dir(follow_symlinks=False)
+                if is_directory and Path(relative).parent.name == _SESSION_SNAPSHOT_DIR:
+                    return None
+                if not is_directory and not _validate_managed_file(path, relative):
                     return None
                 result[relative] = identity
                 try:
-                    if entry.is_dir(follow_symlinks=False):
+                    if is_directory:
                         pending.append(path)
                 except OSError:
                     return None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import stat
 import tempfile
@@ -442,6 +443,14 @@ class HerdrDriverContractTest(unittest.TestCase):
                 bad.unlink()
         (snapshots / "nested").mkdir()
         self.assertFalse(driver._known_paths_owned(receipt))
+        (snapshots / "nested").rmdir()
+        (snapshots / "session-4-5-6.json").mkdir()
+        self.assertFalse(driver._known_paths_owned(receipt))
+        (snapshots / "session-4-5-6.json").rmdir()
+        os.mkfifo(snapshots / "session-7-8-9.json", 0o600)
+        self.assertFalse(driver._known_paths_owned(receipt))
+        (snapshots / "session-7-8-9.json").unlink()
+        self.assertTrue(driver._known_paths_owned(receipt))
 
     def _replace_socket_path_for_test(self, path: Path) -> None:
         original = _identity(path)
@@ -640,6 +649,41 @@ class HerdrDriverContractTest(unittest.TestCase):
         self.assertEqual(result.evidence, CloseEvidence.TERMINATION_UNPROVEN)
         self.assertTrue(result.ownership_verified)
         self.assertFalse(result.session_terminated)
+        stop.assert_called_once_with("stop")
+
+    def test_close_reaches_session_stop_with_saved_session_snapshots(self) -> None:
+        receipt = self._sample_receipt()
+        driver = self._restored_driver(receipt)
+        snapshots = receipt.session_dir / "session-snapshots"
+        snapshots.mkdir(mode=0o700)
+        (snapshots / "session-1791048705949331000-23593-0.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        with (
+            mock.patch.object(
+                driver,
+                "inspect",
+                return_value=HerdrInspection(
+                    presence="absent",
+                    running=False,
+                    exit_status=None,
+                    identity_verified=True,
+                    pane_present=False,
+                    session_present=True,
+                    pane_pid=None,
+                    server_pid=receipt.server_pid,
+                    observed_nonce=receipt.run_nonce,
+                ),
+            ),
+            mock.patch.object(
+                driver,
+                "_session_command",
+                return_value=SimpleNamespace(returncode=1, stdout="", stderr="lost"),
+            ) as stop,
+        ):
+            result = driver.close(receipt)
+        self.assertTrue(result.ownership_verified)
+        self.assertEqual(result.evidence, CloseEvidence.TERMINATION_UNPROVEN)
         stop.assert_called_once_with("stop")
 
     def _sample_receipt(self) -> HerdrReceipt:
