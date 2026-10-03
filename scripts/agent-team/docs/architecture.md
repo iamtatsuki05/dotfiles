@@ -572,6 +572,97 @@ idle tmux terminals were later removed; the failed state, private root,
 snapshot, artifact, and fixture remain retained. The successful reruns do not
 change those earlier outcomes.
 
+### Live acceptance with the explicit Claude-only profile (2026-10-04)
+
+These runs used real models. Each started from a wheel-only Python 3.11.15
+environment that contained only `dotfiles-agent-team`; all 81 runtime files
+matched the committed source and the wheel. `PATH` exposed only the selected
+executables: Claude Code 2.1.288, Node 24.21.0, `claude-agent-acp` 0.70.0 with
+ACP SDK 1.3.0, and the selected terminal or Orca. The harness checked before
+start that unselected CLIs, other terminals, `uv`, `npm`, `npx`, and `acpx`
+were unreachable. Every node used Opus 5.5 at high effort through an explicit
+`claude_config_dir` that points at a separately logged-in Claude Max profile.
+The default Main/Planner Fable and Worker/Reviewer Astra settings are unchanged;
+this is the explicit Claude-only configuration. The normal `~/.claude` login
+could not be used because Fable required usage credits and the organization
+had disabled subscription access for Opus. Actual billing was not checked.
+Agent-mode runs received exactly one initial instruction. Program-mode and
+scripted-Main runs received no input after start; the scripted Main calls the
+public MCP tools over one stdio session and never prompts the Main model.
+
+| Check | Mode | Backend | Commit | Run | Result |
+|---|---|---|---|---|---|
+| Change, review, request changes, fix, verify, stop | `agent`/`serial` with Planner | tmux | `1bc553e` | `6cab4ec7-…` | plan approved, implementation sent back, fixed, approved, fixed-argv verification on one revision, `completed`, public stop 0.755 s |
+| Mainless progression | `program`/`serial` | tmux | `1bc553e` | `026116f3-…` | planner, plan review, worker, implementation review, and verification ran without input; public stop 0.302 s |
+| Two writers in parallel | `agent`/`parallel`, Planner omitted | tmux | `4962125` | `9dd7aa87-…` | both writers active together, both reviewers approved, both tasks verified on one integrated revision, public stop 1.198 s |
+| Interrupt a running Worker | scripted Main | tmux | `bb71ba8` | `3946b17f-…` | public stop 1.372 s while the Worker was reading; 7 PIDs, 3 process groups, and 5 paths absent |
+| Interrupt a running Worker | scripted Main | Herdr 0.9.3 | `691a126` | `f2dc85cc-…` | public stop 2.262 s; 7 PIDs, 5 process groups, and 5 paths absent |
+| Interrupt a running Worker | scripted Main | Zellij 0.44.1 | `691a126` | `d317cec7-…` | public stop 2.914 s; 7 PIDs, 5 process groups, and 5 paths absent |
+| Stale verification and review limit | scripted Main, `max_review_rounds = 1` | tmux | `a0232af` | `2338ca35-…` | `task_verify` refused a changed workspace, then completed after the exact content returned; a second review was refused with `user consultation required` and the task stayed unchanged |
+| Question, review, verify on Orca | named `agent`/`serial` | Orca 1.4.199 | `a0232af` | `run_e89da337f417` | Worker question answered by Main and recorded, implementation sent back, fixed, approved, fixed-argv verification on one revision, `completed`; public stop removed all 69 recorded processes and owned resources; a closed team terminal left Orca's live list within 0.876 s |
+
+In the interrupt runs, the Worker first wrote a marker file and then read a
+protected file repeatedly. Public stop ran while the Worker was active, after
+the config and prompts had been deleted. The checks covered the runner's whole
+process tree, Main, the terminal server, the prompt, private, snapshot, socket,
+and state paths, the unchanged marker and protected files, and the absence of a
+published completion. The Zellij run is the first real-model interrupt
+evidence for Zellij.
+
+Missing selected dependencies were rejected before any resource was created:
+missing `tmux`, `claude`, `node`, or `claude-agent-acp` each exited with status
+1, left state unchanged, started no process, and printed the missing item, the
+selecting setting, and the fix (commit `062c9fa`).
+
+The live runs found five defects, each fixed before the run that passed:
+
+- Reviewers sometimes judged from the writer's self-report without opening a
+  file. With a claude.ai login, Claude Code added the account's connectors as
+  MCP tools to every Claude role even though agent-team passes no MCP servers.
+  The scoped hook denied them, but the roles still received dozens of
+  unselected tools, and Claude Code fetched the connector list over the
+  network. The scoped ACP wrapper and the direct Main now set
+  `disableClaudeAiConnectors` in their flag settings (`a0232af`). In throwaway
+  runs with the same reviewer setup, 12 of 23 reviewers made no tool call while
+  the connectors were present (10 of 14 with the earlier prompt, 2 of 9 with the
+  new one); with the connectors disabled, 7 of 7 read the files, including 3
+  with the earlier prompt. The review
+  prompt also says that the previous result is unverified and that agent-team
+  runs the declared verification after approval (`4962125`).
+- A reviewer returned `findings` as objects, so the strict parser rejected the
+  verdict and the task failed. The contract now states that `findings` is an
+  array of strings (`a1aed1b`).
+- Orca 1.4.199 adds `mutation: {requestId, replayed}` to `orchestration ask`
+  results. The strict result check rejected it and the Worker question failed.
+  The receipt is now validated and removed, and a replayed receipt is rejected
+  (`bb71ba8`). An earlier change for `legacyCompatibility` was reverted
+  because only the legacy direct-dispatch path returns that field.
+- Herdr 0.9.3 saves sessions as `session-snapshots/session-<time>-<pid>-<n>.json`.
+  The private-tree check rejected the directory, so stop closed the workspace
+  but never stopped the server. Only that directory and file pattern are now
+  accepted, and the files are validated as JSON (`691a126`).
+- The management plan used by MCP and stop dropped `claude_config_dir`
+  (`1bc553e`).
+
+Failed attempts are retained and are not rewritten by the later successes.
+Orca runs `run_fe096b06952e` and `run_bd6311c84d24` failed at the Worker
+question; both stopped through the public command after the runner timeout,
+and the independent checks were conclusive. Their fixtures are unchanged. The
+first parallel run `0b3c1ed3-…` ended in `consultation_required` because the
+reviewers did not read the files. The first Herdr interrupt run `5b4a16c5-…`
+returned `native server termination is unproven` and left the private Herdr
+server running; a public stop with the fixed source then removed it. A second
+Herdr interrupt run ended because the Worker completed without writing the
+marker. The first review-limit run failed on object findings. Orca run
+`run_f8c64c697347` completed the workflow, but the runner's single terminal-list
+check right after stop still listed a team terminal; a check minutes later
+found no listed team terminal, no recorded process, and no owned path. The
+runner now waits up to 15 seconds and records what was still listed.
+
+These runs do not cover Fable, Astra, Codex, or the other harnesses. The
+parallel run had no request for changes or question, and resuming after a
+user answer to a review consultation was not run.
+
 ## Components have narrow responsibilities
 
 | Component | Responsibility |
@@ -1192,13 +1283,16 @@ provider's subscription billing ledger is not verified.
 The following are remaining implementation and evidence goals, not exclusions
 from the agreed scope. They are tracked in Issues #8, #9, and #11.
 
-- The required profiles and real execution evidence for all ten harnesses
-- Successful real-model program execution through implementation, review, and
-  fixed-argv verification; the bounded trial above stopped at provider failure
+- Profiles and real execution evidence for the nine harnesses other than
+  Claude Code. Codex's real-authentication test is on hold, Copilot ACP is not
+  public, and the other seven need login, account, or runtime preparation.
+- Astra Worker/Reviewer and the default Fable configuration through the whole
+  workflow; the 2026-10-04 runs used the explicit Claude-only profile
+- Real-model Orca `program` and `parallel` execution, and native
+  `program`/`parallel`
 - A real-model read-only plan-only run
-- A live real-model native `program`/`parallel` acceptance
-- Real-model/provider-backed native `agent`/`parallel` acceptance; real-model
-  named Orca execution and shared Orca/native progression remain gaps
+- Resuming after a user answers a review consultation, and a question or a
+  request for changes inside a parallel batch, with real models
 
 ## Intentional exclusions
 

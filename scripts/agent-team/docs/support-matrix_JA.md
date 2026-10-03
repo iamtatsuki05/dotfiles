@@ -32,7 +32,9 @@ Mainはdirect Claude、Planner、Worker、Reviewerのassignmentはscoped Claude 
 Mainは各ownerを処理してから共有`delivery_ack`を1回呼びます。Codex ACPは設定の読み込み時に拒否し、質問も無効です。
 名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、Mainなしの固定argv Python coordinatorを
 TaskSpec共通のprogram policy/driverへ接続しています。coordinator identityとreadiness/ownership fenceは[アーキテクチャ](architecture_JA.md)に記載します。
-focusedな実装testは接続済みですが、実Orca・実モデルのprogram受入は未実施です。既存の`agent`/`parallel` run
+focusedな実装testは接続済みです。名前付き`agent`/`serial`は、明示的なClaude専用構成で実モデルのOrca 1.4.199 run `run_e89da337f417`に合格しました。
+Workerの質問、差し戻し、承認、同じrevisionでの固定argv検証を経て、公開stopと所有資源の照合まで確認しています（[アーキテクチャ](architecture_JA.md)参照）。
+実Orca・実モデルの`program`と`parallel`の受入は未実施です。以前の`agent`/`parallel` run
 `run_fc73773d2cf5`はMainのprompt受付後、Fableの利用上限によりTaskDispatch 0件で停止し、所有Stopと不在確認を内部の検証記録で完了しています。
 上表のregistry情報と、追加の制御を持たないadapterに対する安全性の判定は変えていません。
 

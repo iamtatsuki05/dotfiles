@@ -17,16 +17,20 @@ Version-5 native and named Orca `agent`/`parallel` support Main-coordinated
 named nodes. Main opens each exact batch with `task_batch_open` before
 dispatch; both paths use the common TaskSpec, TaskBatch, review, and verification
 rules. The implementation and bounded evidence are recorded in
-[Architecture](docs/architecture.md). Real-model parallel acceptance remains
-pending.
+[Architecture](docs/architecture.md). Native `agent`/`parallel` passed a
+real-model tmux run with the explicit Claude-only profile; real-model
+`program`/`parallel` and Orca `parallel` acceptance remain pending.
 
 Version-5 named Orca `agent`/`serial` and `agent`/`parallel` teams can use
 direct Claude Main and scoped Claude ACP background roles. Planner/Reviewer
 stay read-only; Worker dispatch requires a declared TaskSpec; review and
-fixed-argv verification use the same task rules as native teams. The latest
-named-Orca `agent`/`parallel` run, `run_fc73773d2cf5`, reached Main
-prompt acceptance before Fable's usage limit; no TaskDispatch was observed.
-The owned Stop and absence checks completed as recorded in private validation records. This is separate from the program modes. See
+fixed-argv verification use the same task rules as native teams. Named Orca
+`agent`/`serial` passed a real-model Orca 1.4.199 run, `run_e89da337f417`,
+with the explicit Claude-only profile, including a Worker question and a
+request for changes. The earlier named-Orca `agent`/`parallel` run,
+`run_fc73773d2cf5`, reached Main prompt acceptance before Fable's usage limit;
+no TaskDispatch was observed. The owned Stop and absence checks completed as
+recorded in private validation records. This is separate from the program modes. See
 [Architecture](docs/architecture.md) for the serial evidence, program
 coordinator contract, and provider-free parallel protocol proof.
 Codex ACP remains disabled in public configuration.
@@ -94,9 +98,9 @@ Named Orca `program`/`serial` uses state version 4 and
 `program`/`parallel` uses state version 5; both are connected to the common
 TaskSpec program policy and driver. Their Mainless fixed-argv coordinator is
 implemented and test-connected, but real Orca/model program acceptance has not
-been run. Real-model parallel acceptance, all-harness coverage, Codex
-authentication, and shared Orca/native progression remain separate evidence
-gates.
+been run. Real-model `program`/`parallel` and Orca `parallel` acceptance,
+all-harness coverage, Codex authentication, and shared Orca/native progression
+remain separate evidence gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
 routes in native `agent`/`serial` and Main-coordinated `agent`/`parallel`
@@ -109,12 +113,14 @@ including questions, review, fixed-argv verification at one integrated
 revision, and public stop. The default profiles above remain unchanged; this
 acceptance selected Claude Fable explicitly for all five nodes. The native
 parallel path has focused contract coverage and bounded terminal/fake-provider
-acceptance, but this real run was native agent/serial acceptance. Real-model
-parallel acceptance remains pending. The bounded Main-parallel live acceptance
-is recorded in [Architecture](docs/architecture.md). The same document records
-the named-Orca provider-free protocol proof. Named Orca supports
-`agent`/`serial` and `agent`/`parallel`; its real-model workflow remains
-unverified. Named Reviewer consultation answers are available through a
+acceptance, but this real run was native agent/serial acceptance. The
+2026-10-04 real-model runs with the explicit Claude-only profile add native
+`agent`/`parallel`, Mainless `program`/`serial`, interrupting a running Worker
+on tmux, Herdr, and Zellij, the review-round limit, stale-verification
+rejection, and named Orca `agent`/`serial`; they are recorded in
+[Architecture](docs/architecture.md) with the bounded Main-parallel live
+acceptance and the named-Orca provider-free protocol proof. Named Reviewer
+consultation answers are available through a
 bounded opaque ID. Resuming requires the original writer and another review
 within the round limit; reaching the limit keeps the task unresolved even after
 an answer is saved.

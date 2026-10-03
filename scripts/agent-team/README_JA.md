@@ -12,7 +12,7 @@ TaskSpecとscoped Claude ACP policyを使い、terminal driverだけがruntime�
 native `program`/`parallel`は`max_active`まで独立したassignmentを受け付け、nodeごとにDelivery stateを保存します。
 Version 5のnativeと名前付きOrcaの`agent`/`parallel`では、Mainが名前付きnodeを調整します。
 Mainはdispatch前に`task_batch_open`で対象batchを開き、両経路で共通のTaskSpec、TaskBatch、レビュー、検証の規則を使います。
-実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。実モデルでのparallel受入は未完了です。
+実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。native `agent`/`parallel`は、明示的なClaude専用構成の実モデルtmux runで受入済みです。実モデルの`program`/`parallel`とOrcaの`parallel`は未完了です。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
@@ -21,7 +21,8 @@ HerdrとZellijでは、実際の端末と模擬プロバイダーを使って契
 Version 5の名前付きOrca構成では、`agent`/`serial`と`agent`/`parallel`を選択できます。Mainはdirect Claude、
 Planner/ReviewerはClaude ACPの読み取り専用、WorkerはTaskSpecで許可した範囲だけを書き込むClaude ACPを使います。
 Workerには宣言済みTaskSpecが必要で、レビューと固定argv検証にはnativeと共通の規則を適用します。
-既存の名前付きOrca `agent`/`parallel` run `run_fc73773d2cf5` はMainのprompt受付まで進みましたが、
+名前付きOrcaの`agent`/`serial`は、明示的なClaude専用構成で実モデルのOrca 1.4.199 run `run_e89da337f417`に合格しました。Workerの質問と差し戻しを含みます。
+以前の名前付きOrca `agent`/`parallel` run `run_fc73773d2cf5` はMainのprompt受付まで進みましたが、
 Fableの利用上限によりTaskDispatchは0件でした。所有Stopと不在確認は内部の検証記録に記録されています。
 これはprogram構成とは別の証拠です。serialの過去証拠、program coordinatorの契約、providerを呼ばないparallel protocol proofは
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。
@@ -71,7 +72,7 @@ TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質
 native `program`/`parallel`にも実装、focused contract test、boundedな実端末・fake providerのcoverageがあります。
 名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、
 TaskSpec共通のprogram policy/driverへ接続しています。Mainなしの固定argv Python coordinatorまで実装・テスト接続済みですが、
-実機・実モデルのprogram受入は未実施です。実モデルのparallel受入、全harness、Codex認証、Orcaとnativeに共通する進行管理は
+実機・実モデルのprogram受入は未実施です。実モデルの`program`/`parallel`とOrcaの`parallel`、全harness、Codex認証、Orcaとnativeに共通する進行管理は
 別の検証課題として残ります。
 
 Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
@@ -80,9 +81,9 @@ nativeの`agent`/`serial`とMainが調整する`agent`/`parallel`に加えて、
 program parallelは`program_wave` coordinatorを使う別のstate identityです。実モデルのtmux試験では、4件の独立したassignmentで
 2つのTaskSpecを処理し、質問応答、レビュー、同じ統合revisionでの固定argv検証、公開コマンドによる停止まで確認しました。
 既定profileは上表のままで、この試験では5nodeすべてにClaude Fableを明示指定しています。この実モデルrunはnativeのagent/serial受入です。
-native parallelにはfocused contract testとboundedな端末coverageがありますが、実モデルのparallel受入は未実施です。
-今回のMain parallel live受入と、名前付きOrcaのprovider-free protocol proofは[アーキテクチャ](docs/architecture_JA.md)に記載します。
-名前付きOrcaは`agent`/`serial`と`agent`/`parallel`を受け付けますが、実モデルの全工程は未確認です。
+2026-10-04には、明示的なClaude専用構成の実モデルrunで、native `agent`/`parallel`、Mainなしの`program`/`serial`、
+tmux・Herdr・Zellijでの実行中Workerの中断、レビュー回数上限、古い検証の拒否、名前付きOrcaの`agent`/`serial`を確認しました。
+これらは、boundedなMain parallel live受入、名前付きOrcaのprovider-free protocol proofとともに[アーキテクチャ](docs/architecture_JA.md)に記載します。
 名前付き構成のReviewer相談はopaqueなIDで回答できます。再開には元のwriterと上限内の再reviewが必要です。
 回数上限に達している場合は、回答を保存してもtaskは未解決のままです。
 
