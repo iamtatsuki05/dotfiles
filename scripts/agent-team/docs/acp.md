@@ -240,6 +240,76 @@ Codex question handling remains disabled: there is no question socket or
 registry entry remains rejected. The pending normal-authentication trial and
 its permission/cleanup checks are unchanged.
 
+## Scoped Copilot ACP implementation: not enabled
+
+The native and named Orca runtime paths also contain an internal GitHub Copilot CLI
+ACP role path. It is internal only: the registry still reports Copilot ACP as
+`known-unverified`, and configuration rejects `copilot`/`acp` as not runnable. Only a
+saved role specification or a start specification built by a test or live harness
+reaches it. Live acceptance is pending; no authenticated Copilot model turn,
+permission request, cancellation, or cleanup has been observed on this path.
+
+The implementation requires `@github/copilot@1.0.91` and
+`@agentclientprotocol/sdk@1.4.0` in one npm prefix
+(`npm install --prefix DIR @github/copilot@1.0.91 @agentclientprotocol/sdk@1.4.0`),
+with `DIR/node_modules/.bin` and Node.js 22 or newer first on `PATH`. The selected
+`copilot` must be that package's `npm-loader.js`, whose `optionalDependencies` pin
+`@github/copilot-darwin-arm64@1.0.91`. The loader only identifies the package and is
+never run; the platform binary is the ACP server and must have SHA-256
+`87f04922933c139cf4af7cb6a80b96161428618a6275fea4b8dfe7e7a69c9518`. Only darwin-arm64
+hosts are accepted. Start reads manifests and fingerprints files without running
+Copilot (not even `--version`), and a team without a Copilot role never resolves it.
+Dispatch rechecks the binding before a private directory, state, or process is
+created, and the runner rechecks it before starting the client.
+
+Python alone builds the server argv: `--acp --stdio`, the model and effort, and
+`--no-auto-update --no-custom-instructions --disable-builtin-mcps --no-remote
+--no-remote-export --disallow-temp-dir --no-ask-user`. Planner and Reviewer get
+`--available-tools view,grep,glob` and deny `shell`, `write`, and `url`; the Worker
+gets `--available-tools view,grep,glob,edit,create` and denies `shell` and `url`. No
+`--allow-tool`, `--allow-all*`, `--yolo`, or `--mode` flag is passed. The model must
+match `^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$` and cannot be `auto`; the effort is
+`low`, `medium`, `high`, `xhigh`, or `max`. Start rejects other values before any
+state is written. The client and Copilot receive only
+`HOME` (the normal home), `PATH=/usr/bin:/bin`, a private `TMPDIR` and
+`COPILOT_HOME`, and `USER`, `LOGNAME`, `LANG`, and `LC_*`; tokens, BYOK and provider
+variables, proxies, `NODE_OPTIONS`, and `XDG_*` are dropped. The private
+`COPILOT_HOME` contains only a generated `settings.json` that disables hooks and
+remote access and configures a sandbox denying the private directory, `.git`, the
+state directory, network access, and keychain access. agent-team does not log in or
+read, link, or copy the normal `~/.copilot`, its `config.json`, or keychain items.
+
+The shared client decides each `session/request_permission` from the raw JSON-RPC
+parameters and the frozen write policy, and it selects only `allow_once`, never
+`allow_always`. A read or search is allowed only when every target path (the tool-call
+locations plus `rawInput.path` or `rawInput.file_path`, which must also be locations)
+passes the shared workspace checks. An edit is allowed only for the Worker and only
+when every target is inside the TaskSpec write scope. Until live observation fixes
+each tool's argument shape, a request whose `rawInput` has any other field, such as a
+glob pattern or edit content, is rejected. Execute, fetch, delete, move, other,
+unknown, and malformed requests are rejected too. A search or directory read is
+decided by its starting path only; how Copilot then traverses `.git`, nested
+repositories, or symlinks below it is not checked here.
+
+The client also watches the agent's output. An unapproved edit, delete, move, execute,
+or fetch that starts or completes, an approved edit that reports a location outside
+its approval, a completed read outside the policy, an unknown tool kind or status, a
+session mode change, a reported model change, non-JSON output, or a session update the
+SDK schema would drop cancels and fails the turn, even after the prompt ended. This
+monitoring detects violations after the fact; the flags and permission decisions are
+what prevent them. The client never sends `authenticate`, session configuration, or
+mode changes. It requires the `session/close` capability, rejects a reported
+`agentInfo.version` other than `1.0.91` or a reported model other than the requested
+one, and reports a failed session start without logging in or falling back to another
+provider.
+
+Tests use fake npm prefixes and a fake ACP agent to cover dependency selection,
+argv, environment, private files, wiring, and every row of the permission table.
+They do not establish Copilot behavior. Whether Copilot honors these flags in ACP
+mode, the real shapes of its permission requests, tool arguments, and tool updates,
+how its searches treat `.git` and symlinks, where it reads its login, and how it
+cancels and cleans up remain open until live acceptance.
+
 ## Authentication and subscription
 
 ACP does not select an account or bypass a provider's billing policy. The
