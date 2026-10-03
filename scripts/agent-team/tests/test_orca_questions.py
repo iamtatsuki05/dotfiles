@@ -570,6 +570,32 @@ class OrcaQuestionTest(TestCase):
             ):
                 orca_questions._parse_ask_result(bad_payload, returncode)
 
+    def test_ask_result_drops_only_a_fresh_mutation_receipt(self) -> None:
+        pending = {
+            "answer": None,
+            "messageId": "message-1",
+            "threadId": "message-1",
+            "timedOut": True,
+            "cancelled": False,
+            "connectionLost": False,
+            "timeoutMs": 500,
+        }
+        fresh = {"requestId": "request-1", "replayed": False}
+        self.assertEqual(
+            orca_questions._parse_ask_result({**pending, "mutation": fresh}, 1),
+            pending,
+        )
+        for receipt in (
+            [],
+            {"requestId": "request-1"},
+            {**fresh, "extra": True},
+            {**fresh, "requestId": ""},
+            {**fresh, "replayed": True},
+            {**fresh, "replayed": 0},
+        ):
+            with self.subTest(receipt=receipt), self.assertRaises(ValueError):
+                orca_questions._parse_ask_result({**pending, "mutation": receipt}, 1)
+
     def test_actual_ask_adapter_uses_selected_orca_and_json_envelope(self) -> None:
         runner = mock.Mock()
         runner.run.return_value = ProcessResult(

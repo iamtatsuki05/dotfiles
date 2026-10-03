@@ -136,6 +136,7 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
+            "mutation": {"requestId": "request-pending", "replayed": False},
         }
         success_result = {
             "answer": answer_body,
@@ -146,6 +147,7 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
+            "mutation": {"requestId": "request-answered", "replayed": False},
         }
 
         def ask_process(
@@ -484,6 +486,7 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
+            "mutation": {"requestId": "request-pending", "replayed": False},
         }
         success_result = {
             "answer": answer_body,
@@ -494,6 +497,7 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
+            "mutation": {"requestId": "request-answered", "replayed": False},
         }
 
         def ask_process(
@@ -774,6 +778,7 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
+            "mutation": {"requestId": "request-pending", "replayed": False},
         }
         success_result = {
             "answer": answer_body,
@@ -784,6 +789,7 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
             "cancelled": False,
             "connectionLost": False,
             "timeoutMs": 500,
+            "mutation": {"requestId": "request-answered", "replayed": False},
         }
 
         def ask_process(

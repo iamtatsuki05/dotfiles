@@ -560,9 +560,26 @@ def _parse_ask_envelope(payload: object, returncode: int) -> dict[str, object]:
     return _parse_ask_result(payload.get("result"), returncode)
 
 
+def _without_mutation_receipt(payload: dict[str, object]) -> dict[str, object]:
+    """Validate and drop the ``mutation`` receipt Orca 1.4.199 adds to ask."""
+
+    if "mutation" not in payload:
+        return payload
+    receipt = payload["mutation"]
+    if not isinstance(receipt, dict) or set(receipt) != {"requestId", "replayed"}:
+        raise OrcaQuestionError("Orca ask mutation receipt is invalid")
+    _text(receipt.get("requestId"), "mutation.requestId", maximum=256)
+    # agent-team never sends a retry request ID, so a replayed receipt would
+    # be a stored response for some other request.
+    if receipt.get("replayed") is not False:
+        raise OrcaQuestionError("Orca ask returned a replayed mutation")
+    return {key: value for key, value in payload.items() if key != "mutation"}
+
+
 def _parse_ask_result(payload: object, returncode: int) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise OrcaQuestionError("Orca ask response is not an object")
+    payload = _without_mutation_receipt(payload)
     base_fields = {
         "answer",
         "messageId",
@@ -602,7 +619,7 @@ def _parse_ask_result(payload: object, returncode: int) -> dict[str, object]:
         raise OrcaQuestionError("Orca ask success result is incomplete")
     if returncode == 0:
         _text(payload.get("answerMessageId"), "answerMessageId", maximum=256)
-    return cast(dict[str, object], payload)
+    return payload
 
 
 def _ask_orca(
