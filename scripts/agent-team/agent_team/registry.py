@@ -76,7 +76,7 @@ HARNESS_REGISTRY: Final[dict[str, HarnessCapability]] = {
         "copilot",
         "GitHub Copilot CLI",
         "copilot --acp; acpx built-in: copilot",
-        "verified",
+        "known-unverified",
         _READ_ONLY,
     ),
     "cursor": HarnessCapability(

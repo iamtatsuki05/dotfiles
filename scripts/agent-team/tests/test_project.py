@@ -72,7 +72,7 @@ class ProjectSmokeTest(unittest.TestCase):
         )
         self.assertEqual(rows[0]["acp_status"], "verified")
         self.assertEqual(rows[1]["acp_status"], "known-but-rejected")
-        self.assertEqual(rows[2]["acp_status"], "verified")
+        self.assertEqual(rows[2]["acp_status"], "known-unverified")
         self.assertEqual(rows[7]["acp_status"], "known-unverified")
         self.assertEqual(rows[4]["acp_adapter"], "devin acp")
         self.assertEqual(rows[6]["acp_adapter"], "hermes acp")

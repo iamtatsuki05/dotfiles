@@ -15,7 +15,7 @@ package download、process起動、workspace書き込みは行いません。
 |---|---|---|---|---|
 | Claude | Main `orchestrator`、Planner/Reviewer `read-only` | 固定version 3 Orca: `acpx@0.13.2` + `@agentclientprotocol/claude-agent-acp@0.70.0`、nativeと名前付きOrca: `@agentclientprotocol/sdk@1.3.0`を使うdirect public SDK | 検証済み | bundled OrcaのACPはread-onlyのまま。全native terminal driverがTaskSpecに束縛するscoped Workerを共有します。 |
 | Codex | Main `orchestrator`、Planner/Reviewer `read-only`、Worker `workspace-write` | `codex-acp` | direct検証済み、ACP拒否 | ACPのpermission制御がinternal writeを止めないnegative test結果。 |
-| GitHub Copilot | Planner/Reviewer `read-only`（direct background、厳密な`1.0.81`） | native `copilot --acp`、acpx built-in `copilot` | 厳密なGitHub CLIを解決できた場合は検証済み | read-onlyのPlanner/Reviewerに限定。Workerは引き続き拒否。 |
+| GitHub Copilot | Planner/Reviewer `read-only`（direct background、厳密な`1.0.81`） | native `copilot --acp`、acpx built-in `copilot` | directは厳密なGitHub CLIを解決できた場合に検証済み; acp=`known-unverified` | read-onlyのPlanner/Reviewerに限定。Workerは引き続き拒否。 |
 | Cursor | なし | native `cursor-agent acp`、acpx built-in `cursor` | 認識済み; direct=`not-run`; acp=`not-run` | historicalなauth観測は未検証。現在のpermission phaseは`not-run`。 |
 | Devin | なし | native `devin acp` | 認識済み; direct=`blocked`; acp=`blocked` | no-tool smokeとaccount/tierの制限だけではtool turnを証明できない。 |
 | Antigravity | なし | 登録なし | 認識済み; raw=`rejected`（historical）; snapshot=`blocked` | rawのoutside-readはhistorical。snapshot enforcementは未検証。 |
