@@ -404,6 +404,18 @@ class OrcaProgramBackendTest(unittest.TestCase):
                     already_exited=True,
                 )
 
+    def test_startup_stop_rejects_a_pty_that_was_not_killed(self):
+        with mock.patch.object(self.backend, "_await_program_start"):
+            self.backend.start(self.spec)
+
+        def not_killed(*, terminal_id, cwd):
+            return backend_module.TerminalCloseVerdict(terminal_id, "tab", False)
+
+        self.fixture.client.terminal_close = not_killed
+        with self.assertRaisesRegex(RuntimeFailure, "close effect is unknown"):
+            self.backend.stop()
+        self.assertTrue(self.spec.state_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

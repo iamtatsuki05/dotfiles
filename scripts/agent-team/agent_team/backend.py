@@ -202,15 +202,6 @@ def _main_start_marker(
 __all__ = ("OrcaBackend", "OrcaClient")
 
 
-def _coordinator_exited_cleanly(state: Mapping[str, object]) -> bool:
-    process = state.get("coordinator_process")
-    return (
-        isinstance(process, Mapping)
-        and process.get("phase") == "exited"
-        and process.get("cli_cleanup_confirmed") is True
-    )
-
-
 class OrcaBackend(BackendPort):
     """Bind the typed runtime contract to the existing CLI Orca lifecycle."""
 
@@ -1041,6 +1032,7 @@ class OrcaBackend(BackendPort):
                 "agent-team role startup cleanup is pending; use status to inspect "
                 "the retained ownership evidence",
             )
+        coordinator_exited = False
         if is_program(state):
             from .orca_program import exit_cleanup_confirmed
 
@@ -1050,7 +1042,8 @@ class OrcaBackend(BackendPort):
                 or recovery.exists()
                 or recovery.is_symlink()
             )
-            if not starting and not exit_cleanup_confirmed(state):
+            coordinator_exited = exit_cleanup_confirmed(state)
+            if not starting and not coordinator_exited:
                 raise RuntimeFailure(
                     ErrorCode.BUSY,
                     "Orca coordinator exit and CLI cleanup are unconfirmed",
@@ -1302,8 +1295,7 @@ class OrcaBackend(BackendPort):
                     self._require_terminal_close(
                         close_verdict,
                         terminal_id=controller_terminal,
-                        already_exited=is_program(state)
-                        and _coordinator_exited_cleanly(state),
+                        already_exited=coordinator_exited,
                     )
                 except OrcaCommandError as exc:
                     if exc.not_found:

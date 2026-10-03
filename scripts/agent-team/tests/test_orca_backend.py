@@ -1122,6 +1122,19 @@ class OrcaClientContractTest(unittest.TestCase):
             1,
             json.dumps(
                 {
+                    "ok": True,
+                    "result": {"close": {"handle": "term_main", "ptyKilled": False}},
+                }
+            ),
+            "",
+        )
+        with self.assertRaises(OrcaProtocolError):
+            client.terminal_close(terminal_id="term_main", cwd=Path("/tmp"))
+
+        runner.responses[close_argv] = ProcessResult(
+            1,
+            json.dumps(
+                {
                     "ok": False,
                     "result": {
                         "close": {

@@ -644,8 +644,15 @@ class OrcaClient:
             command_error = exc
             result = exc.result
         verdict = self._decode_terminal_close(result, terminal_id=terminal_id)
-        if command_error is not None and verdict.pty_killed:
-            raise command_error
+        if command_error is not None:
+            if verdict.pty_killed:
+                raise command_error
+            # Only a successful close may omit the stop verdict; the close of an
+            # exited coordinator accepts ptyKilled false on that basis.
+            if verdict.pty_stop_verdict is None:
+                raise OrcaProtocolError(
+                    "Orca terminal close response was invalid"
+                ) from command_error
         return verdict
 
     @staticmethod
