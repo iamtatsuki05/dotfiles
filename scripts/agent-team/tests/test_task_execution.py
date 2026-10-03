@@ -309,6 +309,7 @@ class TaskExecutionTest(unittest.TestCase):
             with self.subTest(prompt=prompt[:20]):
                 self.assertIn("未検証の自己申告", prompt)
                 self.assertIn("該当ファイルを直接読み", prompt)
+                self.assertIn("findingsは文字列だけの配列", prompt)
                 self.assertTrue(prompt.rstrip().endswith("}"))
         self.assertIn("承認後にagent-teamが同じrevisionで実行", implementation)
         self.assertNotIn("承認後にagent-teamが同じrevisionで実行", plan)

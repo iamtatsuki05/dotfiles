@@ -911,8 +911,6 @@ def review_prompt(
         "findings": [],
     }
     supplement = f"\n\n追加の依頼:\n{message}" if message else ""
-    # Live reviewers with AskUserQuestion available sometimes answered from the
-    # writer's self-report alone and returned consult without opening a file.
     verification_note = (
         "TaskSpecのverificationは、承認後にagent-teamが同じrevisionで実行します。"
         "作成担当が実行していないことだけを理由に差し戻さないでください。"
@@ -931,7 +929,8 @@ def review_prompt(
         + "\n\nレビュー結果は次のキーを持つJSON objectだけを出力してください。"
         "説明文やMarkdownを追加してはいけません。decisionはapprove、"
         "request_changes、consultのいずれかです。request_changesとconsultでは"
-        "findingsを1件以上記載してください。\n"
+        "findingsを1件以上記載してください。findingsは文字列だけの配列です。"
+        "1件の指摘は、file:line、根拠、影響、確認方法を含めて1つの文字列に書いてください。\n"
         + json.dumps(template, ensure_ascii=False, separators=(",", ":"))
     )
 
