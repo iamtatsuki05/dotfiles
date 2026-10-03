@@ -96,6 +96,7 @@ run_unit_tests() {
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team_mcp.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"
+  "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_selective_setup.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_sync.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_support_matrix.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_skill_upstreams.sh"

@@ -645,6 +645,13 @@ EOF
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
+  assert_not_exists "$uv_log"
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" --install-deps --dry-run >/dev/null
+  assert_not_exists "$uv_log"
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" --install-deps >/dev/null
+
   assert_file "$uv_log"
   assert_contains "$uv_log" "pip install --python $hermes_install/hermes-agent/bin/python mcp>=1.24,<2"
 
@@ -777,7 +784,7 @@ from pathlib import Path
 config = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert config["agents"]["default_subagent_model"] == "gpt-6-astra"
 assert config["agents"]["default_subagent_reasoning_effort"] == "low"
-assert config["agents"]["max_concurrent_threads_per_session"] == 100
+assert config["agents"]["max_concurrent_threads_per_session"] == 25
 PY
 }
 
@@ -839,9 +846,10 @@ assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
 assert "checkpoint.md" in context
-assert "まとまった変更や検証" in context
-assert "最初の待機前" in context
-assert "1つでもあれば直列" in context
+assert "AGENTS.md" in context
+assert "最初の待機前" not in context
+assert "参考情報として扱い" not in context
+assert "read-only reviewer" not in context
 assert "CHANGES.md" not in context
 '
 
@@ -888,6 +896,19 @@ assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 assert ".agent/work/sessions" in payload["additional_context"]
 assert "CHANGES.md" not in payload["additional_context"]
 '
+}
+
+test_agent_context_reminder_is_silent_without_git_or_agent_dir() {
+  local plain_dir output
+  plain_dir="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-test-plain-XXXXXX")"
+
+  output="$(printf '%s\n' '{"hook_event_name":"SessionStart","cwd":"'"$plain_dir"'"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  rm -rf "$plain_dir"
+
+  if [[ -n "$output" ]]; then
+    print -r -- "expected no reminder output outside git/.agent workspaces, got: $output" >&2
+    return 1
+  fi
 }
 
 test_agent_context_reminder_detects_managed_dotfiles_agent_dir() {
@@ -962,6 +983,7 @@ main() {
   test_agent_sync_wrapper_delegates_to_setup_script
   test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
+  test_agent_context_reminder_is_silent_without_git_or_agent_dir
   test_agent_context_reminder_detects_managed_dotfiles_agent_dir
   echo "agent sync tests passed"
 }

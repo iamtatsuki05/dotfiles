@@ -30,6 +30,16 @@ zsh tests/test_agent_sync.sh
 zsh tests/test_agent_support_matrix.sh
 ```
 
+Use `zsh main.sh --only agent` to apply agent settings alone.
+Add `--dry-run` to preview deployment without displaying secret values.
+`zsh dotfiles/.agent/sync.sh --dry-run` uses the same sync implementation.
+
+Standalone sync no longer installs dependencies automatically.
+Use `zsh dotfiles/.agent/sync.sh --install-deps` when the existing Hermes MCP dependency installation is also needed.
+This option changes the environment and may access the network.
+Full `main.sh` setup passes it explicitly to retain its previous behavior.
+See the [getting started guide](getting-started.md) for the settings and secret-file scope.
+
 Syncing files does not prove that an already-running agent process reloaded its
 configuration. Restart or reload the relevant client when its documented
 behavior requires it, then verify the live configuration separately.
