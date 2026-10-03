@@ -60,9 +60,9 @@ internal Codex path remains disabled in public configuration. Named Orca
 launches each assignment in an owned Orca terminal and retains Orca
 Task/Dispatch/Delivery identities; it does not use the fixed version-3 `acpx`
 client. Main is direct Claude, and Planner, Worker, and Reviewer assignments
-use scoped Claude ACP. The provider-free parallel protocol proof is recorded
-in [Architecture](architecture.md); real-model parallel acceptance remains
-pending.
+use scoped Claude ACP. The provider-free parallel protocol proof and the
+real-model Orca `agent`/`parallel` and `program`/`parallel` runs with the
+explicit Claude-only profile are recorded in [Architecture](architecture.md).
 
 Native tmux, Herdr, and Zellij use a separate client with one public ACP connection per assignment.
 It selects Node.js, `@agentclientprotocol/claude-agent-acp@0.70.0`, and that
@@ -130,9 +130,9 @@ in state until its matching acknowledgment. The private Stop path sets
 `native.phase=stopping`, drains safe peers in that order, and retains any node
 with unknown identity, a missing typed result, or unproven cleanup while
 continuing safe peers. Focused contract checks and earlier bounded
-real-terminal/fake-provider cases cover the program path. The bounded live
-Main-parallel acceptance is recorded in [Architecture](architecture.md), and
-real-model parallel acceptance is pending.
+real-terminal/fake-provider cases cover the program path. The real-model
+`agent`/`parallel` and `program`/`parallel` runs with the explicit Claude-only
+profile are recorded in [Architecture](architecture.md).
 
 In Main-coordinated `agent`/`parallel`, Main first calls `task_batch_open` with
 the exact declared IDs in any order; the saved IDs are catalog-ordered. The

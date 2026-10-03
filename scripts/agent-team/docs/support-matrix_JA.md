@@ -34,8 +34,8 @@ Mainは各ownerを処理してから共有`delivery_ack`を1回呼びます。Co
 TaskSpec共通のprogram policy/driverへ接続しています。coordinator identityとreadiness/ownership fenceは[アーキテクチャ](architecture_JA.md)に記載します。
 focusedな実装testは接続済みです。名前付き`agent`/`serial`は、明示的なClaude専用構成で実モデルのOrca 1.4.199 run `run_e89da337f417`に合格しました。
 Workerの質問、差し戻し、承認、同じrevisionでの固定argv検証を経て、公開stopと所有資源の照合まで確認しています（[アーキテクチャ](architecture_JA.md)参照）。
-Mainなしの`program`/`serial`と`program`/`parallel`も実モデルのOrca runに合格しています。Mainが調整する`agent`/`parallel`の受入は未実施です。以前の`agent`/`parallel` run
-`run_fc73773d2cf5`はMainのprompt受付後、Fableの利用上限によりTaskDispatch 0件で停止し、所有Stopと不在確認を内部の検証記録で完了しています。
+Mainなしの`program`/`serial`と`program`/`parallel`、Mainが調整する`agent`/`parallel`も実モデルのOrca runに合格しています。以前の`agent`/`parallel` run
+`run_fc73773d2cf5`（2026-09-09）はMainのprompt受付後、Fableの利用上限によりTaskDispatch 0件で停止し、所有Stopと不在確認を内部の検証記録で完了しています。
 上表のregistry情報と、追加の制御を持たないadapterに対する安全性の判定は変えていません。
 
 ### native Claudeのquestion status
@@ -71,8 +71,8 @@ message、review limit、dependency inputではstateを変更しません。
 
 parallelの`role_prompt`はread-only調査も含めて拒否し、serialのread-only `role_prompt`は維持します。
 `task_batch_open`はこのmodeのClaude Main起動時に、明示的な`--tools`と`--allowedTools`へだけ追加します。
-今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載します。名前付きOrcaのprovider-free protocol proofも同文書にあります。
-Orca/native shared progression、他harness、実Main Astra、実モデルparallel受入は未解決です。これは実装状況であり、新しい`Verified` safety resultではありません。
+今回のMain parallel live受入と、tmuxとOrcaの`agent`/`parallel`の実モデルrunは[アーキテクチャ](architecture_JA.md)に記載します。名前付きOrcaのprovider-free protocol proofも同文書にあります。
+他harnessと実Main Astraは未解決です。これは実装状況であり、新しい`Verified` safety resultではありません。
 
 ### native programの状態
 
@@ -88,13 +88,13 @@ private parallel Stopはidentity不明またはcleanup未確認のnodeを保持�
 
 program contract focused testでは、serialとparallelのadmission、state、Delivery順序、wave遷移、private Stopを確認しています。
 過去のboundedな実端末・fake providerのcoverageは[アーキテクチャ](architecture_JA.md)に記載しています。これは実providerや実モデルの安全判定ではなく、
-今回のMain parallel live受入とは別です。Python 3.11と3.13でmocked-wire parallel pipelineを各1回通過していますが、実モデルのparallel受入は未実施です。
+今回のMain parallel live受入とは別です。Python 3.11と3.13でmocked-wire parallel pipelineを各1回通過しています。tmuxとOrcaの`program`/`parallel`の実モデルrunは[アーキテクチャ](architecture_JA.md)に記載しています。
 
 実機のserial program試験`b239945b-283e-403b-aba5-84ba984c8469`では、2問へ回答し、同じACP sessionで処理した後、ClaudeがFableの利用上限で失敗しました。
 実装、review、verificationには到達していません。公開stopと独立したprocess/path確認は成功しましたが、observerのcommand identity errorにより
 独立typed receipt fieldは保持できませんでした。このrunで主張するcleanup evidenceは、native client result、stop結果、process/path確認に限ります。
-並列dispatch、名前付きOrca、全10 harness、model切替、billing変更、通常authのwrite経路は実証していません。
-実モデルのparallel dispatchは実行していません。
+この試験では、並列dispatch、名前付きOrca、全10 harness、model切替、billing変更、通常authのwrite経路を実証していません。
+その後の実モデルのparallel runは[アーキテクチャ](architecture_JA.md)に記載しています。
 
 ACP adapterがインストールされていることやacpxが表示することだけでは、安全なrole用adapterで
 あることは証明できません。adapterの存在とagent-teamの検証済みprofileは別々に表示します。
@@ -106,7 +106,7 @@ ACP processを作る前に失敗します。別harnessへのfallbackはありま
 Version 5で変わるのはnodeの識別方法とtaskの担当指定に加え、native Mainの`agent`/`parallel` pathと`program`/`serial`・`program`/`parallel` coordinatorです。
 このmatrixのharness安全判定は変わりません。Claudeを使う5nodeのtmux受入試験、serialの限定的なprogram試験、
 boundedな端末・fake providerのparallel coverageは過去runの証拠として[アーキテクチャ](architecture_JA.md)に記載しています。
-今回のMain parallel live受入は同文書に記載し、実モデルのparallel受入は未実施です。
+今回のMain parallel live受入と、明示的なClaude専用構成による実モデルのparallel runも同文書に記載しています。
 
 固定version 3のOrca Claude ACPにはNode.js `22.13.0`以降も必要です。起動前にOrcaは選択したACP roleの
 `node`、`acpx`、`claude-agent-acp`だけを解決し、exact package manifestを確認したうえで、absoluteな

@@ -51,8 +51,8 @@ Version 5の名前付きOrcaも、この節で説明するscoped Claude ACPを�
 `agent`/`serial`はstate version 4、`agent`/`parallel`はstate version 5です。
 Codexの内部実装も接続していますが、公開設定では無効です。assignmentごとに所有するOrca terminalで実行し、
 OrcaのTask・Dispatch・Deliveryを維持します。固定version 3の`acpx` clientは使いません。Mainはdirect Claude、
-Planner、Worker、Reviewerはscoped Claude ACPです。providerを呼ばないparallel protocol proofは[アーキテクチャ](architecture_JA.md)に記載し、
-実モデルparallel受入は未実施です。
+Planner、Worker、Reviewerはscoped Claude ACPです。providerを呼ばないparallel protocol proofと、明示的なClaude専用構成によるOrcaの`agent`/`parallel`・`program`/`parallel`の実モデルrunは
+[アーキテクチャ](architecture_JA.md)に記載しています。
 
 native tmux、Herdr、Zellijでは専用clientが、assignmentごとに公開ACPの接続を1本使います。
 必要な依存はNode.js、`@agentclientprotocol/claude-agent-acp@0.70.0`、そのadapterに
@@ -104,7 +104,7 @@ version 5のnative `agent`/`parallel`と`program`/`parallel` stateは、active�
 完了Deliveryは`role_read` → `role_release` → `delivery_ack`の順で処理し、release後のassignmentも一致するackまでstateに残します。
 private Stopは`native.phase=stopping`を保存して安全なpeerを同じ順でdrainし、identity不明、typed result不足、cleanup未確認のnodeを保持したまま
 安全なpeerを続けます。このprogram経路はfocused contract testと過去のboundedな実端末・fake providerのcaseで確認しています。
-今回のMain parallel live受入は[アーキテクチャ](architecture_JA.md)に記載し、実モデルのparallel受入は未実施です。
+明示的なClaude専用構成による`agent`/`parallel`・`program`/`parallel`の実モデルrunは[アーキテクチャ](architecture_JA.md)に記載しています。
 
 Mainが調整する`agent`/`parallel`では、任意順の宣言済みIDを`task_batch_open`へ渡し、保存するIDはcatalog順に正規化します。
 最初のfinal review dispatchは全writerとDeliveryをdrainしてからbatchをsealし、同じrevisionの全Reviewer承認と全role/Deliveryの消費後にfixed argv検証へ進みます。

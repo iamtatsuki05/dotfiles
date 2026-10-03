@@ -12,7 +12,7 @@ TaskSpecとscoped Claude ACP policyを使い、terminal driverだけがruntime�
 native `program`/`parallel`は`max_active`まで独立したassignmentを受け付け、nodeごとにDelivery stateを保存します。
 Version 5のnativeと名前付きOrcaの`agent`/`parallel`では、Mainが名前付きnodeを調整します。
 Mainはdispatch前に`task_batch_open`で対象batchを開き、両経路で共通のTaskSpec、TaskBatch、レビュー、検証の規則を使います。
-実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。native `agent`/`parallel`と`program`/`parallel`は、明示的なClaude専用構成の実モデルtmux runで受入済みです。名前付きOrcaの`program`/`serial`と`program`/`parallel`も合格しています。Mainが調整するOrcaの`agent`/`parallel`は未完了です。
+実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。native `agent`/`parallel`と`program`/`parallel`は、明示的なClaude専用構成の実モデルtmux runで受入済みです。名前付きOrcaの`program`/`serial`、`program`/`parallel`、Mainが調整する`agent`/`parallel`も実モデルのOrca runに合格しています。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
@@ -71,9 +71,10 @@ TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質
 [アーキテクチャ](docs/architecture_JA.md)に記載します。version 5のnative `program`/`serial`はMainなしで接続し、
 native `program`/`parallel`にも実装、focused contract test、boundedな実端末・fake providerのcoverageがあります。
 名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、
-TaskSpec共通のprogram policy/driverへ接続しています。Mainなしの固定argv Python coordinatorまで実装・テスト接続済みですが、
-どちらも明示的なClaude専用構成の実モデルOrca 1.4.199 runに合格しています。Mainが調整するOrcaの`agent`/`parallel`の実モデル受入、全harness、Codex認証、Orcaとnativeに共通する進行管理は
-別の検証課題として残ります。
+TaskSpec共通のprogram policy/driverへ接続しています。Mainなしの固定argv Python coordinatorまで実装・テスト接続済みで、
+どちらも明示的なClaude専用構成の実モデルOrca 1.4.199 runに合格しています。
+Orcaとnative backendはTaskSpec、レビュー、検証、programの進行に同じコードを使い、`agent`/`program`と`serial`/`parallel`の4つの組み合わせはいずれもtmuxとOrcaの両方で実モデルrunに合格しています。
+全harness、Codex認証、既定のFable/Astra構成は別の検証課題として残ります。
 
 Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
 nativeの`agent`/`serial`とMainが調整する`agent`/`parallel`に加えて、Main roleを置かない

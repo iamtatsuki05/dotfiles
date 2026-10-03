@@ -15,8 +15,8 @@ Mainはdirect Claude・permission `orchestrator`、Planner、Worker、Reviewer�
 名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使います。
 どちらもTaskSpec共通のprogram policy/driverへ接続しており、明示的なClaude専用構成の実モデルOrca 1.4.199 runに合格しています（[アーキテクチャ](architecture_JA.md)参照）。
 Codex ACPの公開設定は引き続き拒否します。
-providerを呼ばないparallel protocol proofとserialの過去証拠は[アーキテクチャ](architecture_JA.md)に記載し、実モデルparallel受入は未実施です。
-既存のfocused contract testとboundedな端末・fake providerの記録は、それぞれの過去runに限定した証拠です。実モデルのparallel受入も未実施です。
+providerを呼ばないparallel protocol proof、serialの過去証拠、名前付きOrcaの`agent`/`parallel`と`program`/`parallel`の実モデルrunは[アーキテクチャ](architecture_JA.md)に記載しています。
+既存のfocused contract testとboundedな端末・fake providerの記録は、それぞれの過去runに限定した証拠です。
 
 同梱のversion 3設定は、Main/PlannerにClaude `fable`、Worker/Reviewerにdirect Codex
 `gpt-6-astra`を使うままです。このページの例では、全nodeにClaudeを明示指定します。
@@ -300,7 +300,7 @@ pending user questionは自分のassignmentだけを止め、条件を満たす�
 `task_verify`は全active assignmentとDeliveryのdrainが終わるまでrun全体で拒否します。
 version 5 stateはassignmentごとにresult、question、Delivery stageを保持します。canonical waveは全writer完了後にsealし、
 同じ統合revisionをreviewし、宣言したfixed argvを検証してから次のwaveへ進みます。focused contract testに加え、Python 3.11と3.13でmocked-wire parallel pipelineを各1回通過しています。
-これはprogram coordinatorの実装証拠であり、[アーキテクチャ](architecture_JA.md)に記載するMain parallel live受入とは別です。実モデルのparallel受入は実施していません。
+これはprogram coordinatorの実装証拠であり、[アーキテクチャ](architecture_JA.md)に記載するMain parallel live受入とは別です。tmuxとOrcaの`program`/`parallel`の実モデルrunも同文書に記載しています。
 
 native programは既存のnative supervisorを使い、名前付きOrcaのprogramは上記の固定argv Python coordinatorを使います。
 どちらもMain modelを追加しません。確認が必要な場合は`--coordinator`で選択したterminalへattachします。

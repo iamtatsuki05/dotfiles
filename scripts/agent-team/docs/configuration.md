@@ -22,7 +22,7 @@ parallel path reuses the common TaskBatch and review contracts; its Run-level
 FIFO Delivery is described in [Architecture](architecture.md). Named Orca
 `program`/`serial` uses state version 4 and `program`/`parallel` uses state
 version 5; both use the common TaskSpec program policy and driver, and both
-passed real-model Orca 1.4.199 runs with the explicit Claude-only profile. Main-coordinated Orca `agent`/`parallel` has no real-model run yet.
+passed real-model Orca 1.4.199 runs with the explicit Claude-only profile, as did Main-coordinated Orca `agent`/`parallel`.
 The version-3 reference
 below retains its fixed Main role and does not express a Mainless program graph.
 

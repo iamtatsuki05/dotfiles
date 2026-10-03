@@ -21,11 +21,11 @@ one Run-level FIFO Delivery; it does not add a scheduler. Named Orca
 `program`/`serial` uses state version 4 and `program`/`parallel` uses state
 version 5. Both are connected to the common TaskSpec program policy and
 driver, and both passed real-model Orca 1.4.199 runs with the explicit Claude-only profile (see [Architecture](architecture.md)). Codex ACP
-configurations remain rejected. The provider-free parallel protocol proof and
-the separate serial evidence are recorded in [Architecture](architecture.md);
-real-model named-Orca parallel acceptance remains pending.
+configurations remain rejected. The provider-free parallel protocol proof,
+the separate serial evidence, and the real-model named-Orca `agent`/`parallel`
+and `program`/`parallel` runs are recorded in [Architecture](architecture.md).
 Existing focused checks and bounded terminal/fake-provider records are
-historical, scoped evidence; real-model parallel acceptance remains pending.
+historical, scoped evidence.
 
 The bundled version-3 defaults remain Main/Planner on Claude `fable` and
 Worker/Reviewer on direct Codex `gpt-6-astra`; version-5 examples may explicitly
@@ -365,8 +365,8 @@ verification before the next wave. Focused contract checks and earlier bounded
 real-terminal/fake-provider cases cover this path; Python 3.11 and 3.13 each
 pass one mocked-wire pipeline. These are implementation evidence for the
 program coordinator and do not replace the separate Main-parallel live
-acceptance recorded in [Architecture](architecture.md). Real-model parallel
-acceptance has not been run.
+acceptance recorded in [Architecture](architecture.md). The real-model
+`program`/`parallel` runs on tmux and Orca are recorded there as well.
 
 Native program uses the existing native supervisor; named Orca program uses
 the fixed-argv Python coordinator described above. Neither adds a Main model.

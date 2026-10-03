@@ -43,9 +43,9 @@ passed a real-model Orca 1.4.199 run, `run_e89da337f417`, with the explicit
 Claude-only profile: a Worker question, a request for changes, approval, and
 fixed-argv verification on one revision, followed by public stop and owned
 resource checks (see [Architecture](architecture.md)). Mainless
-`program`/`serial` and `program`/`parallel` also passed real-model Orca runs;
-Main-coordinated `agent`/`parallel` acceptance is pending. The earlier `agent`/`parallel`
-run `run_fc73773d2cf5` reached Main prompt acceptance before Fable's usage
+`program`/`serial` and `program`/`parallel` and Main-coordinated
+`agent`/`parallel` also passed real-model Orca runs. The earlier `agent`/`parallel`
+run `run_fc73773d2cf5` (2026-09-09) reached Main prompt acceptance before Fable's usage
 limit with zero TaskDispatches; owned Stop and absence checks completed in
 private validation records. This does not change the static registry or the safety
 findings for unwrapped adapters in the table above.
@@ -102,10 +102,10 @@ state-neutral.
 Parallel `role_prompt` is rejected, including read-only research; serial
 read-only `role_prompt` is unchanged. `task_batch_open` is advertised only in
 the explicit Claude Main `--tools` and `--allowedTools` lists for this mode.
-The bounded live Main-parallel acceptance is recorded in [Architecture](architecture.md).
-Named Orca's provider-free protocol proof is documented there; shared
-Orca/native progression, other harnesses, real Main Astra, and real-model
-parallel acceptance remain gaps. This is an implementation status, not a new
+The bounded live Main-parallel acceptance and the real-model tmux and Orca
+`agent`/`parallel` runs are recorded in [Architecture](architecture.md).
+Named Orca's provider-free protocol proof is documented there; other harnesses
+and real Main Astra remain gaps. This is an implementation status, not a new
 `Verified` safety result.
 
 ### Native program status
@@ -134,7 +134,8 @@ real-terminal/fake-provider acceptance is recorded in Architecture as
 historical, scoped evidence; this is not real-provider or real-model safety
 evidence and does not replace the bounded live Main-parallel acceptance in
 [Architecture](architecture.md). Python 3.11 and 3.13 each pass one
-mocked-wire parallel pipeline; real-model parallel acceptance is pending.
+mocked-wire parallel pipeline. The real-model `program`/`parallel` runs on tmux
+and Orca are recorded in [Architecture](architecture.md).
 
 The real serial program trial
 `b239945b-283e-403b-aba5-84ba984c8469` answered two questions in the same ACP
@@ -145,7 +146,8 @@ error prevented independent typed receipt fields from being retained. The
 native client result, stop result, and process/path checks are therefore the
 only cleanup evidence claimed for that run. Parallel dispatch, named Orca, all
 ten harnesses, model switching, billing changes, and normal-auth write coverage
-were not established. No real-model parallel dispatch has been run.
+were not established by that trial; the later real-model parallel runs are
+recorded in [Architecture](architecture.md).
 
 An ACP adapter being installed or listed by acpx does not prove that the
 adapter is safe for a role. It is shown separately from the verified
@@ -161,8 +163,8 @@ agent/parallel Main path plus program/serial and program/parallel coordinators, 
 safety dispositions in this matrix. Its bounded five-node Claude tmux
 acceptance, limited serial program trial, and bounded terminal/fake-provider
 parallel coverage are historical and described in [Architecture](architecture.md).
-The bounded live Main-parallel acceptance is described in [Architecture](architecture.md);
-real-model parallel acceptance remains pending.
+The bounded live Main-parallel acceptance and the real-model parallel runs with
+the explicit Claude-only profile are described in [Architecture](architecture.md).
 
 The fixed version-3 Orca Claude ACP profile requires Node.js `22.13.0` or newer. Before launch,
 Orca resolves only the selected ACP roles' `node`, `acpx`, and

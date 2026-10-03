@@ -19,8 +19,8 @@ dispatch; both paths use the common TaskSpec, TaskBatch, review, and verificatio
 rules. The implementation and bounded evidence are recorded in
 [Architecture](docs/architecture.md). Native `agent`/`parallel` and
 `program`/`parallel` passed real-model tmux runs with the explicit Claude-only
-profile. Named Orca `program`/`serial` and `program`/`parallel` also passed;
-Main-coordinated Orca `agent`/`parallel` acceptance remains pending.
+profile. Named Orca `program`/`serial`, `program`/`parallel`, and
+Main-coordinated `agent`/`parallel` passed real-model Orca runs.
 
 Version-5 named Orca `agent`/`serial` and `agent`/`parallel` teams can use
 direct Claude Main and scoped Claude ACP background roles. Planner/Reviewer
@@ -99,9 +99,11 @@ Named Orca `program`/`serial` uses state version 4 and
 `program`/`parallel` uses state version 5; both are connected to the common
 TaskSpec program policy and driver. Their Mainless fixed-argv coordinator is
 implemented and test-connected, and both passed real-model Orca 1.4.199 runs with the explicit Claude-only profile.
-Real-model Main-coordinated Orca `agent`/`parallel` acceptance, all-harness
-coverage, Codex authentication, and shared Orca/native progression remain
-separate evidence gates.
+Orca and the native backends share the TaskSpec, review, verification, and
+program progression code, and all four `agent`/`program` and
+`serial`/`parallel` combinations passed real-model runs on both tmux and Orca.
+All-harness coverage, Codex authentication, and the default Fable/Astra
+configuration remain separate evidence gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
 routes in native `agent`/`serial` and Main-coordinated `agent`/`parallel`

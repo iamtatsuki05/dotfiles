@@ -72,8 +72,8 @@ for confirmed provider cleanup, then drains existing completion Delivery or
 stops the exact context-only Dispatch and closes owned terminals. These paths
 have contract tests. The named `agent`/`serial` path passed a real-model run,
 `run_e89da337f417`, described in the 2026-10-04 live acceptance below. Named
-Orca `program`/`serial` and `program`/`parallel` passed too; Main-coordinated
-`agent`/`parallel` remains without real-model evidence.
+Orca `program`/`serial`, `program`/`parallel`, and Main-coordinated
+`agent`/`parallel` passed too.
 
 ### Named Orca agent/parallel uses one Run FIFO
 
@@ -121,7 +121,8 @@ checks; the same 233 source files stayed unchanged throughout. Independent
 reviews led to fixes for stale invalid-batch publication, conflicting active
 question/result state, and answer receipt replacement before these final runs.
 Only documentation was updated afterward; runtime and test contents stayed
-unchanged. Real-model named-Orca parallel acceptance remains pending.
+unchanged. Real-model named-Orca parallel acceptance was still pending then;
+the 2026-10-04 live acceptance below records it.
 
 ### Named Orca program uses a Mainless coordinator
 
@@ -278,14 +279,13 @@ tests. Python 3.11 and 3.13 each have one passing mocked-wire parallel
 pipeline; serial approval/request-changes coverage, `/usr/bin/true`
 verification, and real-Python self-registration and readiness-wait tests also
 pass. Earlier bounded terminal/fake-provider parallel coverage is recorded
-below as historical evidence for its own program scope. The bounded live
-Main-parallel acceptance is recorded below; real-model parallel acceptance and
-all-harness requirements remain pending. The existing named-Orca
-`agent`/`parallel` run `run_fc73773d2cf5` reached Main prompt acceptance,
-then observed zero TaskDispatches at the Fable usage limit; the owned Stop and
-absence checks completed in private validation records. No actual Orca/model program
-run has been performed. The named Orca protocol proof above is provider-free
-and does not close the real-model acceptance gate.
+below as historical evidence for its own program scope. The real-model
+parallel runs with the explicit Claude-only profile are recorded in the
+2026-10-04 live acceptance below; all-harness requirements remain pending. The
+earlier named-Orca `agent`/`parallel` run `run_fc73773d2cf5` (2026-09-09)
+reached Main prompt acceptance, then observed zero TaskDispatches at the Fable
+usage limit; the owned Stop and absence checks completed in private validation
+records. The named Orca protocol proof above is provider-free.
 
 ### Named nodes and explicit TaskSpec routes
 
@@ -342,8 +342,9 @@ keeps declared `task_ids`, `phase`, and `revision`, and advances in declaration
 and dependency order. All writers finish before the wave is sealed; all
 same-revision reviewers must approve before fixed-argv verification, and only
 then can the successor wave begin. Focused checks and earlier bounded
-real-terminal/fake-provider cases cover the native program parallel contract;
-real-model parallel acceptance remains pending.
+real-terminal/fake-provider cases cover the native program parallel contract,
+and the real-model native and Orca `program`/`parallel` runs are recorded in the
+2026-10-04 live acceptance below.
 
 Agent/parallel has a different barrier. Main first calls `task_batch_open` with
 a non-empty, unique list of declared IDs in any input order. The runtime
@@ -369,9 +370,9 @@ review-limit, or dependency input leaves the state unchanged.
 Parallel `role_prompt` is rejected, including read-only research; serial
 read-only `role_prompt` remains available. `task_batch_open` is advertised only
 in the explicit parallel Main `--tools` and `--allowedTools` lists. The bounded
-live Main-parallel acceptance is recorded below. Real-model Main-coordinated
-named Orca `agent`/`parallel`, shared Orca/native progression, and real Main
-Astra/provider acceptance remain gaps; the provider-free named-Orca protocol
+live Main-parallel acceptance and the real-model Main-coordinated tmux and
+named Orca `agent`/`parallel` runs are recorded below. Real Main
+Astra/provider acceptance remains a gap; the provider-free named-Orca protocol
 proof is recorded above.
 
 Reviewer consultation is a separate named-native operation. `status` exposes
@@ -476,7 +477,8 @@ and CI results, see [PR #7](https://github.com/iamtatsuki05/dotfiles/pull/7).
 Those results apply to the commit identified there; verify that it matches the
 code being reviewed.
 The bounded agent/parallel live acceptance is recorded below; real-model
-parallel acceptance remains unverified.
+parallel acceptance had not been run at that point (see the 2026-10-04 live
+acceptance).
 
 The first Zellij run `f678e9f5-9fbb-4376-a18a-1855612ba69b` exited before
 review; its exact reason was not preserved. A later startup capture
@@ -492,8 +494,8 @@ the eight-case parallel audit above. It passed five lifecycle and question
 cases on tmux, Herdr, and Zellij without provider or authentication calls.
 Zellij's startup test also covered a temporary-name suffix beginning with an
 underscore; the producer supplied a valid prefix while the strict path
-validator remained unchanged. It does not replace the pending real-model
-parallel acceptance.
+validator remained unchanged. It does not replace the real-model parallel
+acceptance recorded in the 2026-10-04 live acceptance.
 
 ### Bounded live native agent/parallel acceptance
 
@@ -580,8 +582,9 @@ change those earlier outcomes.
 ### Live acceptance with the explicit Claude-only profile (2026-10-04)
 
 These runs used real models. Each started from a wheel-only Python 3.11.15
-environment that contained only `dotfiles-agent-team`; all 81 runtime files
-matched the committed source and the wheel. `PATH` exposed only the selected
+environment that contained only `dotfiles-agent-team`; all runtime files
+matched the committed source and the wheel (81 files, or 82 from `30967a6`,
+which added the Copilot ACP module). `PATH` exposed only the selected
 executables: Claude Code 2.1.288, Node 24.21.0, `claude-agent-acp` 0.70.0 with
 ACP SDK 1.3.0, and the selected terminal or Orca. The harness checked before
 start that unselected CLIs, other terminals, `uv`, `npm`, `npx`, and `acpx`
@@ -608,9 +611,11 @@ public MCP tools over one stdio session and never prompts the Main model.
 | Mainless parallel | `program`/`parallel`, Planner omitted | tmux | `43bc8c1` | `70006335-…` | the coordinator started both writers together, both reviewers approved, both tasks verified on one integrated revision, public stop 0.687 s |
 | Read-only research | `program`/`serial`, plan-only route | tmux | `8c7cd2d` | `2aa38be2-…` | the Planner's plan was approved; verification ran on the reviewed workspace revision, which differs from the plan-body digest; no file changed; public stop 0.278 s |
 | Question and request for changes inside a parallel batch | scripted Main, `agent`/`parallel` | tmux | `051b66b` | `2b02fd75-…` | one Worker's question was answered and acknowledged; one reviewer approved and the other requested changes; dispatching the original Worker reopened the batch and returned the approved peer to review; both were approved again and verified on one revision |
+| Request for changes inside a parallel batch, handled by the Main model | `agent`/`parallel`, Planner omitted | tmux | `e6ea2ab` | `8beb1cfb-…` | Main told one Worker to write a wrong product first; that reviewer requested changes while the other approved; Main dispatched the original Worker again, which reopened the batch and returned the approved peer to review; both were approved in round 2 and verified on one integrated revision; public stop 1.105 s; 11 PIDs, 10 process groups, and 23 owned paths absent |
 | Mainless serial on Orca | `program`/`serial` | Orca 1.4.199 | `3852faf` | `run_344c5c2e5733` | the coordinator ran the Worker, review, and verification without input; public stop 1.327 s; 3 team terminals, 4 PIDs, and 3 process groups absent |
 | Mainless parallel on Orca | `program`/`parallel` | Orca 1.4.199 | `3852faf` | `run_2298fbae4241` | both writers and both reviewers ran concurrently; both tasks verified on one integrated revision; public stop 1.592 s; 5 team terminals, 6 PIDs, and 5 process groups absent |
 | Question, review, verify on Orca | named `agent`/`serial` | Orca 1.4.199 | `a0232af` | `run_e89da337f417` | Worker question answered by Main and recorded, implementation sent back, fixed, approved, fixed-argv verification on one revision, `completed`; public stop removed all 69 recorded processes and owned resources; a closed team terminal left Orca's live list within 0.876 s |
+| Main-coordinated parallel on Orca | named `agent`/`parallel`, Planner omitted | Orca 1.4.199 | `e6ea2ab` | `run_0896461d3533` | both writers active together; worker-a's question was answered by the Main model and acknowledged inside the batch; both reviewers approved; both tasks verified on one integrated revision; public stop removed all 9 recorded processes and owned resources, and the 5 team terminals were inactive |
 
 In the interrupt runs, the Worker first wrote a marker file and then read a
 protected file repeatedly. Public stop ran while the Worker was active, after
@@ -625,7 +630,7 @@ missing `tmux`, `claude`, `node`, or `claude-agent-acp` each exited with status
 1, left state unchanged, started no process, and printed the missing item, the
 selecting setting, and the fix (commit `062c9fa`).
 
-The live runs found seven defects, each fixed before the run that passed:
+The live runs found eight defects, each fixed before the run that passed:
 
 - Reviewers sometimes judged from the writer's self-report without opening a
   file. With a claude.ai login, Claude Code added the account's connectors as
@@ -668,7 +673,15 @@ The live runs found seven defects, each fixed before the run that passed:
   no stop verdict, which its own CLI treats as success, but agent-team required
   a killed PTY and the stop failed with "Main terminal close effect is unknown".
   That answer is now accepted only after the coordinator's exit and CLI cleanup
-  were confirmed (`3852faf`).
+  were confirmed (`3852faf`). A later change checks that exit on the OS also
+  for a stop during startup, and treats a failed close command without a stop
+  verdict as a protocol error (`e6ea2ab`).
+- A reviewer returned a correct approval inside a ```json code fence. The
+  strict parser rejected it with "review output must be one JSON object", and
+  the task failed. The review prompt now also forbids a code fence; the parser
+  still accepts only the bare JSON object (`ca7bcb5`). None of the 22
+  throwaway reviewer runs had wrapped its verdict. Whether this also caused the
+  earlier Mainless Orca review failure, whose reason was not saved, is unknown.
 
 Failed attempts are retained and are not rewritten by the later successes.
 Orca runs `run_fe096b06952e` and `run_bd6311c84d24` failed at the Worker
@@ -698,9 +711,21 @@ coordinator process is gone. A second run's task failed at review; the harness
 stopped it before saving the reason, so that cause is unknown, and the harness
 now saves the task records before a failure stop.
 
-These runs do not cover Fable, Astra, Codex, or the other harnesses. The
-parallel-batch question and request for changes were driven by a scripted
-Main, not by the Main model.
+The first Main-coordinated Orca parallel run, `run_0aab87f6cc36`, failed when
+one reviewer wrapped its approval in a code fence (fixed above). The next run,
+`run_9277708e3c0d`, completed both tasks and verified them on one integrated
+revision, but the runner's Main transcript audit kept waiting: Claude Code
+2.1.288 records a pasted prompt inside a `<pasted_content>` wrapper, and the
+audit compared the whole message with the prompt. The runner stopped the team
+through the public command at its timeout. An audit that accepts exactly one
+such wrapper around the unchanged prompt accepted that transcript afterwards.
+A third run, `run_d30e6c03f61a`, also verified both tasks, but the runner
+audited the transcript as soon as the saved state was completed, while Main
+was still making its last `task_get` calls, and rejected it. The audit now
+waits for Main's final `end_turn` message. All three runs ended with public
+stop and conclusive independent checks; `run_0896461d3533` then passed.
+
+These runs do not cover Fable, Astra, Codex, or the other harnesses.
 
 ## Components have narrow responsibilities
 
@@ -1327,9 +1352,6 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
   public, and the other seven need login, account, or runtime preparation.
 - Astra Worker/Reviewer and the default Fable configuration through the whole
   workflow; the 2026-10-04 runs used the explicit Claude-only profile
-- Real-model Main-coordinated Orca `agent`/`parallel` execution
-- Shared Orca/native progression
-- A question or a request for changes inside a parallel batch with real models
 
 ## Intentional exclusions
 
