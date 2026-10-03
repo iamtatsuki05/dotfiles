@@ -416,6 +416,35 @@ class OrcaProgramBackendTest(unittest.TestCase):
             self.backend.stop()
         self.assertTrue(self.spec.state_path.exists())
 
+    def test_startup_stop_needs_the_os_to_confirm_a_recorded_exit(self):
+        with mock.patch.object(self.backend, "_await_program_start"):
+            self.backend.start(self.spec)
+        state = read_state(self.spec.state_path)
+        state["coordinator_process"] = {
+            "pid": 999999999,
+            "process_group_id": 999999999,
+            "launch_nonce": state["coordinator_argv"][-1],
+            "argv": state["coordinator_argv"],
+            "phase": "exited",
+            "exit_code": 0,
+            "cli_cleanup_confirmed": True,
+        }
+        write_state(self.spec.state_path, state, require_existing=True)
+        self.backend._state = state
+
+        def not_killed(*, terminal_id, cwd):
+            return backend_module.TerminalCloseVerdict(terminal_id, "tab", False)
+
+        self.fixture.client.terminal_close = not_killed
+        with (
+            mock.patch.object(
+                orca_program, "exit_cleanup_confirmed", return_value=False
+            ),
+            self.assertRaisesRegex(RuntimeFailure, "close effect is unknown"),
+        ):
+            self.backend.stop()
+        self.assertTrue(self.spec.state_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
