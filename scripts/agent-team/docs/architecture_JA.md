@@ -171,7 +171,8 @@ ACP background roleにはattachできるTTYはありません。native pathで�
 OrcaとCodexがない環境、空白を含むworkspace path、削除済みconfigを使ったmodelなしの
 start/status/stop smokeが成功しています。
 
-Herdr driverはversion `0.8.2`とprotocol 20のhandshakeを厳密に確認します。Main自然終了で
+Herdr driverはversion `0.9.3`とprotocol 22のhandshakeを厳密に確認します。driver契約とfake providerの
+native契約は0.9.3で確認しました。それ以前の実モデルHerdr runは0.8.2とprotocol 20です。Main自然終了で
 Herdrのpaneやworkspaceが消える場合がありますが、paneの不在だけではstop成功とみなさず、
 所有するserver/socketとtrusted Mainのcleanupを確認します。
 
@@ -397,7 +398,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 | `agent_team/native_backend.py` | 共通nativeの`start`/`status`/`attach`/`stop`、native ACP assignment、完了通知、cleanup確認を担当する。 |
 | `agent_team/native_terminal.py` | 共通terminalのreceipt、inspection、presence、close protocolを定義する。 |
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | NativeBackendを選択したterminal driverへ束縛する。 |
-| `agent_team/herdr.py`, `zellij.py` | Herdrのversion 0.8.2/protocol 20のhandshakeと、0.44.1でcompatibilityを確認したZellijのidentity/cleanup contractを検証する。 |
+| `agent_team/herdr.py`, `zellij.py` | Herdrのversion 0.9.3/protocol 22のhandshakeと、0.44.1でcompatibilityを確認したZellijのidentity/cleanup contractを検証する。 |
 | `agent_team/native_main.py` | 所有するnative Mainのprocess group、またはprogram coordinator childを監督し、終了receiptを保存する。 |
 | `agent_team/native_program.py` | 保存済みnative coordinatorを検証し、共通program driverを呼び出す。 |
 | `agent_team/program_policy.py`, `program_driver.py` | 保存済みtask stateを使い、nativeと名前付きOrcaのprogram構成で、直列・並列のTaskSpec waveを進める操作を選択・実行する。 |

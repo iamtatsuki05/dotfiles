@@ -172,7 +172,7 @@ artifactは0件でした。再試験は、起動時のTaskSpec catalog、PID/PGI
 新しいterminal driverには、modelを呼び出さないfake Main/Nodeのpublic CLI evidenceがあります。
 Python 3.11と3.13でtmux、Herdr、ZellijそれぞれがMCP read/release/ack、active cancel、Main自然終了後の
 元config/prompt削除とcold status/stopに成功し、PID、socket、state、config、private rootの消失を独立確認しました。
-Herdr 0.8.2は通常shell bootstrapを使い、HERDR_ENVを偽装しません。0.44.1で互換性を確認したZellijはdetached mode、
+Herdr 0.9.3は通常shell bootstrapを使い、HERDR_ENVを偽装しません。0.44.1で互換性を確認したZellijはdetached mode、
 persistent clientなし、`--max-panes 1`なし、Main pane保持です。これはfake providerの証拠だけです。
 
 別の実Claude Code 2.1.261 workflowでは、HerdrとZellijをPython 3.13.15のisolated wheel-only環境で実行し、
@@ -284,8 +284,8 @@ Claudeの場合、`AskUserQuestion`を有効にするのは所有するprivate�
 Node clientはform elicitationを処理し、Python channelは回答とreceiptのdurableな順序を記録します。
 Codexにはquestion socketがなく、公開Codex ACP profileも引き続き無効です。
 
-terminalの挙動はHerdr `0.8.2`とZellij `0.44.1`で確認しています。Herdrはversion `0.8.2`と
-protocol 20のhandshakeを厳密に確認します。Zellijのpreflightはexecutableと既知のinventoryを確認し、
+terminalの挙動はHerdr `0.9.3`とZellij `0.44.1`で確認しています。Herdrはversion `0.9.3`と
+protocol 22のhandshakeを厳密に確認します。Zellijのpreflightはexecutableと既知のinventoryを確認し、
 CLIのexact versionは要求しません。確認したcompatibility versionではpersistent clientなしのdetached
 sessionを使い、`--max-panes 1`を使いません。
 

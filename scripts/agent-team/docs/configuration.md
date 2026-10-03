@@ -193,7 +193,7 @@ fake Node, without a model call. Under Python 3.11 and 3.13, tmux, Herdr, and
 Zellij each pass MCP read/release/ack, active cancellation, and natural Main
 exit followed by original config/prompt deletion and cold status/stop. PID,
 socket, state, config, and private-root absence are checked independently.
-Herdr 0.8.2 uses the normal-shell bootstrap without faking `HERDR_ENV`.
+Herdr 0.9.3 uses the normal-shell bootstrap without faking `HERDR_ENV`.
 The Zellij compatibility version tested at 0.44.1 uses detached mode, no persistent
 client, no `--max-panes 1`, and a held Main pane. These are fake-provider tests only.
 
@@ -329,8 +329,8 @@ client supports form elicitation and the Python channel records the durable
 answer/receipt sequence. Codex has no question socket, and its public ACP
 profile remains disabled.
 
-The terminal behavior was verified with Herdr `0.8.2` and Zellij `0.44.1`.
-Herdr's handshake requires exact version `0.8.2` and protocol 20. Zellij's
+The terminal behavior was verified with Herdr `0.9.3` and Zellij `0.44.1`.
+Herdr's handshake requires exact version `0.9.3` and protocol 22. Zellij's
 preflight checks the executable and known inventory, not an exact CLI version;
 the tested compatibility version uses a detached session with no persistent
 client and no `--max-panes 1`.

@@ -512,7 +512,7 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
   制限します。任意repository全体のcoverageは主張しません。
 - verification中断またはcleanup不確認では`verifying`などのstateを保持し、必要に応じてstop、
   新しいrole、再verificationをblockします。自動recoveryは主張しません。
-- Herdr 0.8.2はprivate headless serverと通常shell bootstrapを使い、`HERDR_ENV`を偽装しません。
+- Herdr 0.9.3はprivate headless serverと通常shell bootstrapを使い、`HERDR_ENV`を偽装しません。
   Main自然終了でpane/workspaceが消える場合も、server/socketのownershipとMain cleanupを確認するまで
   stop成功とは扱いません。
 - Zellijは0.44.1で互換性を確認しており、persistent clientなしのdetached sessionを使い、`--max-panes 1`を使いません。

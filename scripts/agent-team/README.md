@@ -634,7 +634,7 @@ cleanup result requires user consultation and remains retained.
 - An interrupted verification or unconfirmed cleanup retains `verifying` or
   another fail-closed state and blocks stop/new roles as required. Automatic
   recovery is not claimed.
-- Herdr 0.8.2 uses a private headless server and a normal-shell bootstrap; the
+- Herdr 0.9.3 uses a private headless server and a normal-shell bootstrap; the
   runtime never fakes `HERDR_ENV`. Natural Main exit may remove Herdr's pane and
   workspace, but terminal absence alone is not stop proof: owned server/socket
   identity and trusted Main process cleanup are still required.

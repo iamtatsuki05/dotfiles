@@ -238,7 +238,9 @@ status is never interpreted as a lifecycle event. Agent teams attach to Main;
 Mainless program teams use `attach --coordinator`. ACP background roles do not
 provide an attachable TTY.
 
-The Herdr driver was verified with exact version 0.8.2 and protocol 20. It owns
+The Herdr driver requires exact version 0.9.3 and protocol 22. Its driver and
+fake-provider native contracts were verified on 0.9.3; the earlier real-model
+Herdr runs used 0.8.2 and protocol 20. It owns
 a private headless server and uses a normal-shell bootstrap without faking
 `HERDR_ENV`. Natural Main exit can remove Herdr's pane and workspace. An absent
 pane is not stop proof: the owned server/socket and trusted Main process cleanup
@@ -582,7 +584,7 @@ change those earlier outcomes.
 | `agent_team/native_backend.py` | Owns the shared native `start`/`status`/`attach`/`stop` path, ACP assignments, completion publication, and cleanup checks. |
 | `agent_team/native_terminal.py` | Defines the shared terminal receipt, inspection, presence, and close protocol. |
 | `agent_team/tmux_backend.py`, `herdr_backend.py`, `zellij_backend.py` | Bind NativeBackend to the selected terminal driver. |
-| `agent_team/herdr.py`, `zellij.py` | Verify the exact Herdr 0.8.2/protocol-20 handshake and the Zellij driver identity/cleanup contract tested with 0.44.1. |
+| `agent_team/herdr.py`, `zellij.py` | Verify the exact Herdr 0.9.3/protocol-22 handshake and the Zellij driver identity/cleanup contract tested with 0.44.1. |
 | `agent_team/native_main.py` | Supervises the owned native Main process group or the program coordinator child and publishes its exit receipt. |
 | `agent_team/native_program.py` | Validates the saved native coordinator and enters the common program driver. |
 | `agent_team/program_policy.py`, `program_driver.py` | Select and apply serial or parallel TaskSpec wave actions for native and named Orca program runs, using the saved task state. |

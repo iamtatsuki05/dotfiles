@@ -29,8 +29,8 @@ from typing import Final, cast
 from .native_terminal import TerminalPresence
 from .process_identity import python_process_argv, read_process_argv
 
-HERDR_VERSION: Final = "0.8.2"
-HERDR_PROTOCOL: Final = 20
+HERDR_VERSION: Final = "0.9.3"
+HERDR_PROTOCOL: Final = 22
 _COMMAND_TIMEOUT_SECONDS: Final = 10.0
 _STARTUP_TIMEOUT_SECONDS: Final = 10.0
 _POLL_SECONDS: Final = 0.05

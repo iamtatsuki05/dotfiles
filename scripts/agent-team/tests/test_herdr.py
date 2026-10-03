@@ -118,8 +118,8 @@ class HerdrDriverContractTest(unittest.TestCase):
             supervisor_argv=("/usr/bin/python3", "-m", "agent_team", "_native-main"),
             server_cwd=self.root,
             cwd=Path("/tmp/workspace"),
-            version="0.8.2",
-            protocol=20,
+            version="0.9.3",
+            protocol=22,
             config_identity=_identity(config),
             socket_identity=_identity(socket_path),
             client_socket_identity=_identity(client_socket),
@@ -192,7 +192,7 @@ class HerdrDriverContractTest(unittest.TestCase):
             nonlocal created
             requests.append((method, params))
             if method == "ping":
-                return {"type": "pong", "version": "0.8.2", "protocol": 20}
+                return {"type": "pong", "version": "0.9.3", "protocol": 22}
             if method == "events.subscribe":
                 return {"type": "subscription_started"}
             if method == "workspace.create":
@@ -216,8 +216,8 @@ class HerdrDriverContractTest(unittest.TestCase):
                     return {
                         "type": "session_snapshot",
                         "snapshot": {
-                            "version": "0.8.2",
-                            "protocol": 20,
+                            "version": "0.9.3",
+                            "protocol": 22,
                             "workspaces": [],
                             "tabs": [],
                             "panes": [],
@@ -228,8 +228,8 @@ class HerdrDriverContractTest(unittest.TestCase):
                 return {
                     "type": "session_snapshot",
                     "snapshot": {
-                        "version": "0.8.2",
-                        "protocol": 20,
+                        "version": "0.9.3",
+                        "protocol": 22,
                         "workspaces": [{"workspace_id": "w1"}],
                         "tabs": [{"tab_id": "w1:t1", "workspace_id": "w1"}],
                         "panes": [
@@ -675,8 +675,8 @@ class HerdrDriverContractTest(unittest.TestCase):
             supervisor_argv=("/usr/bin/python3", "-m", "agent_team", "_native-main"),
             server_cwd=self.root,
             cwd=self.root,
-            version="0.8.2",
-            protocol=20,
+            version="0.9.3",
+            protocol=22,
             config_identity=_identity(paths["config"]),
             socket_identity=_identity(paths["socket"]),
             client_socket_identity=_identity(paths["client"]),
@@ -720,8 +720,8 @@ class HerdrDriverContractTest(unittest.TestCase):
         return {
             "type": "session_snapshot",
             "snapshot": {
-                "version": "0.8.2",
-                "protocol": 20,
+                "version": "0.9.3",
+                "protocol": 22,
                 "workspaces": [],
                 "tabs": [],
                 "panes": [],
