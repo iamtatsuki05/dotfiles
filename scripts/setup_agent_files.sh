@@ -339,6 +339,7 @@ command_link_specs() {
 require_agent_team_command_link() {
   local command_path="$HOME/.local/bin/agent-team"
   local source_path="$REPO_ROOT/scripts/agent-team/agent-team"
+  (( DRY_RUN )) && return 0
   if [[ -L "$command_path" && "$command_path" -ef "$source_path" ]]; then
     return 0
   fi
@@ -347,7 +348,11 @@ require_agent_team_command_link() {
 }
 
 sync_commands() {
-  chmod +x "$REPO_ROOT/scripts/agent-team/agent-team"
+  if (( DRY_RUN )); then
+    print -r -- "chmod +x: $REPO_ROOT/scripts/agent-team/agent-team"
+  else
+    chmod +x "$REPO_ROOT/scripts/agent-team/agent-team"
+  fi
   sync_link_specs command_link_specs
   remove_managed_symlink "$HOME/.local/bin/agent_team_runtime.py" \
     "$REPO_ROOT/scripts/agent_team_runtime.py" \
