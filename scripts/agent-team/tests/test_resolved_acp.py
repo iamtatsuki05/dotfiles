@@ -110,7 +110,12 @@ class ResolvedAcpTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            command_argv[2:], [str(executables.node), str(executables.agent)]
+            command_argv[2:],
+            [
+                "ENABLE_CLAUDEAI_MCP_SERVERS=0",
+                str(executables.node),
+                str(executables.agent),
+            ],
         )
         self.assertEqual(argv[:2], [str(executables.node), str(executables.client)])
         self.assertNotIn("npx", argv)

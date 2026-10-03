@@ -177,6 +177,11 @@ def _validated_acp_executables(executables: AcpExecutables) -> AcpExecutables:
     return executables
 
 
+# A claude.ai login otherwise makes Claude Code add the account's connectors
+# as MCP tools; the acpx path has no flag-settings hook, so use the variable.
+CLAUDE_AI_CONNECTORS_OFF: Final = "ENABLE_CLAUDEAI_MCP_SERVERS=0"
+
+
 def build_acp_agent_command(
     team_id: str,
     role: str | RoleTarget,
@@ -206,6 +211,7 @@ def build_acp_agent_command(
     argv = [
         "env",
         f"AGENT_TEAM_ACP_MARKER={marker}",
+        CLAUDE_AI_CONNECTORS_OFF,
         str(executables.node),
         str(executables.agent),
     ]
@@ -216,7 +222,7 @@ def build_acp_agent_command(
             raise RuntimeValidationError(
                 "scoped ACP policy requires an absolute policy path"
             )
-        argv[3:] = [
+        argv[4:] = [
             str(SCOPED_AGENT),
             "--agent-entry",
             str(executables.agent),
@@ -537,12 +543,13 @@ def build_acp_argv(
             str(write_policy),
         ]
     if (
-        len(agent_tokens) != 3 + len(expected_agent_tokens)
+        len(agent_tokens) != 4 + len(expected_agent_tokens)
         or agent_tokens[0] != "env"
         or not agent_tokens[1].startswith("AGENT_TEAM_ACP_MARKER=")
         or agent_tokens[1] == "AGENT_TEAM_ACP_MARKER="
-        or agent_tokens[2] != str(executables.node)
-        or agent_tokens[3:] != expected_agent_tokens
+        or agent_tokens[2] != CLAUDE_AI_CONNECTORS_OFF
+        or agent_tokens[3] != str(executables.node)
+        or agent_tokens[4:] != expected_agent_tokens
     ):
         raise RuntimeValidationError(
             "ACP agent command does not match resolved executable bindings"

@@ -136,6 +136,8 @@ def build_claude_argv(
             [
                 "--append-system-prompt",
                 instructions,
+                "--settings",
+                json.dumps({"disableClaudeAiConnectors": True}, separators=(",", ":")),
                 "--tools",
                 "Read,Grep,Glob",
                 "--allowedTools",

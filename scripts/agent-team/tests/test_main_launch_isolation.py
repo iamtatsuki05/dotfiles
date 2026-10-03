@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -124,6 +125,13 @@ class OrcaMainLaunchIsolationTest(unittest.TestCase):
                 mcp_server_path=self.root / "agent-team-mcp",
             )
         )
+
+    def test_claude_launches_disable_claude_ai_connectors(self) -> None:
+        for role in ("main", "planner"):
+            with self.subTest(role=role):
+                argv = self._claude_argv(role)
+                settings = json.loads(argv[argv.index("--settings") + 1])
+                self.assertIs(settings["disableClaudeAiConnectors"], True)
 
     def _factory(self, plan: dict[str, object]):
         with (
