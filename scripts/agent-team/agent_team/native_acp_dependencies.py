@@ -1,8 +1,8 @@
 """Resolve the pinned dependencies used by native ACP clients.
 
-This boundary intentionally knows only about the native Claude and Codex ACP
-profiles.  It does not resolve ``acpx`` or any other harness: the Orca resolver
-owns those dependencies separately.
+This boundary intentionally knows only about the native Claude, Codex, and
+internal Copilot ACP profiles.  It does not resolve ``acpx`` or any other
+harness: the Orca resolver owns those dependencies separately.
 """
 
 from __future__ import annotations
@@ -11,9 +11,11 @@ import errno
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import stat
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +86,32 @@ _CODEX_SERIALIZED_FIELDS = frozenset(
         "sdk_manifest_sha256",
     }
 )
+_COPILOT_PACKAGE = "@github/copilot"
+_COPILOT_VERSION = "1.0.91"
+_COPILOT_COMMAND = "copilot"
+_COPILOT_LOADER = "npm-loader.js"
+_COPILOT_HOST = ("darwin", "arm64")
+_COPILOT_PLATFORM_PACKAGE = "@github/copilot-darwin-arm64"
+_COPILOT_PLATFORM_BINARY = "copilot"
+_COPILOT_BINARY_SHA256 = (
+    "87f04922933c139cf4af7cb6a80b96161428618a6275fea4b8dfe7e7a69c9518"
+)
+_COPILOT_SDK_VERSION = "1.4.0"
+_COPILOT_COMMANDS = ("node", _COPILOT_COMMAND)
+_COPILOT_SERIALIZED_FIELDS = frozenset(
+    {
+        "node",
+        "loader",
+        "copilot",
+        "sdk",
+        "node_sha256",
+        "copilot_sha256",
+        "sdk_sha256",
+        "package_manifest_sha256",
+        "platform_manifest_sha256",
+        "sdk_manifest_sha256",
+    }
+)
 
 
 def _profile_error(missing: tuple[str, ...]) -> NativeAcpDependencyError:
@@ -106,6 +134,61 @@ def _codex_profile_error(missing: tuple[str, ...]) -> NativeAcpDependencyError:
         "then add node, codex-acp, and codex to PATH"
     )
     return NativeAcpDependencyError(message)
+
+
+def _copilot_profile_error(missing: tuple[str, ...]) -> NativeAcpDependencyError:
+    names = ", ".join(missing)
+    install = (
+        f"{_COPILOT_PACKAGE}@{_COPILOT_VERSION} {_SDK_PACKAGE}@{_COPILOT_SDK_VERSION}"
+    )
+    return NativeAcpDependencyError(
+        f"native Copilot ACP profile requires installed commands: {names}; "
+        f"install {_COPILOT_PACKAGE}@{_COPILOT_VERSION} and "
+        f"{_SDK_PACKAGE}@{_COPILOT_SDK_VERSION} into one npm prefix "
+        f"(npm install --prefix DIR {install}), then put DIR/node_modules/.bin "
+        "and Node.js 22 or newer first on PATH"
+    )
+
+
+def _copilot_loader_error(path: Path) -> NativeAcpDependencyError:
+    return NativeAcpDependencyError(
+        f"selected copilot is not the {_COPILOT_PACKAGE}@{_COPILOT_VERSION} "
+        f"{_COPILOT_LOADER}: {path}; put DIR/node_modules/.bin first on PATH "
+        "(another copilot, such as AWS Copilot, must not shadow it)"
+    )
+
+
+def _copilot_version_error() -> NativeAcpDependencyError:
+    return NativeAcpDependencyError(
+        f"selected {_COPILOT_PACKAGE}@{_COPILOT_VERSION} is required; install "
+        f"exactly {_COPILOT_PACKAGE}@{_COPILOT_VERSION} into the selected npm prefix"
+    )
+
+
+def _copilot_platform_error() -> NativeAcpDependencyError:
+    return NativeAcpDependencyError(
+        f"selected {_COPILOT_PACKAGE}@{_COPILOT_VERSION} requires "
+        f"{_COPILOT_PLATFORM_PACKAGE}@{_COPILOT_VERSION}"
+    )
+
+
+def _copilot_binary_error() -> NativeAcpDependencyError:
+    return NativeAcpDependencyError(
+        f"selected {_COPILOT_PLATFORM_PACKAGE}@{_COPILOT_VERSION} binary is not "
+        f"the verified build; reinstall {_COPILOT_PACKAGE}@{_COPILOT_VERSION} "
+        "into the selected npm prefix"
+    )
+
+
+def _copilot_sdk_error() -> NativeAcpDependencyError:
+    return NativeAcpDependencyError(
+        f"native Copilot ACP client requires {_SDK_PACKAGE}@{_COPILOT_SDK_VERSION} "
+        f"in the same npm prefix as {_COPILOT_PACKAGE}@{_COPILOT_VERSION}"
+    )
+
+
+def _copilot_drift_error(label: str) -> NativeAcpDependencyError:
+    return NativeAcpDependencyError(f"selected native Copilot ACP {label} changed")
 
 
 def _same_file_identity(first: os.stat_result, second: os.stat_result) -> bool:
@@ -437,6 +520,92 @@ def _sdk_entry(
         owner_package=owner_package,
         owner_version=owner_version,
     )[0]
+
+
+def _copilot_host() -> tuple[str, str]:
+    return sys.platform, platform.machine()
+
+
+def _copilot_pinned_sha256() -> str:
+    host = _copilot_host()
+    if host != _COPILOT_HOST:
+        raise NativeAcpDependencyError(
+            "native Copilot ACP profile is verified only on "
+            f"{'-'.join(_COPILOT_HOST)}; this host is {host[0]}-{host[1]}"
+        )
+    return _COPILOT_BINARY_SHA256
+
+
+def _copilot_package(loader: Path) -> tuple[Path, _ManifestRecord]:
+    """Return the npm ``node_modules`` root and manifest owning the loader."""
+
+    package_root = loader.parent
+    modules = package_root.parent.parent
+    if (
+        loader.name != _COPILOT_LOADER
+        or package_root.name != "copilot"
+        or package_root.parent.name != "@github"
+        or modules.name != "node_modules"
+    ):
+        raise _copilot_loader_error(loader)
+    _check_file(loader, executable=False, label="copilot loader")
+    try:
+        record = _read_manifest_record(package_root, _COPILOT_PACKAGE, _COPILOT_VERSION)
+    except NativeAcpDependencyError as exc:
+        raise _copilot_version_error() from exc
+    binaries = record.value.get("bin")
+    optional = record.value.get("optionalDependencies")
+    if (
+        not isinstance(binaries, Mapping)
+        or binaries.get(_COPILOT_COMMAND) != _COPILOT_LOADER
+        or not isinstance(optional, Mapping)
+        or optional.get(_COPILOT_PLATFORM_PACKAGE) != _COPILOT_VERSION
+    ):
+        raise _copilot_version_error()
+    return modules, record
+
+
+def _copilot_platform(loader: Path, modules: Path) -> tuple[Path, _ManifestRecord]:
+    try:
+        root = _dependency_root(
+            loader,
+            _COPILOT_PLATFORM_PACKAGE,
+            _COPILOT_VERSION,
+            reject_symlink=True,
+            owner_package=_COPILOT_PACKAGE,
+            owner_version=_COPILOT_VERSION,
+        )
+    except NativeAcpDependencyError as exc:
+        raise _copilot_platform_error() from exc
+    if not root.is_relative_to(modules):
+        raise _copilot_platform_error()
+    try:
+        record = _read_manifest_record(
+            root, _COPILOT_PLATFORM_PACKAGE, _COPILOT_VERSION
+        )
+    except NativeAcpDependencyError as exc:
+        raise _copilot_platform_error() from exc
+    if _export_target(record.value.get("exports")) != f"./{_COPILOT_PLATFORM_BINARY}":
+        raise _copilot_platform_error()
+    binary = root / _COPILOT_PLATFORM_BINARY
+    _check_file(binary, executable=True, label="copilot")
+    return _canonical_path(binary, "copilot"), record
+
+
+def _copilot_sdk(loader: Path, modules: Path) -> tuple[Path, _ManifestRecord]:
+    try:
+        sdk, record = _sdk_entry_and_manifest(
+            loader,
+            sdk_version=_COPILOT_SDK_VERSION,
+            reject_dependency_symlink=True,
+            owner_package=_COPILOT_PACKAGE,
+            owner_version=_COPILOT_VERSION,
+        )
+    except NativeAcpDependencyError as exc:
+        raise _copilot_sdk_error() from exc
+    if not sdk.is_relative_to(modules):
+        raise _copilot_sdk_error()
+    return sdk, record
 
 
 @dataclass(frozen=True)
@@ -773,6 +942,169 @@ class CodexAcpExecutables:
         )
 
 
+@dataclass(frozen=True)
+class CopilotAcpExecutables:
+    """The exact files selected for one internal Copilot ACP run.
+
+    ``copilot`` is the pinned platform binary, which is itself the ACP server.
+    The npm loader only identifies the selected package and is never executed.
+    """
+
+    node: Path
+    loader: Path
+    copilot: Path
+    sdk: Path
+    node_sha256: str
+    copilot_sha256: str
+    sdk_sha256: str
+    package_manifest_sha256: str
+    platform_manifest_sha256: str
+    sdk_manifest_sha256: str
+
+    @classmethod
+    def resolve(cls, path: str | None = None) -> CopilotAcpExecutables:
+        resolved = {name: shutil.which(name, path=path) for name in _COPILOT_COMMANDS}
+        missing = tuple(name for name in _COPILOT_COMMANDS if resolved[name] is None)
+        if missing:
+            raise _copilot_profile_error(missing)
+        try:
+            node_value = resolved["node"]
+            loader_value = resolved[_COPILOT_COMMAND]
+            assert node_value is not None
+            assert loader_value is not None
+            node = Path(node_value).resolve(strict=True)
+            loader = Path(loader_value).resolve(strict=True)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise NativeAcpDependencyError(
+                "native Copilot ACP profile selected dependency is unavailable"
+            ) from exc
+        _canonical_path(node, "Node")
+        modules, package_manifest = _copilot_package(loader)
+        pinned = _copilot_pinned_sha256()
+        copilot, platform_manifest = _copilot_platform(loader, modules)
+        # The SDK lookup is cheap, so it precedes fingerprinting the large binary.
+        sdk, sdk_manifest = _copilot_sdk(loader, modules)
+        copilot_sha256 = _digest(copilot, executable=True, label="copilot")
+        if copilot_sha256 != pinned:
+            raise _copilot_binary_error()
+        selected = cls(
+            node,
+            loader,
+            copilot,
+            sdk,
+            _digest(node, executable=True, label="Node"),
+            copilot_sha256,
+            _digest(sdk, executable=False, label="SDK"),
+            package_manifest.sha256,
+            platform_manifest.sha256,
+            sdk_manifest.sha256,
+        )
+        selected.verify()
+        return selected
+
+    def verify(self) -> None:
+        node = _canonical_path(self.node, "Node")
+        loader = _canonical_path(self.loader, "copilot loader")
+        copilot = _canonical_path(self.copilot, "copilot")
+        sdk = _canonical_path(self.sdk, "SDK")
+        if (
+            node != self.node
+            or loader != self.loader
+            or copilot != self.copilot
+            or sdk != self.sdk
+        ):
+            raise NativeAcpDependencyError(
+                "saved native Copilot ACP dependency paths must be canonical"
+            )
+
+        pinned = _copilot_pinned_sha256()
+        if _digest(node, executable=True, label="Node") != self.node_sha256:
+            raise _copilot_drift_error("Node")
+        if self.copilot_sha256 != pinned:
+            raise _copilot_binary_error()
+        if _digest(copilot, executable=True, label="copilot") != self.copilot_sha256:
+            raise _copilot_drift_error("copilot")
+        if _digest(sdk, executable=False, label="SDK") != self.sdk_sha256:
+            raise _copilot_drift_error("SDK")
+
+        modules, package_manifest = _copilot_package(loader)
+        if package_manifest.sha256 != self.package_manifest_sha256:
+            raise _copilot_drift_error("package manifest")
+        expected_copilot, platform_manifest = _copilot_platform(loader, modules)
+        if expected_copilot != copilot:
+            raise NativeAcpDependencyError(
+                "selected native Copilot ACP binary is not the platform package binary"
+            )
+        if platform_manifest.sha256 != self.platform_manifest_sha256:
+            raise _copilot_drift_error("platform manifest")
+        expected_sdk, sdk_manifest = _copilot_sdk(loader, modules)
+        if expected_sdk != sdk:
+            raise NativeAcpDependencyError(
+                "selected native Copilot ACP SDK is not the npm prefix dependency"
+            )
+        if sdk_manifest.sha256 != self.sdk_manifest_sha256:
+            raise _copilot_drift_error("SDK manifest")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "node": str(self.node),
+            "loader": str(self.loader),
+            "copilot": str(self.copilot),
+            "sdk": str(self.sdk),
+            "node_sha256": self.node_sha256,
+            "copilot_sha256": self.copilot_sha256,
+            "sdk_sha256": self.sdk_sha256,
+            "package_manifest_sha256": self.package_manifest_sha256,
+            "platform_manifest_sha256": self.platform_manifest_sha256,
+            "sdk_manifest_sha256": self.sdk_manifest_sha256,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> CopilotAcpExecutables:
+        if not isinstance(value, Mapping) or set(value) != _COPILOT_SERIALIZED_FIELDS:
+            raise NativeAcpDependencyError(
+                "saved native Copilot ACP dependencies have unexpected metadata"
+            )
+        paths: dict[str, Path] = {}
+        for key in ("node", "loader", "copilot", "sdk"):
+            raw_path = value.get(key)
+            if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
+                raise NativeAcpDependencyError(
+                    f"saved native Copilot ACP {key} path is invalid"
+                )
+            paths[key] = Path(raw_path)
+        fingerprints: dict[str, str] = {}
+        for key in (
+            "node",
+            "copilot",
+            "sdk",
+            "package_manifest",
+            "platform_manifest",
+            "sdk_manifest",
+        ):
+            raw_digest = value.get(f"{key}_sha256")
+            if (
+                not isinstance(raw_digest, str)
+                or _SHA256_RE.fullmatch(raw_digest) is None
+            ):
+                raise NativeAcpDependencyError(
+                    f"saved native Copilot ACP {key} fingerprint is invalid"
+                )
+            fingerprints[key] = raw_digest
+        return cls(
+            paths["node"],
+            paths["loader"],
+            paths["copilot"],
+            paths["sdk"],
+            fingerprints["node"],
+            fingerprints["copilot"],
+            fingerprints["sdk"],
+            fingerprints["package_manifest"],
+            fingerprints["platform_manifest"],
+            fingerprints["sdk_manifest"],
+        )
+
+
 def adapter_snapshot(executables: NativeAcpExecutables) -> dict[str, object]:
     identity = executables.sdk.stat()
     return {
@@ -803,5 +1135,22 @@ def codex_adapter_snapshot(executables: CodexAcpExecutables) -> dict[str, object
             "size": identity.st_size,
             "mtime_ns": identity.st_mtime_ns,
             "sha256": executables.sdk_sha256,
+        },
+    }
+
+
+def copilot_adapter_snapshot(executables: CopilotAcpExecutables) -> dict[str, object]:
+    identity = executables.copilot.stat()
+    return {
+        "adapter_id": f"copilot-acp-{_COPILOT_VERSION}",
+        "revision": f"{_SDK_PACKAGE}@{_COPILOT_SDK_VERSION}",
+        "executable": str(executables.copilot),
+        "version": f"{_COPILOT_PACKAGE}@{_COPILOT_VERSION}",
+        "identity": {
+            "device": identity.st_dev,
+            "inode": identity.st_ino,
+            "size": identity.st_size,
+            "mtime_ns": identity.st_mtime_ns,
+            "sha256": executables.copilot_sha256,
         },
     }

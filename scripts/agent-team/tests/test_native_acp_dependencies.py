@@ -8,11 +8,54 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from copilot_prefix import (
+    make_copilot_prefix,
+    package_manifest,
+    pinned_fake_copilot,
+    platform_manifest,
+    sdk_manifest,
+    sha256,
+    write_json,
+)
+
 from agent_team.native_acp_dependencies import (
     CodexAcpExecutables,
+    CopilotAcpExecutables,
     NativeAcpDependencyError,
     NativeAcpExecutables,
     codex_adapter_snapshot,
+    copilot_adapter_snapshot,
+)
+
+COPILOT_E1 = (
+    "native Copilot ACP profile requires installed commands: {names}; install "
+    "@github/copilot@1.0.91 and @agentclientprotocol/sdk@1.4.0 into one npm prefix "
+    "(npm install --prefix DIR @github/copilot@1.0.91 "
+    "@agentclientprotocol/sdk@1.4.0), then put DIR/node_modules/.bin and Node.js 22 "
+    "or newer first on PATH"
+)
+COPILOT_E2 = (
+    "selected copilot is not the @github/copilot@1.0.91 npm-loader.js: {path}; put "
+    "DIR/node_modules/.bin first on PATH (another copilot, such as AWS Copilot, must "
+    "not shadow it)"
+)
+COPILOT_E3 = (
+    "selected @github/copilot@1.0.91 is required; install exactly "
+    "@github/copilot@1.0.91 into the selected npm prefix"
+)
+COPILOT_E4 = (
+    "native Copilot ACP profile is verified only on darwin-arm64; this host is {host}"
+)
+COPILOT_E5 = (
+    "selected @github/copilot@1.0.91 requires @github/copilot-darwin-arm64@1.0.91"
+)
+COPILOT_E6 = (
+    "selected @github/copilot-darwin-arm64@1.0.91 binary is not the verified build; "
+    "reinstall @github/copilot@1.0.91 into the selected npm prefix"
+)
+COPILOT_E7 = (
+    "native Copilot ACP client requires @agentclientprotocol/sdk@1.4.0 in the same "
+    "npm prefix as @github/copilot@1.0.91"
 )
 
 
@@ -500,6 +543,307 @@ class NativeAcpDependenciesTest(unittest.TestCase):
                 self.assertRaises(NativeAcpDependencyError),
             ):
                 NativeAcpExecutables.from_dict(modified)
+
+
+class CopilotAcpDependenciesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory(prefix="agent-team-copilot-deps-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+
+    def _resolve_error(self, path: str) -> str:
+        with self.assertRaises(NativeAcpDependencyError) as raised:
+            CopilotAcpExecutables.resolve(path=path)
+        return str(raised.exception)
+
+    def test_resolves_hoisted_and_nested_prefixes_without_execution(self) -> None:
+        for hoisted in (True, False):
+            with self.subTest(hoisted=hoisted):
+                root = self.root / f"hoisted-{hoisted}"
+                root.mkdir()
+                prefix = make_copilot_prefix(root, hoisted=hoisted)
+                with (
+                    pinned_fake_copilot(prefix.binary),
+                    mock.patch(
+                        "subprocess.Popen",
+                        side_effect=AssertionError("resolver must not run Copilot"),
+                    ),
+                    mock.patch(
+                        "subprocess.run",
+                        side_effect=AssertionError("resolver must not run Copilot"),
+                    ),
+                    mock.patch(
+                        "agent_team.native_acp_dependencies.shutil.which",
+                        wraps=shutil.which,
+                    ) as which,
+                ):
+                    selected = CopilotAcpExecutables.resolve(path=prefix.path)
+                    snapshot = copilot_adapter_snapshot(selected)
+
+                self.assertEqual(
+                    [call.args[0] for call in which.call_args_list], ["node", "copilot"]
+                )
+                self.assertEqual(selected.node, prefix.node)
+                self.assertEqual(selected.loader, prefix.loader)
+                self.assertEqual(selected.copilot, prefix.binary)
+                self.assertEqual(selected.sdk, prefix.sdk)
+                self.assertEqual(selected.copilot_sha256, sha256(prefix.binary))
+                self.assertEqual(
+                    selected.package_manifest_sha256,
+                    sha256(prefix.package_root / "package.json"),
+                )
+                self.assertEqual(
+                    selected.platform_manifest_sha256,
+                    sha256(prefix.platform_root / "package.json"),
+                )
+                self.assertEqual(
+                    selected.sdk_manifest_sha256,
+                    sha256(prefix.sdk_root / "package.json"),
+                )
+                self.assertEqual(
+                    snapshot,
+                    {
+                        "adapter_id": "copilot-acp-1.0.91",
+                        "revision": "@agentclientprotocol/sdk@1.4.0",
+                        "executable": str(prefix.binary),
+                        "version": "@github/copilot@1.0.91",
+                        "identity": {
+                            "device": prefix.binary.stat().st_dev,
+                            "inode": prefix.binary.stat().st_ino,
+                            "size": prefix.binary.stat().st_size,
+                            "mtime_ns": prefix.binary.stat().st_mtime_ns,
+                            "sha256": sha256(prefix.binary),
+                        },
+                    },
+                )
+
+    def test_missing_commands_name_the_single_prefix_install(self) -> None:
+        for found, names in (
+            ((None, None), "node, copilot"),
+            (("/usr/bin/node", None), "copilot"),
+        ):
+            with (
+                self.subTest(names=names),
+                mock.patch(
+                    "agent_team.native_acp_dependencies.shutil.which",
+                    side_effect=found,
+                ) as which,
+            ):
+                message = self._resolve_error(str(self.root))
+            self.assertEqual(message, COPILOT_E1.format(names=names))
+            self.assertEqual(
+                which.call_args_list,
+                [
+                    mock.call("node", path=str(self.root)),
+                    mock.call("copilot", path=str(self.root)),
+                ],
+            )
+
+    def test_another_copilot_earlier_on_path_is_rejected(self) -> None:
+        prefix = make_copilot_prefix(self.root)
+        aws = self.root / "aws-bin" / "copilot"
+        aws.parent.mkdir()
+        aws.write_text("#!/bin/sh\necho aws copilot\n", encoding="utf-8")
+        aws.chmod(0o755)
+        with pinned_fake_copilot(prefix.binary):
+            message = self._resolve_error(f"{aws.parent}{os.pathsep}{prefix.path}")
+        self.assertEqual(message, COPILOT_E2.format(path=aws))
+
+    def test_package_manifest_must_be_exactly_1_0_91(self) -> None:
+        optional = package_manifest()["optionalDependencies"]
+        assert isinstance(optional, dict)
+        for name, changes in (
+            ("version", {"version": "1.0.90"}),
+            ("name", {"name": "@github/copilot-cli"}),
+            ("bin", {"bin": {"copilot": "index.js"}}),
+            (
+                "platform-pin",
+                {
+                    "optionalDependencies": {
+                        **optional,
+                        "@github/copilot-darwin-arm64": "^1.0.91",
+                    }
+                },
+            ),
+        ):
+            with self.subTest(case=name):
+                root = self.root / name
+                root.mkdir()
+                prefix = make_copilot_prefix(root)
+                write_json(
+                    prefix.package_root / "package.json", package_manifest(**changes)
+                )
+                with pinned_fake_copilot(prefix.binary):
+                    self.assertEqual(self._resolve_error(prefix.path), COPILOT_E3)
+
+    def test_only_darwin_arm64_hosts_are_verified(self) -> None:
+        prefix = make_copilot_prefix(self.root)
+        for host in (("linux", "x86_64"), ("darwin", "x86_64"), ("linux", "aarch64")):
+            with self.subTest(host=host), pinned_fake_copilot(prefix.binary, host=host):
+                self.assertEqual(
+                    self._resolve_error(prefix.path),
+                    COPILOT_E4.format(host="-".join(host)),
+                )
+
+    def test_platform_package_must_be_the_pinned_one_in_the_prefix(self) -> None:
+        def remove(prefix_root: Path) -> None:
+            shutil.rmtree(prefix_root)
+
+        def wrong_version(prefix_root: Path) -> None:
+            write_json(
+                prefix_root / "package.json", platform_manifest(version="1.0.90")
+            )
+
+        def wrong_export(prefix_root: Path) -> None:
+            write_json(
+                prefix_root / "package.json",
+                platform_manifest(exports={".": "./other"}),
+            )
+
+        def symlinked(prefix_root: Path) -> None:
+            moved = prefix_root.parent / "moved-platform"
+            prefix_root.rename(moved)
+            prefix_root.symlink_to(moved)
+
+        for name, change in (
+            ("missing", remove),
+            ("version", wrong_version),
+            ("export", wrong_export),
+            ("symlink", symlinked),
+        ):
+            with self.subTest(case=name):
+                root = self.root / name
+                root.mkdir()
+                prefix = make_copilot_prefix(root)
+                with pinned_fake_copilot(prefix.binary):
+                    change(prefix.platform_root)
+                    self.assertEqual(self._resolve_error(prefix.path), COPILOT_E5)
+
+    def test_platform_package_outside_the_prefix_is_rejected(self) -> None:
+        prefix = make_copilot_prefix(self.root)
+        outside = self.root / "node_modules" / "@github" / "copilot-darwin-arm64"
+        outside.parent.mkdir(parents=True)
+        prefix.platform_root.rename(outside)
+        with pinned_fake_copilot(outside / "copilot"):
+            self.assertEqual(self._resolve_error(prefix.path), COPILOT_E5)
+
+    def test_binary_must_be_the_verified_build(self) -> None:
+        prefix = make_copilot_prefix(self.root)
+        with (
+            pinned_fake_copilot(prefix.binary),
+            mock.patch(
+                "agent_team.native_acp_dependencies._COPILOT_BINARY_SHA256", "0" * 64
+            ),
+        ):
+            self.assertEqual(self._resolve_error(prefix.path), COPILOT_E6)
+
+        with pinned_fake_copilot(prefix.binary):
+            data = CopilotAcpExecutables.resolve(path=prefix.path).as_dict()
+            data["copilot_sha256"] = "0" * 64
+            with self.assertRaises(NativeAcpDependencyError) as raised:
+                CopilotAcpExecutables.from_dict(data).verify()
+        self.assertEqual(str(raised.exception), COPILOT_E6)
+
+    def test_sdk_must_be_1_4_0_inside_the_selected_prefix(self) -> None:
+        def remove(prefix_root: Path, root: Path) -> None:
+            del root
+            shutil.rmtree(prefix_root)
+
+        def old_sdk(prefix_root: Path, root: Path) -> None:
+            del root
+            write_json(prefix_root / "package.json", sdk_manifest("1.3.0"))
+
+        def symlinked(prefix_root: Path, root: Path) -> None:
+            moved = root / "moved-sdk"
+            prefix_root.rename(moved)
+            prefix_root.symlink_to(moved)
+
+        def above_prefix(prefix_root: Path, root: Path) -> None:
+            outside = root / "node_modules" / "@agentclientprotocol" / "sdk"
+            outside.parent.mkdir(parents=True)
+            prefix_root.rename(outside)
+
+        for name, change in (
+            ("missing", remove),
+            ("sdk-1.3.0", old_sdk),
+            ("symlink", symlinked),
+            ("above-prefix", above_prefix),
+        ):
+            with self.subTest(case=name):
+                root = self.root / name
+                root.mkdir()
+                prefix = make_copilot_prefix(root)
+                with pinned_fake_copilot(prefix.binary):
+                    change(prefix.sdk_root, root)
+                    self.assertEqual(self._resolve_error(prefix.path), COPILOT_E7)
+
+    def test_each_binding_drift_is_reported(self) -> None:
+        for label, target in (
+            ("Node", lambda prefix: prefix.node),
+            ("copilot", lambda prefix: prefix.binary),
+            ("SDK", lambda prefix: prefix.sdk),
+            ("package manifest", lambda prefix: prefix.package_root / "package.json"),
+            (
+                "platform manifest",
+                lambda prefix: prefix.platform_root / "package.json",
+            ),
+            ("SDK manifest", lambda prefix: prefix.sdk_root / "package.json"),
+        ):
+            with self.subTest(label=label):
+                root = self.root / label.replace(" ", "-")
+                root.mkdir()
+                prefix = make_copilot_prefix(root)
+                with pinned_fake_copilot(prefix.binary):
+                    selected = CopilotAcpExecutables.resolve(path=prefix.path)
+                    path = target(prefix)
+                    if path.name == "package.json":
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                        data["description"] = "drift"
+                        write_json(path, data)
+                    else:
+                        with path.open("a", encoding="utf-8") as handle:
+                            handle.write("// drift\n")
+                    with self.assertRaises(NativeAcpDependencyError) as raised:
+                        selected.verify()
+                self.assertEqual(
+                    str(raised.exception),
+                    f"selected native Copilot ACP {label} changed",
+                )
+
+    def test_round_trip_is_strict(self) -> None:
+        prefix = make_copilot_prefix(self.root)
+        with pinned_fake_copilot(prefix.binary):
+            selected = CopilotAcpExecutables.resolve(path=prefix.path)
+            data = selected.as_dict()
+            self.assertEqual(selected, CopilotAcpExecutables.from_dict(data))
+            CopilotAcpExecutables.from_dict(data).verify()
+        self.assertEqual(
+            set(data),
+            {
+                "node",
+                "loader",
+                "copilot",
+                "sdk",
+                "node_sha256",
+                "copilot_sha256",
+                "sdk_sha256",
+                "package_manifest_sha256",
+                "platform_manifest_sha256",
+                "sdk_manifest_sha256",
+            },
+        )
+        for modified in (
+            {**data, "agent": data["copilot"]},
+            {key: value for key, value in data.items() if key != "loader"},
+            {**data, "sdk_sha256": "bad"},
+            {**data, "copilot": "relative/copilot"},
+            {**data, "platform_manifest_sha256": "A" * 64},
+        ):
+            with (
+                self.subTest(modified=sorted(modified)),
+                self.assertRaises(NativeAcpDependencyError),
+            ):
+                CopilotAcpExecutables.from_dict(modified)
 
 
 if __name__ == "__main__":
