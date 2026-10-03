@@ -20,7 +20,7 @@ declared TaskSpec. Named Orca parallel uses the common TaskBatch contract and
 one Run-level FIFO Delivery; it does not add a scheduler. Named Orca
 `program`/`serial` uses state version 4 and `program`/`parallel` uses state
 version 5. Both are connected to the common TaskSpec program policy and
-driver, but real Orca/model program acceptance has not been run. Codex ACP
+driver, and both passed real-model Orca 1.4.199 runs with the explicit Claude-only profile (see [Architecture](architecture.md)). Codex ACP
 configurations remain rejected. The provider-free parallel protocol proof and
 the separate serial evidence are recorded in [Architecture](architecture.md);
 real-model named-Orca parallel acceptance remains pending.

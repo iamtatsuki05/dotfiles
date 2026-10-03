@@ -42,8 +42,9 @@ Focused implementation tests are connected. The named `agent`/`serial` path
 passed a real-model Orca 1.4.199 run, `run_e89da337f417`, with the explicit
 Claude-only profile: a Worker question, a request for changes, approval, and
 fixed-argv verification on one revision, followed by public stop and owned
-resource checks (see [Architecture](architecture.md)). Real Orca/model
-`program` and `parallel` acceptance is pending. The earlier `agent`/`parallel`
+resource checks (see [Architecture](architecture.md)). Mainless
+`program`/`serial` and `program`/`parallel` also passed real-model Orca runs;
+Main-coordinated `agent`/`parallel` acceptance is pending. The earlier `agent`/`parallel`
 run `run_fc73773d2cf5` reached Main prompt acceptance before Fable's usage
 limit with zero TaskDispatches; owned Stop and absence checks completed in
 private validation records. This does not change the static registry or the safety

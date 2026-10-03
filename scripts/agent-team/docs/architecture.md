@@ -71,8 +71,9 @@ and there is no automatic recovery for those unknown effects. Stop first waits
 for confirmed provider cleanup, then drains existing completion Delivery or
 stops the exact context-only Dispatch and closes owned terminals. These paths
 have contract tests. The named `agent`/`serial` path passed a real-model run,
-`run_e89da337f417`, described in the 2026-10-04 live acceptance below; named Orca
-`program` and `parallel` remain without real-model evidence.
+`run_e89da337f417`, described in the 2026-10-04 live acceptance below. Named
+Orca `program`/`serial` and `program`/`parallel` passed too; Main-coordinated
+`agent`/`parallel` remains without real-model evidence.
 
 ### Named Orca agent/parallel uses one Run FIFO
 
@@ -80,8 +81,8 @@ Named Orca `agent`/`parallel` uses state version 5 and the common TaskSpec,
 TaskBatch, review, and verification rules. Direct Claude Main opens each
 batch with `task_batch_open`; Planner, Worker, and Reviewer assignments use
 scoped Claude ACP. Named Orca `program`/`serial` and `program`/`parallel` are
-connected through the common TaskSpec program policy and driver; their real
-Orca/model acceptance remains pending.
+connected through the common TaskSpec program policy and driver; both passed
+real-model runs recorded in the 2026-10-04 live acceptance below.
 
 `role_wait` takes a valid active node and returns all normalized events from
 the oldest unacknowledged Run Delivery, including events from other nodes.
@@ -368,8 +369,8 @@ review-limit, or dependency input leaves the state unchanged.
 Parallel `role_prompt` is rejected, including read-only research; serial
 read-only `role_prompt` remains available. `task_batch_open` is advertised only
 in the explicit parallel Main `--tools` and `--allowedTools` lists. The bounded
-live Main-parallel acceptance is recorded below. Real-model named Orca
-`program` and `parallel`, shared Orca/native progression, and real Main
+live Main-parallel acceptance is recorded below. Real-model Main-coordinated
+named Orca `agent`/`parallel`, shared Orca/native progression, and real Main
 Astra/provider acceptance remain gaps; the provider-free named-Orca protocol
 proof is recorded above.
 
@@ -606,6 +607,9 @@ public MCP tools over one stdio session and never prompts the Main model.
 | Answer a review consultation and resume | scripted Main, `max_review_rounds = 2` | tmux | `43bc8c1` | `e1ceb6da-…` | the Worker asked a question that Main answered and acknowledged; the reviewer returned `consult`; another dispatch was refused until `agent-team answer` saved the answer; the original Worker then fixed the code, a second review approved, and verification completed the task on one revision |
 | Mainless parallel | `program`/`parallel`, Planner omitted | tmux | `43bc8c1` | `70006335-…` | the coordinator started both writers together, both reviewers approved, both tasks verified on one integrated revision, public stop 0.687 s |
 | Read-only research | `program`/`serial`, plan-only route | tmux | `8c7cd2d` | `2aa38be2-…` | the Planner's plan was approved; verification ran on the reviewed workspace revision, which differs from the plan-body digest; no file changed; public stop 0.278 s |
+| Question and request for changes inside a parallel batch | scripted Main, `agent`/`parallel` | tmux | `051b66b` | `2b02fd75-…` | one Worker's question was answered and acknowledged; one reviewer approved and the other requested changes; dispatching the original Worker reopened the batch and returned the approved peer to review; both were approved again and verified on one revision |
+| Mainless serial on Orca | `program`/`serial` | Orca 1.4.199 | `3852faf` | `run_344c5c2e5733` | the coordinator ran the Worker, review, and verification without input; public stop 1.327 s; 3 team terminals, 4 PIDs, and 3 process groups absent |
+| Mainless parallel on Orca | `program`/`parallel` | Orca 1.4.199 | `3852faf` | `run_2298fbae4241` | both writers and both reviewers ran concurrently; both tasks verified on one integrated revision; public stop 1.592 s; 5 team terminals, 6 PIDs, and 5 process groups absent |
 | Question, review, verify on Orca | named `agent`/`serial` | Orca 1.4.199 | `a0232af` | `run_e89da337f417` | Worker question answered by Main and recorded, implementation sent back, fixed, approved, fixed-argv verification on one revision, `completed`; public stop removed all 69 recorded processes and owned resources; a closed team terminal left Orca's live list within 0.876 s |
 
 In the interrupt runs, the Worker first wrote a marker file and then read a
@@ -621,7 +625,7 @@ missing `tmux`, `claude`, `node`, or `claude-agent-acp` each exited with status
 1, left state unchanged, started no process, and printed the missing item, the
 selecting setting, and the fix (commit `062c9fa`).
 
-The live runs found six defects, each fixed before the run that passed:
+The live runs found seven defects, each fixed before the run that passed:
 
 - Reviewers sometimes judged from the writer's self-report without opening a
   file. With a claude.ai login, Claude Code added the account's connectors as
@@ -659,6 +663,12 @@ The live runs found six defects, each fixed before the run that passed:
   after the JSON template, and the reviewer copied it into the verdict instead
   of the plan-body digest, so the task failed. The workspace revision now comes
   before the output contract and is marked as not the JSON revision (`8c7cd2d`).
+- The Orca program coordinator is exec'd in its terminal and exits after the
+  last task. At stop, Orca answered terminal close with `ptyKilled: false` and
+  no stop verdict, which its own CLI treats as success, but agent-team required
+  a killed PTY and the stop failed with "Main terminal close effect is unknown".
+  That answer is now accepted only after the coordinator's exit and CLI cleanup
+  were confirmed (`3852faf`).
 
 Failed attempts are retained and are not rewritten by the later successes.
 Orca runs `run_fe096b06952e` and `run_bd6311c84d24` failed at the Worker
@@ -681,8 +691,16 @@ refused the early `role_read` and the early writer dispatch as designed. The fir
 plan-only run failed on the review contract fixed above. All these runs ended
 with public stop and conclusive independent checks.
 
+The first Mainless Orca serial run, `run_aef41b018de3`, completed its task
+but failed that stop; its state and the `coordinator: unknown` journal are
+retained, while Orca no longer lists the coordinator terminal and the
+coordinator process is gone. A second run's task failed at review; the harness
+stopped it before saving the reason, so that cause is unknown, and the harness
+now saves the task records before a failure stop.
+
 These runs do not cover Fable, Astra, Codex, or the other harnesses. The
-parallel runs had no request for changes or question.
+parallel-batch question and request for changes were driven by a scripted
+Main, not by the Main model.
 
 ## Components have narrow responsibilities
 
@@ -1309,7 +1327,7 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
   public, and the other seven need login, account, or runtime preparation.
 - Astra Worker/Reviewer and the default Fable configuration through the whole
   workflow; the 2026-10-04 runs used the explicit Claude-only profile
-- Real-model Orca `program` and `parallel` execution
+- Real-model Main-coordinated Orca `agent`/`parallel` execution
 - Shared Orca/native progression
 - A question or a request for changes inside a parallel batch with real models
 

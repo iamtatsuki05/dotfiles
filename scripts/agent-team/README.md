@@ -19,7 +19,8 @@ dispatch; both paths use the common TaskSpec, TaskBatch, review, and verificatio
 rules. The implementation and bounded evidence are recorded in
 [Architecture](docs/architecture.md). Native `agent`/`parallel` and
 `program`/`parallel` passed real-model tmux runs with the explicit Claude-only
-profile; Orca `parallel` acceptance remains pending.
+profile. Named Orca `program`/`serial` and `program`/`parallel` also passed;
+Main-coordinated Orca `agent`/`parallel` acceptance remains pending.
 
 Version-5 named Orca `agent`/`serial` and `agent`/`parallel` teams can use
 direct Claude Main and scoped Claude ACP background roles. Planner/Reviewer
@@ -97,10 +98,10 @@ real-terminal/fake-provider acceptance.
 Named Orca `program`/`serial` uses state version 4 and
 `program`/`parallel` uses state version 5; both are connected to the common
 TaskSpec program policy and driver. Their Mainless fixed-argv coordinator is
-implemented and test-connected, but real Orca/model program acceptance has not
-been run. Real-model Orca `parallel` acceptance, all-harness coverage, Codex
-authentication, and shared Orca/native progression remain separate evidence
-gates.
+implemented and test-connected, and both passed real-model Orca 1.4.199 runs with the explicit Claude-only profile.
+Real-model Main-coordinated Orca `agent`/`parallel` acceptance, all-harness
+coverage, Codex authentication, and shared Orca/native progression remain
+separate evidence gates.
 
 Version 5 supports multiple named Worker and Reviewer nodes with explicit task
 routes in native `agent`/`serial` and Main-coordinated `agent`/`parallel`
@@ -591,7 +592,7 @@ cleanup result requires user consultation and remains retained.
   contract. Named Orca `program`/`serial` uses state version 4 and
   `program`/`parallel` uses state version 5; both use the common TaskSpec
   program policy and driver with a Mainless fixed-argv Python coordinator.
-  Real Orca/model program acceptance remains unverified. Version-3 native runtimes require
+  Both passed real-model Orca 1.4.199 runs with the explicit Claude-only profile. Version-3 native runtimes require
   Main and allow optional verified Claude ACP Planner/Reviewer roles plus a
   scoped Claude ACP Worker. Version-5 native `agent`/`serial` and
   `agent`/`parallel` teams keep Main; version-5 `program`/`serial` and

@@ -12,7 +12,7 @@ TaskSpecとscoped Claude ACP policyを使い、terminal driverだけがruntime�
 native `program`/`parallel`は`max_active`まで独立したassignmentを受け付け、nodeごとにDelivery stateを保存します。
 Version 5のnativeと名前付きOrcaの`agent`/`parallel`では、Mainが名前付きnodeを調整します。
 Mainはdispatch前に`task_batch_open`で対象batchを開き、両経路で共通のTaskSpec、TaskBatch、レビュー、検証の規則を使います。
-実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。native `agent`/`parallel`と`program`/`parallel`は、明示的なClaude専用構成の実モデルtmux runで受入済みです。Orcaの`parallel`は未完了です。
+実装と各試験の証拠は[アーキテクチャ](docs/architecture_JA.md)に記載しています。native `agent`/`parallel`と`program`/`parallel`は、明示的なClaude専用構成の実モデルtmux runで受入済みです。名前付きOrcaの`program`/`serial`と`program`/`parallel`も合格しています。Mainが調整するOrcaの`agent`/`parallel`は未完了です。
 native Claude ACP assignmentには、既存ACPのform elicitationとprivate question socketを使う
 制限付きの`AskUserQuestion` pathもあります。同じTask/Dispatch内で動きます。契約と現在の証拠は
 [アーキテクチャ](docs/architecture_JA.md)にまとめています。実モデルでの質問応答はtmuxで確認済みです。
@@ -72,7 +72,7 @@ TaskSpecのfile scope、Bash・external-tool policyは変わらず、Codexの質
 native `program`/`parallel`にも実装、focused contract test、boundedな実端末・fake providerのcoverageがあります。
 名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、
 TaskSpec共通のprogram policy/driverへ接続しています。Mainなしの固定argv Python coordinatorまで実装・テスト接続済みですが、
-実機・実モデルのprogram受入は未実施です。実モデルのOrcaの`parallel`、全harness、Codex認証、Orcaとnativeに共通する進行管理は
+どちらも明示的なClaude専用構成の実モデルOrca 1.4.199 runに合格しています。Mainが調整するOrcaの`agent`/`parallel`の実モデル受入、全harness、Codex認証、Orcaとnativeに共通する進行管理は
 別の検証課題として残ります。
 
 Version 5では複数のWorkerとReviewerに名前を付け、taskごとの担当を指定できます。
@@ -478,7 +478,7 @@ Workerへretryできます。cleanupが不明な場合はユーザー判断が�
   拒否します。別backendや別transportへ自動で切り替えません。
 - 同梱のversion 3 Orcaは4 role固定です。version 5の名前付きOrcaは`agent`/`serial`と`agent`/`parallel`、
   direct ClaudeのMain、scoped Claude ACPのbackground roleを受け付け、宣言済みTaskSpecの規則を適用します。
-  名前付きOrcaの`agent`/`parallel`はstate version 5と共通TaskBatch contractを使います。名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、TaskSpec共通のprogram policy/driverとMainなしの固定argv Python coordinatorへ接続します。実機・実モデルのprogram受入は未実施です。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
+  名前付きOrcaの`agent`/`parallel`はstate version 5と共通TaskBatch contractを使います。名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使い、TaskSpec共通のprogram policy/driverとMainなしの固定argv Python coordinatorへ接続します。どちらも明示的なClaude専用構成の実モデルOrca 1.4.199 runに合格しています。version 3のnative runtimeはMainを必須とし、verified Claude ACPのread-only
   Planner/Reviewerと、scoped Claude ACPのworkspace-write Workerを任意に追加できます。version 5の
   native `agent`/`serial`と`agent`/`parallel`はMainを使い、`program`/`serial`と`program`/`parallel`は保存済みcoordinatorを使います。
   native Workerの`task_dispatch`にはconfigの`[[tasks]]` entryとの一致が必要で、その他の未対応profileは起動処理の効果が発生する前に拒否します。

@@ -13,7 +13,7 @@ native `agent`/`parallel`は`agent_batch`を、program構成は`program_wave`を
 Mainはdirect Claude・permission `orchestrator`、Planner、Worker、Reviewerはscoped Claude ACPを使い、Workerには宣言済みTaskSpecが必要です。
 名前付きOrcaのparallelは共通TaskBatch contractとRun単位のFIFO Deliveryを使い、schedulerを追加しません。
 名前付きOrcaの`program`/`serial`はstate version 4、`program`/`parallel`はstate version 5を使います。
-どちらもTaskSpec共通のprogram policy/driverへ接続していますが、実Orca・実モデルのprogram受入は実施していません。
+どちらもTaskSpec共通のprogram policy/driverへ接続しており、明示的なClaude専用構成の実モデルOrca 1.4.199 runに合格しています（[アーキテクチャ](architecture_JA.md)参照）。
 Codex ACPの公開設定は引き続き拒否します。
 providerを呼ばないparallel protocol proofとserialの過去証拠は[アーキテクチャ](architecture_JA.md)に記載し、実モデルparallel受入は未実施です。
 既存のfocused contract testとboundedな端末・fake providerの記録は、それぞれの過去runに限定した証拠です。実モデルのparallel受入も未実施です。
