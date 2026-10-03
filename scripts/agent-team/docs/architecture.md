@@ -207,8 +207,10 @@ hashes were unchanged; the selected credentials file was absent before and
 after. Keychain contents were not compared, and the OAuth subject's complete
 before/after identity could not be verified. Existing Team subscription auth
 status does not prove actual billing, and no login, trust grant, permission, or
-billing-plan change was requested. Named Orca's real-model workflow remains
-unverified, as do the other outstanding backend and harness requirements.
+billing-plan change was requested. At the time of these attempts, named Orca's
+real-model workflow was unverified; the named `agent`/`serial` path passed later
+in the 2026-10-04 live acceptance. The other outstanding backend and harness
+requirements remain.
 
 A third attempt, `run_6389a0782d6b`, started after the previously displayed
 reset time. Main accepted the prompt but again reported a Fable usage limit,
@@ -628,7 +630,8 @@ The live runs found six defects, each fixed before the run that passed:
   unselected tools, and Claude Code fetched the connector list over the
   network. The scoped ACP wrapper sets `disableClaudeAiConnectors` in its flag
   settings, and every Claude ACP agent command also sets
-  `ENABLE_CLAUDEAI_MCP_SERVERS=0`, which covers the fixed version-3 acpx path.
+  `ENABLE_CLAUDEAI_MCP_SERVERS=0`, which is also passed on the fixed version-3
+  acpx path; that path was not run live with the variable.
   The direct Main, which already limits MCP with `--strict-mcp-config`, and the
   direct read-only Planner/Reviewer also set the flag (`a0232af` and a later
   commit). In throwaway
