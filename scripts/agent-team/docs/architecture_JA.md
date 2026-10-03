@@ -56,7 +56,7 @@ Deliveryの待機・読み取りとstatus/attachの照合中は、stateの排他
 結果が不明なら再送、進行、停止を拒否し、`status`の`cleanup_pending`に記録を表示します。
 起動途中の失敗も`pending_role_start`へ残します。これらの記録だけで外部操作の完了を証明せず、不明な操作の自動復旧も行いません。
 停止ではproviderの終了確認を待ち、既存の完了Deliveryを消費するか、該当するcontext-only Dispatchと所有端末を停止します。
-各経路の契約テストは成功しています。直近の実機試験ではMain起動とprompt受付まで確認しましたが、名前付きOrcaの実モデル全工程は未確認です。
+各経路の契約テストは成功しています。名前付き`agent`/`serial`は、下記の2026-10-04の実機受入にある実モデルrun `run_e89da337f417`に合格しました。名前付きOrcaの`program`と`parallel`には実モデルの証拠がありません。
 
 ### 名前付きOrcaのagent/parallelはRun単位で受領する
 
@@ -145,7 +145,7 @@ Orcaには閉じた端末の履歴情報が残る場合があります。再試�
 選択repositoryのtrust値とsettingsファイル2件のhashは不変でした。確認対象のcredentialsファイルは試験前後とも存在しませんでした。
 Keychainの内容は比較しておらず、OAuth subjectの試験前後の同一性も完全には確認できていません。
 既存のTeam subscription認証のstatusは、実際の課金記録の確認とは区別します。login、trust付与、権限・課金契約の変更は要求していません。
-名前付きOrcaの実モデル全工程と、残るbackend・harnessの受入条件は未達です。
+この節の試行時点では、名前付きOrcaの実モデル全工程は未達でした。名前付き`agent`/`serial`はその後、2026-10-04の実機受入で合格しています。残るbackend・harnessの受入条件は未達です。
 
 以前の表示にあった再開時刻を過ぎてから、3回目の`run_6389a0782d6b`を実行しました。
 Mainはpromptを受け付けましたが、再びFableの利用上限が表示され、自動再開時刻は2026-09-09の14:10 JSTに変わりました。
@@ -241,7 +241,7 @@ implementation routeの中間plan reviewはwriter phaseで行い、plan-only rou
 その1回のrequestが、`completed`済みpeerを含む正確なpeer集合のreopenと要求したwriterのdispatchを原子的に行います。peerは自動dispatchしません。
 公開reopen toolはなく、`task_batch_open`で未完了batchをreopenまたは置換することもできません。不正なTaskSpec、route、message、review limit、dependency inputではstateを変更しません。
 parallelの`role_prompt`はread-only調査も含めて拒否し、serialのread-only `role_prompt`は維持します。`task_batch_open`はparallel Mainの
-明示的な`--tools`と`--allowedTools`にだけ追加します。今回のMain parallel live受入は下記に記載します。実モデルの名前付きOrca、
+明示的な`--tools`と`--allowedTools`にだけ追加します。今回のMain parallel live受入は下記に記載します。実モデルの名前付きOrcaの`program`と`parallel`、
 Orca/native shared progression、実Main Astra/provider受入は未解決です。provider-freeの名前付きOrca protocol proofは上記に記載しています。
 
 Reviewerの相談は、名前付きnativeで独立した操作として扱います。`status`にはopaqueな相談ID、findings、task/stage、回答状態を表示し、
@@ -410,7 +410,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 
 実機runで見つかった不具合は6件で、いずれも成功したrunの前に修正しました。
 
-- reviewerが、ファイルを開かずに作成担当の自己申告だけで判定することがありました。claude.aiでloginしていると、agent-teamがMCP serverを渡していなくても、Claude Codeがアカウントのconnectorを全Claude roleにMCP toolとして追加していました。scoped hookが実行は拒否していましたが、roleには未選択のtoolが数十件提示され、Claude Codeはconnector一覧をネット経由で取得していました。scoped ACP wrapperとdirect Mainのflag設定に`disableClaudeAiConnectors`を加えました（`a0232af`）。同じreviewer構成の使い捨て試験では、connectorがある状態で23回中12回がtoolを1回も呼びませんでした（旧promptで14回中10回、新promptで9回中2回）。無効化後は7回すべてがファイルを読み、うち3回は旧promptでした。あわせてreview promptに、前段の結果は未検証であることと、宣言済みの検証は承認後にagent-teamが実行することを書きました（`4962125`）。
+- reviewerが、ファイルを開かずに作成担当の自己申告だけで判定することがありました。claude.aiでloginしていると、agent-teamがMCP serverを渡していなくても、Claude Codeがアカウントのconnectorを全Claude ACP roleにMCP toolとして追加していました。scoped hookが実行は拒否していましたが、roleには未選択のtoolが数十件提示され、Claude Codeはconnector一覧をネット経由で取得していました。scoped ACP wrapperのflag設定に`disableClaudeAiConnectors`を加え、全Claude ACPのagent commandにも`ENABLE_CLAUDEAI_MCP_SERVERS=0`を設定しました。後者は固定version 3のacpx経路にも効きます。もともと`--strict-mcp-config`でMCPを限定しているdirect Mainと、direct read-onlyのPlanner/Reviewerにも同じ設定を渡します（`a0232af`とその後のcommit）。同じreviewer構成の使い捨て試験では、connectorがある状態で23回中12回がtoolを1回も呼びませんでした（旧promptで14回中10回、新promptで9回中2回）。無効化後は7回すべてがファイルを読み、うち3回は旧promptでした。あわせてreview promptに、前段の結果は未検証であることと、宣言済みの検証は承認後にagent-teamが実行することを書きました（`4962125`）。
 - reviewerが`findings`をobjectの配列で返したため、厳密なparserが判定を拒否し、taskが失敗しました。`findings`は文字列の配列だと契約に明記しました（`a1aed1b`）。
 - Orca 1.4.199は`orchestration ask`の結果に`mutation: {requestId, replayed}`を加えます。厳密な結果検査がこれを拒否し、Workerの質問が失敗していました。受領情報を検査したうえで取り除き、replayされた受領情報は拒否するようにしました（`bb71ba8`）。先に入れた`legacyCompatibility`対応は、旧来のdirect dispatch経路だけが返すfieldだったためrevertしました。
 - Herdr 0.9.3はsessionを`session-snapshots/session-<時刻>-<pid>-<n>.json`として保存します。private treeの検査がこのdirectoryを拒否したため、stopはworkspaceを閉じたあとserverを止めずに終わっていました。このdirectoryとfile名の形式だけを受け入れ、中身をJSONとして検査するようにしました（`691a126`）。
@@ -419,7 +419,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 
 失敗したrunは保持し、後の成功で書き換えていません。Orcaの`run_fe096b06952e`と`run_bd6311c84d24`はWorkerの質問で失敗し、runnerのtimeout後に公開stopで止め、独立照合の結果は確定しています。fixtureは変更されていません。最初の並列run `0b3c1ed3-…`は、reviewerがファイルを読まなかったため`consultation_required`で止まりました。Herdrの1回目の中断run `5b4a16c5-…`は`native server termination is unproven`を返し、private Herdr serverが残りました。修正版のsourceによる公開stopでこのserverを回収しています。Herdrの2回目の中断runは、Workerがmarkerを書かずに完了したため成立しませんでした。回数上限の1回目は、objectのfindingsで失敗しました。Orcaの`run_f8c64c697347`はworkflowを完了しましたが、stop直後に1回だけ取ったterminal一覧にteam terminalが残っていました。数分後の照合では、一覧のteam terminal、記録したprocess、所有pathはいずれもありませんでした。runnerは現在、最大15秒待ってから、残っていたものを記録します。
 
-相談の最初の2回は、scripted MainがWorkerの質問に答えず、`task_get`の相談情報も読めない作りだったため止まりました。agent-teamは早すぎる`role_read`と再dispatchを設計どおり拒否しています。plan-onlyの1回目は、上で直したreview契約で失敗しました。いずれも公開stopで止め、独立照合の結果は確定しています。
+最初の2回の相談runは、scripted MainがWorkerの質問に答えず、`task_get`の相談情報も読めない作りだったため止まりました。agent-teamは早すぎる`role_read`とwriterへのdispatchを設計どおり拒否しています。plan-onlyの1回目は、上で直したreview契約で失敗しました。いずれも公開stopで止め、独立照合の結果は確定しています。
 
 これらのrunは、Fable、Astra、Codex、その他のharnessを対象にしていません。並列runでは差し戻しと質問は発生していません。
 
@@ -902,6 +902,7 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 - Claude Code以外の9harnessで必要なprofileと実機証拠。Codexは実認証での試験を保留し、Copilot ACPは公開していません。残る7個はlogin、account、実行環境の準備が必要です
 - Astra Worker/Reviewerと既定のFable構成による全工程。2026-10-04のrunは明示的なClaude専用構成です
 - 実モデルでのOrca `program`・`parallel`
+- Orca/native shared progression
 - 並列batch内での質問・差し戻しの実モデル確認
 
 ## 意図的な対象外

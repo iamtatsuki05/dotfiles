@@ -70,8 +70,9 @@ the retained marker as `cleanup_pending`. Partial startup similarly retains
 and there is no automatic recovery for those unknown effects. Stop first waits
 for confirmed provider cleanup, then drains existing completion Delivery or
 stops the exact context-only Dispatch and closes owned terminals. These paths
-have contract tests. The latest live attempt reached Main startup and prompt acceptance;
-a real-model named Orca workflow remains unverified.
+have contract tests. The named `agent`/`serial` path passed a real-model run,
+`run_e89da337f417`, described in the 2026-10-04 live acceptance below; named Orca
+`program` and `parallel` remain without real-model evidence.
 
 ### Named Orca agent/parallel uses one Run FIFO
 
@@ -365,9 +366,10 @@ review-limit, or dependency input leaves the state unchanged.
 Parallel `role_prompt` is rejected, including read-only research; serial
 read-only `role_prompt` remains available. `task_batch_open` is advertised only
 in the explicit parallel Main `--tools` and `--allowedTools` lists. The bounded
-live Main-parallel acceptance is recorded below. Real-model named Orca,
-shared Orca/native progression, and real Main Astra/provider acceptance remain
-gaps; the provider-free named-Orca protocol proof is recorded above.
+live Main-parallel acceptance is recorded below. Real-model named Orca
+`program` and `parallel`, shared Orca/native progression, and real Main
+Astra/provider acceptance remain gaps; the provider-free named-Orca protocol
+proof is recorded above.
 
 Reviewer consultation is a separate named-native operation. `status` exposes
 the opaque consultation ID, findings, task/stage, and answer state. The CLI
@@ -621,11 +623,15 @@ The live runs found six defects, each fixed before the run that passed:
 
 - Reviewers sometimes judged from the writer's self-report without opening a
   file. With a claude.ai login, Claude Code added the account's connectors as
-  MCP tools to every Claude role even though agent-team passes no MCP servers.
-  The scoped hook denied them, but the roles still received dozens of
+  MCP tools to every Claude ACP role even though agent-team passes no MCP
+  servers. The scoped hook denied them, but the roles still received dozens of
   unselected tools, and Claude Code fetched the connector list over the
-  network. The scoped ACP wrapper and the direct Main now set
-  `disableClaudeAiConnectors` in their flag settings (`a0232af`). In throwaway
+  network. The scoped ACP wrapper sets `disableClaudeAiConnectors` in its flag
+  settings, and every Claude ACP agent command also sets
+  `ENABLE_CLAUDEAI_MCP_SERVERS=0`, which covers the fixed version-3 acpx path.
+  The direct Main, which already limits MCP with `--strict-mcp-config`, and the
+  direct read-only Planner/Reviewer also set the flag (`a0232af` and a later
+  commit). In throwaway
   runs with the same reviewer setup, 12 of 23 reviewers made no tool call while
   the connectors were present (10 of 14 with the earlier prompt, 2 of 9 with the
   new one); with the connectors disabled, 7 of 7 read the files, including 3
@@ -666,9 +672,9 @@ check right after stop still listed a team terminal; a check minutes later
 found no listed team terminal, no recorded process, and no owned path. The
 runner now waits up to 15 seconds and records what was still listed.
 
-The first consultation runs stopped because the scripted Main did not yet
+The first two consultation runs stopped because the scripted Main did not yet
 answer Worker questions or read the consultation from `task_get`; agent-team
-refused the early `role_read` and the early dispatch as designed. The first
+refused the early `role_read` and the early writer dispatch as designed. The first
 plan-only run failed on the review contract fixed above. All these runs ended
 with public stop and conclusive independent checks.
 
@@ -1301,6 +1307,7 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
 - Astra Worker/Reviewer and the default Fable configuration through the whole
   workflow; the 2026-10-04 runs used the explicit Claude-only profile
 - Real-model Orca `program` and `parallel` execution
+- Shared Orca/native progression
 - A question or a request for changes inside a parallel batch with real models
 
 ## Intentional exclusions
