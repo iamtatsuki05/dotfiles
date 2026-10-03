@@ -180,6 +180,74 @@ Codexの質問応答は無効のままです。Codex profileにはquestion socke
 `AskUserQuestion` capabilityもなく、公開Codex ACP registry entryも引き続き拒否します。
 通常認証の保留中試験と、そのpermission/cleanup確認も変わりません。
 
+## 範囲を制限したCopilot ACPの実装：公開設定では未有効
+
+nativeと名前付きOrcaの内部経路には、GitHub Copilot CLIをACPで動かすroleの経路も追加しています。
+これは内部専用です。
+registryはCopilot ACPを引き続き`known-unverified`と報告し、設定は`copilot`/`acp`を実行できない構成として拒否します。
+この経路に入るのは、保存済みのrole specか、テストや実機試験用のharnessが組み立てたstart specだけです。
+実機での受け入れ試験は未実施で、この経路を通る認証済みのモデル実行、permission要求、中断、終了処理はどれもまだ確認していません。
+
+この実装は、1つのnpm prefixに`@github/copilot@1.0.91`と`@agentclientprotocol/sdk@1.4.0`を入れることを求めます
+（`npm install --prefix DIR @github/copilot@1.0.91 @agentclientprotocol/sdk@1.4.0`）。
+`PATH`の先頭には`DIR/node_modules/.bin`とNode.js 22以上を置きます。
+選ばれる`copilot`はこのpackageの`npm-loader.js`でなければならず、
+packageの`optionalDependencies`は`@github/copilot-darwin-arm64@1.0.91`に固定されている必要があります。
+loaderはpackageの特定に使うだけで、実行しません。
+ACP serverとして動くのはplatform binaryで、
+そのSHA-256は`87f04922933c139cf4af7cb6a80b96161428618a6275fea4b8dfe7e7a69c9518`でなければなりません。
+対応するhostはdarwin-arm64だけです。
+起動時はmanifestの読み取りとfileのdigest計算だけを行い、Copilotは実行しません（`--version`も呼びません）。
+Copilotのroleを含まないteamでは、Copilotの依存を探しません。
+dispatchは専用directory、状態、processを作る前に依存の固定を確かめ直し、runnerはclientを起動する前にもう一度確かめます。
+
+server argvはPythonだけが組み立てます。
+`--acp --stdio`、model、effortに加えて、
+`--no-auto-update --no-custom-instructions --disable-builtin-mcps --no-remote --no-remote-export --disallow-temp-dir --no-ask-user`を必ず付けます。
+PlannerとReviewerには`--available-tools view,grep,glob`を指定し、`shell`、`write`、`url`を拒否します。
+Workerには`--available-tools view,grep,glob,edit,create`を指定し、`shell`と`url`を拒否します。
+`--allow-tool`、`--allow-all*`、`--yolo`、`--mode`は付けません。
+modelは`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`に一致する必要があり、`auto`は使えません。
+effortは`low`、`medium`、`high`、`xhigh`、`max`のいずれかです。
+それ以外の値は、起動時に状態を書き込む前に拒否します。
+clientとCopilotに渡す環境変数は、`HOME`（通常のhome）、`PATH=/usr/bin:/bin`、
+専用directory内の`TMPDIR`と`COPILOT_HOME`、`USER`、`LOGNAME`、`LANG`、`LC_*`だけです。
+token、BYOKやprovider用の変数、proxy、`NODE_OPTIONS`、`XDG_*`は渡しません。
+専用の`COPILOT_HOME`には、生成した`settings.json`だけを置きます。
+この設定はhookとremote接続を無効にし、専用directory、`.git`、状態directory、network接続、
+keychainへのアクセスを拒否するsandboxを指定します。
+agent-teamはloginせず、通常の`~/.copilot`、その`config.json`、keychainの項目を読み取ることも、
+linkやcopyをすることもありません。
+
+共通のclientは、`session/request_permission`ごとに生のJSON-RPC paramsと固定済みのwrite policyから可否を決めます。
+選ぶのは`allow_once`だけで、`allow_always`は選びません。
+readとsearchを許可するのは、対象pathがすべて共通のworkspace検査を通る場合だけです。
+対象pathはtool callのlocationsと、`rawInput.path`または`rawInput.file_path`です
+（後者の2つはlocationsにも含まれている必要があります）。
+editはWorkerだけに許可し、対象pathがすべてTaskSpecの書き込み範囲内にある場合に限ります。
+実機の観測で各toolの引数の形を固定するまでは、`rawInput`にそれ以外のfield（globのpatternや編集内容など）がある要求も拒否します。
+execute、fetch、delete、move、other、未知の種類、形の不正な要求も拒否します。
+searchやdirectoryのreadは起点のpathだけで判定します。
+その配下の`.git`、入れ子のrepository、symlinkをCopilotがどう走査するかは、この判定では検査しません。
+
+clientはagentの出力も監視します。
+承認していないedit、delete、move、execute、fetchの開始または完了、承認範囲外のlocationを報告した承認済みedit、
+範囲外のreadの完了、未知のtool kindやstatus、sessionのmode変更、報告されたmodelの変更、JSONでない出力、
+SDKのschemaが捨ててしまうsession updateのいずれかを検出すると、turnを中断して失敗にします。
+promptの終了後に検出した場合も失敗にします。
+この監視は違反を事後に検出するもので、防ぐのはflagとpermissionの判定です。
+clientは`authenticate`、sessionの設定変更、modeの変更を送りません。
+`session/close` capabilityを必須とし、
+報告された`agentInfo.version`が`1.0.91`以外の場合や、報告されたmodelが指定と異なる場合は拒否します。
+session開始の失敗は、loginや他のproviderへの切り替えをせずにそのまま報告します。
+
+テストでは偽のnpm prefixと偽のACP agentを使い、依存選択、argv、環境変数、専用file、接続処理、
+permission判定表の全行を確認しています。
+これらはCopilotの実際の挙動を検証した証拠ではありません。
+ACP modeでCopilotがこれらのflagに従うか、permission要求、toolの引数、tool更新の実際の形、
+searchが`.git`やsymlinkをどう扱うか、loginをどこから読むか、中断と終了処理の挙動は、
+実機での受け入れ試験まで未確定です。
+
 ## 認証とsubscription
 
 ACPはaccountを選択したり、providerのbilling policyを回避したりしません。Claude profileは
