@@ -1070,7 +1070,7 @@ class AgentTeamStartTest(AgentTeamTestCase):
                     print(json.dumps({{"ok": True, "result": {{"workers": []}}}}))
                 elif args[:2] == ["orchestration", "worker-show"]:
                     dispatch = args[args.index("--dispatch") + 1]
-                    print(json.dumps({{"ok": True, "result": {{"dispatch": {{"id": dispatch, "task_id": "task_worker", "run_id": "run_1", "assignee_handle": "term_worker"}}, "worker": {{"dispatch_id": dispatch, "worktree_id": "repo::/project", "agent_terminal_handle": "term_worker", "state": "ready"}}}}}}))
+                    print(json.dumps({{"ok": True, "result": {{"dispatch": {{"id": dispatch, "task_id": "task_worker", "runId": "run_1", "assigneeHandle": "term_worker"}}, "worker": {{"dispatchId": dispatch, "worktreeId": "repo::/project", "agentTerminalHandle": "term_worker", "state": "ready"}}}}}}))
                 elif args[:2] == ["orchestration", "worker-stop"]:
                     dispatch = args[args.index("--dispatch") + 1]
                     print(json.dumps({{"ok": True, "result": {{"dispatchId": dispatch, "state": "stopped", "processAction": "closed_agent_terminal", "alreadySettled": False, "close": {{"ptyKilled": True}}}}}}))

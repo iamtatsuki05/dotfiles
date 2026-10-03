@@ -543,7 +543,24 @@ class _AskProcessRunner(ProcessRunner):
         super()._check_cancelled()
 
 
-def _parse_bare_ask_result(payload: object, returncode: int) -> dict[str, object]:
+_ASK_ENVELOPE_FIELDS: Final = frozenset({"id", "ok", "result", "error", "_meta"})
+
+
+def _parse_ask_envelope(payload: object, returncode: int) -> dict[str, object]:
+    """Unwrap the ``{id, ok, result, _meta}`` envelope Orca 1.4.199 prints."""
+
+    if not isinstance(payload, dict) or not set(payload) <= _ASK_ENVELOPE_FIELDS:
+        raise OrcaQuestionError("Orca ask response envelope is invalid")
+    if payload.get("ok") is not True:
+        error = payload.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        raise OrcaQuestionError(
+            f"Orca ask failed: {code if isinstance(code, str) else 'unknown error'}"
+        )
+    return _parse_ask_result(payload.get("result"), returncode)
+
+
+def _parse_ask_result(payload: object, returncode: int) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise OrcaQuestionError("Orca ask response is not an object")
     base_fields = {
@@ -632,7 +649,7 @@ def _ask_orca(
         payload = json.loads(result.stdout)
     except (TypeError, ValueError, UnicodeError) as exc:
         raise OrcaQuestionError("Orca ask response is not valid JSON") from exc
-    return _parse_bare_ask_result(payload, result.returncode)
+    return _parse_ask_envelope(payload, result.returncode)
 
 
 def _ask_result(

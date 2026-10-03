@@ -297,13 +297,13 @@ class FakeOrcaClient:
             "dispatch": {
                 "id": dispatch_id,
                 "task_id": "task_worker",
-                "run_id": "run_1",
-                "assignee_handle": "term_planner",
+                "runId": "run_1",
+                "assigneeHandle": "term_planner",
             },
             "worker": {
-                "dispatch_id": dispatch_id,
-                "worktree_id": self.worker_worktree_id,
-                "agent_terminal_handle": "term_planner",
+                "dispatchId": dispatch_id,
+                "worktreeId": self.worker_worktree_id,
+                "agentTerminalHandle": "term_planner",
                 "state": "ready",
             },
             "terminal": {
@@ -1130,6 +1130,51 @@ class OrcaClientContractTest(unittest.TestCase):
                         }
                     },
                     "error": {"code": "close_failed"},
+                }
+            ),
+            "",
+        )
+        with self.assertRaises(OrcaCommandError):
+            client.terminal_close(terminal_id="term_main", cwd=Path("/tmp"))
+
+        for code, stop_verdict in (
+            ("terminal_stop_live", "live"),
+            ("terminal_stop_unverifiable", "unverifiable"),
+        ):
+            runner.responses[close_argv] = ProcessResult(
+                1,
+                json.dumps(
+                    {
+                        "id": "local",
+                        "ok": False,
+                        "error": {
+                            "code": code,
+                            "message": "PTY stop was not proven",
+                            "data": {
+                                "close": {
+                                    "handle": "term_main",
+                                    "ptyKilled": False,
+                                    "ptyStopVerdict": stop_verdict,
+                                }
+                            },
+                        },
+                    }
+                ),
+                "",
+            )
+            verdict = client.terminal_close(terminal_id="term_main", cwd=Path("/tmp"))
+            self.assertFalse(verdict.pty_killed)
+            self.assertEqual(verdict.pty_stop_verdict, stop_verdict)
+
+        runner.responses[close_argv] = ProcessResult(
+            1,
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "close_failed",
+                        "data": {"close": {"handle": "term_main", "ptyKilled": False}},
+                    },
                 }
             ),
             "",
@@ -3039,13 +3084,13 @@ class OrcaBackendSafetyTest(unittest.TestCase):
                     "dispatch": {
                         "id": "foreign-dispatch",
                         "task_id": "foreign-task",
-                        "run_id": "foreign-run",
-                        "assignee_handle": "foreign-terminal",
+                        "runId": "foreign-run",
+                        "assigneeHandle": "foreign-terminal",
                     },
                     "worker": {
-                        "dispatch_id": "foreign-dispatch",
-                        "worktree_id": "repo::project",
-                        "agent_terminal_handle": "foreign-terminal",
+                        "dispatchId": "foreign-dispatch",
+                        "worktreeId": "repo::project",
+                        "agentTerminalHandle": "foreign-terminal",
                     },
                 }
 
@@ -3094,13 +3139,13 @@ class OrcaBackendSafetyTest(unittest.TestCase):
                     "dispatch": {
                         "id": "foreign-dispatch",
                         "task_id": "foreign-task",
-                        "run_id": "foreign-run",
-                        "assignee_handle": "foreign-terminal",
+                        "runId": "foreign-run",
+                        "assigneeHandle": "foreign-terminal",
                     },
                     "worker": {
-                        "dispatch_id": "foreign-dispatch",
-                        "worktree_id": "repo::project",
-                        "agent_terminal_handle": "foreign-terminal",
+                        "dispatchId": "foreign-dispatch",
+                        "worktreeId": "repo::project",
+                        "agentTerminalHandle": "foreign-terminal",
                     },
                 }
 

@@ -1948,21 +1948,21 @@ class OrcaBackend(BackendPort):
                 worker, ("dispatch", "task_id"), task_token, "worker-show"
             )
             self._assert_nested_string(
-                worker, ("dispatch", "run_id"), run_id, "worker-show"
+                worker, ("dispatch", "runId"), run_id, "worker-show"
             )
             self._assert_nested_string(
                 worker,
-                ("dispatch", "assignee_handle"),
+                ("dispatch", "assigneeHandle"),
                 terminal_token,
                 "worker-show",
             )
             self._assert_nested_string(
-                worker, ("worker", "dispatch_id"), dispatch_token, "worker-show"
+                worker, ("worker", "dispatchId"), dispatch_token, "worker-show"
             )
             worker_payload = worker.get("worker")
             if (
                 not isinstance(worker_payload, dict)
-                or "worktree_id" not in worker_payload
+                or "worktreeId" not in worker_payload
             ):
                 raise OrcaProtocolError("worker-show response is invalid")
             if "role_kind" in assignment:
@@ -1970,7 +1970,7 @@ class OrcaBackend(BackendPort):
                 if (
                     worker_payload.get("state") != "unsupervised"
                     or worker_payload.get("stage") != "context_only"
-                    or worker_payload.get("worktree_id") is not None
+                    or worker_payload.get("worktreeId") is not None
                     or "terminalResource" not in worker
                     or worker["terminalResource"] is not None
                     or not isinstance(observation, Mapping)
@@ -1980,7 +1980,7 @@ class OrcaBackend(BackendPort):
                         ErrorCode.IDENTITY_MISMATCH,
                         "named Orca context-only terminal ownership changed",
                     )
-            observed_worktree = worker_payload["worktree_id"]
+            observed_worktree = worker_payload["worktreeId"]
             if observed_worktree is not None:
                 if not isinstance(observed_worktree, str) or not observed_worktree:
                     raise OrcaProtocolError("worker-show response is invalid")
@@ -1991,7 +1991,7 @@ class OrcaBackend(BackendPort):
                     )
             self._assert_nested_string(
                 worker,
-                ("worker", "agent_terminal_handle"),
+                ("worker", "agentTerminalHandle"),
                 terminal_token,
                 "worker-show",
             )

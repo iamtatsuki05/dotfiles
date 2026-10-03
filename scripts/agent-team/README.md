@@ -661,6 +661,12 @@ the list is not a verified process-stop receipt. Resolve the Orca lifecycle
 failure before reusing that team. Do not delete the state to force a restart.
 The tracked limitation is [#11](https://github.com/iamtatsuki05/dotfiles/issues/11).
 
+The Orca client follows the Orca 1.4.199 CLI JSON: `orchestration ask --json`
+prints the shared `{ok, result}` envelope, `orchestration worker-show` returns
+camelCase `dispatch`/`worker` fields, and an unproven PTY stop from
+`terminal close` is an error whose data carries the close receipt. Other Orca
+versions that print different shapes fail closed with a protocol error.
+
 | Symptom | What to check |
 |---|---|
 | `workspace is not managed by Orca` | Run `orca repo add --path "$PWD"` on macOS, or `orca-ide repo add --path "$PWD"` on Linux. |

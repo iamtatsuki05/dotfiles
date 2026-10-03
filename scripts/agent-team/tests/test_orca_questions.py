@@ -518,7 +518,28 @@ class OrcaQuestionTest(TestCase):
                 {**answers, "question_0_custom": "x" * 20_001},
             )
 
-    def test_bare_ask_parser_allows_pending_nonzero_only_for_pending_flags(
+    def test_ask_envelope_is_unwrapped_and_errors_keep_their_code(self) -> None:
+        normal = {
+            "answer": "yes",
+            "messageId": "message-1",
+            "answerMessageId": "answer-1",
+            "threadId": "message-1",
+            "timedOut": False,
+            "cancelled": False,
+            "connectionLost": False,
+            "timeoutMs": 500,
+        }
+        envelope = {"id": "local", "ok": True, "result": normal, "_meta": {}}
+        self.assertEqual(orca_questions._parse_ask_envelope(envelope, 0), normal)
+        with self.assertRaisesRegex(ValueError, "Orca ask failed: run_not_found"):
+            orca_questions._parse_ask_envelope(
+                {"id": "local", "ok": False, "error": {"code": "run_not_found"}}, 1
+            )
+        for bad in (normal, {**envelope, "extra": 1}, {**envelope, "result": []}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                orca_questions._parse_ask_envelope(bad, 0)
+
+    def test_ask_result_parser_allows_pending_nonzero_only_for_pending_flags(
         self,
     ) -> None:
         pending = {
@@ -530,14 +551,14 @@ class OrcaQuestionTest(TestCase):
             "connectionLost": False,
             "timeoutMs": 500,
         }
-        self.assertEqual(orca_questions._parse_bare_ask_result(pending, 1), pending)
+        self.assertEqual(orca_questions._parse_ask_result(pending, 1), pending)
         normal = {
             **pending,
             "answer": "yes",
             "answerMessageId": "answer-1",
             "timedOut": False,
         }
-        self.assertEqual(orca_questions._parse_bare_ask_result(normal, 0), normal)
+        self.assertEqual(orca_questions._parse_ask_result(normal, 0), normal)
         for bad_payload, returncode in (
             ({"ok": True, "result": normal}, 0),
             ({**pending, "messageId": 1}, 1),
@@ -547,21 +568,26 @@ class OrcaQuestionTest(TestCase):
                 self.subTest(bad_payload=bad_payload, returncode=returncode),
                 self.assertRaises(ValueError),
             ):
-                orca_questions._parse_bare_ask_result(bad_payload, returncode)
+                orca_questions._parse_ask_result(bad_payload, returncode)
 
-    def test_actual_ask_adapter_uses_selected_orca_and_bare_json(self) -> None:
+    def test_actual_ask_adapter_uses_selected_orca_and_json_envelope(self) -> None:
         runner = mock.Mock()
         runner.run.return_value = ProcessResult(
             1,
             json.dumps(
                 {
-                    "answer": None,
-                    "messageId": "message-1",
-                    "threadId": "message-1",
-                    "timedOut": True,
-                    "cancelled": False,
-                    "connectionLost": False,
-                    "timeoutMs": 500,
+                    "id": "local",
+                    "ok": True,
+                    "result": {
+                        "answer": None,
+                        "messageId": "message-1",
+                        "threadId": "message-1",
+                        "timedOut": True,
+                        "cancelled": False,
+                        "connectionLost": False,
+                        "timeoutMs": 500,
+                    },
+                    "_meta": {},
                 }
             ),
             "",

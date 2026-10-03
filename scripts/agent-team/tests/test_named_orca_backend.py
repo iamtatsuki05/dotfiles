@@ -72,7 +72,7 @@ class NamedOrcaBackendTest(unittest.TestCase):
         def context_worker_show(**kwargs):
             response = original_worker_show(**kwargs)
             response["worker"].update(
-                {"state": "unsupervised", "stage": "context_only", "worktree_id": None}
+                {"state": "unsupervised", "stage": "context_only", "worktreeId": None}
             )
             response["terminalResource"] = None
             response["observation"] = {"status": "live", "exactWorker": True}

@@ -157,14 +157,26 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
                 call_number = len(runner_calls)
             if call_number == 1:
                 first_pending.set()
-                return ProcessResult(1, json.dumps(pending_result), "")
+                return ProcessResult(
+                    1,
+                    json.dumps({"id": "local", "ok": True, "result": pending_result}),
+                    "",
+                )
             if call_number == 2:
                 second_pending_started.set()
                 if not allow_delayed_pending.wait(timeout=5):
                     raise AssertionError("delayed pending ask was not released")
-                return ProcessResult(1, json.dumps(pending_result), "")
+                return ProcessResult(
+                    1,
+                    json.dumps({"id": "local", "ok": True, "result": pending_result}),
+                    "",
+                )
             if call_number == 3:
-                return ProcessResult(0, json.dumps(success_result), "")
+                return ProcessResult(
+                    0,
+                    json.dumps({"id": "local", "ok": True, "result": success_result}),
+                    "",
+                )
             raise AssertionError(f"unexpected extra Orca ask invocation: {argv!r}")
 
         main_calls: list[tuple[str, ...]] = []
@@ -492,10 +504,18 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
                 first_ask_started.set()
                 if not release_first_pending.wait(timeout=5):
                     raise AssertionError("first pending ask was not released")
-                return ProcessResult(1, json.dumps(pending_result), "")
+                return ProcessResult(
+                    1,
+                    json.dumps({"id": "local", "ok": True, "result": pending_result}),
+                    "",
+                )
             if len(runner_calls) == 2:
                 second_ask_started.set()
-                return ProcessResult(0, json.dumps(success_result), "")
+                return ProcessResult(
+                    0,
+                    json.dumps({"id": "local", "ok": True, "result": success_result}),
+                    "",
+                )
             raise AssertionError(f"unexpected extra Orca ask invocation: {argv!r}")
 
         main_calls: list[tuple[str, ...]] = []
@@ -771,13 +791,21 @@ class OrcaQuestionIntegrationTest(unittest.TestCase):
         ) -> ProcessResult:
             runner_calls.append(tuple(argv))
             if len(runner_calls) == 1:
-                return ProcessResult(1, json.dumps(pending_result), "")
+                return ProcessResult(
+                    1,
+                    json.dumps({"id": "local", "ok": True, "result": pending_result}),
+                    "",
+                )
             if len(runner_calls) == 2:
                 resume_ask_started.set()
                 if not server_answer_ready.wait(timeout=5):
                     raise AssertionError("server reply was not made available")
                 worker_success_ready.set()
-                return ProcessResult(0, json.dumps(success_result), "")
+                return ProcessResult(
+                    0,
+                    json.dumps({"id": "local", "ok": True, "result": success_result}),
+                    "",
+                )
             raise AssertionError(f"unexpected extra Orca ask invocation: {argv!r}")
 
         main_calls: list[tuple[str, ...]] = []

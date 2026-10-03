@@ -17,6 +17,9 @@ ORCA_TIMEOUT_SECONDS: Final = 900.0
 ORCA_CLEANUP_TIMEOUT_SECONDS: Final = 15.0
 ORCA_STARTUP_TIMEOUT_MS: Final = 180_000
 MAX_ORCA_OUTPUT_BYTES: Final = 100_000
+_TERMINAL_STOP_ERROR_CODES: Final = frozenset(
+    {"terminal_stop_live", "terminal_stop_unverifiable"}
+)
 TERMINAL_ABSENCE_ERRORS: Final = frozenset(
     {"terminal_not_found", "terminal_handle_stale", "terminal_gone"}
 )
@@ -297,9 +300,21 @@ class OrcaClient:
                 error_payload.get("code") if isinstance(error_payload, dict) else None
             )
             normalized_absence = _absence_code(operation, error_code)
+            error_result = result_payload if isinstance(result_payload, dict) else None
+            if (
+                error_result is None
+                and operation[:2] == ("terminal", "close")
+                and error_code in _TERMINAL_STOP_ERROR_CODES
+                and isinstance(error_payload, dict)
+            ):
+                # Orca 1.4.199 reports an unproven PTY stop as an error whose
+                # data carries the close receipt; keep it for verdict decoding.
+                data = error_payload.get("data")
+                if isinstance(data, dict) and isinstance(data.get("close"), dict):
+                    error_result = {"close": data["close"]}
             raise OrcaCommandError(
                 operation_name,
-                result=result_payload if isinstance(result_payload, dict) else None,
+                result=error_result,
                 not_found=normalized_absence is not None,
                 absence_code=normalized_absence,
             )

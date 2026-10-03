@@ -533,6 +533,11 @@ Orca 1.4.190では、非表示の検出済みworktreeに作ったterminalの終�
 再起動を通すためにstateを削除しないでください。残件は[#11](https://github.com/iamtatsuki05/dotfiles/issues/11)
 で追跡します。
 
+Orca clientはOrca 1.4.199のCLI JSONに合わせています。`orchestration ask --json`は共通の
+`{ok, result}`形式で返り、`orchestration worker-show`の`dispatch`と`worker`はcamelCaseの
+fieldを返します。`terminal close`でPTYの停止を確認できない場合は、close結果をdataに含むerrorになります。
+これと異なる形を返すOrcaのversionでは、protocol errorとして安全側に停止します。
+
 | 症状 | 確認する内容 |
 |---|---|
 | `workspace is not managed by Orca` | macOSでは`orca repo add --path "$PWD"`、Linuxでは`orca-ide repo add --path "$PWD"`を実行する。 |
