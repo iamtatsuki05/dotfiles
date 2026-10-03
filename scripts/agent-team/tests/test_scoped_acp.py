@@ -7,7 +7,27 @@ from pathlib import Path
 from unittest import mock
 
 from agent_team import scoped_acp
+from agent_team.native_acp_dependencies import (
+    CodexAcpExecutables,
+    CopilotAcpExecutables,
+)
+from agent_team.runtime import RuntimeValidationError
 from agent_team.task_spec import TaskSpec, VerificationSpec
+
+
+def _copilot_executables() -> CopilotAcpExecutables:
+    return CopilotAcpExecutables(
+        node=Path("/fixture/node"),
+        loader=Path("/fixture/node_modules/@github/copilot/npm-loader.js"),
+        copilot=Path("/fixture/copilot"),
+        sdk=Path("/fixture/sdk/dist/acp.js"),
+        node_sha256="1" * 64,
+        copilot_sha256="2" * 64,
+        sdk_sha256="3" * 64,
+        package_manifest_sha256="4" * 64,
+        platform_manifest_sha256="5" * 64,
+        sdk_manifest_sha256="6" * 64,
+    )
 
 
 class ScopedAcpTest(unittest.TestCase):
@@ -186,6 +206,91 @@ class ScopedAcpTest(unittest.TestCase):
                 path.symlink_to(wrapper)
                 with self.assertRaisesRegex(ValueError, "unsafe file"):
                     scoped_acp.validate_write_policy(saved, assignment, role_spec)
+
+
+class ScopedCopilotAcpTest(unittest.TestCase):
+    def test_copilot_profile_is_an_internal_scoped_acp_profile(self) -> None:
+        for role in ("planner", "worker", "reviewer"):
+            with self.subTest(role=role):
+                self.assertEqual(
+                    scoped_acp.native_profile("copilot", role),
+                    {
+                        "provider": "copilot",
+                        "transport": "acp",
+                        "permission": (
+                            "workspace-write" if role == "worker" else "read-only"
+                        ),
+                        "execution": "background",
+                        "adapter_id": "copilot-acp-scoped-1.0.91",
+                    },
+                )
+        with self.assertRaises(RuntimeValidationError):
+            scoped_acp.native_profile("copilot", "main")
+
+    def _client_argv(self, **changes: object) -> list[str]:
+        arguments: dict[str, object] = {
+            "harness": "copilot",
+            "workspace": Path("/fixture/workspace"),
+            "permission": "read-only",
+            "model": "gpt-5.2",
+            "effort": "high",
+            "instructions": "fixture instructions",
+            "timeout_seconds": 5,
+            "result_file": Path("/fixture/private/client-result.json"),
+            "launch_nonce": "planner1234",
+            "policy": Path("/fixture/private/write-policy.json"),
+            **changes,
+        }
+        executables = arguments.pop("executables", _copilot_executables())
+        return scoped_acp.client_argv(
+            executables,  # type: ignore[arg-type]
+            "/fixture/copilot --acp --stdio",
+            **arguments,  # type: ignore[arg-type]
+        )
+
+    def test_client_argv_binds_the_copilot_policy(self) -> None:
+        with mock.patch.object(CopilotAcpExecutables, "verify") as verify:
+            argv = self._client_argv()
+        verify.assert_called_once_with()
+        self.assertEqual(argv[argv.index("--harness") + 1], "copilot")
+        self.assertEqual(
+            argv[argv.index("--sdk-entry") + 1], "/fixture/sdk/dist/acp.js"
+        )
+        self.assertEqual(
+            argv[argv.index("--policy") + 1], "/fixture/private/write-policy.json"
+        )
+        self.assertNotIn("--question-socket", argv)
+
+    def test_client_argv_rejects_copilot_constraint_violations(self) -> None:
+        codex = CodexAcpExecutables(
+            node=Path("/fixture/node"),
+            agent=Path("/fixture/codex-acp.js"),
+            sdk=Path("/fixture/sdk.js"),
+            codex=Path("/fixture/codex"),
+            node_sha256="a" * 64,
+            agent_sha256="b" * 64,
+            sdk_sha256="c" * 64,
+            codex_sha256="d" * 64,
+            agent_manifest_sha256="e" * 64,
+            sdk_manifest_sha256="f" * 64,
+        )
+        cases: tuple[tuple[str, dict[str, object]], ...] = (
+            ("missing-policy", {"policy": None}),
+            ("relative-policy", {"policy": Path("private/write-policy.json")}),
+            ("other-policy-name", {"policy": Path("/fixture/private/policy.json")}),
+            ("question-socket", {"question_socket": Path("/fixture/private/q.sock")}),
+            ("codex-binding", {"executables": codex}),
+            ("codex-policy", {"harness": "codex", "executables": codex}),
+        )
+        for name, changes in cases:
+            with (
+                self.subTest(case=name),
+                mock.patch.object(CopilotAcpExecutables, "verify") as verify,
+                mock.patch.object(CodexAcpExecutables, "verify"),
+                self.assertRaises(RuntimeValidationError),
+            ):
+                self._client_argv(**changes)
+            verify.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -38,7 +38,11 @@ from .contracts import (
     TaskRef,
     TerminalRef,
 )
-from .native_acp_dependencies import CodexAcpExecutables, NativeAcpExecutables
+from .native_acp_dependencies import (
+    CodexAcpExecutables,
+    CopilotAcpExecutables,
+    NativeAcpExecutables,
+)
 from .orca_controller import controller_terminal
 from .runtime import (
     MAX_PROMPT_CHARS,
@@ -182,7 +186,7 @@ def _role_spec(state: Mapping[str, object], target: NodeRef) -> dict[str, object
     spec = dict(raw_spec)
     if spec.get("kind") != target.kind.value:
         _fail(ErrorCode.IDENTITY_MISMATCH, "named Orca role kind differs from its spec")
-    if spec.get("provider") not in {"claude", "codex"}:
+    if spec.get("provider") not in {"claude", "codex", "copilot"}:
         _fail(
             ErrorCode.INVALID_REQUEST,
             "named Orca role has no supported scoped ACP provider",
@@ -198,7 +202,10 @@ def _frozen_spec(spec: Mapping[str, object]) -> dict[str, object]:
 
 def _preflight_role(
     state: Mapping[str, object], target: NodeRef, spec: Mapping[str, object]
-) -> tuple[NativeAcpExecutables | CodexAcpExecutables, dict[str, object]]:
+) -> tuple[
+    NativeAcpExecutables | CodexAcpExecutables | CopilotAcpExecutables,
+    dict[str, object],
+]:
     frozen = _frozen_spec(spec)
     normalized = copy.deepcopy(frozen)
     try:
@@ -221,7 +228,7 @@ def _preflight_role(
 
     provider = cast(str, frozen["provider"])
     raw_executables = normalized.get("acp_executables")
-    selected: NativeAcpExecutables | CodexAcpExecutables
+    selected: NativeAcpExecutables | CodexAcpExecutables | CopilotAcpExecutables
     try:
         if provider == "codex":
             from . import codex_acp
@@ -235,6 +242,12 @@ def _preflight_role(
                 provider_snapshot, Path(_required_string(state, "workspace"))
             )
             adapter = native_acp_dependencies.codex_adapter_snapshot(selected)
+        elif provider == "copilot":
+            selected = CopilotAcpExecutables.from_dict(raw_executables)
+            selected.verify()
+            normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
+            normalized["scoped_policy_sha256"] = checked_digest(SCOPED_POLICY)
+            adapter = native_acp_dependencies.copilot_adapter_snapshot(selected)
         else:
             selected = NativeAcpExecutables.from_dict(raw_executables)
             selected.verify()
@@ -662,6 +675,35 @@ def start_assignment(
                     "Codex scoped policy is outside its private root",
                 )
             provider_fields["write_policy_path"] = str(codex_policy_path)
+        elif provider == "copilot":
+            from . import copilot_acp
+
+            copilot_selected = cast(CopilotAcpExecutables, selected)
+            phase = "local-policy"
+            provider_fields = copilot_acp.prepare_assignment(
+                private_root=private_root,
+                workspace=Path(_required_string(state, "workspace")),
+                state_path=path,
+                task=request.task if isinstance(request, TaskDispatch) else None,
+                permission=cast(str, spec["permission"]),
+                executables=copilot_selected,
+                model=cast(str, spec["model"]),
+                effort=cast(str, spec["effort"]),
+            )
+            copilot_policy_path = Path(
+                str(provider_fields["write_policy_path"])
+            ).resolve(strict=False)
+            if copilot_policy_path.parent != private_root:
+                _fail(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "Copilot scoped policy is outside its private root",
+                )
+            agent_command = copilot_acp.agent_command(
+                copilot_selected,
+                permission=cast(str, spec["permission"]),
+                model=cast(str, spec["model"]),
+                effort=cast(str, spec["effort"]),
+            )
         else:
             claude_selected = cast(NativeAcpExecutables, selected)
             phase = "local-policy"

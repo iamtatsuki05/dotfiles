@@ -91,9 +91,11 @@ from .harness_launch import (
 from .named_graph import GraphSpec
 from .native_acp_dependencies import (
     CodexAcpExecutables,
+    CopilotAcpExecutables,
     NativeAcpDependencyError,
     NativeAcpExecutables,
     codex_adapter_snapshot,
+    copilot_adapter_snapshot,
 )
 from .native_terminal import NATIVE_RUNTIMES, is_native_runtime
 from .registry import (
@@ -765,12 +767,21 @@ def _saved_acp_executables(spec: dict[str, object]) -> AcpExecutables:
 
 def _validate_acp_assignment_snapshot(
     assignment: dict[str, object],
-    executables: AcpExecutables | NativeAcpExecutables | CodexAcpExecutables,
+    executables: AcpExecutables
+    | NativeAcpExecutables
+    | CodexAcpExecutables
+    | CopilotAcpExecutables,
 ) -> None:
     snapshot = assignment.get("adapter_snapshot")
     if isinstance(executables, CodexAcpExecutables):
         if snapshot != codex_adapter_snapshot(executables):
             raise ConfigError("Codex ACP assignment has an invalid executable snapshot")
+        return
+    if isinstance(executables, CopilotAcpExecutables):
+        if snapshot != copilot_adapter_snapshot(executables):
+            raise ConfigError(
+                "Copilot ACP assignment has an invalid executable snapshot"
+            )
         return
     identity = snapshot.get("identity") if isinstance(snapshot, dict) else None
     if not isinstance(snapshot, dict) or not isinstance(identity, dict):
@@ -1415,7 +1426,7 @@ def _acp_assignment(
 ) -> tuple[
     dict[str, object],
     dict[str, object],
-    AcpExecutables | NativeAcpExecutables | CodexAcpExecutables,
+    AcpExecutables | NativeAcpExecutables | CodexAcpExecutables | CopilotAcpExecutables,
 ]:
     selected_role = _runner_role_target(state, role)
     selected_id = (
@@ -1465,12 +1476,19 @@ def _acp_assignment(
         or not isinstance(spec.get("instructions"), str)
     ):
         raise ConfigError("ACP role does not match its scoped capability")
-    executables: AcpExecutables | NativeAcpExecutables | CodexAcpExecutables
+    executables: (
+        AcpExecutables
+        | NativeAcpExecutables
+        | CodexAcpExecutables
+        | CopilotAcpExecutables
+    )
     if _uses_scoped_acp(state):
         try:
             executables = (
                 CodexAcpExecutables.from_dict(spec.get("acp_executables"))
                 if spec["provider"] == "codex"
+                else CopilotAcpExecutables.from_dict(spec.get("acp_executables"))
+                if spec["provider"] == "copilot"
                 else NativeAcpExecutables.from_dict(spec.get("acp_executables"))
             )
             executables.verify()
@@ -1484,6 +1502,16 @@ def _acp_assignment(
 
         codex_acp.validate_assignment(state, assignment, spec)
         expected_command = codex_acp.agent_command(executables)
+    elif isinstance(executables, CopilotAcpExecutables):
+        from . import copilot_acp
+
+        copilot_acp.validate_assignment(state, assignment, spec)
+        expected_command = copilot_acp.agent_command(
+            executables,
+            permission=cast(str, spec["permission"]),
+            model=cast(str, spec["model"]),
+            effort=cast(str, spec["effort"]),
+        )
     else:
         write_policy = (
             validate_write_policy(state, assignment, spec)
@@ -2006,6 +2034,18 @@ def _acp_run_turn(
             native_environment = codex_acp.environment(
                 Path(str(assignment["provider_private_root"])), executables
             )
+        elif isinstance(executables, CopilotAcpExecutables):
+            from . import copilot_acp
+
+            agent_command = copilot_acp.agent_command(
+                executables,
+                permission=cast(str, spec["permission"]),
+                model=model,
+                effort=effort,
+            )
+            native_environment = copilot_acp.environment(
+                Path(str(assignment["provider_private_root"]))
+            )
         else:
             write_policy = (
                 validate_write_policy(state, assignment, spec)
@@ -2023,7 +2063,10 @@ def _acp_run_turn(
             native_environment = {**acp_env(), **claude_environment(state)}
         session_name = acp_session_name(selected_role, launch_nonce)
         native_argv = None
-        if isinstance(executables, (NativeAcpExecutables, CodexAcpExecutables)):
+        if isinstance(
+            executables,
+            (NativeAcpExecutables, CodexAcpExecutables, CopilotAcpExecutables),
+        ):
             native_argv = client_argv(
                 executables,
                 agent_command,
@@ -2040,6 +2083,11 @@ def _acp_run_turn(
                 **(
                     {"question_socket": Path(str(assignment["question_socket"]))}
                     if spec["provider"] == "claude"
+                    else {}
+                ),
+                **(
+                    {"policy": Path(str(assignment["write_policy_path"]))}
+                    if spec["provider"] == "copilot"
                     else {}
                 ),
             )
@@ -2834,11 +2882,17 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
     groups: dict[str, list[dict[str, object]]] = {}
     for launch in acp_launches:
         provider = launch.get("provider")
-        if provider not in ("claude", "codex") or not isinstance(provider, str):
+        if provider not in ("claude", "codex", "copilot") or not isinstance(
+            provider, str
+        ):
             raise ConfigError("selected ACP provider is unsupported")
         if provider == "codex" and not scoped_acp:
             raise ConfigError(
                 "scoped Codex ACP requires a native or named Orca runtime"
+            )
+        if provider == "copilot" and not scoped_acp:
+            raise ConfigError(
+                "scoped Copilot ACP requires a native or named Orca runtime"
             )
         groups.setdefault(provider, []).append(launch)
     if not os.access(mcp_server_path(), os.X_OK):
@@ -2846,12 +2900,20 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
             f"agent-team MCP server is not executable: {mcp_server_path()}"
         )
     selected: dict[
-        str, AcpExecutables | NativeAcpExecutables | CodexAcpExecutables
+        str,
+        AcpExecutables
+        | NativeAcpExecutables
+        | CodexAcpExecutables
+        | CopilotAcpExecutables,
     ] = {}
     for provider in sorted(groups):
         try:
             if provider == "codex":
                 selected[provider] = CodexAcpExecutables.resolve()
+            elif provider == "copilot":
+                # Unlike Codex, Copilot is not run here (not even --version):
+                # the pinned binary digest is its only version check at start.
+                selected[provider] = CopilotAcpExecutables.resolve()
             elif scoped_acp:
                 selected[provider] = NativeAcpExecutables.resolve()
             else:

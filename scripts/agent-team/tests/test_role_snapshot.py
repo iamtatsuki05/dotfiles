@@ -220,6 +220,126 @@ class RoleSnapshotTest(unittest.TestCase):
         self.assertEqual(normalized["scoped_policy_sha256"], "p" * 64)
         self.assertEqual(normalized["scoped_question_client_sha256"], "q" * 64)
 
+    def test_copilot_preflight_records_only_client_and_policy_digests(self) -> None:
+        for role, permission in (
+            (Role.PLANNER, "read-only"),
+            (Role.WORKER, "workspace-write"),
+        ):
+            with self.subTest(role=role):
+                normalized: dict[str, object] = {
+                    "provider": "copilot",
+                    "transport": "acp",
+                    "model": "gpt-5.2",
+                    "effort": "high",
+                    "permission": permission,
+                    "instructions": "instructions",
+                    "execution": "background",
+                    "adapter_id": "copilot-acp-scoped-1.0.91",
+                    "acp_executables": {"binding": "saved"},
+                }
+                workspace = Path(self.enterContext(tempfile.TemporaryDirectory()))
+                _FakeExecutables.calls.clear()
+                with (
+                    mock.patch.object(
+                        native_acp_dependencies,
+                        "CopilotAcpExecutables",
+                        _FakeExecutables,
+                    ),
+                    mock.patch.object(
+                        native_acp_dependencies,
+                        "NativeAcpExecutables",
+                        side_effect=AssertionError("Claude binding was loaded"),
+                    ),
+                    mock.patch.object(
+                        native_acp_dependencies,
+                        "copilot_adapter_snapshot",
+                        return_value={"adapter": "snapshot"},
+                    ) as adapter_snapshot,
+                    mock.patch.object(
+                        role_snapshot,
+                        "checked_digest",
+                        side_effect=["c" * 64, "p" * 64],
+                    ) as digest,
+                ):
+                    selected = role_snapshot.preflight_scoped_role(
+                        normalized, role, workspace
+                    )
+
+                self.assertIsInstance(selected, _FakeExecutables)
+                self.assertEqual(_FakeExecutables.calls, [{"binding": "saved"}])
+                adapter_snapshot.assert_called_once_with(selected)
+                self.assertEqual(
+                    [call.args[0] for call in digest.call_args_list],
+                    [role_snapshot.SCOPED_CLIENT, role_snapshot.SCOPED_POLICY],
+                )
+                self.assertEqual(normalized["acp_executables"], {"selected": True})
+                self.assertEqual(normalized["scoped_client_sha256"], "c" * 64)
+                self.assertEqual(normalized["scoped_policy_sha256"], "p" * 64)
+                self.assertNotIn("scoped_wrapper_sha256", normalized)
+                self.assertNotIn("scoped_question_client_sha256", normalized)
+                self.assertNotIn("provider_snapshot", normalized)
+
+    def test_copilot_role_options_are_rejected_before_loading_the_binding(
+        self,
+    ) -> None:
+        for field, value, message in (
+            ("model", "auto", "model is invalid"),
+            ("model", "--yolo", "model is invalid"),
+            ("effort", "none", "effort is invalid"),
+        ):
+            for preflight in (False, True):
+                with self.subTest(field=field, preflight=preflight):
+                    normalized: dict[str, object] = {
+                        "provider": "copilot",
+                        "transport": "acp",
+                        "model": "gpt-5.2",
+                        "effort": "high",
+                        "permission": "read-only",
+                        "instructions": "instructions",
+                        "execution": "background",
+                        "adapter_id": "copilot-acp-scoped-1.0.91",
+                        "acp_executables": {"binding": "saved"},
+                        field: value,
+                    }
+                    with (
+                        tempfile.TemporaryDirectory() as directory,
+                        mock.patch.object(
+                            native_acp_dependencies,
+                            "CopilotAcpExecutables",
+                            side_effect=AssertionError("binding was loaded"),
+                        ),
+                        self.assertRaisesRegex(RuntimeFailure, message) as raised,
+                    ):
+                        role_snapshot.preflight_scoped_role(
+                            normalized,
+                            Role.REVIEWER,
+                            Path(directory),
+                            preflight=preflight,
+                        )
+                    self.assertIs(raised.exception.code, ErrorCode.INVALID_REQUEST)
+
+    def test_copilot_preflight_rejects_a_non_copilot_adapter(self) -> None:
+        normalized: dict[str, object] = {
+            "provider": "copilot",
+            "transport": "acp",
+            "model": "gpt-5.2",
+            "effort": "high",
+            "permission": "read-only",
+            "instructions": "instructions",
+            "execution": "background",
+            "adapter_id": "github-copilot-direct-readonly-1.0.81",
+            "acp_executables": {"binding": "saved"},
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(
+                RuntimeFailure, "does not match its scoped ACP profile"
+            ),
+        ):
+            role_snapshot.preflight_scoped_role(
+                normalized, Role.REVIEWER, Path(directory), preflight=False
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

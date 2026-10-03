@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { Readable, Writable } from "node:stream";
+import { pipeline, Readable, Transform, Writable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const READ_TOOLS = Object.freeze(["Read", "Grep", "Glob"]);
@@ -21,7 +22,25 @@ const RESULT_FILE_NAME = "client-result.json";
 const RESULT_TEMP_NAME = "client-result.pending";
 const LAUNCH_NONCE_RE = /^[a-z0-9]{8,64}$/;
 const SDK_PACKAGE = "@agentclientprotocol/sdk";
-const SDK_VERSIONS = Object.freeze({ claude: "1.3.0", codex: "1.4.0" });
+const SDK_VERSIONS = Object.freeze({ claude: "1.3.0", codex: "1.4.0", copilot: "1.4.0" });
+const COPILOT_VERSION = "1.0.91";
+const COPILOT_ENV_KEYS = new Set(["HOME", "PATH", "TMPDIR", "COPILOT_HOME", "USER", "LOGNAME", "LANG"]);
+const COPILOT_REQUIRED_ENV_PATHS = Object.freeze(["HOME", "TMPDIR", "COPILOT_HOME"]);
+const COPILOT_READ_KINDS = new Set(["read", "search"]);
+const COPILOT_MONITORED_KINDS = new Set(["edit", "delete", "move", "execute", "fetch"]);
+const COPILOT_TOOL_KINDS = new Set([
+  ...COPILOT_READ_KINDS,
+  ...COPILOT_MONITORED_KINDS,
+  "think",
+  "switch_mode",
+  "other",
+]);
+const COPILOT_TOOL_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
+const COPILOT_RUNNING_STATUSES = new Set(["in_progress", "completed"]);
+const MAX_COPILOT_AUDIT_LINES = 256;
+const MAX_COPILOT_AUDIT_BYTES = 64 * 1024;
+const MAX_COPILOT_AUDIT_PATHS = 16;
+const MAX_PROVIDER_ERROR_CHARS = 1_000;
 
 function fail(message) {
   throw new Error(`scoped ACP client: ${message}`);
@@ -147,7 +166,9 @@ function parsePermission(value) {
 }
 
 function parseHarness(value) {
-  if (value !== "claude" && value !== "codex") fail("harness must be claude or codex");
+  if (value !== "claude" && value !== "codex" && value !== "copilot") {
+    fail("harness must be claude or codex or copilot");
+  }
   return value;
 }
 
@@ -166,6 +187,7 @@ export function parseCliArgs(argv) {
     "--question-socket",
     "--result-file",
     "--launch-nonce",
+    "--policy",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
@@ -206,6 +228,13 @@ export function parseCliArgs(argv) {
     if (!path.isAbsolute(rawSocket)) fail("question socket must be absolute");
     questionSocket = path.resolve(rawSocket);
   }
+  let policyPath;
+  if (values["--policy"] !== undefined) {
+    if (harness !== "copilot") fail("--policy is only available for copilot");
+    policyPath = absolutePath(values["--policy"], "policy");
+  } else if (harness === "copilot") {
+    fail("--policy is required for copilot");
+  }
   const hasResultFile = values["--result-file"] !== undefined;
   const hasLaunchNonce = values["--launch-nonce"] !== undefined;
   if (hasResultFile !== hasLaunchNonce) {
@@ -226,6 +255,7 @@ export function parseCliArgs(argv) {
     questionSocket,
     resultFile,
     launchNonce,
+    policyPath,
   };
 }
 
@@ -271,7 +301,8 @@ function fixedTools(permission, questionsEnabled = false) {
 }
 
 export function buildSessionRequest(options) {
-  if (parseHarness(options.harness) === "codex") {
+  const harness = parseHarness(options.harness);
+  if (harness === "codex" || harness === "copilot") {
     return { cwd: options.cwd, mcpServers: [] };
   }
   const questionsEnabled = options.questions === true || options.questionSocket !== undefined;
@@ -291,6 +322,132 @@ export function buildSessionRequest(options) {
       },
     },
   };
+}
+
+// Copilot loads no custom instructions, so the role instructions travel in
+// the single prompt text block instead of a provider-specific system prompt.
+export function buildPromptText(options, prompt) {
+  if (parseHarness(options.harness) !== "copilot") return prompt;
+  return `${options.instructions}\n\n${prompt}`;
+}
+
+export function copilotEnvironment(source) {
+  const environment = {};
+  for (const [key, value] of Object.entries(source)) {
+    if ((COPILOT_ENV_KEYS.has(key) || key.startsWith("LC_")) && typeof value === "string") {
+      environment[key] = value;
+    }
+  }
+  if (typeof environment.PATH !== "string" || environment.PATH.length === 0) {
+    fail("Copilot environment requires PATH");
+  }
+  for (const key of COPILOT_REQUIRED_ENV_PATHS) {
+    const value = environment[key];
+    if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
+      fail(`Copilot environment requires an absolute ${key}`);
+    }
+  }
+  return environment;
+}
+
+function reportedCopilotModels(response) {
+  const reported = [];
+  const current = response?.models?.currentModelId;
+  if (current !== undefined) reported.push(current);
+  if (Array.isArray(response?.configOptions)) {
+    for (const option of response.configOptions) {
+      if (option && option.id === "model") reported.push(option.currentValue);
+    }
+  }
+  return reported;
+}
+
+async function prepareCopilot(options) {
+  const policyModule = await import("./scoped_policy.mjs");
+  const policy = await policyModule.loadPolicy(options.policyPath);
+  if (policy.workspace !== options.cwd) fail("Copilot policy workspace does not match cwd");
+  if (policy.permission !== options.permission) {
+    fail("Copilot policy permission does not match the role permission");
+  }
+  // The SDK router parses every session/update with this schema before any
+  // handler runs and drops the ones that fail, so the client applies the same
+  // check to the raw stream to make such updates fatal instead of invisible.
+  const schema = await import(new URL("./schema/zod.gen.js", pathToFileURL(options.sdkEntry)).href);
+  if (typeof schema.zSessionNotification?.safeParse !== "function") {
+    fail(`installed ${SDK_PACKAGE} does not expose its session update schema`);
+  }
+  return {
+    policyModule,
+    policy,
+    sessionNotification: schema.zSessionNotification,
+    environment: copilotEnvironment(process.env),
+    approvedEdits: new Map(),
+    toolKinds: new Map(),
+    toolStatuses: new Map(),
+    toolLocations: new Map(),
+    auditLines: 0,
+    auditBytes: 0,
+    initialModeId: undefined,
+  };
+}
+
+function lineTap(onLine) {
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  const split = (text) => {
+    // Only the new text can contain a newline; rescanning a long pending
+    // line on every chunk would be quadratic in its length.
+    let newline = text.indexOf("\n");
+    if (newline < 0) {
+      pending += text;
+      return;
+    }
+    onLine(pending + text.slice(0, newline));
+    let start = newline + 1;
+    newline = text.indexOf("\n", start);
+    while (newline >= 0) {
+      onLine(text.slice(start, newline));
+      start = newline + 1;
+      newline = text.indexOf("\n", start);
+    }
+    pending = text.slice(start);
+  };
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      split(decoder.write(chunk));
+      callback(null, chunk);
+    },
+    flush(callback) {
+      split(decoder.end());
+      if (pending.length > 0) onLine(pending);
+      pending = "";
+      callback();
+    },
+  });
+}
+
+// Without a session/close capability the client could not prove cleanup, so
+// the requirement is fixed instead of branching on the advertised capability.
+function requireCopilotAgent(response) {
+  const version = response?.agentInfo?.version;
+  if (version !== undefined && version !== COPILOT_VERSION) {
+    fail(`Copilot ACP agent version ${boundedProviderError(version)} is not ${COPILOT_VERSION}`);
+  }
+  const close = response?.agentCapabilities?.sessionCapabilities?.close;
+  if (close === null || typeof close !== "object" || Array.isArray(close)) {
+    fail("Copilot ACP agent does not advertise session/close");
+  }
+}
+
+function boundedProviderError(error) {
+  const message = String(error?.message ?? error);
+  return [...message]
+    .filter((character) => {
+      const code = character.codePointAt(0);
+      return code !== undefined && code >= 0x20 && code !== 0x7f;
+    })
+    .slice(0, MAX_PROVIDER_ERROR_CHARS)
+    .join("");
 }
 
 function requireConfigValue(response, id, label) {
@@ -522,10 +679,11 @@ async function runTask(options, prompt, signalState) {
       questionClient = new questionModule.ScopedQuestionClient(options.questionSocket);
     }
   }
+  const copilot = options.harness === "copilot" ? await prepareCopilot(options) : undefined;
   cleanup.spawnAttempted = true;
   const child = spawn(options.agentArgv[0], options.agentArgv.slice(1), {
     cwd: options.cwd,
-    env: { ...process.env },
+    env: copilot ? copilot.environment : { ...process.env },
     shell: false,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -536,9 +694,17 @@ async function runTask(options, prompt, signalState) {
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
 
+  let agentOutput = child.stdout;
+  if (copilot) {
+    // pipeline() propagates an error or teardown on either side, so a failed
+    // stdout ends the ACP stream and a closed stream stops reading from Copilot.
+    agentOutput = lineTap((line) => inspectCopilotLine(line));
+    pipeline(child.stdout, agentOutput, () => {});
+  }
+  agentOutput.on("error", () => {});
   const stream = sdk.ndJsonStream(
     Writable.toWeb(child.stdin),
-    Readable.toWeb(child.stdout),
+    Readable.toWeb(agentOutput),
   );
   let sessionId;
   let connection;
@@ -562,42 +728,206 @@ async function runTask(options, prompt, signalState) {
     void cancelActive?.();
   };
 
-  const app = sdk
-    .client({ name: CLIENT_NAME })
-    .onRequest(sdk.methods.client.session.requestPermission, ({ params }) => selectPermission(params))
-    .onNotification(sdk.methods.client.session.update, ({ params }) => {
-      if (params?.sessionId !== sessionId) return;
-      const update = params.update;
-      if (
-        update?.sessionUpdate === "tool_call" &&
-        update._meta?.claudeCode?.toolName === ASK_USER_TOOL
-      ) {
-        const toolCallId = update.toolCallId;
-        if (
-          typeof toolCallId !== "string" ||
-          toolCallId.length === 0 ||
-          [...toolCallId].length > MAX_QUESTION_TOOL_CALL_ID_CHARS
-        ) {
-          recordFatalQuestionError(new Error("AskUserQuestion tool call id is invalid"));
-        } else if (
-          observedAskToolCalls.has(toolCallId) ||
-          inFlightAskToolCalls.has(toolCallId) ||
-          consumedAskToolCalls.has(toolCallId)
-        ) {
-          recordFatalQuestionError(new Error("duplicate or empty AskUserQuestion tool call id"));
-        } else if (observedAskToolCallCount >= 64) {
-          recordFatalQuestionError(new Error("AskUserQuestion tool call limit exceeded"));
-        } else {
-          observedAskToolCalls.add(toolCallId);
-          observedAskToolCallCount += 1;
+  // A violation is recorded even while stopping: it is evidence that Copilot
+  // acted without an approved permission request.
+  let fatalPolicyError;
+  const recordFatalPolicyError = (message) => {
+    if (fatalPolicyError) return;
+    fatalPolicyError = new Error(`scoped Copilot ACP policy violation: ${message}`);
+    process.stderr.write(`${fatalPolicyError.message}\n`);
+    if (promptAbort && !promptAbort.signal.aborted) promptAbort.abort(fatalPolicyError);
+    void cancelActive?.();
+  };
+
+  const inspectCopilotLine = (line) => {
+    if (line.trim().length === 0) return;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      recordFatalPolicyError("the agent sent a message that is not JSON");
+      return;
+    }
+    if (message === null || typeof message !== "object" || message.jsonrpc !== "2.0") {
+      recordFatalPolicyError("the agent sent a message that is not JSON-RPC 2.0");
+      return;
+    }
+    if (message.method !== sdk.methods.client.session.update) return;
+    // The SDK drops an update that carries an id or fails its schema.
+    if (
+      Object.hasOwn(message, "id") ||
+      !copilot.sessionNotification.safeParse(message.params).success
+    ) {
+      recordFatalPolicyError("the agent sent a session update that cannot be inspected");
+    }
+  };
+
+  const auditCopilot = (entry) => {
+    const line = `${JSON.stringify({ event: "copilot-permission", ...entry })}\n`;
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (
+      copilot.auditLines >= MAX_COPILOT_AUDIT_LINES ||
+      copilot.auditBytes + bytes > MAX_COPILOT_AUDIT_BYTES
+    ) {
+      return;
+    }
+    copilot.auditLines += 1;
+    copilot.auditBytes += bytes;
+    process.stderr.write(line);
+  };
+
+  const decideCopilot = (params) => {
+    if (
+      sessionId === undefined ||
+      cleanupStarted ||
+      signalState.interrupted ||
+      signalState.timedOut ||
+      fatalPolicyError
+    ) {
+      auditCopilot({ decision: "cancelled", reason: "the scoped session is not accepting tool calls" });
+      return { outcome: { outcome: "cancelled" } };
+    }
+    const decision = copilot.policyModule.decideCopilotPermission(copilot.policy, params, { sessionId });
+    if (decision.decision === "allow" && decision.kind === "edit") {
+      copilot.approvedEdits.set(decision.toolCallId, new Set(decision.paths));
+    }
+    auditCopilot({
+      kind: decision.kind ?? null,
+      decision: decision.decision,
+      reason: decision.reason,
+      paths: decision.paths.slice(0, MAX_COPILOT_AUDIT_PATHS).map((target) =>
+        [...(path.relative(copilot.policy.workspace, target) || ".")].slice(0, 256).join(""),
+      ),
+    });
+    return decision.response;
+  };
+
+  const monitorCopilotUpdate = (update) => {
+    if (!update || typeof update !== "object") return;
+    if (update.sessionUpdate === "current_mode_update") {
+      if (update.currentModeId !== copilot.initialModeId) {
+        recordFatalPolicyError("the session mode changed");
+      }
+      return;
+    }
+    if (update.sessionUpdate === "config_option_update") {
+      if (reportedCopilotModels(update).some((model) => model !== options.model)) {
+        recordFatalPolicyError("the session model changed");
+      }
+      return;
+    }
+    if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") return;
+    const toolCallId = update.toolCallId;
+    if (typeof toolCallId !== "string" || toolCallId.length === 0) {
+      recordFatalPolicyError("a tool call update has no id");
+      return;
+    }
+    // The SDK schema turns an unknown kind or status into "absent"; here an
+    // unknown value would hide a running tool from the checks below.
+    if (
+      (update.kind !== undefined && update.kind !== null && !COPILOT_TOOL_KINDS.has(update.kind)) ||
+      (update.status !== undefined && update.status !== null && !COPILOT_TOOL_STATUSES.has(update.status))
+    ) {
+      recordFatalPolicyError("a tool call reported an unknown kind or status");
+      return;
+    }
+    // Updates carry only changed fields, so the last reported values apply.
+    if (update.kind !== undefined && update.kind !== null) copilot.toolKinds.set(toolCallId, update.kind);
+    if (update.status !== undefined && update.status !== null) {
+      copilot.toolStatuses.set(toolCallId, update.status);
+    }
+    if (Array.isArray(update.locations)) copilot.toolLocations.set(toolCallId, update.locations);
+    const kind = copilot.toolKinds.get(toolCallId);
+    const status = copilot.toolStatuses.get(toolCallId);
+    const approved = kind === "edit" ? copilot.approvedEdits.get(toolCallId) : undefined;
+    if (
+      COPILOT_MONITORED_KINDS.has(kind) &&
+      COPILOT_RUNNING_STATUSES.has(status) &&
+      approved === undefined
+    ) {
+      recordFatalPolicyError(`an unapproved ${kind} tool call ran`);
+      return;
+    }
+    if (
+      approved !== undefined &&
+      COPILOT_RUNNING_STATUSES.has(status) &&
+      (copilot.toolLocations.get(toolCallId) ?? []).some((location) => !approved.has(location?.path))
+    ) {
+      recordFatalPolicyError("an approved edit reported a location outside its approval");
+      return;
+    }
+    if (COPILOT_READ_KINDS.has(kind) && status === "completed") {
+      for (const location of copilot.toolLocations.get(toolCallId) ?? []) {
+        const target = location?.path;
+        const check = typeof target === "string"
+          ? copilot.policyModule.inspectTarget(copilot.policy, target, {
+            allowDirectory: true,
+            allowWorkspaceRoot: true,
+            enforceScope: false,
+          })
+          : { ok: false };
+        if (!check.ok) {
+          recordFatalPolicyError(`a ${kind} tool call completed outside the policy`);
+          return;
         }
       }
-      const text = textFromUpdate(update);
-      const messageId = update?.messageId;
-      if (!text || typeof messageId !== "string" || messageId.length === 0) return;
-      lastMessageId = messageId;
-      messageText.set(messageId, `${messageText.get(messageId) ?? ""}${text}`);
-    });
+    }
+  };
+
+  const onSessionUpdate = ({ params }) => {
+    if (params?.sessionId !== sessionId) {
+      if (copilot && sessionId !== undefined) {
+        recordFatalPolicyError("a session update named another session");
+      }
+      return;
+    }
+    const update = params.update;
+    if (copilot) monitorCopilotUpdate(update);
+    if (
+      update?.sessionUpdate === "tool_call" &&
+      update._meta?.claudeCode?.toolName === ASK_USER_TOOL
+    ) {
+      const toolCallId = update.toolCallId;
+      if (
+        typeof toolCallId !== "string" ||
+        toolCallId.length === 0 ||
+        [...toolCallId].length > MAX_QUESTION_TOOL_CALL_ID_CHARS
+      ) {
+        recordFatalQuestionError(new Error("AskUserQuestion tool call id is invalid"));
+      } else if (
+        observedAskToolCalls.has(toolCallId) ||
+        inFlightAskToolCalls.has(toolCallId) ||
+        consumedAskToolCalls.has(toolCallId)
+      ) {
+        recordFatalQuestionError(new Error("duplicate or empty AskUserQuestion tool call id"));
+      } else if (observedAskToolCallCount >= 64) {
+        recordFatalQuestionError(new Error("AskUserQuestion tool call limit exceeded"));
+      } else {
+        observedAskToolCalls.add(toolCallId);
+        observedAskToolCallCount += 1;
+      }
+    }
+    const text = textFromUpdate(update);
+    const messageId = update?.messageId;
+    if (!text || typeof messageId !== "string" || messageId.length === 0) return;
+    lastMessageId = messageId;
+    messageText.set(messageId, `${messageText.get(messageId) ?? ""}${text}`);
+  };
+
+  const app = sdk.client({ name: CLIENT_NAME });
+  if (copilot) {
+    // The SDK schema silently drops invalid kinds and locations, so Copilot
+    // permission decisions and monitoring read the raw JSON-RPC params.
+    app
+      .onRequest(sdk.methods.client.session.requestPermission, (params) => params, ({ params }) =>
+        decideCopilot(params),
+      )
+      .onNotification(sdk.methods.client.session.update, (params) => params, onSessionUpdate);
+  } else {
+    app
+      .onRequest(sdk.methods.client.session.requestPermission, ({ params }) => selectPermission(params))
+      .onNotification(sdk.methods.client.session.update, onSessionUpdate);
+  }
   for (const method of [
     sdk.methods.client.fs.readTextFile,
     sdk.methods.client.fs.writeTextFile,
@@ -694,14 +1024,25 @@ async function runTask(options, prompt, signalState) {
       terminal: false,
       ...(questionClient ? { elicitation: { form: {} } } : {}),
     };
-    await request(sdk.methods.agent.initialize, {
+    const initialized = await request(sdk.methods.agent.initialize, {
       protocolVersion: 1,
       clientCapabilities,
       clientInfo: { name: CLIENT_NAME, version: CLIENT_VERSION },
     });
+    if (copilot) requireCopilotAgent(initialized);
     if (signalState.interrupted) fail(signalState.reason);
     cleanup.sessionNewAttempted = true;
-    const created = await request(sdk.methods.agent.session.new, buildSessionRequest(options));
+    let created;
+    try {
+      created = await request(sdk.methods.agent.session.new, buildSessionRequest(options));
+    } catch (error) {
+      if (!copilot) throw error;
+      // agent-team never answers authMethods: a missing login is reported, not repaired.
+      throw new Error(
+        `Copilot ACP session could not start: ${boundedProviderError(error)}; agent-team does ` +
+          "not log in, copy credentials, or fall back to another provider",
+      );
+    }
     if (!created || typeof created.sessionId !== "string" || created.sessionId.length === 0) {
       fail("session/new returned no session id");
     }
@@ -713,24 +1054,39 @@ async function runTask(options, prompt, signalState) {
       fail(signalState.reason);
     }
 
-    const modelResponse = await request(sdk.methods.agent.session.setConfigOption, {
-      sessionId,
-      configId: "model",
-      value: options.model,
-    });
-    const selectedModel = requireConfigValue(modelResponse, "model", "model selection");
-    if (selectedModel !== options.model) fail("model selection does not match requested model");
-    const effortId = options.harness === "codex" ? "reasoning_effort" : "effort";
-    const effortResponse = await request(sdk.methods.agent.session.setConfigOption, {
-      sessionId,
-      configId: effortId,
-      value: options.effort,
-    });
-    const selectedEffort = requireConfigValue(effortResponse, effortId, "effort selection");
-    if (selectedEffort !== options.effort) fail("effort selection does not match requested effort");
-    if (requireConfigValue(effortResponse, "model", "effort selection") !== options.model) {
-      fail("model selection does not match requested model after effort selection");
+    let selectedModel;
+    let selectedEffort;
+    if (copilot) {
+      // Copilot fixes model and effort through its server argv; a reported
+      // model must still agree before any prompt is sent.
+      for (const reported of reportedCopilotModels(created)) {
+        if (reported !== options.model) fail("Copilot ACP session model does not match requested model");
+      }
+      copilot.initialModeId =
+        typeof created.modes?.currentModeId === "string" ? created.modes.currentModeId : undefined;
+      selectedModel = options.model;
+      selectedEffort = options.effort;
+    } else {
+      const modelResponse = await request(sdk.methods.agent.session.setConfigOption, {
+        sessionId,
+        configId: "model",
+        value: options.model,
+      });
+      selectedModel = requireConfigValue(modelResponse, "model", "model selection");
+      if (selectedModel !== options.model) fail("model selection does not match requested model");
+      const effortId = options.harness === "codex" ? "reasoning_effort" : "effort";
+      const effortResponse = await request(sdk.methods.agent.session.setConfigOption, {
+        sessionId,
+        configId: effortId,
+        value: options.effort,
+      });
+      selectedEffort = requireConfigValue(effortResponse, effortId, "effort selection");
+      if (selectedEffort !== options.effort) fail("effort selection does not match requested effort");
+      if (requireConfigValue(effortResponse, "model", "effort selection") !== options.model) {
+        fail("model selection does not match requested model after effort selection");
+      }
     }
+    if (fatalPolicyError) throw fatalPolicyError;
     if (signalState.interrupted) {
       await cancelActive();
       fail(signalState.reason);
@@ -748,10 +1104,11 @@ async function runTask(options, prompt, signalState) {
       promptInFlight = true;
       promptResponse = await request(
         sdk.methods.agent.session.prompt,
-        { sessionId, prompt: [{ type: "text", text: prompt }] },
+        { sessionId, prompt: [{ type: "text", text: buildPromptText(options, prompt) }] },
         { cancellationSignal: promptAbort.signal },
       );
     } catch (error) {
+      if (fatalPolicyError) throw fatalPolicyError;
       if (fatalQuestionError) throw fatalQuestionError;
       if (signalState.interrupted) fail(signalState.reason);
       if (signalState.timedOut) fail("ACP prompt timed out");
@@ -760,6 +1117,7 @@ async function runTask(options, prompt, signalState) {
       promptInFlight = false;
       clearTimeout(timeout);
     }
+    if (fatalPolicyError) throw fatalPolicyError;
     if (fatalQuestionError) throw fatalQuestionError;
     if (signalState.interrupted) fail(signalState.reason);
     if (signalState.timedOut) fail("ACP prompt timed out");
@@ -809,6 +1167,8 @@ async function runTask(options, prompt, signalState) {
     childExited = await stopChild(child);
     cleanup.childExited = childExited;
   }
+  // Late tool updates can still prove a violation after the prompt returned.
+  if (fatalPolicyError) primaryError = fatalPolicyError;
   if (primaryError) {
     if (!cleanupConfirmed(cleanup)) {
       primaryError = new Error(`${primaryError.message}; cleanup unconfirmed`);

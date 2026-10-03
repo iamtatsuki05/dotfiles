@@ -144,6 +144,53 @@ class ProjectSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "not runnable"):
                 load_config(config)
 
+    def test_internal_copilot_acp_profile_stays_publicly_rejected(self) -> None:
+        row = next(item for item in status_rows() if item["harness_id"] == "copilot")
+        self.assertEqual(row["acp_status"], "known-unverified")
+        self.assertEqual(
+            row["runnable_profiles"],
+            (("planner", "direct", "read-only"), ("reviewer", "direct", "read-only")),
+        )
+        for role, permission in (
+            ("planner", "read-only"),
+            ("reviewer", "read-only"),
+            ("worker", "workspace-write"),
+        ):
+            with (
+                self.subTest(role=role),
+                self.assertRaisesRegex(ValueError, "not runnable"),
+            ):
+                profile_execution("copilot", role, "acp", permission)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            prompts = root / "prompts"
+            prompts.mkdir()
+            for role in ("orchestrator", "planner", "worker", "reviewer"):
+                (prompts / f"{role}.md").write_text(role, encoding="utf-8")
+            base = (PROJECT_ROOT / "agent_team" / "defaults" / "config.toml").read_text(
+                encoding="utf-8"
+            )
+            config = root / "config.toml"
+            for original, replacement in (
+                (
+                    'provider = "claude"\ntransport = "acp"\nmodel = "fable"',
+                    'provider = "copilot"\ntransport = "acp"\nmodel = "gpt-5.2"',
+                ),
+                (
+                    'provider = "codex"\ntransport = "direct"\nmodel = "gpt-6-astra"',
+                    'provider = "copilot"\ntransport = "acp"\nmodel = "gpt-5.2"',
+                ),
+            ):
+                with self.subTest(replacement=original.split("\n", 1)[0]):
+                    config.write_text(
+                        base.replace(original, replacement, 1), encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(
+                        ConfigError, r"copilot profile \w+/acp/[\w-]+ is not runnable"
+                    ):
+                        load_config(config)
+
     def test_background_registry_is_closed_and_has_no_worker_or_provider_fallback(
         self,
     ) -> None:
