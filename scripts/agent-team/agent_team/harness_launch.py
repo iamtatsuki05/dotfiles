@@ -80,7 +80,11 @@ def build_claude_argv(
                 "--disable-slash-commands",
                 "--settings",
                 json.dumps(
-                    {"disableAllHooks": True, "autoMemoryEnabled": False},
+                    {
+                        "disableAllHooks": True,
+                        "autoMemoryEnabled": False,
+                        "disableClaudeAiConnectors": True,
+                    },
                     separators=(",", ":"),
                 ),
             ]

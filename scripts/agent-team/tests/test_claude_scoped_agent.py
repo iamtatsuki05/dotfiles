@@ -570,6 +570,7 @@ try {
         self.assertEqual(options["settingSources"], [])
         self.assertFalse(options["persistSession"])
         self.assertFalse(options["settings"]["autoMemoryEnabled"])
+        self.assertTrue(options["settings"]["disableClaudeAiConnectors"])
         permissions = options["settings"]["permissions"]
         self.assertEqual(permissions["defaultMode"], "default")
         self.assertEqual(permissions["disableBypassPermissionsMode"], "disable")
@@ -618,6 +619,7 @@ for (const method of methods) {
             defaultMode: options.settings.permissions.defaultMode,
             bypass: options.settings.permissions.disableBypassPermissionsMode,
             autoMemoryEnabled: options.settings.autoMemoryEnabled,
+            disableClaudeAiConnectors: options.settings.disableClaudeAiConnectors,
   };
 }
 let modeError = "";
@@ -669,6 +671,7 @@ process.stdout.write(JSON.stringify(summary));
                 self.assertEqual(summary[method]["defaultMode"], "default")
                 self.assertEqual(summary[method]["bypass"], "disable")
                 self.assertFalse(summary[method]["autoMemoryEnabled"])
+                self.assertTrue(summary[method]["disableClaudeAiConnectors"])
         self.assertIn("not allowed", summary["modeError"])
         self.assertIn("not allowed", summary["configError"])
         self.assertIn("not allowed", summary["providerError"])

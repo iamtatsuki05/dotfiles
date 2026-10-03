@@ -229,6 +229,8 @@ function securityOptions(rawOptions, policy, questionsEnabled = false) {
   options.persistSession = false;
   options.settings = {
     autoMemoryEnabled: false,
+    // A claude.ai login otherwise adds its account connectors as MCP tools.
+    disableClaudeAiConnectors: true,
     permissions: {
       defaultMode: DEFAULT_MODE,
       disableBypassPermissionsMode: "disable",

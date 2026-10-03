@@ -159,7 +159,11 @@ print("native core imported")
         self.assertIn("--disable-slash-commands", argv)
         self.assertEqual(
             json.loads(argv[argv.index("--settings") + 1]),
-            {"disableAllHooks": True, "autoMemoryEnabled": False},
+            {
+                "disableAllHooks": True,
+                "autoMemoryEnabled": False,
+                "disableClaudeAiConnectors": True,
+            },
         )
 
     def test_saved_direct_role_specs_build_worker_and_reviewer_without_config(
