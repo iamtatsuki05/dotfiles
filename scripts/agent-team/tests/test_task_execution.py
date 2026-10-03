@@ -11,6 +11,7 @@ from agent_team.task_execution import (
     acknowledge_task,
     parse_review,
     prepare_dispatch,
+    review_prompt,
     task_digest,
     validate_saved_tasks,
 )
@@ -295,6 +296,22 @@ class TaskExecutionTest(unittest.TestCase):
                         stage="plan",
                         revision="revision-1",
                     )
+
+    def test_review_prompt_requires_reading_files_and_explains_verification(
+        self,
+    ) -> None:
+        implementation = review_prompt(
+            task(), stage="implementation", revision="rev", result_body="done"
+        )
+        plan = review_prompt(task(), stage="plan", revision="rev", result_body="plan")
+
+        for prompt in (implementation, plan):
+            with self.subTest(prompt=prompt[:20]):
+                self.assertIn("未検証の自己申告", prompt)
+                self.assertIn("該当ファイルを直接読み", prompt)
+                self.assertTrue(prompt.rstrip().endswith("}"))
+        self.assertIn("承認後にagent-teamが同じrevisionで実行", implementation)
+        self.assertNotIn("承認後にagent-teamが同じrevisionで実行", plan)
 
     def test_review_verdict_drives_writer_only_transitions(self) -> None:
         saved = state()

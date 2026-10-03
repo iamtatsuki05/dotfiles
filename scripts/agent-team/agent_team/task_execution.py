@@ -911,12 +911,23 @@ def review_prompt(
         "findings": [],
     }
     supplement = f"\n\n追加の依頼:\n{message}" if message else ""
+    # Live reviewers with AskUserQuestion available sometimes answered from the
+    # writer's self-report alone and returned consult without opening a file.
+    verification_note = (
+        "TaskSpecのverificationは、承認後にagent-teamが同じrevisionで実行します。"
+        "作成担当が実行していないことだけを理由に差し戻さないでください。"
+        if stage == "implementation"
+        else ""
+    )
     return (
         "前段resultbody:\n"
         + result_body
         + "\n\nTaskSpec:\n"
         + task_json(task)
         + supplement
+        + "\n\n前段resultbodyは未検証の自己申告です。判定の前に、利用できる読み取り用ツールで"
+        "作業ディレクトリ内の該当ファイルを直接読み、実際の内容を確認してください。"
+        + verification_note
         + "\n\nレビュー結果は次のキーを持つJSON objectだけを出力してください。"
         "説明文やMarkdownを追加してはいけません。decisionはapprove、"
         "request_changes、consultのいずれかです。request_changesとconsultでは"
