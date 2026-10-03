@@ -2467,6 +2467,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 executables: (
                     native_acp_dependencies.NativeAcpExecutables
                     | native_acp_dependencies.CodexAcpExecutables
+                    | native_acp_dependencies.CopilotAcpExecutables
                 )
                 if raw_spec["provider"] == "codex":
                     from . import codex_acp
@@ -2483,6 +2484,13 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     codex_acp.verify_snapshot(
                         provider_snapshot, Path(str(state["workspace"]))
                     )
+                elif raw_spec["provider"] == "copilot":
+                    executables = (
+                        native_acp_dependencies.CopilotAcpExecutables.from_dict(
+                            raw_spec.get("acp_executables")
+                        )
+                    )
+                    executables.verify()
                 else:
                     executables = (
                         native_acp_dependencies.NativeAcpExecutables.from_dict(
@@ -2494,6 +2502,10 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     native_acp_dependencies.codex_adapter_snapshot(executables)
                     if isinstance(
                         executables, native_acp_dependencies.CodexAcpExecutables
+                    )
+                    else native_acp_dependencies.copilot_adapter_snapshot(executables)
+                    if isinstance(
+                        executables, native_acp_dependencies.CopilotAcpExecutables
                     )
                     else native_acp_dependencies.adapter_snapshot(executables)
                 )
@@ -2513,6 +2525,14 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 or checked_digest(SCOPED_POLICY) != raw_spec.get("scoped_policy_sha256")
                 or checked_digest(SCOPED_QUESTIONS)
                 != raw_spec.get("scoped_question_client_sha256")
+            ):
+                raise RuntimeFailure(
+                    ErrorCode.IDENTITY_MISMATCH,
+                    "scoped ACP runtime changed since team start",
+                )
+            if raw_spec["provider"] == "copilot" and (
+                checked_digest(SCOPED_CLIENT) != raw_spec.get("scoped_client_sha256")
+                or checked_digest(SCOPED_POLICY) != raw_spec.get("scoped_policy_sha256")
             ):
                 raise RuntimeFailure(
                     ErrorCode.IDENTITY_MISMATCH,
@@ -2585,6 +2605,28 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                 write_policy = Path(str(codex_fields["write_policy_path"]))
                 policy_digest = str(codex_fields["write_policy_sha256"])
                 agent_command = codex_acp.agent_command(executables)
+            elif isinstance(executables, native_acp_dependencies.CopilotAcpExecutables):
+                from . import copilot_acp
+
+                assert private_root is not None
+                copilot_fields = copilot_acp.prepare_assignment(
+                    private_root=private_root,
+                    workspace=Path(str(state["workspace"])),
+                    state_path=path,
+                    task=request.task if isinstance(request, TaskDispatch) else None,
+                    permission=str(raw_spec["permission"]),
+                    executables=executables,
+                    model=str(raw_spec["model"]),
+                    effort=str(raw_spec["effort"]),
+                )
+                write_policy = Path(str(copilot_fields["write_policy_path"]))
+                policy_digest = str(copilot_fields["write_policy_sha256"])
+                agent_command = copilot_acp.agent_command(
+                    executables,
+                    permission=str(raw_spec["permission"]),
+                    model=str(raw_spec["model"]),
+                    effort=str(raw_spec["effort"]),
+                )
             else:
                 assert private_root is not None
                 write_policy, policy_digest = create_write_policy(

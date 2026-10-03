@@ -106,6 +106,7 @@ def preflight_scoped_role(
 ) -> (
     native_acp_dependencies.NativeAcpExecutables
     | native_acp_dependencies.CodexAcpExecutables
+    | native_acp_dependencies.CopilotAcpExecutables
     | None
 ):
     """Validate and, optionally, preflight one native ACP role binding."""
@@ -127,12 +128,28 @@ def preflight_scoped_role(
             ErrorCode.INVALID_REQUEST,
             f"native {role_id(role)} is missing ACP executable bindings",
         )
+    if normalized["provider"] == "copilot":
+        # The model and effort become Copilot server flags; reject them before
+        # state or a dispatch private root exists rather than at launch.
+        from . import copilot_acp
+
+        try:
+            copilot_acp.validate_role_options(
+                normalized.get("permission"),
+                normalized.get("model"),
+                normalized.get("effort"),
+            )
+        except RuntimeValidationError as exc:
+            raise RuntimeFailure(
+                ErrorCode.INVALID_REQUEST, f"native {role_id(role)}: {exc}"
+            ) from exc
     if not preflight:
         return None
 
     try:
         executables: (
             native_acp_dependencies.CodexAcpExecutables
+            | native_acp_dependencies.CopilotAcpExecutables
             | native_acp_dependencies.NativeAcpExecutables
         )
         if normalized["provider"] == "codex":
@@ -146,6 +163,9 @@ def preflight_scoped_role(
             if not isinstance(provider_snapshot, Mapping):
                 raise RuntimeValidationError("Codex provider snapshot is missing")
             codex_acp.verify_snapshot(provider_snapshot, workspace)
+        elif normalized["provider"] == "copilot":
+            executables = native_acp_dependencies.CopilotAcpExecutables.from_dict(raw)
+            executables.verify()
         else:
             executables = native_acp_dependencies.NativeAcpExecutables.from_dict(raw)
             executables.verify()
@@ -154,6 +174,8 @@ def preflight_scoped_role(
         snapshot: object = (
             native_acp_dependencies.codex_adapter_snapshot(executables)
             if isinstance(executables, native_acp_dependencies.CodexAcpExecutables)
+            else native_acp_dependencies.copilot_adapter_snapshot(executables)
+            if isinstance(executables, native_acp_dependencies.CopilotAcpExecutables)
             else native_acp_dependencies.adapter_snapshot(executables)
         )
     except Exception as exc:
@@ -173,4 +195,9 @@ def preflight_scoped_role(
         normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
         normalized["scoped_policy_sha256"] = checked_digest(SCOPED_POLICY)
         normalized["scoped_question_client_sha256"] = checked_digest(SCOPED_QUESTIONS)
+    elif normalized["provider"] == "copilot":
+        # Copilot has no in-process wrapper or question channel; the client
+        # and the shared policy are the only scoped runtime it executes.
+        normalized["scoped_client_sha256"] = checked_digest(SCOPED_CLIENT)
+        normalized["scoped_policy_sha256"] = checked_digest(SCOPED_POLICY)
     return executables

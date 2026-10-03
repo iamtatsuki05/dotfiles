@@ -10,12 +10,18 @@ import stat
 from collections.abc import Mapping
 from pathlib import Path
 
-from .native_acp_dependencies import CodexAcpExecutables, NativeAcpExecutables
+from .native_acp_dependencies import (
+    CodexAcpExecutables,
+    CopilotAcpExecutables,
+    NativeAcpExecutables,
+)
 from .runtime import RuntimeValidationError
 from .task_spec import TaskSpec
 
 SCOPED_ADAPTER_ID = "claude-acp-scoped-0.70.0"
 CODEX_SCOPED_ADAPTER_ID = "codex-acp-scoped-1.10.0"
+# Internal only: the registry and configuration still reject Copilot ACP.
+COPILOT_SCOPED_ADAPTER_ID = "copilot-acp-scoped-1.0.91"
 SCOPED_AGENT = Path(__file__).resolve().with_name("claude_scoped_agent.mjs")
 SCOPED_CLIENT = Path(__file__).resolve().with_name("scoped_acp_client.mjs")
 SCOPED_POLICY = Path(__file__).resolve().with_name("scoped_policy.mjs")
@@ -26,13 +32,15 @@ def native_profile(provider: str, role: str) -> dict[str, str]:
     if (
         not isinstance(provider, str)
         or not isinstance(role, str)
-        or provider not in {"claude", "codex"}
+        or provider not in {"claude", "codex", "copilot"}
         or role not in {"planner", "worker", "reviewer"}
     ):
         raise RuntimeValidationError("unsupported native ACP provider or role")
     adapter = (
         CODEX_SCOPED_ADAPTER_ID
         if provider == "codex"
+        else COPILOT_SCOPED_ADAPTER_ID
+        if provider == "copilot"
         else (SCOPED_ADAPTER_ID if role == "worker" else "claude-acp-0.70.0")
     )
     return {
@@ -45,7 +53,7 @@ def native_profile(provider: str, role: str) -> dict[str, str]:
 
 
 def client_argv(
-    executables: NativeAcpExecutables | CodexAcpExecutables,
+    executables: NativeAcpExecutables | CodexAcpExecutables | CopilotAcpExecutables,
     agent_command: str,
     *,
     harness: str,
@@ -58,12 +66,15 @@ def client_argv(
     question_socket: Path | None = None,
     result_file: Path | None = None,
     launch_nonce: str | None = None,
+    policy: Path | None = None,
 ) -> list[str]:
     if not (
         harness == "claude"
         and isinstance(executables, NativeAcpExecutables)
         or harness == "codex"
         and isinstance(executables, CodexAcpExecutables)
+        or harness == "copilot"
+        and isinstance(executables, CopilotAcpExecutables)
     ):
         raise RuntimeValidationError(
             "native ACP harness does not match its dependencies"
@@ -73,6 +84,16 @@ def client_argv(
     ):
         raise RuntimeValidationError(
             "native question socket requires selected Claude and an absolute path"
+        )
+    # Copilot permission requests are decided by the client, so its policy is
+    # mandatory there and meaningless for the providers that enforce in-process.
+    if (harness == "copilot") != (policy is not None) or (
+        policy is not None
+        and (not policy.is_absolute() or policy.name != "write-policy.json")
+    ):
+        raise RuntimeValidationError(
+            "native ACP client policy requires selected Copilot and an absolute "
+            "write-policy.json"
         )
     if (result_file is None) != (launch_nonce is None) or (
         result_file is not None
@@ -113,6 +134,7 @@ def client_argv(
             if result_file is not None
             else []
         ),
+        *(["--policy", str(policy)] if policy is not None else []),
     ]
 
 

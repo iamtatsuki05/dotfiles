@@ -18,6 +18,14 @@ const POLICY_VERSION = 1;
 const PROTECTED_COMPONENTS = new Set([
   ".git",
 ]);
+const COPILOT_READ_KINDS = new Set(["read", "search"]);
+// Until live observation fixes each Copilot tool's arguments, rawInput may
+// carry only these path fields, and each must also be a location.  Any other
+// field (a glob pattern, extra paths, edit content) has an unverified meaning.
+const COPILOT_RAW_PATH_FIELDS = Object.freeze(["path", "file_path"]);
+const COPILOT_LOCATION_KEYS = new Set(["path", "line", "_meta"]);
+const MAX_COPILOT_TOOL_CALL_ID_CHARS = 256;
+const MAX_COPILOT_REASON_CHARS = 512;
 
 function fail(message) {
   throw new Error(`scoped ACP: ${message}`);
@@ -362,4 +370,146 @@ export function decideTool(rawPolicy, toolName, input) {
   });
   if (!target.ok) return { behavior: "deny", message: target.reason };
   return { behavior: "allow", message: `allowed ${toolName} for ${target.relative}` };
+}
+
+function copilotPath(value) {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    path.isAbsolute(value) &&
+    ![...value].some((character) => {
+      const code = character.codePointAt(0);
+      return code !== undefined && (code < 0x20 || code === 0x7f);
+    });
+}
+
+function copilotTargets(toolCall) {
+  const located = [];
+  const locations = toolCall.locations;
+  if (locations !== undefined && locations !== null) {
+    if (!Array.isArray(locations)) return { ok: false, reason: "tool call locations must be an array" };
+    for (const location of locations) {
+      if (
+        !isObject(location) ||
+        Object.keys(location).some((key) => !COPILOT_LOCATION_KEYS.has(key)) ||
+        !copilotPath(location.path) ||
+        !(
+          location.line === undefined ||
+          location.line === null ||
+          (Number.isSafeInteger(location.line) && location.line >= 0)
+        )
+      ) {
+        return { ok: false, reason: "tool call location is invalid" };
+      }
+      located.push(location.path);
+    }
+  }
+  const rawInput = toolCall.rawInput;
+  if (rawInput !== undefined && rawInput !== null) {
+    if (!isObject(rawInput)) return { ok: false, reason: "tool call raw input has an unknown shape" };
+    const unknown = Object.keys(rawInput).find((key) => !COPILOT_RAW_PATH_FIELDS.includes(key));
+    if (unknown !== undefined) {
+      return {
+        ok: false,
+        reason: `tool call raw input has an unverified field: ${boundedText(unknown, 64)}`,
+      };
+    }
+    for (const field of COPILOT_RAW_PATH_FIELDS) {
+      if (!Object.hasOwn(rawInput, field)) continue;
+      if (!copilotPath(rawInput[field])) {
+        return { ok: false, reason: `tool call raw input ${field} is invalid` };
+      }
+      if (!located.includes(rawInput[field])) {
+        return { ok: false, reason: `tool call raw input ${field} is not a reported location` };
+      }
+    }
+  }
+  if (located.length === 0) return { ok: false, reason: "tool call has no target path" };
+  return { ok: true, paths: [...new Set(located)] };
+}
+
+function boundedText(value, limit) {
+  return [...String(value)].slice(0, limit).join("");
+}
+
+function copilotResponse(request, allow) {
+  const options = isObject(request) && Array.isArray(request.options) ? request.options : [];
+  const option = (kind) =>
+    options.find(
+      (item) => isObject(item) && item.kind === kind && typeof item.optionId === "string" && item.optionId.length > 0,
+    );
+  if (allow) {
+    const selected = option("allow_once");
+    return selected ? { outcome: { outcome: "selected", optionId: selected.optionId } } : undefined;
+  }
+  const rejected = option("reject_once") ?? option("reject_always");
+  return rejected
+    ? { outcome: { outcome: "selected", optionId: rejected.optionId } }
+    : { outcome: { outcome: "cancelled" } };
+}
+
+/**
+ * Decide one raw Copilot `session/request_permission` request.
+ *
+ * Only `allow_once` is ever selected.  Reads and searches need every target
+ * path inside the workspace policy; edits additionally need the Worker policy
+ * and its declared TaskSpec scope.  Every other request is rejected.
+ */
+export function decideCopilotPermission(rawPolicy, request, context) {
+  const policy = isObject(rawPolicy) && rawPolicy.version === POLICY_VERSION
+    ? rawPolicy
+    : normalizePolicy(rawPolicy);
+  if (!isObject(context) || typeof context.sessionId !== "string" || context.sessionId.length === 0) {
+    fail("Copilot permission decisions require the active session id");
+  }
+  const toolCall = isObject(request) && isObject(request.toolCall) ? request.toolCall : undefined;
+  const kind = typeof toolCall?.kind === "string" ? boundedText(toolCall.kind, 64) : undefined;
+  const toolCallId = typeof toolCall?.toolCallId === "string" ? toolCall.toolCallId : undefined;
+  let paths = [];
+  const decide = (allow, reason) => {
+    const allowed = allow ? copilotResponse(request, true) : undefined;
+    const response = allowed ?? copilotResponse(request, false);
+    return {
+      decision: allowed ? "allow" : "reject",
+      reason: boundedText(
+        allow && !allowed ? "permission request has no allow_once option" : reason,
+        MAX_COPILOT_REASON_CHARS,
+      ),
+      kind,
+      toolCallId,
+      paths,
+      response,
+    };
+  };
+  if (!isObject(request)) return decide(false, "permission request must be an object");
+  if (request.sessionId !== context.sessionId) {
+    return decide(false, "permission session does not match the active session");
+  }
+  if (!toolCall) return decide(false, "permission tool call must be an object");
+  const idLength = toolCallId === undefined ? 0 : [...toolCallId].length;
+  if (idLength === 0 || idLength > MAX_COPILOT_TOOL_CALL_ID_CHARS) {
+    return decide(false, "permission tool call id is invalid");
+  }
+  if (kind === undefined || (!COPILOT_READ_KINDS.has(kind) && kind !== "edit")) {
+    return decide(false, `tool kind is not allowed: ${kind ?? "missing"}`);
+  }
+  if (kind === "edit" && policy.permission !== "workspace-write") {
+    return decide(false, "edit requires the Worker policy");
+  }
+  const targets = copilotTargets(toolCall);
+  if (!targets.ok) return decide(false, targets.reason);
+  paths = targets.paths;
+  for (const target of paths) {
+    if (kind === "edit") {
+      const decision = decideTool(policy, "Write", { file_path: target });
+      if (decision.behavior !== "allow") return decide(false, decision.message);
+    } else {
+      const check = inspectTarget(policy, target, {
+        allowDirectory: true,
+        allowWorkspaceRoot: true,
+        enforceScope: false,
+      });
+      if (!check.ok) return decide(false, check.reason);
+    }
+  }
+  return decide(true, `${kind} targets are inside the policy`);
 }

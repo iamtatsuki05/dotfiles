@@ -10,6 +10,7 @@ from unittest import TestCase, mock
 from agent_team import (
     cli,
     codex_acp,
+    copilot_acp,
     native_acp_dependencies,
     orca_dispatch,
     role_snapshot,
@@ -537,6 +538,141 @@ class OrcaNamedDispatchTest(TestCase):
                 else:
                     self.assertEqual(assignment["agent_command"], "codex-acp-agent")
                     self.assertIn("codex_launch_path", assignment)
+
+    def _copilot_state(self) -> dict[str, object]:
+        state = self._state("claude")
+        role_specs = state["role_specs"]
+        assert isinstance(role_specs, dict)
+        spec = role_specs["worker-a"]
+        spec.update(
+            provider="copilot",
+            model="gpt-5.2",
+            adapter_id="copilot-acp-scoped-1.0.91",
+            acp_executables={"saved": "copilot"},
+        )
+        del spec["scoped_wrapper_sha256"]
+        del spec["scoped_question_client_sha256"]
+        return state
+
+    def _copilot_fakes(self, selected: object) -> ExitStack:
+        stack = ExitStack()
+        stack.enter_context(
+            mock.patch.object(
+                native_acp_dependencies.CopilotAcpExecutables,
+                "from_dict",
+                return_value=selected,
+            )
+        )
+        stack.enter_context(
+            mock.patch.object(
+                native_acp_dependencies,
+                "copilot_adapter_snapshot",
+                side_effect=lambda _exe: self._adapter("copilot"),
+            )
+        )
+        stack.enter_context(
+            mock.patch.object(
+                copilot_acp,
+                "prepare_assignment",
+                side_effect=lambda *, private_root, **_kwargs: {
+                    "write_policy_path": str(private_root / "write-policy.json"),
+                    "write_policy_sha256": "w" * 64,
+                },
+            )
+        )
+        stack.enter_context(
+            mock.patch.object(
+                copilot_acp, "agent_command", return_value="copilot-acp-agent"
+            )
+        )
+        stack.enter_context(
+            mock.patch.object(
+                scoped_acp,
+                "create_write_policy",
+                side_effect=AssertionError("Claude policy was created for Copilot"),
+            )
+        )
+        return stack
+
+    def test_copilot_profile_uses_a_local_policy_without_questions(self) -> None:
+        self.state = self._copilot_state()
+        prepared, request, record = self._prepared_request("copilot")
+        with self._copilot_fakes(_FakeExecutables("copilot")):
+            result = orca_dispatch.start_assignment(
+                self.state_path,
+                prepared,
+                request,
+                task_record=record,
+                text="prepared work",
+            )
+            prepare = copilot_acp.prepare_assignment
+
+        self.assertEqual(result.role, NodeRef("worker-a", Role.WORKER))
+        self.assertEqual(self.preflight_calls, ["copilot"])
+        self.assertEqual(self.adapter_calls, ["copilot"])
+        assignment = self.state["roles"]["worker-a"]
+        private_root = Path(assignment["provider_private_root"])
+        self.assertEqual(assignment["adapter_id"], "copilot-acp-scoped-1.0.91")
+        self.assertEqual(assignment["agent_command"], "copilot-acp-agent")
+        self.assertEqual(
+            assignment["write_policy_path"], str(private_root / "write-policy.json")
+        )
+        self.assertEqual(assignment["write_policy_sha256"], "w" * 64)
+        self.assertNotIn("question_socket", assignment)
+        self.assertNotIn("codex_launch_path", assignment)
+        self.assertEqual(prepare.call_args.kwargs["permission"], "workspace-write")
+        self.assertEqual(prepare.call_args.kwargs["model"], "gpt-5.2")
+
+    def test_copilot_binding_drift_is_rejected_before_the_private_root(self) -> None:
+        class DriftedExecutables(_FakeExecutables):
+            def verify(self) -> None:
+                raise native_acp_dependencies.NativeAcpDependencyError(
+                    "selected native Copilot ACP copilot changed"
+                )
+
+        self.state = self._copilot_state()
+        prepared, request, record = self._prepared_request("copilot")
+        with (
+            self._copilot_fakes(DriftedExecutables("copilot")),
+            self.assertRaises(RuntimeFailure) as raised,
+        ):
+            orca_dispatch.start_assignment(
+                self.state_path,
+                prepared,
+                request,
+                task_record=record,
+                text="prepared work",
+            )
+
+        self.assertEqual(raised.exception.code, ErrorCode.INVALID_REQUEST)
+        self.assertEqual(self.temp_counter, 0)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.effects, [])
+
+    def test_copilot_runtime_digest_drift_is_rejected_before_the_private_root(
+        self,
+    ) -> None:
+        for key in ("scoped_client_sha256", "scoped_policy_sha256"):
+            with self.subTest(key=key):
+                self.state = self._copilot_state()
+                self.state["role_specs"]["worker-a"][key] = "0" * 64
+                prepared, request, record = self._prepared_request("copilot")
+                with (
+                    self._copilot_fakes(_FakeExecutables("copilot")),
+                    self.assertRaises(RuntimeFailure) as raised,
+                ):
+                    orca_dispatch.start_assignment(
+                        self.state_path,
+                        prepared,
+                        request,
+                        task_record=record,
+                        text="prepared work",
+                    )
+
+                self.assertEqual(raised.exception.code, ErrorCode.IDENTITY_MISMATCH)
+                self.assertEqual(self.temp_counter, 0)
+                self.assertEqual(self.saved, [])
+                self.assertEqual(self.effects, [])
 
     def test_assignment_is_saved_before_runner_send(self) -> None:
         prepared, request, record = self._prepared_request()
