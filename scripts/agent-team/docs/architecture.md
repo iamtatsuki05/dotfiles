@@ -403,7 +403,8 @@ reported a command-identity error, so independent typed receipt fields were not
 retained; the cleanup claim is limited to the native client accepted result,
 the public stop result, and those process/path checks. No model switch or
 billing change was made, and normal-auth write coverage was not verified. A
-real-model read-only plan-only trial was not run after the usage-limit failure.
+real-model read-only plan-only trial was not run after that usage-limit failure;
+the 2026-10-04 plan-only run is recorded in the live acceptance below.
 
 Focused program-contract checks now cover the serial and parallel program
 paths, including admission, per-assignment state, delivery order, canonical
@@ -583,7 +584,7 @@ change those earlier outcomes.
 
 These runs used real models. Each started from a wheel-only Python 3.11.15
 environment that contained only `dotfiles-agent-team`; all runtime files
-matched the committed source and the wheel (81 files, or 82 from `30967a6`,
+matched the committed source and the wheel (81 files, or 82 from `e25dd21`,
 which added the Copilot ACP module). `PATH` exposed only the selected
 executables: Claude Code 2.1.288, Node 24.21.0, `claude-agent-acp` 0.70.0 with
 ACP SDK 1.3.0, and the selected terminal or Orca. The harness checked before
@@ -679,8 +680,8 @@ The live runs found eight defects, each fixed before the run that passed:
 - A reviewer returned a correct approval inside a ```json code fence. The
   strict parser rejected it with "review output must be one JSON object", and
   the task failed. The review prompt now also forbids a code fence; the parser
-  still accepts only the bare JSON object (`ca7bcb5`). None of the 22
-  throwaway reviewer runs had wrapped its verdict. Whether this also caused the
+  still accepts only the bare JSON object (`ca7bcb5`). None of the 22 earlier
+  throwaway reviewer runs whose output was saved had wrapped its verdict. Whether this also caused the
   earlier Mainless Orca review failure, whose reason was not saved, is unknown.
 
 Failed attempts are retained and are not rewritten by the later successes.
@@ -711,8 +712,9 @@ coordinator process is gone. A second run's task failed at review; the harness
 stopped it before saving the reason, so that cause is unknown, and the harness
 now saves the task records before a failure stop.
 
-The first Main-coordinated Orca parallel run, `run_0aab87f6cc36`, failed when
-one reviewer wrapped its approval in a code fence (fixed above). The next run,
+The first Main-coordinated Orca parallel run on 2026-10-04,
+`run_0aab87f6cc36`, failed when one reviewer wrapped its approval in a code
+fence (fixed above). The next run,
 `run_9277708e3c0d`, completed both tasks and verified them on one integrated
 revision, but the runner's Main transcript audit kept waiting: Claude Code
 2.1.288 records a pasted prompt inside a `<pasted_content>` wrapper, and the

@@ -260,7 +260,7 @@ coordinatorはfailed resultを公開し、`read` → `release` → `ack`を処�
 configとpromptを削除した後の公開`stop`はreturn code 0、0.406秒で完了しました。独立した`ps`とpathの確認では、所有PID、process group、
 private path、fixture、virtual environmentは残りませんでした。observer自身にcommand identity errorがあり、独立したtyped receipt fieldは保持できていません。
 cleanupの主張は、native clientが受理したresult、公開stopの結果、process/path確認に限定します。model切替とbilling変更は行わず、通常authのwrite経路も未検証です。
-利用上限後の実モデルread-only plan-only試験は実行していません。
+この利用上限の後、実モデルのread-only plan-only試験はその時点では実行していません。2026-10-04のplan-only runは下記の実機受入に記載しています。
 
 program contract focused testでは、serialとparallelのadmission、assignmentごとのstate、Delivery順序、
 canonical wave遷移、private Stopを確認しています。これは実装とcontractの検証であり、失敗したserialの実機試験を
@@ -388,7 +388,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 
 ### 明示的なClaude専用構成での実機受入（2026-10-04）
 
-以下は実モデルを使ったrunです。各runは、`dotfiles-agent-team`だけを入れたwheelのみのPython 3.11.15環境から始め、runtimeの全ファイルがcommit済みのsourceおよびwheelと一致することを確認しました（81ファイル。Copilot ACP moduleを加えた`30967a6`以降は82ファイル）。`PATH`には選択した実行ファイルだけを置きました。Claude Code 2.1.288、Node 24.21.0、`claude-agent-acp` 0.70.0とACP SDK 1.3.0、選択したterminalまたはOrcaです。未選択のCLI、他のterminal、`uv`、`npm`、`npx`、`acpx`に届かないことは起動前に確認しました。全nodeはOpus 5.5（effort high）で、明示した`claude_config_dir`から、別にloginしたClaude Maxのprofileを使いました。既定のMain/Planner=Fable、Worker/Reviewer=Astraは変えていません。これはClaudeだけを使う明示的な別構成です。通常の`~/.claude`は、Fableにusage creditsが必要で、Opusも組織がsubscriptionでの利用を無効にしていたため使えませんでした。実際の課金は確認していません。agent modeのrunは最初の指示を1回だけ受け取りました。program modeとscripted Mainのrunは、起動後に入力を受けていません。scripted Mainは1本のstdio sessionで公開MCP toolを呼び、Main modelには入力しません。
+以下は実モデルを使ったrunです。各runは、`dotfiles-agent-team`だけを入れたwheelのみのPython 3.11.15環境から始め、runtimeの全ファイルがcommit済みのsourceおよびwheelと一致することを確認しました（81ファイル。Copilot ACP moduleを加えた`e25dd21`以降は82ファイル）。`PATH`には選択した実行ファイルだけを置きました。Claude Code 2.1.288、Node 24.21.0、`claude-agent-acp` 0.70.0とACP SDK 1.3.0、選択したterminalまたはOrcaです。未選択のCLI、他のterminal、`uv`、`npm`、`npx`、`acpx`に届かないことは起動前に確認しました。全nodeはOpus 5.5（effort high）で、明示した`claude_config_dir`から、別にloginしたClaude Maxのprofileを使いました。既定のMain/Planner=Fable、Worker/Reviewer=Astraは変えていません。これはClaudeだけを使う明示的な別構成です。通常の`~/.claude`は、Fableにusage creditsが必要で、Opusも組織がsubscriptionでの利用を無効にしていたため使えませんでした。実際の課金は確認していません。agent modeのrunは最初の指示を1回だけ受け取りました。program modeとscripted Mainのrunは、起動後に入力を受けていません。scripted Mainは1本のstdio sessionで公開MCP toolを呼び、Main modelには入力しません。
 
 | 確認内容 | mode | backend | commit | run | 結果 |
 |---|---|---|---|---|---|
@@ -422,7 +422,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 - MCPとstopが使う管理planが`claude_config_dir`を落としていました（`1bc553e`）。
 - plan-only routeの最終計画レビューで、依頼文がJSONテンプレートの後ろにworkspace revisionを追記していたため、reviewerが計画本文のdigestではなくそのrevisionを判定に入れ、taskが失敗しました。workspace revisionを出力契約の前に置き、JSONのrevisionではないと明記しました（`8c7cd2d`）。
 - Orcaのprogram coordinatorはterminal内でexecされ、最後のtaskの後に終了します。stop時にOrcaはterminal closeへ`ptyKilled: false`かつ停止判定なしで応答し、Orca自身のCLIはこれを成功として扱いますが、agent-teamはPTYを止めたことを要求したため、stopが「Main terminal close effect is unknown」で失敗しました。coordinatorの終了とCLI cleanupが確認済みの場合に限り、この応答を受け入れるようにしました（`3852faf`）。その後、起動中のstopでも終了をOSで確認し、停止判定のない失敗したclose commandはprotocol errorとして扱うようにしました（`e6ea2ab`）。
-- reviewerが正しい承認を```jsonのコードブロックで囲んで返したため、厳密なparserが「review output must be one JSON object」で拒否し、taskが失敗しました。review promptでコードブロックも禁止しました。parserは引き続きJSON objectだけを受け付けます（`ca7bcb5`）。22回の使い捨てreviewer試験では、囲んだ出力はありませんでした。理由を保存できなかったOrcaのMainなし直列runのreview失敗が同じ原因かは分かりません。
+- reviewerが正しい承認を```jsonのコードブロックで囲んで返したため、厳密なparserが「review output must be one JSON object」で拒否し、taskが失敗しました。review promptでコードブロックも禁止しました。parserは引き続きJSON objectだけを受け付けます（`ca7bcb5`）。出力を保存していた以前の使い捨てreviewer試験22回では、囲んだ出力はありませんでした。理由を保存できなかったOrcaのMainなし直列runのreview失敗が同じ原因かは分かりません。
 
 失敗したrunは保持し、後の成功で書き換えていません。Orcaの`run_fe096b06952e`と`run_bd6311c84d24`はWorkerの質問で失敗し、runnerのtimeout後に公開stopで止め、独立照合の結果は確定しています。fixtureは変更されていません。最初の並列run `0b3c1ed3-…`は、reviewerがファイルを読まなかったため`consultation_required`で止まりました。Herdrの1回目の中断run `5b4a16c5-…`は`native server termination is unproven`を返し、private Herdr serverが残りました。修正版のsourceによる公開stopでこのserverを回収しています。Herdrの2回目の中断runは、Workerがmarkerを書かずに完了したため成立しませんでした。回数上限の1回目は、objectのfindingsで失敗しました。Orcaの`run_f8c64c697347`はworkflowを完了しましたが、stop直後に1回だけ取ったterminal一覧にteam terminalが残っていました。数分後の照合では、一覧のteam terminal、記録したprocess、所有pathはいずれもありませんでした。runnerは現在、最大15秒待ってから、残っていたものを記録します。
 
@@ -430,7 +430,7 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 
 OrcaでのMainなし直列の最初のrun `run_aef41b018de3`はtaskを完了しましたが、上記のstopで失敗しました。stateと`coordinator: unknown`のjournalは保持しています。Orcaの一覧からcoordinator terminalは消え、coordinator processも残っていません。2回目のrunはreview段階でtaskが失敗しました。ハーネスが理由を保存する前にstopしたため原因は不明で、現在は失敗時のstop前にtask記録を保存します。
 
-Mainが調整するOrcaの並列runの1回目`run_0aab87f6cc36`は、reviewerの一方が承認をコードブロックで囲んだため失敗しました（上記で修正）。2回目の`run_9277708e3c0d`は両taskを完了し、同じ統合revisionで検証しましたが、runnerのMain transcript監査が待ち続けました。Claude Code 2.1.288は貼り付けたpromptを`<pasted_content>`で囲んで記録し、監査はmessage全体をpromptと比較していたためです。runnerはtimeout時に公開stopでteamを止めました。変更のないpromptを囲む1つの包装だけを受け付ける監査で、このtranscriptを事後に受理しています。3回目の`run_d30e6c03f61a`も両taskを検証しましたが、runnerは保存stateが完了した直後、Mainが最後の`task_get`を呼んでいる途中でtranscriptを監査し、拒否しました。監査は現在、Mainの最後の`end_turn` messageを待ちます。3回とも公開stopで止め、独立照合の結果は確定しています。その後の`run_0896461d3533`が合格しました。
+2026-10-04に行ったMainが調整するOrcaの並列runのうち、1回目の`run_0aab87f6cc36`は、reviewerの一方が承認をコードブロックで囲んだため失敗しました（上記で修正）。2回目の`run_9277708e3c0d`は両taskを完了し、同じ統合revisionで検証しましたが、runnerのMain transcript監査が待ち続けました。Claude Code 2.1.288は貼り付けたpromptを`<pasted_content>`で囲んで記録し、監査はmessage全体をpromptと比較していたためです。runnerはtimeout時に公開stopでteamを止めました。変更のないpromptを囲む1つの包装だけを受け付ける監査で、このtranscriptを事後に受理しています。3回目の`run_d30e6c03f61a`も両taskを検証しましたが、runnerは保存stateが完了した直後、Mainが最後の`task_get`を呼んでいる途中でtranscriptを監査し、拒否しました。監査は現在、Mainの最後の`end_turn` messageを待ちます。3回とも公開stopで止め、独立照合の結果は確定しています。その後の`run_0896461d3533`が合格しました。
 
 これらのrunは、Fable、Astra、Codex、その他のharnessを対象にしていません。
 
