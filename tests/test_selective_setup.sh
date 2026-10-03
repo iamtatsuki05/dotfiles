@@ -66,12 +66,16 @@ mkdir -p "$fixture/repo/dotfiles/.agent/skills"
 cp -R "$REPO_ROOT/dotfiles/.agent/apps" "$REPO_ROOT/dotfiles/.agent/hooks" "$fixture/repo/dotfiles/.agent/"
 cp "$REPO_ROOT/dotfiles/.agent/AGENTS.md" "$REPO_ROOT/dotfiles/.agent/sync.sh" "$fixture/repo/dotfiles/.agent/"
 cp "$REPO_ROOT/scripts/setup_agent_files.sh" "$REPO_ROOT/scripts/agent-run-compact" "$fixture/repo/scripts/"
+mkdir -p "$fixture/repo/scripts/agent-team"
+cp "$REPO_ROOT/scripts/agent-team/agent-team" "$fixture/repo/scripts/agent-team/"
+chmod -x "$fixture/repo/scripts/agent-team/agent-team"
 chmod -x "$fixture/repo/dotfiles/.agent/hooks/jupytext_sync.sh"
 
 mkdir -p "$fixture/home/.config/shell"
 print -r -- 'DEVIN_API_KEY=fixture-secret' > "$fixture/home/.config/shell/secrets.env"
 HOME="$fixture/home" XDG_CONFIG_HOME="$fixture/home/.config" /bin/zsh "$fixture/repo/dotfiles/.agent/sync.sh" --dry-run > "$fixture/plan"
 [[ ! -x "$fixture/repo/dotfiles/.agent/hooks/jupytext_sync.sh" ]] || fail "dry-run changed source permissions"
+[[ ! -x "$fixture/repo/scripts/agent-team/agent-team" ]] || fail "dry-run changed agent-team permissions"
 [[ ! -e "$fixture/home/.codex" ]] || fail 'dry-run created agent home'
 assert_not_contains "$fixture/plan" 'fixture-secret'
 assert_contains "$fixture/plan" '.codex/config.toml'
@@ -79,6 +83,7 @@ HOME="$fixture/home" XDG_CONFIG_HOME="$fixture/home/.config" /bin/zsh "$fixture/
 [[ "$fixture/home/.codex/config.toml" -ef "$fixture/repo/dotfiles/.agent/apps/codex/config.toml" ]] || fail 'agent config not linked'
 [[ -L "$fixture/home/.codex/skills" ]] || fail 'skills not linked'
 [[ -L "$fixture/home/.codex/hooks/jupytext_sync.sh" ]] || fail 'hooks not linked'
+[[ "$fixture/home/.local/bin/agent-team" -ef "$fixture/repo/scripts/agent-team/agent-team" ]] || fail 'agent-team command not linked'
 assert_contains "$fixture/home/.hermes/.env" 'DEVIN_API_KEY=fixture-secret'
 cp "$fixture/home/.hermes/.env" "$fixture/env-before"
 HOME="$fixture/home" XDG_CONFIG_HOME="$fixture/home/.config" /bin/zsh "$fixture/repo/dotfiles/.agent/sync.sh" --dry-run > "$fixture/plan"

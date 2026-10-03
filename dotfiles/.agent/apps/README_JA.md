@@ -12,6 +12,7 @@ English version: [README.md](README.md)
 
 | Path | Agent | 内容 |
 |---|---|---|
+| `agent-team/` | opt-in orchestration runtime | Main、Planner、Worker、Reviewerのrole configとprompt。 |
 | `antigravity-cli/` | Antigravity CLI | Gemini / Antigravity 向け設定と `dotfiles-agent` plugin。 |
 | `claude/` | Claude Code | Claude settings と MCP 設定。 |
 | `codex/` | Codex | Codex config と hook 登録。 |
