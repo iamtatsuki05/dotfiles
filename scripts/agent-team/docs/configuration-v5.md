@@ -420,8 +420,8 @@ phase; the final plan-only review waits until all writers finish and uses the
 same sealed workspace revision as the implementation review. Fixed-argv
 verification uses that exact revision. A plan change returns to the exact
 Planner and preserves its round limit; it never synthesizes an implementation
-writer. The focused contract is tested, but a real-model plan-only run has not
-been completed.
+writer. The focused contract is tested, and a real-model plan-only run passed
+on tmux (see [Architecture](architecture.md)).
 
 ## Select a team explicitly
 

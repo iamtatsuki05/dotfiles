@@ -599,6 +599,9 @@ public MCP tools over one stdio session and never prompts the Main model.
 | Interrupt a running Worker | scripted Main | Herdr 0.9.3 | `691a126` | `f2dc85cc-…` | public stop 2.262 s; 7 PIDs, 5 process groups, and 5 paths absent |
 | Interrupt a running Worker | scripted Main | Zellij 0.44.1 | `691a126` | `d317cec7-…` | public stop 2.914 s; 7 PIDs, 5 process groups, and 5 paths absent |
 | Stale verification and review limit | scripted Main, `max_review_rounds = 1` | tmux | `a0232af` | `2338ca35-…` | `task_verify` refused a changed workspace, then completed after the exact content returned; a second review was refused with `user consultation required` and the task stayed unchanged |
+| Answer a review consultation and resume | scripted Main, `max_review_rounds = 2` | tmux | `43bc8c1` | `e1ceb6da-…` | the Worker asked a question that Main answered and acknowledged; the reviewer returned `consult`; another dispatch was refused until `agent-team answer` saved the answer; the original Worker then fixed the code, a second review approved, and verification completed the task on one revision |
+| Mainless parallel | `program`/`parallel`, Planner omitted | tmux | `43bc8c1` | `70006335-…` | the coordinator started both writers together, both reviewers approved, both tasks verified on one integrated revision, public stop 0.687 s |
+| Read-only research | `program`/`serial`, plan-only route | tmux | `8c7cd2d` | `2aa38be2-…` | the Planner's plan was approved; verification ran on the reviewed workspace revision, which differs from the plan-body digest; no file changed; public stop 0.278 s |
 | Question, review, verify on Orca | named `agent`/`serial` | Orca 1.4.199 | `a0232af` | `run_e89da337f417` | Worker question answered by Main and recorded, implementation sent back, fixed, approved, fixed-argv verification on one revision, `completed`; public stop removed all 69 recorded processes and owned resources; a closed team terminal left Orca's live list within 0.876 s |
 
 In the interrupt runs, the Worker first wrote a marker file and then read a
@@ -614,7 +617,7 @@ missing `tmux`, `claude`, `node`, or `claude-agent-acp` each exited with status
 1, left state unchanged, started no process, and printed the missing item, the
 selecting setting, and the fix (commit `062c9fa`).
 
-The live runs found five defects, each fixed before the run that passed:
+The live runs found six defects, each fixed before the run that passed:
 
 - Reviewers sometimes judged from the writer's self-report without opening a
   file. With a claude.ai login, Claude Code added the account's connectors as
@@ -643,6 +646,10 @@ The live runs found five defects, each fixed before the run that passed:
   accepted, and the files are validated as JSON (`691a126`).
 - The management plan used by MCP and stop dropped `claude_config_dir`
   (`1bc553e`).
+- The final plan review of a plan-only route appended the workspace revision
+  after the JSON template, and the reviewer copied it into the verdict instead
+  of the plan-body digest, so the task failed. The workspace revision now comes
+  before the output contract and is marked as not the JSON revision (`8c7cd2d`).
 
 Failed attempts are retained and are not rewritten by the later successes.
 Orca runs `run_fe096b06952e` and `run_bd6311c84d24` failed at the Worker
@@ -659,9 +666,14 @@ check right after stop still listed a team terminal; a check minutes later
 found no listed team terminal, no recorded process, and no owned path. The
 runner now waits up to 15 seconds and records what was still listed.
 
+The first consultation runs stopped because the scripted Main did not yet
+answer Worker questions or read the consultation from `task_get`; agent-team
+refused the early `role_read` and the early dispatch as designed. The first
+plan-only run failed on the review contract fixed above. All these runs ended
+with public stop and conclusive independent checks.
+
 These runs do not cover Fable, Astra, Codex, or the other harnesses. The
-parallel run had no request for changes or question, and resuming after a
-user answer to a review consultation was not run.
+parallel runs had no request for changes or question.
 
 ## Components have narrow responsibilities
 
@@ -1288,11 +1300,8 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
   public, and the other seven need login, account, or runtime preparation.
 - Astra Worker/Reviewer and the default Fable configuration through the whole
   workflow; the 2026-10-04 runs used the explicit Claude-only profile
-- Real-model Orca `program` and `parallel` execution, and native
-  `program`/`parallel`
-- A real-model read-only plan-only run
-- Resuming after a user answers a review consultation, and a question or a
-  request for changes inside a parallel batch, with real models
+- Real-model Orca `program` and `parallel` execution
+- A question or a request for changes inside a parallel batch with real models
 
 ## Intentional exclusions
 

@@ -343,7 +343,7 @@ plan-only route（`plan_writer`と`plan_reviewer`だけを持つroute）では�
 Reviewerが確認したコードのsnapshotを`workspace_revision`に保存します。両者を置き換えません。mixed waveでは、実装writerを
 進める計画reviewはwriters phaseで行い、finalのplan-only reviewは全writer完了後、implementation reviewと同じsealed workspace
 revisionに束縛します。fixed argvの検証も同じrevisionを使います。計画変更は元のPlannerへ戻り、review roundを維持します。
-focused contract testは通っていますが、実モデルのplan-only runは完了していません。
+focused contract testに加え、tmuxで実モデルのplan-only runに合格しています（[アーキテクチャ](architecture_JA.md)参照）。
 
 ## teamを明示して選ぶ
 

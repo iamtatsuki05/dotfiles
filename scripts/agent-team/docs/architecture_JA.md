@@ -399,23 +399,29 @@ Pythonがクライアントの終了コードを失い、完了結果を確定�
 | 実行中Workerの中断 | scripted Main | Herdr 0.9.3 | `691a126` | `f2dc85cc-…` | 公開stop 2.262秒、PID 7件、process group 5件、path 5件が不在 |
 | 実行中Workerの中断 | scripted Main | Zellij 0.44.1 | `691a126` | `d317cec7-…` | 公開stop 2.914秒、PID 7件、process group 5件、path 5件が不在 |
 | 古い検証とレビュー回数上限 | scripted Main、`max_review_rounds = 1` | tmux | `a0232af` | `2338ca35-…` | 変更後のworkspaceでは`task_verify`が拒否し、内容を戻すと完了。2回目のレビュー依頼は`user consultation required`で拒否され、taskは変わらない |
+| reviewの相談への回答と再開 | scripted Main、`max_review_rounds = 2` | tmux | `43bc8c1` | `e1ceb6da-…` | Workerの質問にMainが回答してACK。reviewerが`consult`を返し、`agent-team answer`で回答を保存するまで再dispatchは拒否された。その後、元のWorkerが修正し、2回目のレビューで承認、同じrevisionで検証して完了 |
+| Mainなしの並列実行 | `program`/`parallel`（Planner省略） | tmux | `43bc8c1` | `70006335-…` | coordinatorが2 writerを同時に起動、2 reviewerとも承認、2 taskを同じ統合revisionで検証、公開stop 0.687秒 |
+| 読み取り専用の調査 | `program`/`serial`、plan-only route | tmux | `8c7cd2d` | `2aa38be2-…` | Plannerの計画が承認され、計画本文のdigestとは別のreview対象workspace revisionで検証。変更されたファイルなし、公開stop 0.278秒 |
 | Orcaでの質問、レビュー、検証 | 名前付き`agent`/`serial` | Orca 1.4.199 | `a0232af` | `run_e89da337f417` | Workerの質問にMainが回答して記録、実装差し戻し、修正、承認、同じrevisionで固定argv検証、`completed`。公開stopで記録した69 processと所有資源が消滅。閉じたteam terminalは0.876秒以内にOrcaのlive一覧から消えた |
 
 中断runでは、Workerがまずmarker fileを書き、次に保護fileを繰り返し読みます。configとpromptを削除したあと、Workerの動作中に公開stopを実行しました。照合対象は、runner配下のprocess全体、Main、terminal server、prompt・private・snapshot・socket・stateの各path、markerと保護fileが変わっていないこと、完了通知が発行されていないことです。Zellijで実モデルの中断を確認したのはこれが初めてです。
 
 選択した依存が欠けた場合は、資源を作る前に拒否しました。`tmux`、`claude`、`node`、`claude-agent-acp`のどれが欠けても終了status 1で、stateは変わらず、processも起動せず、欠けた項目と選択した設定、解消方法を表示しました（commit `062c9fa`）。
 
-実機runで見つかった不具合は5件で、いずれも成功したrunの前に修正しました。
+実機runで見つかった不具合は6件で、いずれも成功したrunの前に修正しました。
 
 - reviewerが、ファイルを開かずに作成担当の自己申告だけで判定することがありました。claude.aiでloginしていると、agent-teamがMCP serverを渡していなくても、Claude Codeがアカウントのconnectorを全Claude roleにMCP toolとして追加していました。scoped hookが実行は拒否していましたが、roleには未選択のtoolが数十件提示され、Claude Codeはconnector一覧をネット経由で取得していました。scoped ACP wrapperとdirect Mainのflag設定に`disableClaudeAiConnectors`を加えました（`a0232af`）。同じreviewer構成の使い捨て試験では、connectorがある状態で23回中12回がtoolを1回も呼びませんでした（旧promptで14回中10回、新promptで9回中2回）。無効化後は7回すべてがファイルを読み、うち3回は旧promptでした。あわせてreview promptに、前段の結果は未検証であることと、宣言済みの検証は承認後にagent-teamが実行することを書きました（`4962125`）。
 - reviewerが`findings`をobjectの配列で返したため、厳密なparserが判定を拒否し、taskが失敗しました。`findings`は文字列の配列だと契約に明記しました（`a1aed1b`）。
 - Orca 1.4.199は`orchestration ask`の結果に`mutation: {requestId, replayed}`を加えます。厳密な結果検査がこれを拒否し、Workerの質問が失敗していました。受領情報を検査したうえで取り除き、replayされた受領情報は拒否するようにしました（`bb71ba8`）。先に入れた`legacyCompatibility`対応は、旧来のdirect dispatch経路だけが返すfieldだったためrevertしました。
 - Herdr 0.9.3はsessionを`session-snapshots/session-<時刻>-<pid>-<n>.json`として保存します。private treeの検査がこのdirectoryを拒否したため、stopはworkspaceを閉じたあとserverを止めずに終わっていました。このdirectoryとfile名の形式だけを受け入れ、中身をJSONとして検査するようにしました（`691a126`）。
 - MCPとstopが使う管理planが`claude_config_dir`を落としていました（`1bc553e`）。
+- plan-only routeの最終計画レビューで、依頼文がJSONテンプレートの後ろにworkspace revisionを追記していたため、reviewerが計画本文のdigestではなくそのrevisionを判定に入れ、taskが失敗しました。workspace revisionを出力契約の前に置き、JSONのrevisionではないと明記しました（`8c7cd2d`）。
 
 失敗したrunは保持し、後の成功で書き換えていません。Orcaの`run_fe096b06952e`と`run_bd6311c84d24`はWorkerの質問で失敗し、runnerのtimeout後に公開stopで止め、独立照合の結果は確定しています。fixtureは変更されていません。最初の並列run `0b3c1ed3-…`は、reviewerがファイルを読まなかったため`consultation_required`で止まりました。Herdrの1回目の中断run `5b4a16c5-…`は`native server termination is unproven`を返し、private Herdr serverが残りました。修正版のsourceによる公開stopでこのserverを回収しています。Herdrの2回目の中断runは、Workerがmarkerを書かずに完了したため成立しませんでした。回数上限の1回目は、objectのfindingsで失敗しました。Orcaの`run_f8c64c697347`はworkflowを完了しましたが、stop直後に1回だけ取ったterminal一覧にteam terminalが残っていました。数分後の照合では、一覧のteam terminal、記録したprocess、所有pathはいずれもありませんでした。runnerは現在、最大15秒待ってから、残っていたものを記録します。
 
-これらのrunは、Fable、Astra、Codex、その他のharnessを対象にしていません。並列runでは差し戻しと質問は発生していません。reviewの相談にユーザーが回答した後の再開も、実機では行っていません。
+相談の最初の2回は、scripted MainがWorkerの質問に答えず、`task_get`の相談情報も読めない作りだったため止まりました。agent-teamは早すぎる`role_read`と再dispatchを設計どおり拒否しています。plan-onlyの1回目は、上で直したreview契約で失敗しました。いずれも公開stopで止め、独立照合の結果は確定しています。
+
+これらのrunは、Fable、Astra、Codex、その他のharnessを対象にしていません。並列runでは差し戻しと質問は発生していません。
 
 ## componentごとに責務を限定する
 
@@ -895,9 +901,8 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 
 - Claude Code以外の9harnessで必要なprofileと実機証拠。Codexは実認証での試験を保留し、Copilot ACPは公開していません。残る7個はlogin、account、実行環境の準備が必要です
 - Astra Worker/Reviewerと既定のFable構成による全工程。2026-10-04のrunは明示的なClaude専用構成です
-- 実モデルでのOrca `program`・`parallel`と、native `program`/`parallel`
-- 実モデルのread-only plan-only run
-- reviewの相談にユーザーが回答した後の再開と、並列batch内での質問・差し戻しの実モデル確認
+- 実モデルでのOrca `program`・`parallel`
+- 並列batch内での質問・差し戻しの実モデル確認
 
 ## 意図的な対象外
 
