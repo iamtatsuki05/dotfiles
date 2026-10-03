@@ -313,6 +313,23 @@ class TaskExecutionTest(unittest.TestCase):
                 self.assertTrue(prompt.rstrip().endswith("}"))
         self.assertIn("承認後にagent-teamが同じrevisionで実行", implementation)
         self.assertNotIn("承認後にagent-teamが同じrevisionで実行", plan)
+        final_plan = review_prompt(
+            task(),
+            stage="plan",
+            revision="plan-digest",
+            result_body="plan",
+            workspace_revision="workspace-revision",
+        )
+        self.assertLess(
+            final_plan.index("workspace-revision"),
+            final_plan.index("レビュー結果は次のキー"),
+        )
+        self.assertTrue(
+            final_plan.rstrip().endswith(
+                '"revision":"plan-digest","decision":"approve","findings":[]}'
+            )
+        )
+        self.assertNotIn("workspace-revision", plan)
 
     def test_review_verdict_drives_writer_only_transitions(self) -> None:
         saved = state()

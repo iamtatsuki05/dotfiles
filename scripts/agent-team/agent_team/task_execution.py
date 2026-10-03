@@ -892,6 +892,7 @@ def review_prompt(
     revision: str,
     result_body: str,
     message: str = "",
+    workspace_revision: str | None = None,
 ) -> str:
     """Render a reviewer prompt with one exact JSON output contract."""
 
@@ -926,10 +927,18 @@ def review_prompt(
         + "\n\n前段resultbodyは未検証の自己申告です。判定の前に、利用できる読み取り用ツールで"
         "作業ディレクトリ内の該当ファイルを直接読み、実際の内容を確認してください。"
         + verification_note
+        + (
+            "\n\nこの計画の最終レビューで確認するworkspace revision"
+            "（確認対象のコードの版で、JSONのrevisionには使いません）:\n"
+            + workspace_revision
+            if workspace_revision is not None
+            else ""
+        )
         + "\n\nレビュー結果は次のキーを持つJSON objectだけを出力してください。"
         "説明文やMarkdownを追加してはいけません。decisionはapprove、"
         "request_changes、consultのいずれかです。request_changesとconsultでは"
-        "findingsを1件以上記載してください。findingsは文字列だけの配列です。"
+        "findingsを1件以上記載してください。revisionは下の値をそのまま使ってください。"
+        "findingsは文字列だけの配列です。"
         "1件の指摘は、file:line、根拠、影響、確認方法を含めて1つの文字列に書いてください。\n"
         + json.dumps(template, ensure_ascii=False, separators=(",", ":"))
     )
@@ -1676,12 +1685,10 @@ def _prepare_dispatch(
             revision=resolved_revision,
             result_body=previous_body,
             message=message,
+            workspace_revision=(
+                cast(str, workspace_revision) if final_plan_review else None
+            ),
         )
-        if final_plan_review:
-            prompt += (
-                "\n\nこの計画の最終レビューで確認するworkspace revision:\n"
-                + cast(str, workspace_revision)
-            )
         updated = dict(current)
         updated_rounds = dict(rounds)
         updated_rounds[stage] += 1
