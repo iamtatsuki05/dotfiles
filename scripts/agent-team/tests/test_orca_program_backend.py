@@ -379,6 +379,31 @@ class OrcaProgramBackendTest(unittest.TestCase):
         self.assertEqual(journal["coordinator"], "pending")
         self.assertNotIn("main", journal)
 
+    def test_stop_accepts_a_closed_pty_only_after_the_coordinator_exited(self):
+        def already_closed(*, terminal_id, cwd):
+            return backend_module.TerminalCloseVerdict(terminal_id, "tab", False)
+
+        self.registered_state()
+        self.fixture.client.terminal_close = already_closed
+        self.backend.stop()
+        self.assertFalse(self.spec.state_path.parent.exists())
+
+        require = OrcaBackend._require_terminal_close
+        closed = backend_module.TerminalCloseVerdict("term", "tab", False)
+        with self.assertRaises(backend_module.OrcaProtocolError):
+            require(closed, terminal_id="term")
+        self.assertIs(require(closed, terminal_id="term", already_exited=True), closed)
+        for verdict in ("live", "unverifiable"):
+            with (
+                self.subTest(verdict=verdict),
+                self.assertRaises(backend_module.OrcaProtocolError),
+            ):
+                require(
+                    backend_module.TerminalCloseVerdict("term", "tab", False, verdict),
+                    terminal_id="term",
+                    already_exited=True,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

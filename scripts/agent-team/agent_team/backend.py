@@ -202,6 +202,15 @@ def _main_start_marker(
 __all__ = ("OrcaBackend", "OrcaClient")
 
 
+def _coordinator_exited_cleanly(state: Mapping[str, object]) -> bool:
+    process = state.get("coordinator_process")
+    return (
+        isinstance(process, Mapping)
+        and process.get("phase") == "exited"
+        and process.get("cli_cleanup_confirmed") is True
+    )
+
+
 class OrcaBackend(BackendPort):
     """Bind the typed runtime contract to the existing CLI Orca lifecycle."""
 
@@ -1293,6 +1302,8 @@ class OrcaBackend(BackendPort):
                     self._require_terminal_close(
                         close_verdict,
                         terminal_id=controller_terminal,
+                        already_exited=is_program(state)
+                        and _coordinator_exited_cleanly(state),
                     )
                 except OrcaCommandError as exc:
                     if exc.not_found:
@@ -1760,13 +1771,17 @@ class OrcaBackend(BackendPort):
 
     @staticmethod
     def _require_terminal_close(
-        verdict: object, *, terminal_id: str
+        verdict: object, *, terminal_id: str, already_exited: bool = False
     ) -> TerminalCloseVerdict:
         if not isinstance(verdict, TerminalCloseVerdict):
             raise OrcaProtocolError("Orca terminal close response was invalid")
-        if verdict.handle != terminal_id or not verdict.pty_killed:
+        if verdict.handle != terminal_id:
             raise OrcaProtocolError("Orca terminal close response was invalid")
         if verdict.pty_stop_verdict in {"live", "unverifiable"}:
+            raise OrcaProtocolError("Orca terminal close response was invalid")
+        # Orca reports ptyKilled false with no verdict when the terminal's
+        # process had already ended, which is only proven for an exited coordinator.
+        if not verdict.pty_killed and not already_exited:
             raise OrcaProtocolError("Orca terminal close response was invalid")
         return verdict
 
