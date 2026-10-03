@@ -403,8 +403,8 @@ reported a command-identity error, so independent typed receipt fields were not
 retained; the cleanup claim is limited to the native client accepted result,
 the public stop result, and those process/path checks. No model switch or
 billing change was made, and normal-auth write coverage was not verified. A
-real-model read-only plan-only trial was not run after that usage-limit failure;
-the 2026-10-04 plan-only run is recorded in the live acceptance below.
+real-model read-only plan-only trial had not been run at that point; the
+2026-10-04 plan-only run is recorded in the live acceptance below.
 
 Focused program-contract checks now cover the serial and parallel program
 paths, including admission, per-assignment state, delivery order, canonical
@@ -680,9 +680,10 @@ The live runs found eight defects, each fixed before the run that passed:
 - A reviewer returned a correct approval inside a ```json code fence. The
   strict parser rejected it with "review output must be one JSON object", and
   the task failed. The review prompt now also forbids a code fence; the parser
-  still accepts only the bare JSON object (`ca7bcb5`). None of the 22 earlier
-  throwaway reviewer runs whose output was saved had wrapped its verdict. Whether this also caused the
-  earlier Mainless Orca review failure, whose reason was not saved, is unknown.
+  still accepts only the bare JSON object (`ca7bcb5`). None of the 30
+  throwaway reviewer runs above had wrapped its verdict. Whether this also
+  caused the earlier Mainless Orca review failure, whose reason was not saved,
+  is unknown.
 
 Failed attempts are retained and are not rewritten by the later successes.
 Orca runs `run_fe096b06952e` and `run_bd6311c84d24` failed at the Worker
