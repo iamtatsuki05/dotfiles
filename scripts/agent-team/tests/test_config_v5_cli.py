@@ -375,6 +375,53 @@ class ConfigV5CliTest(unittest.TestCase):
             ("implement-a", "implement-b"),
         )
 
+    def test_claude_config_dir_reaches_the_plan_and_start_spec(self) -> None:
+        profile = self.root / "claude-profile"
+        profile.mkdir(mode=0o700)
+        self.config_path.write_text(
+            f'claude_config_dir = "{profile}"\n' + _v5_config_text(), encoding="utf-8"
+        )
+        result, stdout, stderr = self.run_cli("start", "--team", "build", "--dry-run")
+        self.assertEqual(result, 0, stderr)
+        plan = json.loads(stdout)
+        self.assertEqual(plan["claude_config_dir"], str(profile))
+        self.assertEqual(cli._start_spec(plan, attach=False).claude_config_dir, profile)
+
+    def test_unusable_claude_config_dir_fails_before_any_runtime_effect(self) -> None:
+        missing = self.root / "missing-profile"
+        link = self.root / "linked-profile"
+        target = self.root / "real-profile"
+        target.mkdir(mode=0o700)
+        link.symlink_to(target)
+        shared = self.root / "shared-profile"
+        shared.mkdir(mode=0o700)
+        shared.chmod(0o770)
+        for path, problem in (
+            (missing, "it does not exist"),
+            (link, "it is a symlink"),
+            (shared, "it is writable by group or others"),
+        ):
+            with self.subTest(problem=problem):
+                plan = {
+                    "runtime": "tmux",
+                    "claude_config_dir": str(path),
+                    "roles": {},
+                }
+                with (
+                    mock.patch.object(cli, "require_binary"),
+                    mock.patch.object(
+                        cli.subprocess, "Popen", side_effect=AssertionError
+                    ),
+                    self.assertRaises(cli.ConfigError) as raised,
+                ):
+                    cli._start_prerequisites(plan)
+                message = str(raised.exception)
+                self.assertIn(
+                    f"claude_config_dir is not usable: {path} ({problem})", message
+                )
+                self.assertIn("remove it to use the normal ~/.claude login", message)
+                self.assertFalse(self.state_home.exists())
+
     def test_start_requires_one_exact_team_before_prerequisites_or_runtime(
         self,
     ) -> None:

@@ -2073,6 +2073,8 @@ class OrcaBackend(BackendPort):
                     "tasks": {},
                 }
             )
+            if spec.claude_config_dir is not None:
+                state["claude_config_dir"] = str(spec.claude_config_dir)
         if _program_spec(spec):
             from .task_execution import new_program_wave
 
@@ -2284,6 +2286,11 @@ class OrcaBackend(BackendPort):
                 "task_specs": [task.as_dict() for task in spec.task_specs],
                 "max_review_rounds": spec.max_review_rounds,
                 "role_specs": self._named_specs,
+                "claude_config_dir": (
+                    str(spec.claude_config_dir)
+                    if spec.claude_config_dir is not None
+                    else None
+                ),
             }.items()
         ):
             raise RuntimeFailure(

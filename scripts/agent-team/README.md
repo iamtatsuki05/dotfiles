@@ -295,12 +295,19 @@ Before starting a team:
    bundled Orca roles require both Claude and Codex; native and named Orca teams require Claude.
 4. For `runtime = "orca"`, register the target repository with Orca once.
 
-Native runtimes currently use the standard Claude login under the normal home
-directory. They resolve the Claude executable directly and do not inherit a
-`claude-account` default profile or forward `CLAUDE_CONFIG_DIR`. Confirm that
-this standard login with `env -u CLAUDE_CONFIG_DIR claude auth status` before
-starting a native team. Named account profiles are not supported by the native
-runtime yet.
+By default, native and named Orca teams use the standard Claude login under the
+normal home directory. They resolve the Claude executable directly and do not
+inherit a `claude-account` default profile or forward an ambient
+`CLAUDE_CONFIG_DIR`. Confirm that standard login with
+`env -u CLAUDE_CONFIG_DIR claude auth status` before starting a team.
+
+To use another Claude Code config directory, such as a `claude-account`
+profile, set the version-5 top-level `claude_config_dir` to its absolute path.
+Startup checks that it is an existing directory owned by you and not writable by
+group or others, before any state, terminal, or process is created. The value is
+saved in the startup snapshot and passed as `CLAUDE_CONFIG_DIR` only to the
+Claude Main and Claude ACP role processes of that team. Scoped file tools treat
+the directory as protected. agent-team never falls back to another login.
 
 ```bash
 # Providers for the bundled Orca configuration

@@ -577,6 +577,22 @@ def build_acp_argv(
     ]
 
 
+def claude_environment(state: Mapping[str, object]) -> dict[str, str]:
+    """Return the Claude Code config directory explicitly selected at team start."""
+
+    value = state.get("claude_config_dir")
+    if value is None:
+        return {}
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\0" in value
+        or not Path(value).is_absolute()
+    ):
+        raise RuntimeValidationError("saved claude_config_dir is invalid")
+    return {"CLAUDE_CONFIG_DIR": value}
+
+
 def acp_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
     source = os.environ if environment is None else environment
     return {

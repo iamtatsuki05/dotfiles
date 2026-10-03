@@ -672,6 +672,11 @@ def start_assignment(
                 request.task if isinstance(request, TaskDispatch) else None,
                 claude_selected.agent,
                 permission=cast(str, spec["permission"]),
+                **(
+                    {"claude_config_dir": Path(str(state["claude_config_dir"]))}
+                    if state.get("claude_config_dir") is not None
+                    else {}
+                ),
             )
             policy_path = policy_path.resolve(strict=False)
             if policy_path.parent != private_root:

@@ -45,6 +45,13 @@ and the limits of each.
 | Coordination | `mode`, `entry_nodes`, `dispatch_mode`, `max_active`; mode is `agent` or `program`, dispatch is `serial` or `parallel`. |
 | Edge | `source`, `target`, `kind`; kind is `delegates-to`, `reviewed-by`, or `consults-to`. |
 
+The only optional top-level field is `claude_config_dir`, an absolute path to a
+Claude Code config directory. When the selected team has a Claude node, startup
+requires an existing directory owned by you and not writable by group or others,
+saves it in the startup snapshot, and passes it as `CLAUDE_CONFIG_DIR` to that
+team's Claude Main and Claude ACP role processes only. Without it, teams use the
+standard login under the normal home directory.
+
 Team IDs match `[a-z][a-z0-9-]{0,23}`; node IDs match
 `[a-z][a-z0-9-]{0,63}`. Names and labels are non-empty printable strings up to
 128 characters. `max_review_rounds` and `max_active` are positive integers;

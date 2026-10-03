@@ -24,6 +24,7 @@ MAX_V5_LABEL_CHARS: Final = 128
 _NODE_ID = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _TEAM_ID = re.compile(r"[a-z][a-z0-9-]{0,23}\Z")
 _TOP_LEVEL_FIELDS: Final = frozenset({"version", "runtime", "teams"})
+_OPTIONAL_TOP_LEVEL_FIELDS: Final = frozenset({"claude_config_dir"})
 _TEAM_FIELDS: Final = frozenset(
     {
         "name",
@@ -77,6 +78,7 @@ class V5Config:
     config_path: Path
     runtime: str
     teams: tuple[V5Team, ...]
+    claude_config_dir: Path | None = None
 
 
 def _table(value: object, context: str) -> dict[str, object]:
@@ -244,7 +246,16 @@ def load_v5_config_data(config_path: Path, data: dict[str, object]) -> V5Config:
 
     if not isinstance(data, dict):
         raise V5ConfigError("config must be a table")
-    _check_fields(data, _TOP_LEVEL_FIELDS, "config")
+    _check_fields(
+        {
+            key: value
+            for key, value in data.items()
+            if key not in _OPTIONAL_TOP_LEVEL_FIELDS
+        },
+        _TOP_LEVEL_FIELDS,
+        "config",
+    )
+    claude_config_dir = _claude_config_dir(data.get("claude_config_dir"))
     version = data["version"]
     if (
         not isinstance(version, int)
@@ -274,7 +285,25 @@ def load_v5_config_data(config_path: Path, data: dict[str, object]) -> V5Config:
         seen_ids.add(team_id)
         teams.append(_parse_team(team_id, raw_team, config_dir=resolved_path.parent))
     teams.sort(key=lambda team: team.team_id)
-    return V5Config(config_path=resolved_path, runtime=runtime, teams=tuple(teams))
+    return V5Config(
+        config_path=resolved_path,
+        runtime=runtime,
+        teams=tuple(teams),
+        claude_config_dir=claude_config_dir,
+    )
+
+
+def _claude_config_dir(value: object) -> Path | None:
+    """Parse the explicit Claude Code config directory; absence keeps ~/.claude."""
+
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or not value.isprintable():
+        raise V5ConfigError("claude_config_dir must be a non-empty printable string")
+    path = Path(value)
+    if not path.is_absolute():
+        raise V5ConfigError("claude_config_dir must be an absolute path")
+    return path
 
 
 def _selection_values(team: str | Sequence[str] | None) -> tuple[object, ...]:

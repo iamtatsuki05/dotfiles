@@ -34,6 +34,11 @@ providerを呼ばないparallel protocol proofとserialの過去証拠は[アー
 | coordination | `mode`、`entry_nodes`、`dispatch_mode`、`max_active`。modeは`agent`または`program`、dispatchは`serial`または`parallel`。 |
 | edge | `source`、`target`、`kind`。kindは`delegates-to`、`reviewed-by`、`consults-to`。 |
 
+top levelで省略できるfieldは`claude_config_dir`だけで、Claude Codeの設定ディレクトリを絶対パスで指定します。
+選択したteamにClaudeのnodeがある場合、起動時に存在するディレクトリであること、自分の所有であること、
+groupとotherが書き込めないことを確認し、起動時snapshotへ保存します。そのteamのClaude MainとClaude ACP roleの
+processにだけ`CLAUDE_CONFIG_DIR`として渡します。指定しない場合は、通常のホームディレクトリにある標準のログインを使います。
+
 team IDは`[a-z][a-z0-9-]{0,23}`、node IDは`[a-z][a-z0-9-]{0,63}`に一致させます。
 nameとlabelは空でない表示可能な文字列で、128文字以内です。`max_review_rounds`と`max_active`は
 正の整数で、順次実行では`max_active = 1`にします。parallelのagent/program実行では正の`max_active`を上限にします。

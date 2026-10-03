@@ -189,6 +189,32 @@ class OrcaMainLaunchIsolationTest(unittest.TestCase):
         self.assertIn("ANTHROPIC_API_KEY=<unset>", output)
         self.assertNotIn("ORCA-CLAUDE", output)
 
+    def test_named_claude_main_gets_only_the_selected_config_dir(self) -> None:
+        selected = self.root / "selected-profile"
+        plan = _named_plan(self.root, self._claude_argv())
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            unselected = shlex.split(self._factory(plan)(self.root / "orca.sock"))
+            plan["claude_config_dir"] = str(selected)
+            chosen = shlex.split(self._factory(plan)(self.root / "orca.sock"))
+
+        self.assertFalse(
+            any(item.startswith("CLAUDE_CONFIG_DIR=") for item in unselected)
+        )
+        self.assertIn(f"CLAUDE_CONFIG_DIR={selected}", chosen)
+        self.assertNotIn(f"CLAUDE_CONFIG_DIR={self.root / 'profile'}", chosen)
+
+    def test_saved_claude_config_dir_is_the_only_claude_env_source(self) -> None:
+        from agent_team.runtime import RuntimeValidationError, claude_environment
+
+        self.assertEqual(claude_environment({}), {})
+        self.assertEqual(
+            claude_environment({"claude_config_dir": "/profiles/a"}),
+            {"CLAUDE_CONFIG_DIR": "/profiles/a"},
+        )
+        for value in ("relative", "", 3, "/bad\0path"):
+            with self.subTest(value=value), self.assertRaises(RuntimeValidationError):
+                claude_environment({"claude_config_dir": value})
+
     def test_codex_main_keeps_socket_rebuild_and_saved_role_environment(self) -> None:
         raw_argv = ["codex", "-m", "gpt-6-astra", "-a", "never"]
         plan = _fixed_plan(self.root, raw_argv, provider="codex")

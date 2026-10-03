@@ -38,6 +38,69 @@ class ScopedAcpTest(unittest.TestCase):
             ):
                 scoped_acp.native_profile(provider, role)
 
+    def test_selected_claude_config_dir_is_protected_and_bound_to_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            state = root / "state" / "state.json"
+            state.parent.mkdir()
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            profile = root / "claude-profile"
+            profile.mkdir(mode=0o700)
+            wrapper = root / "host.mjs"
+            wrapper.write_text("export {};\n")
+            with (
+                mock.patch.object(scoped_acp, "SCOPED_AGENT", wrapper),
+                mock.patch.object(scoped_acp, "SCOPED_CLIENT", wrapper),
+                mock.patch.object(scoped_acp, "SCOPED_POLICY", wrapper),
+            ):
+                path, digest = scoped_acp.create_write_policy(
+                    private,
+                    workspace,
+                    state,
+                    None,
+                    wrapper,
+                    permission="read-only",
+                    claude_config_dir=profile,
+                )
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                self.assertIn(str(profile), payload["protected_paths"])
+                assignment = {
+                    "provider_private_root": str(private),
+                    "write_policy_path": str(path),
+                    "write_policy_sha256": digest,
+                    "question_socket": str(private / "q.sock"),
+                }
+                role_spec = {
+                    "scoped_wrapper_sha256": scoped_acp.checked_digest(wrapper),
+                    "scoped_client_sha256": scoped_acp.checked_digest(wrapper),
+                    "scoped_policy_sha256": scoped_acp.checked_digest(wrapper),
+                    "scoped_question_client_sha256": scoped_acp.checked_digest(
+                        scoped_acp.SCOPED_QUESTIONS
+                    ),
+                    "permission": "read-only",
+                    "acp_executables": {"agent": str(wrapper)},
+                }
+                saved = {
+                    "workspace": str(workspace),
+                    "state_path": str(state),
+                    "claude_config_dir": str(profile),
+                }
+                self.assertEqual(
+                    scoped_acp.validate_write_policy(saved, assignment, role_spec), path
+                )
+                without_selection = {
+                    key: value
+                    for key, value in saved.items()
+                    if key != "claude_config_dir"
+                }
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    scoped_acp.validate_write_policy(
+                        without_selection, assignment, role_spec
+                    )
+
     def test_policy_is_private_and_rejects_changed_scope_and_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

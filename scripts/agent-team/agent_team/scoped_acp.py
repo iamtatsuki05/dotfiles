@@ -162,10 +162,17 @@ def create_write_policy(
     agent_entry: Path,
     *,
     permission: str,
+    claude_config_dir: Path | None = None,
 ) -> tuple[Path, str]:
     path = private_root / "write-policy.json"
     payload = policy_payload(
-        private_root, workspace, state_path, task, agent_entry, permission=permission
+        private_root,
+        workspace,
+        state_path,
+        task,
+        agent_entry,
+        permission=permission,
+        claude_config_dir=claude_config_dir,
     )
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as target:
@@ -181,6 +188,7 @@ def policy_payload(
     agent_entry: Path,
     *,
     permission: str,
+    claude_config_dir: Path | None = None,
 ) -> dict[str, object]:
     if permission not in {"read-only", "workspace-write"} or (
         task is None and permission != "read-only"
@@ -205,6 +213,8 @@ def policy_payload(
         source = normal_home / relative
         if source.exists():
             protected.append(source.resolve(strict=True))
+    if claude_config_dir is not None:
+        protected.append(claude_config_dir.resolve(strict=True))
     return {
         "permission": permission,
         "workspace": str(workspace.resolve(strict=True)),
@@ -265,6 +275,11 @@ def validate_write_policy(
         state_path=Path(str(state["state_path"])),
         task=task,
         agent_entry=Path(executables["agent"]),
+        claude_config_dir=(
+            Path(str(state["claude_config_dir"]))
+            if state.get("claude_config_dir") is not None
+            else None
+        ),
     )
     if json.loads(policy_path.read_text(encoding="utf-8")) != expected:
         raise RuntimeValidationError(

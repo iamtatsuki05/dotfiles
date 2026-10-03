@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import errno
 import json
 import os
@@ -2241,6 +2242,34 @@ class NativeBackendTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(source_probe.returncode, 0, source_probe.stderr)
+
+    def test_explicit_claude_config_dir_is_saved_and_given_to_the_main_terminal(
+        self,
+    ) -> None:
+        config_dir = self.workspace.parent / "claude-profile"
+        config_dir.mkdir(mode=0o700)
+        spec = dataclasses.replace(self.spec(), claude_config_dir=config_dir)
+        backend = self.start_backend(spec)
+        state = native.runtime_read_state(self.state_path)
+        self.assertEqual(state["claude_config_dir"], str(config_dir))
+        driver = backend._driver
+        assert isinstance(driver, FakeTmuxDriver) and driver.created is not None
+        _argv, _cwd, child_env, _title = driver.created
+        self.assertEqual(child_env["CLAUDE_CONFIG_DIR"], str(config_dir))
+
+        changed = dataclasses.replace(spec, claude_config_dir=None)
+        with self.assertRaisesRegex(RuntimeFailure, "Claude config directory"):
+            self.backend(changed)._assert_state_matches_spec(
+                state, changed, state["role_specs"]
+            )
+
+    def test_main_terminal_has_no_claude_config_dir_without_selection(self) -> None:
+        backend = self.start_backend(self.spec())
+        state = native.runtime_read_state(self.state_path)
+        self.assertNotIn("claude_config_dir", state)
+        driver = backend._driver
+        assert isinstance(driver, FakeTmuxDriver) and driver.created is not None
+        self.assertNotIn("CLAUDE_CONFIG_DIR", driver.created[2])
 
     def test_starting_without_receipt_can_resume_status_and_retains_unknown_effect(
         self,

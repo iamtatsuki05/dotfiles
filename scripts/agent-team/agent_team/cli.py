@@ -111,6 +111,7 @@ from .runtime import (
     build_acp_argv,
     build_acp_runner_command,
     build_acp_session_name,
+    claude_environment,
     read_prompt_file,
     resolve_state_role,
 )
@@ -968,6 +969,31 @@ def require_binary(binary: str, selection: str) -> None:
             f"install {binary} on PATH or change that selection. "
             "agent-team does not fall back to another runtime or provider."
         )
+
+
+def require_claude_config_dir(value: str) -> None:
+    path = Path(value)
+    try:
+        info: os.stat_result | None = path.lstat()
+    except OSError:
+        info = None
+    if info is None:
+        problem = "it does not exist"
+    elif stat.S_ISLNK(info.st_mode):
+        problem = "it is a symlink"
+    elif not stat.S_ISDIR(info.st_mode):
+        problem = "it is not a directory"
+    elif info.st_uid != os.getuid():
+        problem = "it is not owned by the current user"
+    elif info.st_mode & 0o022:
+        problem = "it is writable by group or others"
+    else:
+        return
+    raise ConfigError(
+        f"claude_config_dir is not usable: {value} ({problem}); point it at an "
+        "existing Claude Code config directory owned by you, or remove it to use "
+        "the normal ~/.claude login. agent-team does not fall back to another login."
+    )
 
 
 def create_managed_symlink(source: Path, destination: Path) -> None:
@@ -1989,7 +2015,7 @@ def _acp_run_turn(
                 **({"write_policy": write_policy} if write_policy is not None else {}),
                 questions=_uses_scoped_acp(state),
             )
-            native_environment = acp_env()
+            native_environment = {**acp_env(), **claude_environment(state)}
         session_name = acp_session_name(selected_role, launch_nonce)
         native_argv = None
         if isinstance(executables, (NativeAcpExecutables, CodexAcpExecutables)):
@@ -2740,6 +2766,11 @@ def _start_spec(plan: dict[str, object], *, attach: bool) -> StartSpec:
         max_review_rounds=cast(int | None, plan.get("max_review_rounds")),
         task_specs=parse_task_specs(plan.get("task_specs", [])),
         graph=graph,
+        claude_config_dir=(
+            Path(cast(str, plan["claude_config_dir"]))
+            if plan.get("claude_config_dir") is not None
+            else None
+        ),
     )
 
 
@@ -2766,6 +2797,11 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         require_binary(orca_executable(), 'runtime = "orca"')
     else:
         raise ConfigError("launch plan has an unsupported runtime")
+    claude_config_dir = plan.get("claude_config_dir")
+    if claude_config_dir is not None:
+        if not isinstance(claude_config_dir, str):
+            raise TypeError("launch plan contains an invalid claude_config_dir")
+        require_claude_config_dir(claude_config_dir)
     roles = plan.get("roles")
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
@@ -2935,11 +2971,15 @@ def _runtime_engine(
         provider = launch.get("provider") if isinstance(launch, Mapping) else None
         if not isinstance(provider, str):
             raise ConfigError(f"launch plan is missing {main_role}.provider")
+        environment = acp_environment()
+        claude_config_dir = launch_plan.get("claude_config_dir")
+        if provider == "claude" and isinstance(claude_config_dir, str):
+            environment["CLAUDE_CONFIG_DIR"] = claude_config_dir
         return role_command(
             launch_plan,
             main_role,
             executable=_resolve_orca_main_executable(provider),
-            environment=acp_environment(),
+            environment=environment,
         )
 
     backend = OrcaBackend(
@@ -3408,7 +3448,7 @@ def _v5_runtime_plan(
                 else []
             ),
         }
-    return {
+    plan: dict[str, object] = {
         "runtime": config.runtime,
         "max_review_rounds": selected.max_review_rounds,
         "task_specs": [task.as_dict() for task in selected.task_specs],
@@ -3419,6 +3459,11 @@ def _v5_runtime_plan(
         "roles": roles,
         "graph": selected.graph.as_dict(),
     }
+    if config.claude_config_dir is not None and any(
+        node.role_spec.provider == "claude" for node in selected.nodes
+    ):
+        plan["claude_config_dir"] = str(config.claude_config_dir)
+    return plan
 
 
 def run_v5_command(args: argparse.Namespace, config: V5Config) -> int:

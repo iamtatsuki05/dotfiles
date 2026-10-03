@@ -233,11 +233,18 @@ ACPセッションを再開し、Reviewer承認と同一リビジョンの固定
    nativeと名前付きOrcaではClaudeが必要です。
 4. `runtime = "orca"`では対象repositoryをOrcaへ一度登録している。
 
-現在のnative runtimeは、通常のホームディレクトリにある標準のClaudeログインを使います。
+nativeと名前付きOrcaのteamは、既定では通常のホームディレクトリにある標準のClaudeログインを使います。
 Claudeの実行ファイルを直接起動するため、`claude-account`の既定プロファイルを選択せず、
-`CLAUDE_CONFIG_DIR`も渡しません。native teamを起動する前に、
+呼び出し元の`CLAUDE_CONFIG_DIR`も引き継ぎません。teamを起動する前に、
 `env -u CLAUDE_CONFIG_DIR claude auth status`で標準のログインが意図したアカウントであることを
-確認してください。名前付きアカウントプロファイルにはまだ対応していません。
+確認してください。
+
+`claude-account`のプロファイルなど別のClaude Code設定ディレクトリを使う場合は、version 5の
+トップレベルに`claude_config_dir`を絶対パスで指定します。起動時、state・terminal・processを
+作る前に、存在するディレクトリであること、自分の所有であること、groupとotherが書き込めない
+ことを確認します。値は起動時snapshotに保存し、そのteamのClaude MainとClaude ACP roleの
+processにだけ`CLAUDE_CONFIG_DIR`として渡します。scoped file toolはこのディレクトリを保護pathとして
+扱います。別のログインへのfallbackはしません。
 
 ```bash
 # bundled Orca configのprovider

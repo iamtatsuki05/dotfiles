@@ -195,6 +195,7 @@ class StartSpec:
     max_review_rounds: int | None = None
     task_specs: tuple[TaskSpec, ...] = ()
     graph: GraphSpec | None = None
+    claude_config_dir: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

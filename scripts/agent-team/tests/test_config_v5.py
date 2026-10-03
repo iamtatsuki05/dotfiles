@@ -265,6 +265,21 @@ class ConfigV5Test(unittest.TestCase):
                 with self.assertRaisesRegex(V5ConfigError, "runtime"):
                     self._load(invalid)
 
+    def test_claude_config_dir_is_optional_and_must_be_absolute(self) -> None:
+        self.assertIsNone(self._load().claude_config_dir)
+        selected = _config_data()
+        selected["claude_config_dir"] = "/Users/example/.config/claude-profile"
+        self.assertEqual(
+            self._load(selected).claude_config_dir,
+            Path("/Users/example/.config/claude-profile"),
+        )
+        for value in ("relative/profile", "~/profile", "", 7, True):
+            with self.subTest(value=value):
+                invalid = _config_data()
+                invalid["claude_config_dir"] = value
+                with self.assertRaisesRegex(V5ConfigError, "claude_config_dir"):
+                    self._load(invalid)
+
     def test_team_id_keeps_runtime_prefix_limit_while_node_id_keeps_graph_limit(
         self,
     ) -> None:

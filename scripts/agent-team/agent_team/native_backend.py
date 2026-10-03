@@ -109,6 +109,7 @@ from .runtime import (
     acp_environment,
     build_acp_agent_command,
     build_acp_session_name,
+    claude_environment,
     create_prompt_file,
     remove_prompt_file,
     resolve_state_role,
@@ -1901,6 +1902,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             keys.terminal: controller_terminal,
             "role_specs": role_specs,
             "task_specs": [task.as_dict() for task in spec.task_specs],
+            **(
+                {"claude_config_dir": str(spec.claude_config_dir)}
+                if spec.claude_config_dir is not None
+                else {}
+            ),
             "roles": {},
             **(
                 {"max_review_rounds": spec.max_review_rounds, "tasks": {}}
@@ -1930,7 +1936,7 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             receipt = driver.create(
                 supervisor_argv,
                 cwd=PACKAGE_ROOT,
-                env=acp_environment(),
+                env={**acp_environment(), **claude_environment(state)},
                 title=f"{spec.team_id}-{controller_name}",
             )
             if receipt.run_nonce != run_nonce or receipt.session_name != session_name:
@@ -2142,6 +2148,14 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
             raise RuntimeFailure(
                 ErrorCode.IDENTITY_MISMATCH,
                 "native graph snapshot does not match requested configuration",
+            )
+        expected_claude_config_dir = (
+            str(spec.claude_config_dir) if spec.claude_config_dir is not None else None
+        )
+        if state.get("claude_config_dir") != expected_claude_config_dir:
+            raise RuntimeFailure(
+                ErrorCode.IDENTITY_MISMATCH,
+                "native Claude config directory does not match requested configuration",
             )
         if _role_specs(state) != expected_role_specs:
             raise RuntimeFailure(
@@ -2580,6 +2594,11 @@ class NativeBackend(BackendPort, ABC, Generic[ReceiptT]):
                     request.task if isinstance(request, TaskDispatch) else None,
                     executables.agent,
                     permission=str(raw_spec["permission"]),
+                    **(
+                        {"claude_config_dir": Path(str(state["claude_config_dir"]))}
+                        if state.get("claude_config_dir") is not None
+                        else {}
+                    ),
                 )
                 agent_command = build_acp_agent_command(
                     _required_string(state.get("team_id"), "team_id"),
