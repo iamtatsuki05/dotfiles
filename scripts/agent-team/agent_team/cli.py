@@ -961,9 +961,13 @@ def _v4_runtime_plan(
     return plan
 
 
-def require_binary(binary: str) -> None:
+def require_binary(binary: str, selection: str) -> None:
     if shutil.which(binary) is None:
-        raise ConfigError(f"required command is not available: {binary}")
+        raise ConfigError(
+            f"required command is not available: {binary} (selected by {selection}); "
+            f"install {binary} on PATH or change that selection. "
+            "agent-team does not fall back to another runtime or provider."
+        )
 
 
 def create_managed_symlink(source: Path, destination: Path) -> None:
@@ -2755,27 +2759,32 @@ def _start_prerequisites(plan: dict[str, object]) -> None:
         runtime == "orca" and isinstance(plan.get("graph"), (GraphSpec, Mapping))
     )
     if is_native_runtime(runtime):
-        require_binary(runtime)
+        require_binary(runtime, f'runtime = "{runtime}"')
     elif plan.get("runtime") == "orca":
         from .orca import orca_executable
 
-        require_binary(orca_executable())
+        require_binary(orca_executable(), 'runtime = "orca"')
     else:
         raise ConfigError("launch plan has an unsupported runtime")
     roles = plan.get("roles")
     if not isinstance(roles, dict):
         raise TypeError("launch plan contains invalid roles")
-    providers = {
-        launch.get("provider")
-        for launch in roles.values()
-        if isinstance(launch, dict)
-        and launch.get("transport") == "direct"
-        and launch.get("execution") == "tui_direct"
-    }
-    for provider in providers:
-        if not isinstance(provider, str):
-            raise TypeError("launch plan contains invalid provider")
-        require_binary(provider)
+    direct_roles: dict[str, list[str]] = {}
+    for role_name, launch in roles.items():
+        if (
+            isinstance(launch, dict)
+            and launch.get("transport") == "direct"
+            and launch.get("execution") == "tui_direct"
+        ):
+            provider = launch.get("provider")
+            if not isinstance(provider, str):
+                raise TypeError("launch plan contains invalid provider")
+            direct_roles.setdefault(provider, []).append(str(role_name))
+    for provider, role_names in direct_roles.items():
+        require_binary(
+            provider,
+            f'provider = "{provider}" for direct role {", ".join(sorted(role_names))}',
+        )
     acp_launches = [
         launch
         for launch in roles.values()

@@ -66,7 +66,11 @@ class NativeConfigTest(unittest.TestCase):
             ):
                 cli._start_prerequisites(plan)
             self.assertEqual(
-                require.call_args_list, [mock.call(runtime), mock.call("claude")]
+                require.call_args_list,
+                [
+                    mock.call(runtime, f'runtime = "{runtime}"'),
+                    mock.call("claude", 'provider = "claude" for direct role main'),
+                ],
             )
 
     def test_unknown_runtime_does_not_fall_back_to_orca(self) -> None:
@@ -274,8 +278,46 @@ prompt = "planner.md"
         ):
             cli._start_prerequisites(plan)
         self.assertEqual(
-            require.call_args_list, [mock.call("tmux"), mock.call("claude")]
+            require.call_args_list,
+            [
+                mock.call("tmux", 'runtime = "tmux"'),
+                mock.call("claude", 'provider = "claude" for direct role main'),
+            ],
         )
+
+    def test_missing_selected_command_names_the_selection_and_fix(self) -> None:
+        plan: dict[str, object] = {
+            "runtime": "tmux",
+            "roles": {
+                "main": {
+                    "provider": "claude",
+                    "transport": "direct",
+                    "execution": "tui_direct",
+                }
+            },
+        }
+        for missing, selection in (
+            ("tmux", 'runtime = "tmux"'),
+            ("claude", 'provider = "claude" for direct role main'),
+        ):
+            with (
+                self.subTest(missing=missing),
+                mock.patch.object(
+                    cli.shutil,
+                    "which",
+                    side_effect=lambda name, missing=missing: (
+                        None if name == missing else "/usr/bin/" + name
+                    ),
+                ),
+                mock.patch.object(subprocess, "Popen", side_effect=AssertionError),
+                self.assertRaises(cli.ConfigError) as raised,
+            ):
+                cli._start_prerequisites(plan)
+            message = str(raised.exception)
+            self.assertIn(f"required command is not available: {missing}", message)
+            self.assertIn(f"selected by {selection}", message)
+            self.assertIn(f"install {missing} on PATH or change that selection", message)
+            self.assertIn("does not fall back", message)
 
     def test_native_state_and_management_need_no_orca_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

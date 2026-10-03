@@ -389,7 +389,7 @@ class OrcaClientContractTest(unittest.TestCase):
         ):
             cli_module._start_prerequisites({"runtime": "orca", "roles": {}})
 
-        require_binary.assert_any_call("orca-ide")
+        require_binary.assert_any_call("orca-ide", 'runtime = "orca"')
 
     def test_cli_raw_reporter_uses_the_shared_linux_orca_command(self) -> None:
         completed = mock.Mock(returncode=0)
