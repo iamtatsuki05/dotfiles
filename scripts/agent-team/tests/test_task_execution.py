@@ -271,6 +271,13 @@ class TaskExecutionTest(unittest.TestCase):
         parsed = parse_review(output, task=current, stage="plan", revision="revision-1")
 
         self.assertEqual(parsed["decision"], "request_changes")
+        with self.assertRaises(RuntimeFailure):
+            parse_review(
+                f"```json\n{output}\n```",
+                task=current,
+                stage="plan",
+                revision="revision-1",
+            )
         invalid_cases: tuple[dict[str, object], ...] = (
             {"extra": True},
             {"task_id": "other"},
@@ -310,6 +317,7 @@ class TaskExecutionTest(unittest.TestCase):
                 self.assertIn("未検証の自己申告", prompt)
                 self.assertIn("該当ファイルを直接読み", prompt)
                 self.assertIn("findingsは文字列だけの配列", prompt)
+                self.assertIn("コードブロック（```）で囲まず", prompt)
                 self.assertTrue(prompt.rstrip().endswith("}"))
         self.assertIn("承認後にagent-teamが同じrevisionで実行", implementation)
         self.assertNotIn("承認後にagent-teamが同じrevisionで実行", plan)

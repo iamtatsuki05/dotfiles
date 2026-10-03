@@ -935,7 +935,9 @@ def review_prompt(
             else ""
         )
         + "\n\nレビュー結果は次のキーを持つJSON objectだけを出力してください。"
-        "説明文やMarkdownを追加してはいけません。decisionはapprove、"
+        "説明文やMarkdownを追加してはいけません。"
+        "コードブロック（```）で囲まず、出力全体を{で始めて}で終えてください。"
+        "decisionはapprove、"
         "request_changes、consultのいずれかです。request_changesとconsultでは"
         "findingsを1件以上記載してください。revisionは下の値をそのまま使ってください。"
         "findingsは文字列だけの配列です。"
