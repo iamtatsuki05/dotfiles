@@ -2262,6 +2262,11 @@ class NativeBackendTest(unittest.TestCase):
             self.backend(changed)._assert_state_matches_spec(
                 state, changed, state["role_specs"]
             )
+        managed = cli._start_spec(cli._management_plan_from_state(state), attach=False)
+        self.assertEqual(managed.claude_config_dir, config_dir)
+        self.backend(managed)._assert_state_matches_spec(
+            state, managed, state["role_specs"]
+        )
 
     def test_main_terminal_has_no_claude_config_dir_without_selection(self) -> None:
         backend = self.start_backend(self.spec())

@@ -492,6 +492,11 @@ def _management_plan_from_state(state: dict[str, object]) -> dict[str, object]:
             if "max_review_rounds" in state
             else {}
         ),
+        **(
+            {"claude_config_dir": state["claude_config_dir"]}
+            if "claude_config_dir" in state
+            else {}
+        ),
     }
 
 
