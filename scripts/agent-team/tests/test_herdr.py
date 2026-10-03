@@ -419,6 +419,30 @@ class HerdrDriverContractTest(unittest.TestCase):
         (receipt.session_dir / "unowned-link").symlink_to(receipt.config_path)
         self.assertFalse(driver._known_paths_owned(receipt))
 
+    def test_private_inventory_accepts_only_valid_session_snapshots(self) -> None:
+        receipt = self._sample_receipt()
+        driver = self._restored_driver(receipt)
+        self.assertTrue(driver._known_paths_owned(receipt))
+        snapshots = receipt.session_dir / "session-snapshots"
+        snapshots.mkdir(mode=0o700)
+        valid = (
+            snapshots / "session-000000000000000000001791048705949331000-23593-0.json"
+        )
+        valid.write_text("{}", encoding="utf-8")
+        self.assertTrue(driver._known_paths_owned(receipt))
+        for name, body in (
+            ("session-1-2-3.json", "not json"),
+            ("other.json", "{}"),
+            ("session-1-2.json", "{}"),
+        ):
+            with self.subTest(name=name):
+                bad = snapshots / name
+                bad.write_text(body, encoding="utf-8")
+                self.assertFalse(driver._known_paths_owned(receipt))
+                bad.unlink()
+        (snapshots / "nested").mkdir()
+        self.assertFalse(driver._known_paths_owned(receipt))
+
     def _replace_socket_path_for_test(self, path: Path) -> None:
         original = _identity(path)
         staged_path = path.with_name(".replacement")

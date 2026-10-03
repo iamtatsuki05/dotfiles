@@ -491,6 +491,9 @@ _SESSION_MANAGED_FILES: Final = frozenset(
         "herdr-client.sock",
     }
 )
+# Herdr 0.9.3 keeps saved session states here instead of rewriting one file.
+_SESSION_SNAPSHOT_DIR: Final = "session-snapshots"
+_SESSION_SNAPSHOT_NAME: Final = re.compile(r"session-[0-9]+-[0-9]+-[0-9]+\.json")
 
 
 def _owned_relative_allowed(relative: str, session_name: str) -> bool:
@@ -520,7 +523,15 @@ def _owned_relative_allowed(relative: str, session_name: str) -> bool:
         return True
     if parts[3] != session_name:
         return False
-    return len(parts) == 4 or (len(parts) == 5 and parts[4] in _SESSION_MANAGED_FILES)
+    if len(parts) == 4:
+        return True
+    if len(parts) == 5:
+        return parts[4] in _SESSION_MANAGED_FILES or parts[4] == _SESSION_SNAPSHOT_DIR
+    return (
+        len(parts) == 6
+        and parts[4] == _SESSION_SNAPSHOT_DIR
+        and _SESSION_SNAPSHOT_NAME.fullmatch(parts[5]) is not None
+    )
 
 
 def _relative_mutable(relative: str) -> bool:
@@ -529,11 +540,11 @@ def _relative_mutable(relative: str) -> bool:
         return True
     if relative == "c/herdr/.plugins.lock":
         return True
-    return (
-        len(parts) == 5
-        and parts[0:3] == ("c", "herdr", "sessions")
-        and parts[4] not in {"herdr.sock", "herdr-client.sock"}
-    )
+    if parts[0:3] != ("c", "herdr", "sessions"):
+        return False
+    if len(parts) == 6:
+        return parts[4] == _SESSION_SNAPSHOT_DIR
+    return len(parts) == 5 and parts[4] not in {"herdr.sock", "herdr-client.sock"}
 
 
 def _owned_paths(
@@ -759,7 +770,10 @@ def _read_process_ppid(pid: int) -> int | None:
 def _validate_managed_file(path: Path, relative: str) -> bool:
     if relative.endswith(("herdr.sock", "herdr-client.sock")):
         return True
-    if not relative.endswith(("session.json", "session-history.json")):
+    if (
+        not relative.endswith(("session.json", "session-history.json"))
+        and Path(relative).parent.name != _SESSION_SNAPSHOT_DIR
+    ):
         return True
     try:
         data = path.read_bytes()
