@@ -1197,10 +1197,11 @@ from the agreed scope. They are tracked in Issues #8, #9, and #11.
 - A live real-model native `program`/`parallel` acceptance
 - Real-model/provider-backed native `agent`/`parallel` acceptance; real-model
   named Orca execution and shared Orca/native progression remain gaps
-- Automatic recovery after crash or unproven cleanup
 
 ## Intentional exclusions
 
+- No automatic recovery of unknown effects after a crash or unproven cleanup;
+  retained state and journals are inspected explicitly
 - No arbitrary ACP server command in config
 - No automatic provider or transport fallback
 - No automatic commit, push, publishing, or deployment

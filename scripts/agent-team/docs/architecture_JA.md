@@ -866,10 +866,10 @@ stop直前に再確認しました。独立readbackで所有PID/PGID、process r
 - 実モデルのread-only plan-only run
 - 実モデルのnative `program`/`parallel`受入
 - 実モデル/providerを使うnative `agent`/`parallel`受入、実モデルの名前付きOrca構成、Orcaとnativeの共有progression
-- crashやcleanup不明後の自動recovery
 
 ## 意図的な対象外
 
+- crashやcleanup不明後に、不明な外部効果を自動復旧すること。保持したstateとjournalを明示的に確認します
 - configからの任意ACP server command登録
 - provider/transportの自動fallback
 - commit、push、publish、deployの自動実行
