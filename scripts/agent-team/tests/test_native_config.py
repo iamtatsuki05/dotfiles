@@ -316,7 +316,9 @@ prompt = "planner.md"
             message = str(raised.exception)
             self.assertIn(f"required command is not available: {missing}", message)
             self.assertIn(f"selected by {selection}", message)
-            self.assertIn(f"install {missing} on PATH or change that selection", message)
+            self.assertIn(
+                f"install {missing} on PATH or change that selection", message
+            )
             self.assertIn("does not fall back", message)
 
     def test_native_state_and_management_need_no_orca_metadata(self) -> None:
