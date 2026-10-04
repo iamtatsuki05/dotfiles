@@ -85,6 +85,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
+| `core-message-writing` | `shibayu36/agent-skills` | `core-message-writing/` | 想定読者と主メッセージを軸に文章を作成・推敲する。SKILL.md は原文のまま、MIT LICENSE を同梱。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語の AI pattern を strict checklist で除く。voice matching は `humanizer`。 |
 | `pstack-principles` | `cursor/plugins` | `principle-make-operations-idempotent/`, `principle-separate-before-serializing-shared-state/` | 再実行時の安全性と共有状態の分離に関する2原則。本文・MIT LICENSEは原文のまま。frontmatterを移植し、ローカルの `agents/openai.yaml` でCodexを明示呼び出し専用にする。他の実行環境ではこの制限が適用されない場合がある。 |

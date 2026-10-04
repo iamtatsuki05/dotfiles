@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 13"
+  assert_contains_text "$output" "registered upstream skills: 14"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -33,6 +33,7 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "cognitive-rhythm-writing"
   assert_contains_text "$output" "japanese-tech-writing"
   assert_contains_text "$output" "k16shikano-gist-license"
+  assert_contains_text "$output" "core-message-writing"
 }
 
 test_pstack_principles_preserve_explicit_invocation() {
@@ -352,7 +353,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
       --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
-      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -377,6 +379,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 1717171717171717171717171717171717171717"
   assert_contains_text "$output" "Skill ID: japanese-tech-writing"
   assert_contains_text "$output" "candidate_commit: 1818181818181818181818181818181818181818"
+  assert_contains_text "$output" "Skill ID: core-message-writing"
+  assert_contains_text "$output" "candidate_commit: 2020202020202020202020202020202020202020"
   assert_contains_text "$output" "Skill ID: k16shikano-gist-license"
   assert_contains_text "$output" "candidate_commit: 1919191919191919191919191919191919191919"
 }
@@ -399,6 +403,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed cognitive-rhythm-writing" > "$report_dir/cognitive-rhythm-writing.md"
   print -r -- "reviewed japanese-tech-writing" > "$report_dir/japanese-tech-writing.md"
   print -r -- "reviewed k16shikano-gist-license" > "$report_dir/k16shikano-gist-license.md"
+  print -r -- "reviewed core-message-writing" > "$report_dir/core-message-writing.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -419,7 +424,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
       --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
-      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -440,6 +446,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "cognitive-rhythm-writing: plan update"
   assert_contains_text "$output" "candidate=1717171717171717171717171717171717171717"
   assert_contains_text "$output" "k16shikano-gist-license: plan update"
+  assert_contains_text "$output" "core-message-writing: plan update"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -638,7 +645,8 @@ EOF'
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
       --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
-      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -706,7 +714,8 @@ PY
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
       --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
-      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -771,7 +780,8 @@ EOF'
       --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
       --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
-      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 2>&1
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020 2>&1
   )"
   local exit_status=$?
   set -e

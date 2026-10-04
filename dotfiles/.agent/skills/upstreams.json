@@ -879,6 +879,33 @@
         "last_reviewed_at": "2026-09-20T16:59:19+00:00",
         "review_report": ".agent/work/sessions/2026-09-21-015133-k16shikano-writing-skills-claude/subagents/k16shikano-gist-security-review.md"
       }
+    },
+    {
+      "id": "core-message-writing",
+      "description": "Core-message-focused writing guidance imported unchanged from shibayu36/agent-skills.",
+      "repository": "https://github.com/shibayu36/agent-skills.git",
+      "branch": "main",
+      "pinned_commit": "9929c7448a17f57a26db2598b4277dee5717c731",
+      "local_tree_sha256": "4e8698de24ac8510d4fc720e79dfdae1d2f9a19e6f8a971af4a08055b1e12d83",
+      "source_url": "https://github.com/shibayu36/agent-skills/tree/9929c7448a17f57a26db2598b4277dee5717c731/skills/core-message-writing",
+      "provenance_note": "SKILL.md is preserved byte-for-byte, including user-invocable: true, as explicitly requested. MIT LICENSE and copyright are copied unchanged. The local quick_validate.py does not accept user-invocable; this known validation incompatibility is retained without weakening the validator.",
+      "mappings": [
+        {
+          "source_path": "skills/core-message-writing",
+          "local_path": "dotfiles/.agent/skills/core-message-writing"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/core-message-writing/LICENSE"
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "9929c7448a17f57a26db2598b4277dee5717c731",
+        "review_report": ".agent/work/sessions/2026-10-04-234847-core-message-writing-codex/subagents/review.md",
+        "last_reviewed_at": "2026-10-04T14:54:35+00:00"
+      }
     }
   ]
 }
