@@ -15,6 +15,7 @@ This directory contains setup, migration, update, sync, and test helper scripts 
 | `waza_eval_*.sh` | Compatibility wrappers for Waza / agent eval entrypoints. |
 | `agent-run-compact` | Opt-in command wrapper that bounds successful agent output while retaining diagnostic failure logs. |
 | `agent_skill_upstreams.py` | External skill update and security review manifest tool. |
+| [`agent-team/`](agent-team/README.md) | Standalone Python project for the opt-in Orca-backed team, including the package, bundled defaults, MCP entrypoint, support matrix, ACP docs, and tests. |
 | `analyze_agent_delegation.py` | Aggregates Codex subagent dispatch and observed-overlap metrics without emitting prompt, response, tool-argument, or tool-output content. |
 | `setup_agent_files.sh` | Canonical AI agent config, hook, skill, and pet sync script. |
 | `setup_hermes_agent.sh` | Installs or updates Hermes Agent through its official shell installer, because upstream dropped pip/PyPI and Homebrew distribution. |

@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+source_path=$0
+caller_cwd=$PWD
+if link_target=$(readlink "$source_path" 2>/dev/null); then
+    case "$link_target" in
+        /*) source_path=$link_target ;;
+        *) source_path=$(dirname "$source_path")/$link_target ;;
+    esac
+fi
+project_dir=${source_path%/*}
+if [ "$project_dir" = "$source_path" ]; then
+    project_dir=.
+fi
+project_root=$(CDPATH= cd -- "$project_dir" && pwd)
+cd "$project_root"
+export AGENT_TEAM_LAUNCHER="$project_root/agent-team"
+export AGENT_TEAM_CALLER_CWD="$caller_cwd"
+if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))'; then
+    echo "agent-team requires Python 3.11 or newer (python3 was too old)" >&2
+    exit 1
+fi
+exec python3 -m agent_team "$@"
