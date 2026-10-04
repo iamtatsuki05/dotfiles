@@ -906,6 +906,61 @@
         "review_report": ".agent/work/sessions/2026-10-04-234847-core-message-writing-codex/subagents/review.md",
         "last_reviewed_at": "2026-10-04T14:54:35+00:00"
       }
+    },
+    {
+      "id": "consulting-pptx-skill",
+      "description": "Carnot AI consulting slide rules, 62 HTML parts, editable PPTX catalog, and deck validators.",
+      "repository": "https://github.com/carnot-tech/consulting-pptx-skill.git",
+      "branch": "main",
+      "pinned_commit": "5d3b048e944f237c26690ed5f624d7773b302d96",
+      "mappings": [
+        {
+          "source_path": ".gitignore",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/.gitignore"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/LICENSE"
+        },
+        {
+          "source_path": "README.md",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/README.md"
+        },
+        {
+          "source_path": "SKILL.md",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/SKILL.md"
+        },
+        {
+          "source_path": "assets",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/assets"
+        },
+        {
+          "source_path": "package.json",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/package.json"
+        },
+        {
+          "source_path": "references",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/references"
+        },
+        {
+          "source_path": "scripts",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/scripts"
+        },
+        {
+          "source_path": "templates",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/templates"
+        }
+      ],
+      "source_url": "https://github.com/carnot-tech/consulting-pptx-skill/tree/5d3b048e944f237c26690ed5f624d7773b302d96",
+      "provenance_note": "Complete upstream snapshot imported unchanged, including MIT LICENSE (Copyright 2026 Carnot AI Inc.), references, templates, scripts, and PDF/PPTX catalogs. No npm setup, package installation, archived pipeline, hooks, or external upload was executed. Future use remains subject to local authorization and vendored-file ownership rules.",
+      "local_tree_sha256": "16d703640546cc5b942bcb352eaf2aafb173285fa59d383050249b3cefde4f4c",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "5d3b048e944f237c26690ed5f624d7773b302d96",
+        "last_reviewed_at": "2026-10-04T14:56:32+00:00",
+        "review_report": ".agent/work/sessions/2026-10-04-234924-consulting-pptx-install-codex/subagents/install-review.md"
+      }
     }
   ]
 }
