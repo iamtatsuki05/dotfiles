@@ -5,6 +5,38 @@
 共有 AI agent ファイルは `dotfiles/.agent/` で管理します。変更は canonical tree に
 加え、同期を実行してから、管理ソースと代表的な展開先の両方を検証します。
 
+## RTKによるコマンド出力の圧縮
+
+通常のセットアップで[RTK](https://github.com/rtk-ai/rtk)をmise経由で導入します。
+Agent同期で、Claude Code、Codex、Copilot、Cursor、Antigravity CLI、Hermes、
+OpenCode、OpenClawの公式hook・pluginを有効にします。固定したバージョンでは、
+Devin、Grokの公式連携はありません。
+
+```sh
+mise install github:rtk-ai/rtk
+zsh scripts/setup_agent_files.sh
+rtk --version
+rtk gain
+```
+
+RTKは対応するシェルコマンドを書き換えます。組み込みのファイル読み取り・検索
+ツールは対象外です。CopilotのCLI固有hook形式ではRTK経由の再実行を促し、
+今回採用したPascalCase形式では`updatedInput`による書き換えに対応します。Codexでは
+`/hooks`から`rtk hook codex`の定義を確認し、信頼を承認してください。
+[Codexのhook仕様](https://learn.chatgpt.com/docs/hooks)により、新規hookは承認まで実行されません。
+同期後はAgentを再起動してください。OpenClawではGatewayの再読み込みも必要です。
+起動済みのセッションへの反映は別途確認してください。無加工の出力が必要な場合は`rtk proxy <command>`を使います。
+
+権限チェックは書き換え後の`rtk ...`を評価する場合があり、コマンド単位の許可・
+拒否ルールによっては確認の挙動が変わります。既存の権限設定は緩和しません。
+
+本体と公式pluginをRTKのリリース0.51.0に揃えて固定しています。
+[配布元・更新手順](../dotfiles/.agent/apps/rtk/README.md)を参照してください。
+管理対象のHOMEに直接`rtk init`を実行すると、共有プロンプトの変更やsymlinkの
+置換が起きる可能性があります。設定の反映にはAgent同期を使ってください。
+既存の`opencode/plugins`が非空の実ディレクトリの場合、同期は保護のため
+置換をスキップします。その場合はRTKも配置されないため、警告を確認してください。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

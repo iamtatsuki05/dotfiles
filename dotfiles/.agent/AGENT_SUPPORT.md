@@ -21,6 +21,25 @@ Hermes Agent は upstream が 2026-07-22 に pip/PyPI と Homebrew 配布を廃�
 
 Herdr は agent を束ねる terminal multiplexer / runtime であり、ここでいう canonical agent ではありません。CLI は `mise` の `github:ogulcancelik/herdr` で管理し、Herdr 用 agent skill は `dotfiles/.agent/skills/herdr/` に置きます。
 
+## RTK
+
+`github:rtk-ai/rtk@0.51.0`をmiseで導入し、Agent同期で対応する連携を有効にします。
+
+| Agent | RTK連携 |
+|---|---|
+| `claude` | `PreToolUse` → `rtk hook claude` |
+| `codex` | `PreToolUse` → `rtk hook codex` |
+| `copilot` | `hooks/rtk-rewrite.json` → `rtk hook copilot` |
+| `cursor` | `preToolUse` → `rtk hook cursor` |
+| `antigravity` | `~/.gemini/config/plugins/rtk`の`PreToolUse` → `rtk hook antigravity` |
+| `hermes` | 公式`rtk-rewrite` pluginの`pre_tool_call` |
+| `opencode` | 公式`rtk.ts` pluginの`tool.execute.before` |
+| `devin` | このバージョンでは公式連携なし |
+| `openclaw` | 公式`rtk-rewrite` pluginの`before_tool_call` |
+| `grok` | このバージョンでは公式連携なし |
+
+公式pluginの出典・license・更新方法は[RTK integration provenance](apps/rtk/README.md)を参照してください。
+
 ## Internal Call Sites
 
 | Code / tool | Supported agents | Notes |

@@ -22,6 +22,7 @@ typeset -r -a RUNNER_TEST_FILES=(
   tests/test_agent_delegation_analysis.sh
   tests/test_agent_html_preview_review.sh
   tests/test_agent_run_compact.py
+  tests/test_rtk_setup.py
   tests/test_selective_setup.sh
   tests/test_agent_sync.sh
   tests/test_agent_support_matrix.sh
@@ -81,6 +82,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_agent_delegation_analysis.sh" "unit:agent-delegation"
   write_fixture_zsh_script "$repo/tests/test_agent_html_preview_review.sh" "unit:html-preview-review"
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
+  print -r -- 'print("unit:rtk-setup")' > "$repo/tests/test_rtk_setup.py"
   write_fixture_zsh_script "$repo/tests/test_selective_setup.sh" "unit:selective-setup"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
   write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"

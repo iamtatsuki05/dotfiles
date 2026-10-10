@@ -6,6 +6,38 @@ Shared AI agent files are maintained under `dotfiles/.agent/`. Keep changes in
 that canonical tree, run the sync, and validate both the managed source and
 representative deployed targets.
 
+## RTK command output compression
+
+The standard setup installs [RTK](https://github.com/rtk-ai/rtk) through mise.
+Agent sync enables its official hooks/plugins for Claude Code, Codex, Copilot,
+Cursor, Antigravity CLI, Hermes, OpenCode, and OpenClaw. Devin and Grok have no
+official RTK integration in the pinned release.
+
+```sh
+mise install github:rtk-ai/rtk
+zsh scripts/setup_agent_files.sh
+rtk --version
+rtk gain
+```
+
+RTK rewrites supported shell commands; built-in file/search tools are outside
+that scope. Copilot's native CLI hook protocol can deny with an RTK suggestion;
+the PascalCase protocol supports `updatedInput`. In Codex, review and trust
+`rtk hook codex` through `/hooks`; [Codex skips untrusted hooks](https://learn.chatgpt.com/docs/hooks).
+Reload the agent after sync, including the OpenClaw Gateway.
+Existing running sessions are not proof that the new hook has loaded. Use
+`rtk proxy <command>` when full, unfiltered output is needed.
+
+Permission checks may evaluate the rewritten `rtk ...` command, so command-specific
+allow/deny rules can behave differently. This setup does not relax permissions.
+
+The binary and official plugins are pinned to RTK release 0.51.0. See
+[provenance and update instructions](../dotfiles/.agent/apps/rtk/README.md).
+Do not run `rtk init` against live managed homes: it may modify the shared prompt
+or replace symlinks. Agent sync deploys the reviewed integration instead.
+An existing nonempty, unmanaged `opencode/plugins` directory is preserved and
+skipped by sync; review that warning before expecting RTK to load there.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.
