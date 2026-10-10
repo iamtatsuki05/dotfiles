@@ -30,6 +30,12 @@
       {
         "command": "zsh \"$HOME/.cursor/hooks/jupytext_sync.sh\""
       }
+    ],
+    "preToolUse": [
+      {
+        "command": "rtk hook cursor",
+        "matcher": "Shell"
+      }
     ]
   }
 }

@@ -63,6 +63,7 @@ plugins:
   enabled:
     - orca-status
     - japanese-prose-lint
+    - rtk-rewrite
 _config_version: 37
 
 # ── Security ──────────────────────────────────────────────────────────

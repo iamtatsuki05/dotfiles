@@ -303,6 +303,7 @@ tool_config_link_specs() {
   print -r -- "$APPS_DIR/claude/settings.json"$'\t'"$HOME/.claude/settings.json"
   print -r -- "$APPS_DIR/claude/.mcp.json"$'\t'"$HOME/.claude/.mcp.json"
   print -r -- "$APPS_DIR/copilot/settings.json"$'\t'"$HOME/.copilot/settings.json"
+  print -r -- "$APPS_DIR/copilot/hooks/rtk-rewrite.json"$'\t'"$HOME/.copilot/hooks/rtk-rewrite.json"
   print -r -- "$APPS_DIR/copilot/mcp-config.json"$'\t'"$HOME/.copilot/mcp-config.json"
   print -r -- "$APPS_DIR/codex/config.toml"$'\t'"$HOME/.codex/config.toml"
   print -r -- "$APPS_DIR/codex/hooks.json"$'\t'"$HOME/.codex/hooks.json"
@@ -322,6 +323,9 @@ tool_config_link_specs() {
 }
 
 agent_plugin_link_specs() {
+  print -r -- "$APPS_DIR/antigravity-cli/plugins/rtk"$'\t'"$HOME/.gemini/config/plugins/rtk"
+  print -r -- "$APPS_DIR/openclaw/extensions/rtk-rewrite"$'\t'"$HOME/.openclaw/extensions/rtk-rewrite"
+  print -r -- "$APPS_DIR/hermes-agent/plugins/rtk-rewrite"$'\t'"$HOME/.hermes/plugins/rtk-rewrite"
   print -r -- "$APPS_DIR/hermes-agent/plugins/japanese-prose-lint"$'\t'"$HOME/.hermes/plugins/japanese-prose-lint"
   print -r -- "$APPS_DIR/openclaw/extensions/japanese-prose-lint"$'\t'"$HOME/.openclaw/extensions/japanese-prose-lint"
 }
@@ -329,6 +333,28 @@ agent_plugin_link_specs() {
 sync_tool_configs() {
   sync_link_specs tool_config_link_specs
   sync_link_specs agent_plugin_link_specs
+}
+
+enable_rtk_antigravity_plugin() {
+  if (( DRY_RUN )); then
+    print -r -- "enable RTK plugin: $HOME/.gemini/config/config.json"
+    return 0
+  fi
+
+  python3 - "$HOME/.gemini/config/config.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+content = path.read_text() if path.exists() else "{}"
+settings = json.loads(content)
+settings.setdefault("plugins", {}).setdefault("rtk", {})["enabled"] = True
+updated = json.dumps(settings, ensure_ascii=False, indent=2) + "\n"
+if updated != content:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(updated)
+PY
 }
 
 write_env_file_from_secrets() {
@@ -446,6 +472,7 @@ main() {
   sync_shared_files
   sync_hooks
   sync_tool_configs
+  enable_rtk_antigravity_plugin
   sync_agent_env_files
   if (( INSTALL_DEPS )); then
     if (( DRY_RUN )); then
