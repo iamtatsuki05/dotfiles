@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI、Hermes Agent、opencode、OpenClaw、Grok CLI に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Harness、Devin CLI、Hermes Agent、opencode、OpenClaw、Pi、Grok CLI に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
 
 ## 2. 前提
 
@@ -10,7 +10,7 @@ Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI�
 - バージョン管理する実装は `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/` 配下に置く
 - 実行時データは `~/.agent/agent-job-scheduler/` 配下に置く
 - ジョブ実行は非対話モードで行う
-- 権限は全 Agent とも最強自動承認モードを使う
+- 既存 Agent は従来の強い自動承認設定を維持する。DeepSeek Harness と Pi には強い権限 override を追加せず、各 CLI の既定動作を使う
 
 ## 3. 用語
 
@@ -33,7 +33,7 @@ Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI�
   - `workdir`
   - `agent`
 - `workdir` は絶対パスで保存すること
-- `agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`devin`、`hermes`、`opencode`、`openclaw`、`grok` を受け付けること
+- `agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok` を受け付けること
 
 ### 4.2 ジョブ台帳
 
@@ -150,6 +150,17 @@ copilot -C "$workdir" --allow-all --no-remote --output-format text -p "$prompt"
 devin --permission-mode dangerous --respect-workspace-trust true -p "$prompt"
 ```
 
+#### DeepSeek Harness
+
+- 非対話の一回実行は `dsh headless -- "$prompt"`
+- `--` 以降は task として渡す。回答は stdout、診断は stderr、終了コード 0 / 1 で成否を返す
+- プロセスの `cwd` を `workdir` にする
+- 権限、model、auth の override は渡さず、dsh の既定設定を使う。起動ごとに新しい永続 session が作られる
+
+```bash
+dsh headless -- "$prompt"
+```
+
 #### Cursor Agent
 
 - 非対話モードは `cursor-agent --print`
@@ -195,6 +206,17 @@ HERMES_ACCEPT_HOOKS=1 hermes --accept-hooks --yolo -z "$prompt"
 
 ```bash
 openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$prompt" --timeout 600
+```
+
+#### Pi CLI
+
+- 非対話の一回実行は `pi --print --no-session -- "$prompt"`
+- `--print` は回答を stdout に出して終了し、`--no-session` は session を保存しない
+- `--` 以降を message として渡し、プロセスの `cwd` を `workdir` にする
+- 権限、model、auth の override は渡さない。Pi の tool 呼び出しは scheduler を実行する OS account の権限で動く
+
+```bash
+pi --print --no-session -- "$prompt"
 ```
 
 #### Grok CLI
@@ -265,7 +287,7 @@ grok -p "$prompt"
 
 ## 8. セキュリティ上の注意
 
-- 全 Agent を強い自動承認モードで動かすため、投入ジョブは信頼できるものに限る
+- 既存 Agent は従来の強い自動承認設定を維持する。DeepSeek Harness と Pi は各 CLI の既定動作を使い、強い権限 override を追加しない。Pi の tool 呼び出しは scheduler を実行する OS account の権限で動くため、投入ジョブは信頼できるものに限る
 - `workdir` は信頼済みパスだけを許可する allowlist を実装し、必要に応じて強制できること
 - API キーや機密情報を `last_response` や log にそのまま残さないマスキング方針が必要
 - 完全な prompt は sidecar に残るため、prompt 自体に秘密情報を埋め込まない運用前提を明示する

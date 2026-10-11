@@ -189,6 +189,127 @@ enabled = true
 EOF
 }
 
+test_agent_sync_registers_deepseek_and_pi() {
+  local repo home_dir skill_root
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  skill_root="$repo/dotfiles/.agent/skills"
+  mkdir -p "$skill_root/research/example" "$skill_root/top-level" "$skill_root/.system/hidden" \
+    "$home_dir/.dsh/skills/local" "$home_dir/.pi/agent"
+  print -r -- 'nested skill' > "$skill_root/research/example/SKILL.md"
+  print -r -- 'top-level skill' > "$skill_root/top-level/SKILL.md"
+  print -r -- 'hidden skill' > "$skill_root/.system/hidden/SKILL.md"
+  print -r -- 'local skill' > "$home_dir/.dsh/skills/local/SKILL.md"
+  print -r -- '{"defaultProvider":"user-choice"}' > "$home_dir/.pi/agent/settings.json"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --dry-run >/dev/null
+  assert_not_exists "$home_dir/.dsh/AGENTS.md"
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-research--example"
+
+  local iteration
+  for iteration in 1 2; do
+    HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null
+  done
+  assert_symlink_target "$home_dir/.dsh/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.pi/agent/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.pi/agent/skills" "$skill_root"
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-research--example" "$skill_root/research/example"
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-top-level" "$skill_root/top-level"
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-.system--hidden"
+  assert_contains "$home_dir/.dsh/skills/local/SKILL.md" 'local skill'
+  assert_contains "$home_dir/.pi/agent/settings.json" 'user-choice'
+
+  rm -f "$skill_root/top-level/SKILL.md"
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null
+  [[ ! -L "$home_dir/.dsh/skills/dotfiles-top-level" ]] || fail "stale managed DeepSeek skill link remains"
+  assert_file "$home_dir/.dsh/skills/local/SKILL.md"
+}
+
+test_agent_sync_preserves_conflicting_deepseek_skills() {
+  local repo home_dir skill_root
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  skill_root="$repo/dotfiles/.agent/skills"
+  mkdir -p "$skill_root/example" "$home_dir/.dsh/skills/dotfiles-example"
+  print -r -- 'shared skill' > "$skill_root/example/SKILL.md"
+  print -r -- 'user skill' > "$home_dir/.dsh/skills/dotfiles-example/SKILL.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a conflicting DeepSeek skill to fail"
+  fi
+  assert_contains "$home_dir/.dsh/skills/dotfiles-example/SKILL.md" 'user skill'
+
+  mv "$home_dir/.dsh/skills/dotfiles-example" "$home_dir/foreign-skill"
+  ln -s "$home_dir/foreign-skill" "$home_dir/.dsh/skills/dotfiles-example"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a foreign DeepSeek skill link to fail"
+  fi
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-example" "$home_dir/foreign-skill"
+
+  mv "$home_dir/.dsh/skills" "$home_dir/foreign-skills"
+  ln -s "$home_dir/foreign-skills" "$home_dir/.dsh/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a symlinked DeepSeek skill root to fail"
+  fi
+  assert_symlink_target "$home_dir/.dsh/skills" "$home_dir/foreign-skills"
+  assert_contains "$home_dir/foreign-skills/dotfiles-example/SKILL.md" 'user skill'
+}
+
+test_agent_sync_preserves_foreign_pi_skills() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.pi/agent" "$home_dir/custom-skills"
+  print -r -- 'user skill' > "$home_dir/custom-skills/SKILL.md"
+  ln -s "$home_dir/custom-skills" "$home_dir/.pi/agent/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a foreign Pi skills symlink to fail"
+  fi
+  assert_symlink_target "$home_dir/.pi/agent/skills" "$home_dir/custom-skills"
+  assert_contains "$home_dir/custom-skills/SKILL.md" 'user skill'
+  assert_not_exists "$home_dir/.dsh/skills"
+
+  rm "$home_dir/.pi/agent/skills"
+  print -r -- 'user file' > "$home_dir/.pi/agent/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a conflicting Pi skills file to fail"
+  fi
+  assert_contains "$home_dir/.pi/agent/skills" 'user file'
+}
+
+test_agent_sync_rejects_deepseek_flattened_name_collision() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$repo/dotfiles/.agent/skills/group/skill" "$repo/dotfiles/.agent/skills/group--skill"
+  print -r -- 'nested' > "$repo/dotfiles/.agent/skills/group/skill/SKILL.md"
+  print -r -- 'flat' > "$repo/dotfiles/.agent/skills/group--skill/SKILL.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected colliding DeepSeek skill paths to fail"
+  fi
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-group--skill"
+}
+
 test_agent_sync_links_managed_files_and_generates_runtime_state() {
   local repo
   local home_dir
@@ -855,6 +976,10 @@ test_colab_mcp_is_absent_from_managed_agent_assets() {
 }
 
 main() {
+  test_agent_sync_registers_deepseek_and_pi
+  test_agent_sync_preserves_conflicting_deepseek_skills
+  test_agent_sync_preserves_foreign_pi_skills
+  test_agent_sync_rejects_deepseek_flattened_name_collision
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_colab_mcp_is_absent_from_managed_agent_assets
   test_agent_sync_replaces_hermes_skill_symlink_with_local_directory

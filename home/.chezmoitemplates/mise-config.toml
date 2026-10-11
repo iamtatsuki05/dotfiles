@@ -25,6 +25,8 @@ opencode = "latest"
 "npm:@github/copilot" = "latest"
 "npm:openclaw" = "latest"
 "npm:@xai-official/grok" = "latest"
+"npm:@deepseek-ai/dsh" = "latest"
+"npm:@earendil-works/pi-coding-agent" = "latest"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"
