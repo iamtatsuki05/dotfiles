@@ -360,7 +360,7 @@ preflight_new_agent_integrations() {
 }
 
 sync_pi_runtime_configs() {
-  python3 - "$APPS_DIR/pi" "$HOME/.pi/agent" "$1" <<'PY'
+  python3 -B - "$APPS_DIR/pi" "$HOME/.pi/agent" "$1" <<'PY'
 import json
 import os
 from pathlib import Path
