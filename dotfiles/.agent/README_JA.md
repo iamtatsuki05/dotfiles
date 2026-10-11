@@ -46,18 +46,40 @@ zsh dotfiles/.agent/sync.sh
 
 ## DeepSeek Harness / Pi
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) の登録IDは `deepseek`、実行コマンドは `dsh` です。[Pi](https://github.com/earendil-works/pi) はどちらも `pi` です。既存のmiseセットアップ（Node.js 24）で導入します。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) の登録IDは `deepseek`、実行コマンドは `dsh` です。[Pi](https://github.com/earendil-works/pi) はどちらも `pi` です。native連携の確認済みバージョンはDSH `0.2.0-rc.2`、Pi `1.1.0`、RTK `0.51.0` です。miseの両定義で固定し、Node.js 24を使います。
 
 ```sh
 mise install npm:@deepseek-ai/dsh npm:@earendil-works/pi-coding-agent
-zsh scripts/setup_agent_files.sh
+zsh scripts/setup_agent_files.sh --only deepseek
+zsh scripts/setup_agent_files.sh --only pi
 ```
 
-同期先は標準HOMEの `~/.dsh/AGENTS.md`、`~/.pi/agent/AGENTS.md` と各Agentのskillディレクトリです。DeepSeekはskillの直下だけを検索するため、`~/.dsh/skills` に `dotfiles-<relative-path>` という個別リンクを作り、リンク名の `/` を `--` に置換します。`.system` などの隠しディレクトリは対象外です。現在のrepoを指す不要なリンクは削除し、無関係なskillは保持します。同名の既存パスと衝突した場合はエラーで停止します。Piは `~/.pi/agent/skills` にリンクした共有ツリーを再帰的に読み込みます。このパスに外部へのリンク、ファイル、非空のディレクトリがある場合もエラーで保護します。
+`--only` は指定した新Agentだけを同期し、他AgentのHOMEは変更しません。省略すると通常の全Agent同期になります。`--dry-run` で事前確認できます。新しい連携ファイルの同名衝突は反映前にエラーで停止します。Pi設定は実ファイルのまま統合し、管理対象のモデル既定値とMCPサーバー定義だけを更新します。`deviceId`、無関係なサーバー、既存extensionは保持します。Piの既定は `openai/gpt-6-luna`、推論強度highです。`/login openai` で **Sign in with ChatGPT** を選んでください。認証情報はrepo外のクライアント所有ファイルに保存します。
 
-認証情報、モデル、profile、Piの `settings.json` は各クライアントで管理します。`dsh web` または `pi` で認証・モデルを設定してから、非対話実行の `dsh headless -- "task"`、`pi --print --no-session -- "task"` を使ってください。Wazaの `--agent deepseek` / `--agent pi`（`all` も含む）、外部skillレビューの `--review-agent`、`agent-job-scheduler` で両IDを指定できます。
+共通指示は `~/.dsh/AGENTS.md` と `~/.pi/agent/AGENTS.md` にリンクします。DeepSeekはskillを1階層だけ検索するため、`~/.dsh/skills` に `dotfiles-<relative-path>` という個別リンクを作ります（`/` は `--` に置換）。`.system` などの隠しディレクトリは除外し、現在のrepoを指す不要なリンクだけ削除します。Piは `~/.pi/agent/skills` を再帰検索します。このパスに外部へのリンク、ファイル、非空ディレクトリがある場合はエラーで保護します。
 
-登録範囲は導入、共通指示・skill、非対話実行です。この2つにはMCPサーバー、共通hook、RTK pluginを追加しません。DeepSeekは開発者向けプレビュー版です。両Agentは起動ユーザーの権限でツールを実行するため、この登録だけではsandboxや他Agentの拒否ルールは適用されません。[DeepSeekの安全上の注意](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md)と[Piのセキュリティ説明](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md)を参照してください。
+両native pluginはrepoの作業context、完了通知、paired `.py` のJupyter同期、成功した標準`write`/`edit`後の日本語lintを追加します。shellや独自toolによる書き込みは編集hookの対象外です。Piは公式RTK extensionを無変更で使い、Bashコマンドを自動変換します。DeepSeekの公開APIは引数変更を認めないため、RTK利用指示を追加します。こちらはモデルが指示に従うことが前提です。権限・sandbox設定は上書きしません。
+
+MCP定義は既存Codexに合わせてDeepWiki、Devin、Figma、Notionを登録し、Playwrightは無効のままにします（DSH patchには追加しません）。Devinはプロセス環境の `DEVIN_API_KEY` を使います。MCP認証はクライアントごとに必要で、設定だけでは他クライアントのOAuth権限を引き継ぎません。Piは `pi mcp login <server>` に対応します。固定したDSH MCP clientにはFigma/Notion向けOAuthログイン機能がありません。
+
+DeepSeekの`web`/`headless` profile設定と認証情報はクライアント所有のまま保持します。同梱の `llm-pi-ai/openai-codex` は公開authorization APIからChatGPTサブスク認証を行えますが、この版のModels画面にはAPI key入力しかありません。native OAuth後に、各profileの `cordis.patch.yml` へ次のモデル選択を設定します。
+
+```yaml
+- id: llm-pi-ai
+  config:
+    providers:
+      openai-codex:
+        transport: sse
+- id: agent-default-model
+  config:
+    provider: openai-codex
+    model: gpt-6-luna
+    reasoningEffort: high
+```
+
+`transport: sse` は、同梱ライブラリの回答後のWebSocket解放待ち（[upstream報告](https://github.com/deepseek-ai/deepseek-harness/discussions/4190)）を避ける設定です。provider・モデル・認証・native tool実行は変えません。HOMEの連携patchは`web`と`headless`だけに適用し、同期時にその2つのprofileへlocal pluginをリンクします。plugin更新後は起動中のクライアントを再起動してください。
+
+実行は `dsh headless -- "task"` または `pi --print --no-session -- "task"` です。Wazaの `--agent deepseek` / `--agent pi`（`all` も含む）、外部skillレビューの `--review-agent`、`agent-job-scheduler` で両IDを指定できます。DeepSeekは開発者向けプレビュー版です。両Agentは起動ユーザーの権限でツールを実行します。[DeepSeekの安全上の注意](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md)と[Piのセキュリティ説明](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md)を参照してください。
 
 ## Herdr
 

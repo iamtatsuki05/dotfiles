@@ -39,8 +39,8 @@ Herdr は agent を束ねる terminal multiplexer / runtime であり、ここ�
 | `devin` | このバージョンでは公式連携なし |
 | `openclaw` | 公式`rtk-rewrite` pluginの`before_tool_call` |
 | `grok` | このバージョンでは公式連携なし |
-| `deepseek` | このrepoではRTK連携未設定 |
-| `pi` | このrepoではRTK連携未設定 |
+| `deepseek` | native pluginがRTK利用指示を追加（自動書き換えなし） |
+| `pi` | 公式`extensions/rtk.ts`の`tool_call` |
 
 公式pluginの出典・license・更新方法は[RTK integration provenance](apps/rtk/README.md)を参照してください。
 

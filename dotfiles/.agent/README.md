@@ -46,18 +46,40 @@ zsh dotfiles/.agent/sync.sh
 
 ## DeepSeek Harness / Pi
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) uses the canonical ID `deepseek` and the `dsh` binary. [Pi](https://github.com/earendil-works/pi) uses `pi`. Both install through the existing mise setup (Node.js 24):
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) uses the canonical ID `deepseek` and the `dsh` binary. [Pi](https://github.com/earendil-works/pi) uses `pi`. Native integrations are verified with DSH `0.2.0-rc.2`, Pi `1.1.0`, and RTK `0.51.0`; both mise definitions pin these versions and use Node.js 24.
 
 ```sh
 mise install npm:@deepseek-ai/dsh npm:@earendil-works/pi-coding-agent
-zsh scripts/setup_agent_files.sh
+zsh scripts/setup_agent_files.sh --only deepseek
+zsh scripts/setup_agent_files.sh --only pi
 ```
 
-Sync targets the default homes: `~/.dsh/AGENTS.md`, `~/.pi/agent/AGENTS.md`, and each agent's skills directory. DeepSeek only discovers direct skill children, so sync creates individual `dotfiles-<relative-path>` links under `~/.dsh/skills`, replacing `/` with `--` in link names. Hidden directories such as `.system` are excluded. Stale links into the current repository are removed; unrelated skills are preserved and conflicting paths cause an error. Pi recursively loads the shared tree through `~/.pi/agent/skills`; sync rejects an existing foreign link, file, or nonempty directory at that path.
+`--only` updates one new agent home without syncing the other agents. Omit it for the standard all-agent sync. Add `--dry-run` to preview. New integration file conflicts fail before deployment. Pi settings are merged as regular files: managed model defaults and named MCP servers are updated, while fields such as `deviceId`, unrelated servers, and other extensions are preserved. Pi defaults to `openai/gpt-6-luna` with high reasoning; use `/login openai` and choose **Sign in with ChatGPT**. Credentials remain in client-owned files outside this repository.
 
-Credentials, models, profiles, and Pi's `settings.json` remain client-owned. Configure authentication and a model in `dsh web` or `pi` before using the non-interactive runners: `dsh headless -- "task"` and `pi --print --no-session -- "task"`. Waza (`--agent deepseek` / `--agent pi`, including `all`), upstream skill review (`--review-agent`), and `agent-job-scheduler` accept both IDs.
+Sync links the shared instructions to `~/.dsh/AGENTS.md` and `~/.pi/agent/AGENTS.md`. DeepSeek only discovers direct skill children, so it gets individual `dotfiles-<relative-path>` links under `~/.dsh/skills` (`/` becomes `--`); hidden directories such as `.system` are excluded. Only stale links into the current repository are removed. Pi recursively loads `~/.pi/agent/skills`; foreign links, files, and nonempty directories at that path are rejected.
 
-This registration covers installation, shared instructions/skills, and non-interactive execution; it does not add MCP servers, shared hooks, or RTK plugins for these two agents. DeepSeek is a developer preview. Both agents can execute tools with the launching user's access; this registration does not provide a sandbox or mirror another agent's deny rules. See [DeepSeek safety](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md) and [Pi security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md).
+Both native plugins add repository context, completion notifications, paired `.py` notebook synchronization, and advisory Japanese prose lint after successful built-in `write`/`edit` calls. Shell/custom-tool writes are outside the edit hook contract. Pi uses the unchanged official RTK extension to rewrite Bash commands. DeepSeek receives RTK usage guidance because its public tool API forbids argument rewriting; usage depends on the model following the instruction. No permission or sandbox override is added.
+
+MCP definitions match the existing Codex set: DeepWiki, Devin, Figma, and Notion; Playwright remains disabled (absent from the DSH patch). Devin reads `DEVIN_API_KEY` from the process environment. MCP authorization is client-specific; configuration alone does not copy another client's OAuth grants. Pi supports `pi mcp login <server>`. The pinned DSH MCP client does not provide an OAuth login flow for Figma/Notion.
+
+DeepSeek's `web`/`headless` profile settings and credential store remain client-owned. Its built-in `llm-pi-ai/openai-codex` authorization flow supports ChatGPT subscription login through the public authorization service, although this release's Models form only exposes API-key entry. After native OAuth, use this selection in each profile's `cordis.patch.yml`:
+
+```yaml
+- id: llm-pi-ai
+  config:
+    providers:
+      openai-codex:
+        transport: sse
+- id: agent-default-model
+  config:
+    provider: openai-codex
+    model: gpt-6-luna
+    reasoningEffort: high
+```
+
+`transport: sse` avoids the pinned library's post-answer WebSocket cache delay ([upstream report](https://github.com/deepseek-ai/deepseek-harness/discussions/4190)) while retaining the same provider, model, credentials, and native tool loop. The home integration patch applies only to `web` and `headless`; sync links the local plugin package into those two profiles. Restart running clients after updating plugins.
+
+Run `dsh headless -- "task"` or `pi --print --no-session -- "task"`. Waza (`--agent deepseek` / `--agent pi`, including `all`), upstream skill review (`--review-agent`), and `agent-job-scheduler` accept both IDs. DeepSeek is a developer preview, and both agents execute tools with the launching user's access: see [DeepSeek safety](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md) and [Pi security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md).
 
 ## Herdr
 

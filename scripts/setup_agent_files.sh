@@ -7,6 +7,7 @@ DEFAULT_REPO_ROOT="${SCRIPT_DIR:h}"
 REPO_ROOT="$DEFAULT_REPO_ROOT"
 DRY_RUN=0
 INSTALL_DEPS=0
+ONLY_AGENT=""
 AGENT_DIR=""
 APPS_DIR=""
 readonly SECRETS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/shell/secrets.env"
@@ -19,6 +20,7 @@ Usage:
 Options:
   --dry-run        Preview changes without writing files or installing dependencies.
   --install-deps   Also install missing Hermes MCP dependencies (may access network).
+  --only AGENT     Sync only deepseek or pi, preserving all other agent homes.
   --repo-root PATH  Override repository root. Intended for tests.
   -h, --help        Show this help.
 EOF
@@ -32,6 +34,14 @@ parse_args() {
         ;;
       --install-deps)
         INSTALL_DEPS=1
+        ;;
+      --only)
+        shift
+        if ((! $#)) || [[ "$1" != "deepseek" && "$1" != "pi" ]]; then
+          echo "ERROR: --only requires deepseek or pi" >&2
+          return 1
+        fi
+        ONLY_AGENT="$1"
         ;;
       --repo-root)
         shift
@@ -56,6 +66,11 @@ parse_args() {
     esac
     shift
   done
+
+  if [[ -n "$ONLY_AGENT" ]] && (( INSTALL_DEPS )); then
+    echo "ERROR: --install-deps installs Hermes dependencies and cannot be combined with --only" >&2
+    return 1
+  fi
 
   REPO_ROOT="${REPO_ROOT:A}"
   AGENT_DIR="$REPO_ROOT/dotfiles/.agent"
@@ -137,6 +152,7 @@ ensure_dir() {
 
 sync_link_specs() {
   local spec_function="$1"
+  shift
   local src
   local dst
 
@@ -144,7 +160,7 @@ sync_link_specs() {
     [[ -n "$src" && -n "$dst" ]] || continue
     ensure_dir "${dst:h}"
     link_symlink "$src" "$dst"
-  done < <("$spec_function")
+  done < <("$spec_function" "$@")
 }
 
 require_shared_skill_link() {
@@ -179,6 +195,15 @@ preflight_required_shared_skill_link() {
 
 shared_link_specs() {
   local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+  if [[ "$ONLY_AGENT" == "deepseek" ]]; then
+    print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.dsh/AGENTS.md"
+    return
+  elif [[ "$ONLY_AGENT" == "pi" ]]; then
+    print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.pi/agent/AGENTS.md"
+    print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.pi/agent/skills"
+    return
+  fi
 
   print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.codex/AGENTS.md"
   print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.claude/CLAUDE.md"
@@ -273,9 +298,20 @@ sync_deepseek_skills() {
 sync_shared_files() {
   local pi_skills="$HOME/.pi/agent/skills"
 
+  if [[ "$ONLY_AGENT" == "deepseek" ]]; then
+    sync_deepseek_skills
+    sync_link_specs shared_link_specs
+    return
+  fi
   if [[ ( -L "$pi_skills" || -f "$pi_skills" ) && ! "$pi_skills" -ef "$AGENT_DIR/skills" ]]; then
     echo "ERROR: Pi skills path is not managed by this repository; existing path was preserved: $pi_skills" >&2
     return 1
+  fi
+  preflight_required_shared_skill_link "$pi_skills"
+  if [[ "$ONLY_AGENT" == "pi" ]]; then
+    sync_link_specs shared_link_specs
+    require_shared_skill_link "$pi_skills"
+    return
   fi
   preflight_required_shared_skill_link "$HOME/.codex/skills"
   preflight_required_shared_skill_link "$HOME/.claude/skills"
@@ -286,6 +322,99 @@ sync_shared_files() {
   require_shared_skill_link "$HOME/.codex/skills"
   require_shared_skill_link "$HOME/.claude/skills"
   require_shared_skill_link "$HOME/.pi/agent/skills"
+}
+
+new_agent_link_specs() {
+  local agent="$1"
+  local target_dir hook profile
+  case "$agent" in
+    pi) target_dir="$HOME/.pi/agent" ;;
+    deepseek) target_dir="$HOME/.dsh" ;;
+  esac
+  for hook in agent_context_reminder.sh agent_turn_done_notify.sh jupytext_sync.sh japanese_prose_lint.sh; do
+    print -r -- "$AGENT_DIR/hooks/$hook"$'\t'"$target_dir/hooks/$hook"
+  done
+  if [[ "$agent" == "pi" ]]; then
+    print -r -- "$APPS_DIR/pi/extensions/dotfiles.ts"$'\t'"$target_dir/extensions/dotfiles.ts"
+    print -r -- "$APPS_DIR/pi/extensions/rtk.ts"$'\t'"$target_dir/extensions/rtk.ts"
+  else
+    print -r -- "$APPS_DIR/deepseek/cordis.patch.yml"$'\t'"$target_dir/cordis.patch.yml"
+    for profile in web headless; do
+      print -r -- "$APPS_DIR/deepseek"$'\t'"$target_dir/profiles/$profile/node_modules/@dotfiles/deepseek-native"
+    done
+  fi
+}
+
+preflight_new_agent_integrations() {
+  local agent="$1"
+  local src dst
+  while IFS=$'\t' read -r src dst; do
+    if [[ ( -e "$dst" || -L "$dst" ) && ! ( -L "$dst" && "$dst" -ef "$src" ) ]]; then
+      echo "ERROR: managed $agent integration is blocked by existing path: $dst" >&2
+      return 1
+    fi
+  done < <(new_agent_link_specs "$agent")
+  if [[ "$agent" == "pi" ]]; then
+    sync_pi_runtime_configs check
+  fi
+}
+
+sync_pi_runtime_configs() {
+  python3 - "$APPS_DIR/pi" "$HOME/.pi/agent" "$1" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+source, destination = map(Path, sys.argv[1:3])
+mode = sys.argv[3]
+updates = []
+for name in ("settings.json", "mcp.json"):
+    target = destination / name
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise SystemExit(f"ERROR: Pi runtime config must be a regular file: {target}")
+    current = json.loads(target.read_text()) if target.exists() else {}
+    managed = json.loads((source / name).read_text())
+    if not isinstance(current, dict) or not isinstance(managed, dict):
+        raise SystemExit(f"ERROR: Pi runtime config must contain an object: {target}")
+    if name == "mcp.json":
+        servers = current.get("mcpServers", {})
+        if not isinstance(servers, dict):
+            raise SystemExit(f"ERROR: Pi mcpServers must contain an object: {target}")
+        current["mcpServers"] = {**servers, **managed["mcpServers"]}
+    else:
+        current.update(managed)
+    updates.append((target, json.dumps(current, ensure_ascii=False, indent=2) + "\n"))
+if mode == "check":
+    sys.exit(0)
+for target, text in updates:
+    if mode == "preview":
+        print(f"merge managed Pi settings, preserving other fields: {target}")
+        continue
+    if target.exists() and target.read_text() == text:
+        continue
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".dotfiles-", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+PY
+}
+
+sync_new_agent_integrations() {
+  sync_link_specs new_agent_link_specs "$1"
+  if [[ "$1" == "pi" ]]; then
+    if (( DRY_RUN )); then
+      sync_pi_runtime_configs preview
+    else
+      sync_pi_runtime_configs write
+    fi
+  fi
 }
 
 sync_hook_files_from_dir() {
@@ -524,7 +653,21 @@ PY
 
 main() {
   parse_args "$@"
+  local -a new_agents
+  local agent
+  if [[ -n "$ONLY_AGENT" ]]; then
+    new_agents=("$ONLY_AGENT")
+  else
+    new_agents=(deepseek pi)
+  fi
+  for agent in "${new_agents[@]}"; do
+    preflight_new_agent_integrations "$agent"
+  done
   sync_shared_files
+  for agent in "${new_agents[@]}"; do
+    sync_new_agent_integrations "$agent"
+  done
+  [[ -n "$ONLY_AGENT" ]] && return 0
   sync_hooks
   sync_tool_configs
   enable_rtk_antigravity_plugin
