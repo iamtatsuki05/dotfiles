@@ -292,6 +292,75 @@ test_security_prompt_accepts_registered_review_agent() {
   assert_contains_text "$output" "Skill ID: superpowers"
 }
 
+test_review_agent_cli_invocations_preserve_arguments_and_status() {
+  python3 - "$SCRIPT" <<'PY' || fail "review-agent CLI invocation contract failed"
+import importlib.util
+import os
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+spec = importlib.util.spec_from_file_location("agent_skill_upstreams", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+prompt = '-- Keep "quoted" text, $variables, and\nnewlines intact.'
+expected_tools = {
+    "deepseek": "npm:@deepseek-ai/dsh",
+    "pi": "npm:@earendil-works/pi-coding-agent",
+}
+expected_arguments = {
+    "deepseek": ["headless", "--", prompt],
+    "pi": ["--print", "--no-session", "--", prompt],
+}
+
+with TemporaryDirectory() as temporary_directory:
+    root = Path(temporary_directory)
+    fake_bin = root / "bin"
+    fake_bin.mkdir()
+    for binary in ("dsh", "pi"):
+        executable = fake_bin / binary
+        executable.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\0' \"$PWD\" \"$@\" > \"$AGENT_TEST_CAPTURE\"\n"
+            "printf 'mock review output\\n'\n"
+            "exit \"${AGENT_TEST_STATUS:-0}\"\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    os.environ["PATH"] = f"{fake_bin}:{os.environ['PATH']}"
+    for agent, expected_tool in expected_tools.items():
+        module.validate_review_agent(agent)
+        assert module.MISE_TOOLS_BY_REVIEW_AGENT[agent] == expected_tool
+        for status in (0, 23):
+            capture = root / f"{agent}-{status}.argv"
+            prompt_file = root / f"{agent}-{status}.prompt"
+            report_file = root / f"{agent}-{status}.report"
+            prompt_file.write_text(prompt, encoding="utf-8")
+            os.environ["AGENT_TEST_CAPTURE"] = str(capture)
+            os.environ["AGENT_TEST_STATUS"] = str(status)
+
+            if status == 0:
+                module.run_review_agent(agent, prompt, prompt_file, report_file)
+                assert report_file.read_text(encoding="utf-8") == "mock review output\n"
+            else:
+                try:
+                    module.run_review_agent(agent, prompt, prompt_file, report_file)
+                except module.UpstreamError:
+                    pass
+                else:
+                    raise AssertionError(f"{agent} accepted mocked exit status {status}")
+
+            captured = capture.read_bytes().split(b"\0")
+            assert captured[-1] == b""
+            cwd = Path(os.fsdecode(captured[0]))
+            arguments = [os.fsdecode(value) for value in captured[1:-1]]
+            assert cwd == module.REPO_ROOT, (agent, cwd, module.REPO_ROOT)
+            assert arguments == expected_arguments[agent], (agent, arguments)
+PY
+}
+
 test_security_prompt_rejects_unknown_review_agent() {
   local output
   set +e
@@ -922,6 +991,7 @@ main() {
   test_updates_accepts_fixture_ls_remote_output
   test_security_prompt_accepts_commit_alias
   test_security_prompt_accepts_registered_review_agent
+  test_review_agent_cli_invocations_preserve_arguments_and_status
   test_security_prompt_rejects_unknown_review_agent
   test_security_prompt_accepts_custom_review_prompt
   test_security_prompt_all_generates_prompts_for_registered_skills

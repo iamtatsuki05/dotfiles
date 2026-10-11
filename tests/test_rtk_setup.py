@@ -35,6 +35,7 @@ class RtkSetupTest(unittest.TestCase):
                 "HOME": str(home),
                 "XDG_CONFIG_HOME": str(config),
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "PYTHONPYCACHEPREFIX": str(home / "bytecode-cache"),
             }
             preview = subprocess.run(
                 [TEST_ZSH_BIN, str(repo / "scripts/setup_agent_files.sh"), "--dry-run"],

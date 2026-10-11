@@ -23,6 +23,8 @@ typeset -r -a RUNNER_TEST_FILES=(
   tests/test_agent_html_preview_review.sh
   tests/test_agent_run_compact.py
   tests/test_rtk_setup.py
+  tests/test_pi_integration.mjs
+  tests/test_deepseek_integration.mjs
   tests/test_selective_setup.sh
   tests/test_agent_sync.sh
   tests/test_agent_support_matrix.sh
@@ -83,6 +85,8 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_agent_html_preview_review.sh" "unit:html-preview-review"
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
   print -r -- 'print("unit:rtk-setup")' > "$repo/tests/test_rtk_setup.py"
+  print -r -- 'console.log("unit:pi-integration")' > "$repo/tests/test_pi_integration.mjs"
+  print -r -- 'console.log("unit:deepseek-integration")' > "$repo/tests/test_deepseek_integration.mjs"
   write_fixture_zsh_script "$repo/tests/test_selective_setup.sh" "unit:selective-setup"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
   write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"
@@ -511,6 +515,8 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:agent-delegation"
   assert_output_contains "$output" "unit:html-preview-review"
   assert_output_contains "$output" "unit:agent-run-compact"
+  assert_output_contains "$output" "unit:pi-integration"
+  assert_output_contains "$output" "unit:deepseek-integration"
   assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"
   assert_output_contains "$output" "unit:claude-account"

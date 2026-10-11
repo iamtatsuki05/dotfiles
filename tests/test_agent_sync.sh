@@ -42,12 +42,20 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
     "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint" \
     "$repo/dotfiles/.agent/apps/grok" \
+    "$repo/dotfiles/.agent/apps/pi/extensions" \
+    "$repo/dotfiles/.agent/apps/deepseek" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills" \
     "$repo/dotfiles/.agent/pets"
 
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
   cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
+  print -r -- '{"defaultProvider":"openai","defaultModel":"gpt-6-luna","defaultThinkingLevel":"high"}' > "$repo/dotfiles/.agent/apps/pi/settings.json"
+  print -r -- '{"mcpServers":{"deepwiki":{"url":"https://mcp.deepwiki.com/mcp"}}}' > "$repo/dotfiles/.agent/apps/pi/mcp.json"
+  print -r -- 'export default function () {}' > "$repo/dotfiles/.agent/apps/pi/extensions/dotfiles.ts"
+  print -r -- 'export default function () {}' > "$repo/dotfiles/.agent/apps/pi/extensions/rtk.ts"
+  print -r -- '[]' > "$repo/dotfiles/.agent/apps/deepseek/cordis.patch.yml"
+  print -r -- '{"name":"@dotfiles/deepseek-native","type":"module"}' > "$repo/dotfiles/.agent/apps/deepseek/package.json"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
@@ -187,6 +195,198 @@ type = "http"
 enabled = true
 
 EOF
+}
+
+test_agent_sync_only_new_agents_preserves_existing_settings() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.claude" "$home_dir/.pi/agent/extensions"
+  print -r -- 'existing claude settings' > "$home_dir/.claude/settings.json"
+  print -r -- 'existing extension' > "$home_dir/.pi/agent/extensions/user.ts"
+  print -r -- '{"deviceId":"fixture-device","theme":"custom"}' > "$home_dir/.pi/agent/settings.json"
+  print -r -- '{"mcpServers":{"user-server":{"url":"https://example.test/mcp"}}}' > "$home_dir/.pi/agent/mcp.json"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only pi --dry-run >/dev/null
+  assert_not_exists "$home_dir/.pi/agent/extensions/rtk.ts"
+  assert_not_contains "$home_dir/.pi/agent/settings.json" 'defaultModel'
+  local iteration
+  for iteration in 1 2; do
+    HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only pi >/dev/null
+  done
+  assert_contains "$home_dir/.claude/settings.json" 'existing claude settings'
+  assert_contains "$home_dir/.pi/agent/extensions/user.ts" 'existing extension'
+  assert_symlink_target "$home_dir/.pi/agent/extensions/rtk.ts" "$repo/dotfiles/.agent/apps/pi/extensions/rtk.ts"
+  assert_symlink_target "$home_dir/.pi/agent/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_not_exists "$home_dir/.dsh"
+  python3 - "$home_dir/.pi/agent" <<'PY'
+import json, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+settings=json.loads((root/'settings.json').read_text())
+assert settings['defaultModel']=='gpt-6-luna'
+assert settings['deviceId']=='fixture-device' and settings['theme']=='custom'
+servers=json.loads((root/'mcp.json').read_text())['mcpServers']
+assert set(servers)=={'deepwiki','user-server'}
+assert servers['user-server']['url']=='https://example.test/mcp'
+PY
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only deepseek >/dev/null
+  assert_contains "$home_dir/.claude/settings.json" 'existing claude settings'
+  assert_symlink_target "$home_dir/.dsh/cordis.patch.yml" "$repo/dotfiles/.agent/apps/deepseek/cordis.patch.yml"
+  assert_symlink_target "$home_dir/.dsh/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.dsh/profiles/web/node_modules/@dotfiles/deepseek-native" "$repo/dotfiles/.agent/apps/deepseek"
+  assert_symlink_target "$home_dir/.dsh/profiles/headless/node_modules/@dotfiles/deepseek-native" "$repo/dotfiles/.agent/apps/deepseek"
+}
+
+test_agent_sync_preserves_unmanaged_new_agent_integrations() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.pi/agent/extensions" "$home_dir/.dsh"
+  print -r -- 'custom rtk extension' > "$home_dir/.pi/agent/extensions/rtk.ts"
+  print -r -- '# custom patch' > "$home_dir/.dsh/cordis.patch.yml"
+  local agent
+  for agent in pi deepseek; do
+    if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only "$agent" >/dev/null 2>&1; then
+      fail "expected a conflicting $agent integration to fail"
+    fi
+  done
+  assert_contains "$home_dir/.pi/agent/extensions/rtk.ts" 'custom rtk extension'
+  assert_contains "$home_dir/.dsh/cordis.patch.yml" '# custom patch'
+  assert_not_exists "$home_dir/.pi/agent/AGENTS.md"
+  assert_not_exists "$home_dir/.dsh/AGENTS.md"
+}
+
+test_agent_sync_registers_deepseek_and_pi() {
+  local repo home_dir skill_root
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  skill_root="$repo/dotfiles/.agent/skills"
+  mkdir -p "$skill_root/research/example" "$skill_root/top-level" "$skill_root/.system/hidden" \
+    "$home_dir/.dsh/skills/local" "$home_dir/.pi/agent"
+  print -r -- 'nested skill' > "$skill_root/research/example/SKILL.md"
+  print -r -- 'top-level skill' > "$skill_root/top-level/SKILL.md"
+  print -r -- 'hidden skill' > "$skill_root/.system/hidden/SKILL.md"
+  print -r -- 'local skill' > "$home_dir/.dsh/skills/local/SKILL.md"
+  print -r -- '{"theme":"user-choice"}' > "$home_dir/.pi/agent/settings.json"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --dry-run >/dev/null
+  assert_not_exists "$home_dir/.dsh/AGENTS.md"
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-research--example"
+
+  local iteration
+  for iteration in 1 2; do
+    HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null
+  done
+  assert_symlink_target "$home_dir/.dsh/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.pi/agent/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.pi/agent/skills" "$skill_root"
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-research--example" "$skill_root/research/example"
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-top-level" "$skill_root/top-level"
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-.system--hidden"
+  assert_contains "$home_dir/.dsh/skills/local/SKILL.md" 'local skill'
+  assert_contains "$home_dir/.pi/agent/settings.json" 'user-choice'
+
+  rm -f "$skill_root/top-level/SKILL.md"
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null
+  [[ ! -L "$home_dir/.dsh/skills/dotfiles-top-level" ]] || fail "stale managed DeepSeek skill link remains"
+  assert_file "$home_dir/.dsh/skills/local/SKILL.md"
+}
+
+test_agent_sync_preserves_conflicting_deepseek_skills() {
+  local repo home_dir skill_root
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  skill_root="$repo/dotfiles/.agent/skills"
+  mkdir -p "$skill_root/example" "$home_dir/.dsh/skills/dotfiles-example"
+  print -r -- 'shared skill' > "$skill_root/example/SKILL.md"
+  print -r -- 'user skill' > "$home_dir/.dsh/skills/dotfiles-example/SKILL.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a conflicting DeepSeek skill to fail"
+  fi
+  assert_contains "$home_dir/.dsh/skills/dotfiles-example/SKILL.md" 'user skill'
+
+  mv "$home_dir/.dsh/skills/dotfiles-example" "$home_dir/foreign-skill"
+  ln -s "$home_dir/foreign-skill" "$home_dir/.dsh/skills/dotfiles-example"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a foreign DeepSeek skill link to fail"
+  fi
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-example" "$home_dir/foreign-skill"
+
+  mv "$home_dir/.dsh/skills" "$home_dir/foreign-skills"
+  ln -s "$home_dir/foreign-skills" "$home_dir/.dsh/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a symlinked DeepSeek skill root to fail"
+  fi
+  assert_symlink_target "$home_dir/.dsh/skills" "$home_dir/foreign-skills"
+  assert_contains "$home_dir/foreign-skills/dotfiles-example/SKILL.md" 'user skill'
+}
+
+test_agent_sync_preserves_foreign_pi_skills() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.pi/agent" "$home_dir/custom-skills"
+  print -r -- 'user skill' > "$home_dir/custom-skills/SKILL.md"
+  ln -s "$home_dir/custom-skills" "$home_dir/.pi/agent/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a foreign Pi skills symlink to fail"
+  fi
+  assert_symlink_target "$home_dir/.pi/agent/skills" "$home_dir/custom-skills"
+  assert_contains "$home_dir/custom-skills/SKILL.md" 'user skill'
+  assert_not_exists "$home_dir/.dsh/skills"
+
+  rm "$home_dir/.pi/agent/skills"
+  print -r -- 'user file' > "$home_dir/.pi/agent/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a conflicting Pi skills file to fail"
+  fi
+  assert_contains "$home_dir/.pi/agent/skills" 'user file'
+}
+
+test_agent_sync_rejects_deepseek_flattened_name_collision() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$repo/dotfiles/.agent/skills/group/skill" "$repo/dotfiles/.agent/skills/group--skill"
+  print -r -- 'nested' > "$repo/dotfiles/.agent/skills/group/skill/SKILL.md"
+  print -r -- 'flat' > "$repo/dotfiles/.agent/skills/group--skill/SKILL.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected colliding DeepSeek skill paths to fail"
+  fi
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-group--skill"
 }
 
 test_agent_sync_links_managed_files_and_generates_runtime_state() {
@@ -855,6 +1055,12 @@ test_colab_mcp_is_absent_from_managed_agent_assets() {
 }
 
 main() {
+  test_agent_sync_only_new_agents_preserves_existing_settings
+  test_agent_sync_preserves_unmanaged_new_agent_integrations
+  test_agent_sync_registers_deepseek_and_pi
+  test_agent_sync_preserves_conflicting_deepseek_skills
+  test_agent_sync_preserves_foreign_pi_skills
+  test_agent_sync_rejects_deepseek_flattened_name_collision
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_colab_mcp_is_absent_from_managed_agent_assets
   test_agent_sync_replaces_hermes_skill_symlink_with_local_directory

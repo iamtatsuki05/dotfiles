@@ -18,6 +18,8 @@ Agent-specific hook registration lives under `../apps/`.
 Some agents use JSON hook maps, while others consume shell scripts from hook directories.
 Japanese prose lint runs automatically for all supported agents. Claude Code, Codex, Copilot, Cursor, Devin, and Antigravity use native post-tool hooks. Hermes, OpenCode, and OpenClaw use small plugins so findings are included in the next model-visible tool result. Grok loads the Claude-compatible hook configuration and therefore does not need a duplicate registration.
 
+Pi and DeepSeek use their native extension/plugin events for the same shared hooks. Their prose adapters are explicit `--hook-agent pi` and `--hook-agent dsh` contracts; successful built-in writes/edits receive advisory feedback, with in-place edits limited to newly written text. Pi completion uses non-aborted `agent_settled`; DeepSeek completion uses `turn/end` with `reason.kind=completed`.
+
 ## Japanese prose lint
 
 Run the shared profile against Markdown or plain text:

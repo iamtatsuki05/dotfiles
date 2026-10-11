@@ -10,8 +10,8 @@ representative deployed targets.
 
 The standard setup installs [RTK](https://github.com/rtk-ai/rtk) through mise.
 Agent sync enables its official hooks/plugins for Claude Code, Codex, Copilot,
-Cursor, Antigravity CLI, Hermes, OpenCode, and OpenClaw. Devin and Grok have no
-official RTK integration in the pinned release.
+Cursor, Antigravity CLI, Hermes, OpenCode, OpenClaw, and Pi. Devin and Grok have no
+official RTK integration in the pinned release. DeepSeek Harness receives RTK usage guidance rather than automatic rewriting.
 
 ```sh
 mise install github:rtk-ai/rtk

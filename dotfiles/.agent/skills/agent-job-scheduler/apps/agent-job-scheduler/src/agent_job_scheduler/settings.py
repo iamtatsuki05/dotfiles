@@ -64,6 +64,16 @@ DEFAULT_RATE_LIMIT_PROFILES = {
         ],
         "default_backoff_seconds": 900,
     },
+    Agent.DEEPSEEK.value: {
+        "markers": [
+            "rate limit",
+            "too many requests",
+            "quota exceeded",
+            "usage limit",
+            "retry after",
+        ],
+        "default_backoff_seconds": 900,
+    },
     Agent.DEVIN.value: {
         "markers": [
             "rate limit",
@@ -95,6 +105,16 @@ DEFAULT_RATE_LIMIT_PROFILES = {
         "default_backoff_seconds": 900,
     },
     Agent.OPENCLAW.value: {
+        "markers": [
+            "rate limit",
+            "too many requests",
+            "quota exceeded",
+            "usage limit",
+            "retry after",
+        ],
+        "default_backoff_seconds": 900,
+    },
+    Agent.PI.value: {
         "markers": [
             "rate limit",
             "too many requests",
