@@ -398,6 +398,7 @@ write_main_fixture() {
     chezmoi_apply.sh setup_agent_files.sh setup_git_hooks.sh; do
     write_event_command "$repo/scripts/$script_name" "${script_name%.sh}"
   done
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "$DOTFILES_TEST_EVENT_LOG"\n' > "$repo/scripts/setup_steermouse.sh"
   write_fake_uname "$repo/bin"
   write_fake_sudo_for_main "$repo/bin"
   write_event_command "$repo/bin/pkgutil" pkgutil '[[ "$#" == 2 && "$1" == --pkg-info && "$2" == com.apple.pkg.RosettaUpdateAuto ]] || exit 125; exit 1'
@@ -455,6 +456,7 @@ test_main_gate_off_keeps_core_setup_and_profile() {
   assert_contains "$repo/events.log" 'mise:install'
   assert_not_contains "$repo/events.log" 'install_homebrew:'
   assert_not_contains "$repo/events.log" 'install_mas_apps:'
+  assert_not_contains "$repo/events.log" 'setup_steermouse:'
   assert_not_contains "$repo/events.log" 'pkgutil:'
   assert_not_contains "$repo/events.log" 'softwareupdate'
 
@@ -483,6 +485,7 @@ test_main_gate_on_retains_optional_setup() {
   assert_contains "$repo/events.log" 'sudo:softwareupdate --install-rosetta --agree-to-license'
   assert_contains "$repo/events.log" 'install_homebrew:--profile full'
   assert_contains "$repo/events.log" 'install_mas_apps:--profile full'
+  assert_contains "$repo/events.log" 'setup_steermouse:'
   assert_contains "$repo/events.log" 'nix_install:--profile full'
 
   rm -rf -- "$repo"

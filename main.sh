@@ -424,6 +424,14 @@ apply_chezmoi() {
   log_success "chezmoi home files applied"
 }
 
+setup_steermouse() {
+  local profile="$1"
+  shift
+  if [[ "$profile" == "full" ]] && dotfiles_is_macos && dotfiles_macos_features_enabled; then
+    bash "$SCRIPTS_DIR/setup_steermouse.sh" "$@"
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # Main execution
 # -----------------------------------------------------------------------------
@@ -445,6 +453,7 @@ main() {
     fi
     if [[ ",$ONLY," == *,config,* ]]; then
       zsh "$SCRIPTS_DIR/chezmoi_apply.sh" "${apply_args[@]}"
+      setup_steermouse "$profile" "${agent_args[@]}"
     fi
     if [[ ",$ONLY," == *,agent,* ]]; then
       sync_agent_files "${agent_args[@]}"
@@ -465,6 +474,7 @@ main() {
   activate_nix_environment
   install_mas_apps_best_effort "$profile"
   apply_chezmoi "$profile"
+  setup_steermouse "$profile"
   sync_agent_files --install-deps
   setup_git_hooks "$profile"
   install_mise_tools

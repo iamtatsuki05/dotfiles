@@ -16,6 +16,7 @@ source "$TEST_DIR/lib/chezmoi.sh"
 typeset -r -a RUNNER_TEST_FILES=(
   tests/test_fixture_isolation.sh
   tests/test_feature_flags.sh
+  tests/test_steermouse_setup.sh
   tests/test_macos_entrypoints.sh
   tests/test_macos_update_features.sh
   tests/test_macos_nix_features.sh
@@ -77,6 +78,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/main.sh" "main"
   write_fixture_bash_script "$repo/tests/test_fixture_isolation.sh" "unit:isolation"
   write_fixture_bash_script "$repo/tests/test_feature_flags.sh" "unit:features"
+  write_fixture_bash_script "$repo/tests/test_steermouse_setup.sh" "unit:steermouse"
   write_fixture_zsh_script "$repo/tests/test_macos_entrypoints.sh" "unit:macos-entrypoints"
   write_fixture_zsh_script "$repo/tests/test_macos_update_features.sh" "unit:macos-updates"
   write_fixture_zsh_script "$repo/tests/test_macos_nix_features.sh" "unit:macos-nix"

@@ -2211,6 +2211,7 @@ test_main_script_runs_homebrew_before_nix_setup() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2302,6 +2303,7 @@ test_main_script_can_skip_mas_apps_for_full_profile() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2383,6 +2385,7 @@ test_main_script_uses_cli_profile_when_requested() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -2492,6 +2495,7 @@ test_main_script_bootstraps_nix_on_macos_when_missing() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2606,6 +2610,7 @@ test_main_script_keeps_sudo_authentication_alive_on_macos() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2696,6 +2701,7 @@ test_main_script_installs_rosetta_on_apple_silicon_full_profile() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2894,6 +2900,7 @@ test_main_script_reports_nix_portable_when_nix_missing_on_linux() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2967,6 +2974,7 @@ test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF

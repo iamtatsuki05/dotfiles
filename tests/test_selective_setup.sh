@@ -11,6 +11,9 @@ cp "$REPO_ROOT/home/.chezmoidata.toml" "$fixture/repo/home/"
 for script in chezmoi_apply setup_agent_files; do
   print -r -- "print -r -- \"$script \$*\" >> \"\$EVENT_LOG\"" > "$fixture/repo/scripts/$script.sh"
 done
+cat > "$fixture/repo/scripts/setup_steermouse.sh" <<'MOUSE'
+printf 'setup_steermouse %s\n' "$*" >> "$EVENT_LOG"
+MOUSE
 for executable in sudo nix brew mise curl softwareupdate; do
   cat > "$fixture/bin/$executable" <<'GUARD'
 #!/bin/sh
@@ -27,6 +30,7 @@ run_main() {
 run_main --only config --profile cli || { cat "$fixture/output"; fail 'config selection failed'; }
 assert_contains "$fixture/events" 'chezmoi_apply --profile cli --mark-default --no-install'
 assert_not_contains "$fixture/events" 'setup_agent_files'
+assert_not_contains "$fixture/events" 'setup_steermouse'
 run_main --only agent --profile cli
 assert_contains "$fixture/events" 'setup_agent_files'
 assert_not_contains "$fixture/events" 'chezmoi_apply'
@@ -34,6 +38,12 @@ assert_not_contains "$fixture/events" '--install-deps'
 run_main --only=config,agent --profile cli --dry-run
 assert_contains "$fixture/events" 'chezmoi_apply --profile cli --mark-default --no-install --dry-run'
 assert_contains "$fixture/events" 'setup_agent_files --dry-run'
+if [[ "$OSTYPE" == darwin* ]]; then
+  run_main --only config --profile full --dry-run
+  assert_contains "$fixture/events" 'setup_steermouse --dry-run'
+  run_main --only agent --profile full
+  assert_not_contains "$fixture/events" 'setup_steermouse'
+fi
 for selection in '' bogus config, ,agent config,config; do
   if run_main --only "$selection"; then fail "accepted invalid selection: $selection"; fi
   [[ ! -s "$fixture/events" ]] || fail 'invalid arguments caused actions'
