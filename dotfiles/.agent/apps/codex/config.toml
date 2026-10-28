@@ -139,6 +139,8 @@ enabled = true
 enabled = true
 
 [memories]
+extract_model = "gpt-6-luna"
+consolidation_model = "gpt-6.1-terra"
 generate_memories = true
 use_memories = true
 disable_on_external_context = true
