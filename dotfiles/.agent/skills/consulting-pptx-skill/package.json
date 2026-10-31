@@ -1,0 +1,13 @@
+{
+  "name": "consulting-pptx-skill",
+  "private": true,
+  "description": "HTML デッキの PDF 化・実レンダリング検査に使う playwright と Chromium headless shell だけを依存に持つ（Chromium 本体は入れない）",
+  "scripts": {
+    "setup": "npm install && npx playwright install --only-shell chromium",
+    "setup:linux": "npm install && npx playwright install --with-deps --only-shell chromium",
+    "check:layout": "node scripts/check_layout.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

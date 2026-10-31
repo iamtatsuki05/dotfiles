@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--check", action="store_true", help="check files from the command line")
     mode.add_argument(
         "--hook-agent",
-        choices=("claude", "codex", "copilot", "cursor", "devin", "antigravity"),
+        choices=("claude", "codex", "copilot", "cursor", "devin", "antigravity", "pi", "dsh"),
         help="read the named agent's post-tool payload",
     )
     parser.add_argument("--profile", choices=("shared", "longform"), default="shared")
@@ -357,7 +357,19 @@ def hook_paths(payload: object, agent: str) -> list[Path]:
         raise ValueError(f"expected {expected_event}")
 
     cwd = resolve_path(payload.get("cwd", "."), Path.cwd())
-    if agent == "copilot":
+    if agent == "pi":
+        if payload.get("type") != "tool_result":
+            raise ValueError("expected Pi tool_result")
+        if payload.get("isError") is True:
+            return []
+        tool_name = payload.get("toolName")
+        tool_input = payload.get("input")
+        accepted_tools = {"write", "edit"}
+    elif agent == "dsh":
+        tool_name = payload.get("tool_name")
+        tool_input = payload.get("tool_input")
+        accepted_tools = {"write", "edit"}
+    elif agent == "copilot":
         tool_name = payload.get("toolName")
         tool_input = payload.get("toolArgs")
         accepted_tools = {"create", "edit", "apply_patch", "Write", "Edit", "MultiEdit"}
@@ -408,7 +420,10 @@ def changed_text_lines(payload: object, agent: str) -> set[str] | None:
     """
     if not isinstance(payload, dict):
         return None
-    if agent == "copilot":
+    if agent == "pi":
+        tool_name = payload.get("toolName")
+        tool_input = payload.get("input")
+    elif agent == "copilot":
         tool_name = payload.get("toolName")
         tool_input = payload.get("toolArgs")
     else:
@@ -427,7 +442,7 @@ def changed_text_lines(payload: object, agent: str) -> set[str] | None:
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
-            for key in ("new_string", "newString", "new_str"):
+            for key in (("newText",) if agent == "pi" else ("new_string", "newString", "new_str")):
                 value = candidate.get(key)
                 if isinstance(value, str):
                     saw_edit_content = True
@@ -502,7 +517,7 @@ def run_hook(agent: str, profile: str) -> int:
     if omitted:
         visible_output.append(f"ほか{omitted}件あります。表示された箇所を修正した後、lint を再実行してください。")
     context = "日本語 lint で修正候補が見つかりました。内容と根拠を変えずに修正し、編集後に再確認してください。\n" + "\n".join(visible_output)
-    if agent == "copilot":
+    if agent in {"copilot", "pi", "dsh"}:
         response = {"additionalContext": context}
     elif agent == "cursor":
         response = {"additional_context": context}

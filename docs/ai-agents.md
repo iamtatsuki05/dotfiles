@@ -6,6 +6,88 @@ Shared AI agent files are maintained under `dotfiles/.agent/`. Keep changes in
 that canonical tree, run the sync, and validate both the managed source and
 representative deployed targets.
 
+## RTK command output compression
+
+The standard setup installs [RTK](https://github.com/rtk-ai/rtk) through mise.
+Agent sync enables its official hooks/plugins for Claude Code, Codex, Copilot,
+Cursor, Antigravity CLI, Hermes, OpenCode, OpenClaw, and Pi. Devin and Grok have no
+official RTK integration in the pinned release. DeepSeek Harness receives RTK usage guidance rather than automatic rewriting.
+
+```sh
+mise install github:rtk-ai/rtk
+zsh scripts/setup_agent_files.sh
+rtk --version
+rtk gain
+```
+
+RTK rewrites supported shell commands; built-in file/search tools are outside
+that scope. Copilot's native CLI hook protocol can deny with an RTK suggestion;
+the PascalCase protocol supports `updatedInput`. In Codex, review and trust
+`rtk hook codex` through `/hooks`; [Codex skips untrusted hooks](https://learn.chatgpt.com/docs/hooks).
+Reload the agent after sync, including the OpenClaw Gateway.
+Existing running sessions are not proof that the new hook has loaded. Use
+`rtk proxy <command>` when full, unfiltered output is needed.
+
+Permission checks may evaluate the rewritten `rtk ...` command, so command-specific
+allow/deny rules can behave differently. This setup does not relax permissions.
+
+The binary and official plugins are pinned to RTK release 0.51.0. See
+[provenance and update instructions](../dotfiles/.agent/apps/rtk/README.md).
+Do not run `rtk init` against live managed homes: it may modify the shared prompt
+or replace symlinks. Agent sync deploys the reviewed integration instead.
+An existing nonempty, unmanaged `opencode/plugins` directory is preserved and
+skipped by sync; review that warning before expecting RTK to load there.
+
+## TokenEconomizer for repeated agent work
+
+The full setup registers [TokenEconomizer](https://github.com/microsoft/TokenEconomizer) after installing mise tools.
+It targets Claude Code, Codex, Copilot CLI, Pi, and OpenCode. Upstream OpenCode support is experimental.
+To install or reapply it in an existing environment:
+
+```sh
+mise run tokeneconomizer-setup -- --dry-run
+mise run tokeneconomizer-setup
+# Install for one agent only
+bash scripts/setup_tokeneconomizer.sh --agent pi
+```
+
+Standalone agent sync and `main.sh --only agent` only apply configuration.
+Run the installation command above on first use. Missing CLIs are reported as `SKIP`;
+an explicitly selected `--agent` must be installed or setup fails.
+
+Upstream commit `e428fc91b0f8ffecb5a596d56b14fe2f1485a5f9` is kept at
+`~/.local/share/dotfiles/tokeneconomizer` without code changes.
+The checkout retains its Apache-2.0 LICENSE and attribution.
+Claude Code and Copilot register a local marketplace; Pi registers a local package.
+Codex uses a Git marketplace pinned to the same commit, and OpenCode loads through its `plugin` setting.
+Clients own their installation registries and Pi's package list. The shared prompt is unchanged.
+Claude Code is installed in its default home and existing registered `claude-account` profiles.
+An explicit `CLAUDE_CONFIG_DIR` limits installation to that home. Credentials are unchanged.
+To update, change the commit in the setup script and Codex configuration together, validate, and rerun setup.
+A checkout with local changes is rejected rather than overwritten.
+
+Upstream defaults are retained: Micro-skills is off, unused-tool pruning and the loop guard are on.
+Loop-guard judgments make additional model calls through the current agent.
+Learned state lives in `~/.tokeneconomizer`; pruning changes project-local settings.
+Pi and OpenCode do not prune tools. Existing RTK integrations remain in place.
+
+Restart each agent after installation. In Codex, review and trust TokenEconomizer's definitions
+through `/hooks`, then restart again. Setup does not change hook trust or permissions.
+For Claude Code and Copilot, capture the tool catalog once and again after CLI updates.
+These upstream catalog probes do not require a paid model response.
+
+```sh
+~/.local/share/dotfiles/tokeneconomizer/plugin/scripts/te --host claude toolprune refresh-catalog
+~/.local/share/dotfiles/tokeneconomizer/plugin/scripts/te --host copilot toolprune refresh-catalog
+~/.local/share/dotfiles/tokeneconomizer/plugin/scripts/te --host codex status
+```
+
+Set `TE_DISABLE=1` when starting an agent to pause the plugin. Before uninstalling,
+run `te --host <agent> toolprune restore` in each project where tools were pruned,
+then uninstall the native plugins/packages. Remove TokenEconomizer entries from the canonical
+configuration too, so sync does not re-enable them.
+See the [upstream installation guide](https://github.com/microsoft/TokenEconomizer/blob/main/plugin/README.md) for removal commands.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

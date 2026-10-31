@@ -16,12 +16,16 @@ source "$TEST_DIR/lib/chezmoi.sh"
 typeset -r -a RUNNER_TEST_FILES=(
   tests/test_fixture_isolation.sh
   tests/test_feature_flags.sh
+  tests/test_steermouse_setup.sh
   tests/test_macos_entrypoints.sh
   tests/test_macos_update_features.sh
   tests/test_macos_nix_features.sh
   tests/test_agent_delegation_analysis.sh
   tests/test_agent_html_preview_review.sh
   tests/test_agent_run_compact.py
+  tests/test_rtk_setup.py
+  tests/test_pi_integration.mjs
+  tests/test_deepseek_integration.mjs
   tests/test_selective_setup.sh
   tests/test_agent_sync.sh
   tests/test_agent_support_matrix.sh
@@ -74,6 +78,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/main.sh" "main"
   write_fixture_bash_script "$repo/tests/test_fixture_isolation.sh" "unit:isolation"
   write_fixture_bash_script "$repo/tests/test_feature_flags.sh" "unit:features"
+  write_fixture_bash_script "$repo/tests/test_steermouse_setup.sh" "unit:steermouse"
   write_fixture_zsh_script "$repo/tests/test_macos_entrypoints.sh" "unit:macos-entrypoints"
   write_fixture_zsh_script "$repo/tests/test_macos_update_features.sh" "unit:macos-updates"
   write_fixture_zsh_script "$repo/tests/test_macos_nix_features.sh" "unit:macos-nix"
@@ -89,6 +94,10 @@ create_runner_fixture() {
     print -r -- '    pass'
   } > "$repo/scripts/agent-team/tests/test_project.py"
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
+  print -r -- 'print("unit:rtk-setup")' > "$repo/tests/test_rtk_setup.py"
+  print -r -- 'printf "%s\n" "unit:tokeneconomizer-setup"' > "$repo/tests/test_tokeneconomizer_setup.sh"
+  print -r -- 'console.log("unit:pi-integration")' > "$repo/tests/test_pi_integration.mjs"
+  print -r -- 'console.log("unit:deepseek-integration")' > "$repo/tests/test_deepseek_integration.mjs"
   write_fixture_zsh_script "$repo/tests/test_selective_setup.sh" "unit:selective-setup"
   write_fixture_zsh_script "$repo/tests/test_agent_sync.sh" "unit:agent"
   write_fixture_zsh_script "$repo/tests/test_agent_support_matrix.sh" "unit:agent-support"
@@ -523,6 +532,8 @@ test_test_runner_skip_chezmoi_keeps_fast_checks() {
   assert_output_contains "$output" "unit:agent-team"
   assert_output_contains "$output" "unit:agent-team-mcp"
   assert_output_contains "$output" "unit:agent-run-compact"
+  assert_output_contains "$output" "unit:pi-integration"
+  assert_output_contains "$output" "unit:deepseek-integration"
   assert_output_contains "$output" "unit:agent-support"
   assert_output_contains "$output" "unit:skill-upstreams"
   assert_output_contains "$output" "unit:claude-account"

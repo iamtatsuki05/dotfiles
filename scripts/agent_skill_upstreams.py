@@ -28,11 +28,13 @@ REVIEW_AGENTS = (
     "claude-code",
     "antigravity-cli",
     "copilot",
+    "deepseek",
     "cursor-agent",
     "devin",
     "hermes",
     "opencode",
     "openclaw",
+    "pi",
     "grok",
 )
 MISE_TOOLS_BY_REVIEW_AGENT = {
@@ -40,11 +42,13 @@ MISE_TOOLS_BY_REVIEW_AGENT = {
     "claude-code": "claude-code",
     "antigravity-cli": "brew-cask:antigravity-cli",
     "copilot": "npm:@github/copilot",
+    "deepseek": "npm:@deepseek-ai/dsh",
     "cursor-agent": "http:cursor-agent",
     "devin": "http:devin",
     "hermes": "pipx:git+https://github.com/NousResearch/hermes-agent.git",
     "opencode": "opencode",
     "openclaw": "npm:openclaw",
+    "pi": "npm:@earendil-works/pi-coding-agent",
     "grok": "npm:@xai-official/grok",
 }
 
@@ -591,6 +595,13 @@ def run_review_agent(
             REPO_ROOT,
             env,
         )
+    elif review_agent == "deepseek":
+        output = run_direct_or_mise(
+            review_agent,
+            ["dsh", "headless", "--", prompt],
+            REPO_ROOT,
+            env,
+        )
     elif review_agent == "devin":
         output = run_direct_or_mise(
             review_agent,
@@ -635,6 +646,13 @@ def run_review_agent(
                 "--timeout",
                 "600",
             ],
+            REPO_ROOT,
+            env,
+        )
+    elif review_agent == "pi":
+        output = run_direct_or_mise(
+            review_agent,
+            ["pi", "--print", "--no-session", "--", prompt],
             REPO_ROOT,
             env,
         )

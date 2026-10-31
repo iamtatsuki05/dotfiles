@@ -139,6 +139,8 @@ enabled = true
 enabled = true
 
 [memories]
+extract_model = "gpt-6-luna"
+consolidation_model = "gpt-6.1-terra"
 generate_memories = true
 use_memories = true
 disable_on_external_context = true
@@ -151,3 +153,11 @@ selected-avatar-id = "custom:mirai"
 conversationDetailMode = "STEPS_COMMANDS"
 show-context-window-usage = true
 followUpQueueMode = "queue"
+
+[marketplaces.tokeneconomizer]
+source_type = "git"
+source = "https://github.com/microsoft/TokenEconomizer.git"
+ref = "e428fc91b0f8ffecb5a596d56b14fe2f1485a5f9"
+
+[plugins."tokeneconomizer@tokeneconomizer"]
+enabled = true

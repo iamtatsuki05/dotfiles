@@ -26,11 +26,15 @@
   "plugins": {
     "load": {
       "paths": [
-        "~/.openclaw/extensions/japanese-prose-lint"
+        "~/.openclaw/extensions/japanese-prose-lint",
+        "~/.openclaw/extensions/rtk-rewrite"
       ]
     },
     "entries": {
       "japanese-prose-lint": {
+        "enabled": true
+      },
+      "rtk-rewrite": {
         "enabled": true
       }
     }

@@ -12,4 +12,4 @@ AJS=dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/bin/agen
   --prompt-file dotfiles/.agent/skills/agent-job-scheduler/assets/examples/prompt.codex.txt
 ```
 
-`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`devin`、`hermes`、`opencode`、`openclaw`、`grok` を指定できます。
+`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok` を指定できます。
