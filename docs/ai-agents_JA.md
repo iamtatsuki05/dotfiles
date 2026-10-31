@@ -5,6 +5,87 @@
 共有 AI agent ファイルは `dotfiles/.agent/` で管理します。変更は canonical tree に
 加え、同期を実行してから、管理ソースと代表的な展開先の両方を検証します。
 
+## RTKによるコマンド出力の圧縮
+
+通常のセットアップで[RTK](https://github.com/rtk-ai/rtk)をmise経由で導入します。
+Agent同期で、Claude Code、Codex、Copilot、Cursor、Antigravity CLI、Hermes、
+OpenCode、OpenClaw、Piの公式hook・pluginを有効にします。固定したバージョンでは、
+Devin、Grokの公式連携はありません。DeepSeek HarnessにはRTK利用指示を追加し、自動変換とは区別します。
+
+```sh
+mise install github:rtk-ai/rtk
+zsh scripts/setup_agent_files.sh
+rtk --version
+rtk gain
+```
+
+RTKは対応するシェルコマンドを書き換えます。組み込みのファイル読み取り・検索
+ツールは対象外です。CopilotのCLI固有hook形式ではRTK経由の再実行を促し、
+今回採用したPascalCase形式では`updatedInput`による書き換えに対応します。Codexでは
+`/hooks`から`rtk hook codex`の定義を確認し、信頼を承認してください。
+[Codexのhook仕様](https://learn.chatgpt.com/docs/hooks)により、新規hookは承認まで実行されません。
+同期後はAgentを再起動してください。OpenClawではGatewayの再読み込みも必要です。
+起動済みのセッションへの反映は別途確認してください。無加工の出力が必要な場合は`rtk proxy <command>`を使います。
+
+権限チェックは書き換え後の`rtk ...`を評価する場合があり、コマンド単位の許可・
+拒否ルールによっては確認の挙動が変わります。既存の権限設定は緩和しません。
+
+本体と公式pluginをRTKのリリース0.51.0に揃えて固定しています。
+[配布元・更新手順](../dotfiles/.agent/apps/rtk/README.md)を参照してください。
+管理対象のHOMEに直接`rtk init`を実行すると、共有プロンプトの変更やsymlinkの
+置換が起きる可能性があります。設定の反映にはAgent同期を使ってください。
+既存の`opencode/plugins`が非空の実ディレクトリの場合、同期は保護のため
+置換をスキップします。その場合はRTKも配置されないため、警告を確認してください。
+
+## TokenEconomizerによる繰り返し作業の削減
+
+通常の全体セットアップでは、miseのツール導入後に[TokenEconomizer](https://github.com/microsoft/TokenEconomizer)を登録します。
+対象はClaude Code、Codex、Copilot CLI、Pi、OpenCodeです。OpenCodeは上流で実験的対応です。
+既存環境への導入と再適用には、次のコマンドを使います。
+
+```sh
+mise run tokeneconomizer-setup -- --dry-run
+mise run tokeneconomizer-setup
+# 1つだけ導入する場合
+bash scripts/setup_tokeneconomizer.sh --agent pi
+```
+
+単独のAgent同期と `main.sh --only agent` は設定だけを反映します。
+初回は上の導入コマンドも実行してください。未導入のCLIは `SKIP` と表示します。
+`--agent` で指定したCLIがなければエラーになります。
+
+上流のコミット `e428fc91b0f8ffecb5a596d56b14fe2f1485a5f9` を
+`~/.local/share/dotfiles/tokeneconomizer` に保持し、上流コードは変更しません。
+ライセンスはApache-2.0で、LICENSEと帰属情報を含むcheckoutをそのまま使います。
+Claude Code・Copilotはローカルmarketplace、Piはローカルpackageとして登録します。
+Codexは同じコミットに固定したGit marketplaceを使い、OpenCodeは設定の `plugin` から読み込みます。
+CLIの登録情報とPiのpackage一覧は各クライアントが管理し、共有プロンプトは変更しません。
+Claude Codeは標準の設定先に加え、`claude-account` の登録済みアカウントにも導入します。
+`CLAUDE_CONFIG_DIR` を明示した場合は、その設定先だけが対象です。認証情報は変更しません。
+更新するときは導入スクリプトとCodex設定のコミットを揃え、検証後に導入コマンドを再実行してください。
+checkout内に変更がある場合は上書きせず停止します。
+
+機能は上流既定のままです。Micro-skillsは無効、未使用ツールの除外とLoop guardは有効です。
+Loop guardの判定には利用中のAgent経由で追加のモデル呼び出しが発生します。
+学習状態は `~/.tokeneconomizer` に保存され、ツール除外はプロジェクトのローカル設定を変更します。
+Pi・OpenCodeにはツール除外機能がありません。既存のRTK連携は保持します。
+
+導入後は各Agentを再起動してください。Codexでは `/hooks` からTokenEconomizerの定義を
+確認して信頼を承認し、もう一度起動します。インストール処理は信頼・権限設定を変更しません。
+Claude CodeとCopilotでは、初回とCLI更新後にツール一覧を取得します。
+次のコマンドは上流の仕組みで一覧を取得し、有料モデルの応答を必要としません。
+
+```sh
+~/.local/share/dotfiles/tokeneconomizer/plugin/scripts/te --host claude toolprune refresh-catalog
+~/.local/share/dotfiles/tokeneconomizer/plugin/scripts/te --host copilot toolprune refresh-catalog
+~/.local/share/dotfiles/tokeneconomizer/plugin/scripts/te --host codex status
+```
+
+一時停止は起動時に `TE_DISABLE=1` を付けます。解除する場合は、まずツールを除外した
+各プロジェクトで `te --host <agent> toolprune restore` を実行し、各CLIのplugin/packageを
+アンインストールします。再同期で復活しないよう管理元のTokenEconomizer設定も取り除きます。
+詳しい解除手順は[上流の導入ガイド](https://github.com/microsoft/TokenEconomizer/blob/main/plugin/README.md)を参照してください。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

@@ -1,6 +1,6 @@
 ---
 name: agent-job-scheduler
-description: "Use when the user wants to queue, inspect, retry, cancel, or run long non-interactive AI agent CLI jobs (codex, claude, copilot, cursor, devin, antigravity, hermes, opencode, openclaw, grok) via agent-job-scheduler, or to change its workdir allowlist, stale recovery, or launchd schedule. DO NOT USE FOR: a single interactive run."
+description: "Use when the user wants to queue, inspect, retry, cancel, or run long non-interactive AI agent CLI jobs (codex, claude, copilot, cursor, deepseek, devin, antigravity, hermes, opencode, openclaw, pi, grok) via agent-job-scheduler, or to change its workdir allowlist, stale recovery, or launchd schedule. DO NOT USE FOR: a single interactive run."
 ---
 
 # Agent Job Scheduler
@@ -31,12 +31,12 @@ dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/scripts/inst
 dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/scripts/uninstall_launch_agent.sh
 ```
 
-`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`devin`、`hermes`、`opencode`、`openclaw`、`grok`。ジョブ状態は `queued` / `running` / `succeeded` / `failed` / `retry_waiting` / `cancelled`。prompt の叩き台は `assets/examples/prompt.<agent>.txt`、agent ごとの実行コマンドと flag は [apps/agent-job-scheduler/README.md](apps/agent-job-scheduler/README.md) にある。
+`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok`。ジョブ状態は `queued` / `running` / `succeeded` / `failed` / `retry_waiting` / `cancelled`。prompt の叩き台は `assets/examples/prompt.<agent>.txt`、agent ごとの実行コマンドと flag は [apps/agent-job-scheduler/README.md](apps/agent-job-scheduler/README.md) にある。
 
 ## 手順
 
 1. `status` で queued / running / failed と agent ごとの cooldown を見て、操作対象の `job_id` と agent 種別を確定する。
-2. `enqueue` の prompt には、対象 `workdir`(絶対パスの実在ディレクトリ)、期待する成果物、禁止操作、検証方法を書く。全 agent が自動承認モードで動くため、破壊的操作・認証情報参照・本番影響があり得る prompt はユーザー確認なしで積まない。prompt は `prompts/<job_id>.txt` に平文保存されるので、機密値を埋め込まない。
+2. `enqueue` の prompt には、対象 `workdir`(絶対パスの実在ディレクトリ)、期待する成果物、禁止操作、検証方法を書く。ジョブは各 CLI の非対話モードで動き、追加確認を待てない場合がある。破壊的操作・認証情報参照・本番影響があり得る prompt はユーザー確認なしで積まない。prompt は `prompts/<job_id>.txt` に平文保存されるので、機密値を埋め込まない。
 3. `run-once` の前に、実行され得る先頭ジョブを `status` / `show` で確認する。
 4. `retry` / `cancel` / `requeue` は `show <job_id>` で失敗理由と現在状態を見てから選ぶ。判断に迷う場合は再実行せず、候補と理由をユーザーに提示する。
 5. `allow-workdir`、allowlist enforcement、stale timeout、launchd の install / uninstall は実行環境の安全設定を変えるため、対象パス・影響・戻し方を示してから実行する。enforcement を `on` にする前に必要な `workdir` を登録する。`install_launch_agent.sh` は既定で `launchctl bootstrap` まで行い、生成だけなら `--no-load` を付ける。

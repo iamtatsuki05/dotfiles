@@ -7,6 +7,7 @@ readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly TEST_ZSH_BIN="${DOTFILES_TEST_ZSH_BIN:-/bin/zsh}"
 readonly TEST_BASH_BIN="${DOTFILES_TEST_BASH_BIN:-/bin/bash}"
 readonly TEST_PYTHON_BIN="${DOTFILES_TEST_PYTHON:-python3}"
+readonly TEST_NODE_BIN="${DOTFILES_TEST_NODE_BIN:-node}"
 
 LIST_ONLY=0
 SYNTAX_ONLY=0
@@ -86,6 +87,8 @@ run_unit_tests() {
   log_step "Running unit tests"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_fixture_isolation.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_feature_flags.sh"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_steermouse_setup.sh"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_tokeneconomizer_setup.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_entrypoints.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_update_features.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_nix_features.sh"
@@ -96,6 +99,9 @@ run_unit_tests() {
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_team_mcp.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_rtk_setup.py"
+  "$TEST_NODE_BIN" --experimental-strip-types --test "$REPO_ROOT/tests/test_pi_integration.mjs"
+  "$TEST_NODE_BIN" --test "$REPO_ROOT/tests/test_deepseek_integration.mjs"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_selective_setup.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_sync.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_support_matrix.sh"
