@@ -18,6 +18,8 @@ Agent CLI を内部で呼び出すコードやツールの対応状況は [AGENT
 - `opencode`
 - `openclaw`
 - `grok`
+- `deepseek` (`dsh`)
+- `pi`
 
 CLI 本体は可能な範囲で `mise` から導入します。Herdr も `mise` で導入しますが、canonical agent ではなく terminal multiplexer / agent runtime として扱います。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
 
@@ -41,6 +43,43 @@ zsh dotfiles/.agent/sync.sh
 ```
 
 `sync.sh` は `scripts/setup_agent_files.sh` を呼びます。各 tool home への symlink を作り、必要な agent 固有 env file を `~/.config/shell/secrets.env` から生成します。
+
+## DeepSeek Harness / Pi
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) の登録IDは `deepseek`、実行コマンドは `dsh` です。[Pi](https://github.com/earendil-works/pi) はどちらも `pi` です。native連携の確認済みバージョンはDSH `0.2.0-rc.2`、Pi `1.1.0`、RTK `0.51.0` です。miseの両定義で固定し、Node.js 24を使います。
+
+```sh
+mise install npm:@deepseek-ai/dsh npm:@earendil-works/pi-coding-agent
+zsh scripts/setup_agent_files.sh --only deepseek
+zsh scripts/setup_agent_files.sh --only pi
+```
+
+`--only` は指定した新Agentだけを同期し、他AgentのHOMEは変更しません。省略すると通常の全Agent同期になります。`--dry-run` で事前確認できます。新しい連携ファイルの同名衝突は反映前にエラーで停止します。Pi設定は実ファイルのまま統合し、管理対象のモデル既定値とMCPサーバー定義だけを更新します。`deviceId`、無関係なサーバー、既存extensionは保持します。Piの既定は `openai/gpt-6-luna`、推論強度highです。`/login openai` で **Sign in with ChatGPT** を選んでください。認証情報はrepo外のクライアント所有ファイルに保存します。
+
+共通指示は `~/.dsh/AGENTS.md` と `~/.pi/agent/AGENTS.md` にリンクします。DeepSeekはskillを1階層だけ検索するため、`~/.dsh/skills` に `dotfiles-<relative-path>` という個別リンクを作ります（`/` は `--` に置換）。`.system` などの隠しディレクトリは除外し、現在のrepoを指す不要なリンクだけ削除します。Piは `~/.pi/agent/skills` を再帰検索します。このパスに外部へのリンク、ファイル、非空ディレクトリがある場合はエラーで保護します。
+
+両native pluginはrepoの作業context、完了通知、paired `.py` のJupyter同期、成功した標準`write`/`edit`後の日本語lintを追加します。shellや独自toolによる書き込みは編集hookの対象外です。Piは公式RTK extensionを無変更で使い、Bashコマンドを自動変換します。DeepSeekの公開APIは引数変更を認めないため、RTK利用指示を追加します。こちらはモデルが指示に従うことが前提です。権限・sandbox設定は上書きしません。
+
+MCP定義は既存Codexに合わせてDeepWiki、Devin、Figma、Notionを登録し、Playwrightは無効のままにします（DSH patchには追加しません）。Devinはプロセス環境の `DEVIN_API_KEY` を使います。MCP認証はクライアントごとに必要で、設定だけでは他クライアントのOAuth権限を引き継ぎません。Piは `pi mcp login <server>` に対応します。固定したDSH MCP clientにはFigma/Notion向けOAuthログイン機能がありません。
+
+DeepSeekの`web`/`headless` profile設定と認証情報はクライアント所有のまま保持します。同梱の `llm-pi-ai/openai-codex` は公開authorization APIからChatGPTサブスク認証を行えますが、この版のModels画面にはAPI key入力しかありません。native OAuth後に、各profileの `cordis.patch.yml` へ次のモデル選択を設定します。
+
+```yaml
+- id: llm-pi-ai
+  config:
+    providers:
+      openai-codex:
+        transport: sse
+- id: agent-default-model
+  config:
+    provider: openai-codex
+    model: gpt-6-luna
+    reasoningEffort: high
+```
+
+`transport: sse` は、同梱ライブラリの回答後のWebSocket解放待ち（[upstream報告](https://github.com/deepseek-ai/deepseek-harness/discussions/4190)）を避ける設定です。provider・モデル・認証・native tool実行は変えません。HOMEの連携patchは`web`と`headless`だけに適用し、同期時にその2つのprofileへlocal pluginをリンクします。plugin更新後は起動中のクライアントを再起動してください。
+
+実行は `dsh headless -- "task"` または `pi --print --no-session -- "task"` です。Wazaの `--agent deepseek` / `--agent pi`（`all` も含む）、外部skillレビューの `--review-agent`、`agent-job-scheduler` で両IDを指定できます。DeepSeekは開発者向けプレビュー版です。両Agentは起動ユーザーの権限でツールを実行します。[DeepSeekの安全上の注意](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md)と[Piのセキュリティ説明](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md)を参照してください。
 
 ## Herdr
 
@@ -70,6 +109,10 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
+| `AGENTS.md` | `~/.dsh/AGENTS.md` |
+| `AGENTS.md` | `~/.pi/agent/AGENTS.md` |
+| `skills/` | `~/.pi/agent/skills` |
+| `skills/**/SKILL.md` の親ディレクトリ | `~/.dsh/skills/dotfiles-<relative-path>` |
 | `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
@@ -91,7 +134,7 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 | `apps/grok/config.toml` | `~/.grok/config.toml` |
 
-`skills/` は各対応 agent の home に symlink します。Antigravity CLI では `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills` に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/antigravity-cli/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
+`skills/` は各対応 agent の home に symlink します。Antigravity CLI では `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills` に symlink します。OpenClaw では `~/.openclaw/workspace/skills` に symlink します。Hermes も共有 skill の配置先を分けます。`~/.hermes/skills` は Hermes が所有する実ディレクトリのまま残し、bundled skill の同期、`.bundled_manifest`、hub、curator の書き込みをそこに集めます。共有 tree は `~/.hermes/dotfiles-skills` に symlink し、managed `config.yaml` の `skills.external_dirs` から読み込みます。Hermes はこの external tree を外部所有として扱いますが、ユーザー指示による `skill_manage` の編集は repository に書き込まれます。共通 hook は `~/.claude/hooks/`、`~/.codex/hooks/`、`~/.copilot/hooks/`、`~/.cursor/hooks/`、`~/.config/devin/hooks/`、`~/.gemini/antigravity-cli/hooks/`、`~/.config/opencode/hooks/`、`~/.hermes/agent-hooks/` に symlink します。
 
 Hermes では `apps/hermes-agent/agent-hooks/` のファイルも `~/.hermes/agent-hooks/` に symlink します。
 
@@ -153,13 +196,15 @@ mise run waza-eval-model -- --agent opencode --allow
 mise run waza-eval-model -- --agent hermes --allow
 mise run waza-eval-model -- --agent openclaw --allow
 mise run waza-eval-model -- --agent grok --allow
+mise run waza-eval-model -- --agent deepseek --allow
+mise run waza-eval-model -- --agent pi --allow
 ```
 
 AI CLI を起動せず対象 suite だけ確認する場合は `--dry-run` を使います。結果は `.waza-results/` に出力します。
 
 ## 外部 skill upstream
 
-他人の skill を vendoring している場合は `skills/upstreams.json` で管理します。この manifest には upstream の GitHub repository、branch、固定 commit、local path、local tree hash を記録します。
+他人の skill を vendoring している場合は `skills/upstreams.json` で管理します。この manifest には upstream の GitHub repository(public gist を含む)、branch、固定 commit、local path、local tree hash を記録します。
 
 よく使うコマンド:
 
@@ -179,7 +224,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw`、`grok` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
+review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw`、`grok`、`deepseek`、`pi` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
 
 手動 review 用に、低レベルコマンドも残しています。
 

@@ -1,5 +1,12 @@
 #!/usr/bin/env zsh
 
+# Scripts under test resolve config paths as "${XDG_CONFIG_HOME:-$HOME/.config}".
+# Tests isolate HOME but an inherited XDG_CONFIG_HOME still points at the
+# developer's real ~/.config, so fixture runs of update_managed_versions.sh
+# overwrote the real ~/.config/mise/config.toml. Drop the XDG base directory
+# variables before any test runs so only the test's HOME is ever written.
+unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1

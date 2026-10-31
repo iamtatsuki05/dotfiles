@@ -11,12 +11,14 @@ This directory contains shared hook scripts used by multiple local AI agents.
 |---|---|
 | `agent_context_reminder.sh` | Emits repository-specific reminder context for supported agent prompt or session hook phases. |
 | `agent_turn_done_notify.sh` | Plays the shared completion sound for agents that support end-of-turn notifications. |
-| `japanese_prose_lint.sh` | Checks Japanese Markdown and text prose, and returns advisory feedback after supported file edits. |
+| `japanese_prose_lint.sh` | Checks Japanese Markdown and text prose, and returns advisory feedback after supported file edits. In-place edits (Edit / MultiEdit / apply_patch) report only lines the edit introduced, so document-wide counts such as repeated terms surface only when their first occurrence is on an edited line; whole-file writes lint everything. Files under `.agent/work/` are skipped. |
 | `jupytext_sync.sh` | Keeps paired Jupyter notebooks synchronized after agents edit paired `.py` files. |
 
 Agent-specific hook registration lives under `../apps/`.
 Some agents use JSON hook maps, while others consume shell scripts from hook directories.
 Japanese prose lint runs automatically for all supported agents. Claude Code, Codex, Copilot, Cursor, Devin, and Antigravity use native post-tool hooks. Hermes, OpenCode, and OpenClaw use small plugins so findings are included in the next model-visible tool result. Grok loads the Claude-compatible hook configuration and therefore does not need a duplicate registration.
+
+Pi and DeepSeek use their native extension/plugin events for the same shared hooks. Their prose adapters are explicit `--hook-agent pi` and `--hook-agent dsh` contracts; successful built-in writes/edits receive advisory feedback, with in-place edits limited to newly written text. Pi completion uses non-aborted `agent_settled`; DeepSeek completion uses `turn/end` with `reason.kind=completed`.
 
 ## Japanese prose lint
 

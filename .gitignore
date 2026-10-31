@@ -69,3 +69,6 @@ pnpm-debug.log*
 
 # Repo-specific secret file; keep config/shell/secrets.env.example tracked.
 config/shell/secrets.env
+
+# chatgpt-pro-line writes run artifacts into the working repository
+.devspace/

@@ -27,7 +27,6 @@ evals/<skill>/
 | `agent-cli-consult` | External agent CLI (Codex / Claude Code) consultation routing. |
 | `agent-job-scheduler` | Queueing and recovery workflows for the scheduler skill. |
 | `alphaxiv-paper-lookup` | Paper lookup and summarization behavior. |
-| `api-design` | API review and design feedback. |
 | `auto-debugger` | Debugging from stack traces and failing code. |
 | `ci-cd` | CI workflow review. |
 | `compatibility-safety` | Compatibility, alias, and fallback discipline. |
@@ -37,7 +36,6 @@ evals/<skill>/
 | `goal-prompt-builder` | `/goal` prompt construction, language handling, and refusal behavior. |
 | `gws` | Google Workspace CLI inspection behavior. |
 | `html-preview-review` | Safe local HTML review generation and viewer routing. |
-| `magika` | File type identification. |
 | `markdown-docs` | Markdown review, proofreading, and restructuring. |
 | `markitdown` | Conversion-to-Markdown routing. |
 | `missing-tools` | Safe fallback planning when a command is unavailable. |

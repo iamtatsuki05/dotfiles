@@ -14,7 +14,15 @@ readonly NIX_INSTALL_URL="https://nixos.org/nix/install"
 readonly NIX_INSTALL_SHELL="${DOTFILES_NIX_INSTALL_SHELL:-/bin/sh}"
 SUDO_KEEPALIVE_PID=""
 SKIP_MAS_APPS=0
+ONLY=""
+DRY_RUN=0
 
+source "$LIB_DIR/features.sh"
+dotfiles_load_features "$REPO_ROOT" || {
+  feature_status=$?
+  echo "ERROR: failed to load feature flags for dotfiles setup." >&2
+  exit "$feature_status"
+}
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
 
@@ -42,6 +50,8 @@ usage() {
   cat <<'EOF'
 
 Options:
+  --only config|agent|config,agent  Apply selected settings without installing tools.
+  --dry-run       Preview selected settings; requires --only.
   --skip-mas-apps  Skip Mac App Store apps while keeping the selected profile.
 EOF
 }
@@ -52,6 +62,22 @@ parse_main_args() {
   SKIP_MAS_APPS=0
   while (($#)); do
     case "$1" in
+      --only)
+        shift
+        if ((! $#)); then
+          echo "ERROR: --only requires a value" >&2
+          return 1
+        fi
+        ONLY="$1"
+        [[ -n "$ONLY" ]] || { echo "ERROR: empty --only selection" >&2; return 1; }
+        ;;
+      --only=*)
+        ONLY="${1#--only=}"
+        [[ -n "$ONLY" ]] || { echo "ERROR: empty --only selection" >&2; return 1; }
+        ;;
+      --dry-run)
+        DRY_RUN=1
+        ;;
       --skip-mas-apps)
         SKIP_MAS_APPS=1
         ;;
@@ -75,6 +101,18 @@ parse_main_args() {
     shift
   done
 
+  case "$ONLY" in
+    ''|config|agent|config,agent|agent,config) ;;
+    *) echo "ERROR: invalid --only selection: $ONLY" >&2; return 1 ;;
+  esac
+  if (( DRY_RUN )) && [[ -z "$ONLY" ]]; then
+    echo "ERROR: --dry-run requires --only" >&2
+    return 1
+  fi
+  if (( SKIP_MAS_APPS )) && [[ -n "$ONLY" ]]; then
+    echo "ERROR: --skip-mas-apps cannot be combined with --only" >&2
+    return 1
+  fi
   dotfiles_parse_profile_args "main.sh" "${profile_args[@]}"
 }
 
@@ -120,10 +158,28 @@ prepare_sudo_authentication() {
 
 install_rosetta_if_needed() {
   local profile="$1"
+  local feature_status
 
   if ! dotfiles_is_macos || [[ "$profile" != "full" ]]; then
     return 0
   fi
+
+  if dotfiles_macos_features_enabled; then
+    feature_status=0
+  else
+    feature_status=$?
+  fi
+  case "$feature_status" in
+    0)
+      ;;
+    1)
+      log_skip "Rosetta 2 install disabled because features.macos=false"
+      return 0
+      ;;
+    *)
+      return "$feature_status"
+      ;;
+  esac
 
   if [[ "${DOTFILES_SKIP_ROSETTA_INSTALL:-0}" == "1" ]]; then
     log_skip "Rosetta 2 install disabled"
@@ -205,6 +261,26 @@ install_nix_daemon_if_needed() {
 
 install_homebrew_if_needed() {
   local profile="$1"
+  local feature_status
+
+  if dotfiles_is_macos; then
+    if dotfiles_macos_features_enabled; then
+      feature_status=0
+    else
+      feature_status=$?
+    fi
+    case "$feature_status" in
+      0)
+        ;;
+      1)
+        log_skip "Homebrew install disabled because features.macos=false"
+        return 0
+        ;;
+      *)
+        return "$feature_status"
+        ;;
+    esac
+  fi
 
   log_step "Ensuring Homebrew is available when required"
   zsh "$SCRIPTS_DIR/install_homebrew.sh" --profile "$profile"
@@ -300,12 +376,36 @@ install_mise_tools() {
 
 sync_agent_files() {
   log_step "Syncing agent prompts and skills"
-  zsh "$SCRIPTS_DIR/setup_agent_files.sh"
-  log_success "Agent prompts and skills synced"
+  zsh "$SCRIPTS_DIR/setup_agent_files.sh" "$@"
+  if (( DRY_RUN )); then
+    log_success "Agent settings preview complete"
+  else
+    log_success "Agent prompts and skills synced"
+  fi
 }
 
 install_mas_apps_best_effort() {
   local profile="$1"
+  local feature_status
+
+  if dotfiles_is_macos; then
+    if dotfiles_macos_features_enabled; then
+      feature_status=0
+    else
+      feature_status=$?
+    fi
+    case "$feature_status" in
+      0)
+        ;;
+      1)
+        log_skip "Mac App Store apps disabled because features.macos=false"
+        return 0
+        ;;
+      *)
+        return "$feature_status"
+        ;;
+    esac
+  fi
 
   log_step "Installing Mac App Store apps best-effort"
   if (( SKIP_MAS_APPS )); then
@@ -324,6 +424,14 @@ apply_chezmoi() {
   log_success "chezmoi home files applied"
 }
 
+setup_steermouse() {
+  local profile="$1"
+  shift
+  if [[ "$profile" == "full" ]] && dotfiles_is_macos && dotfiles_macos_features_enabled; then
+    bash "$SCRIPTS_DIR/setup_steermouse.sh" "$@"
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # Main execution
 # -----------------------------------------------------------------------------
@@ -336,6 +444,28 @@ main() {
   echo "Profile: $profile"
   echo
 
+  if [[ -n "$ONLY" ]]; then
+    local -a apply_args=(--profile "$profile" --mark-default --no-install)
+    local -a agent_args=()
+    if (( DRY_RUN )); then
+      apply_args+=(--dry-run)
+      agent_args+=(--dry-run)
+    fi
+    if [[ ",$ONLY," == *,config,* ]]; then
+      zsh "$SCRIPTS_DIR/chezmoi_apply.sh" "${apply_args[@]}"
+      setup_steermouse "$profile" "${agent_args[@]}"
+    fi
+    if [[ ",$ONLY," == *,agent,* ]]; then
+      sync_agent_files "${agent_args[@]}"
+    fi
+    if (( DRY_RUN )); then
+      echo "Settings preview completed; no changes applied."
+    else
+      echo "Selected settings applied. Reload or restart affected clients as needed."
+    fi
+    return 0
+  fi
+
   prepare_sudo_authentication
   install_rosetta_if_needed "$profile"
   install_homebrew_if_needed "$profile"
@@ -344,9 +474,11 @@ main() {
   activate_nix_environment
   install_mas_apps_best_effort "$profile"
   apply_chezmoi "$profile"
-  sync_agent_files
+  setup_steermouse "$profile"
+  sync_agent_files --install-deps
   setup_git_hooks "$profile"
   install_mise_tools
+  "$(mise_command)" exec -- bash "$SCRIPTS_DIR/setup_tokeneconomizer.sh"
 
   echo
   echo "Setup completed successfully!"

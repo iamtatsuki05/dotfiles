@@ -489,12 +489,14 @@ module "vpc" {
 }
 ```
 
-### 破壊的変更の回避
+### 破壊的変更の扱い
+
+変数の削除・改名や、`moved` を伴わないリソースアドレスの変更は MAJOR を上げる。旧名を受け付ける互換 alias は、移行期間と削除予定の version を `description` に書ける場合だけ追加する。書けなければ旧名を削除し、plan のエラーで利用者に気付かせる。`coalesce(..., "default")` のような固定値で不足を埋めない(全て null なら `coalesce` はエラーになり、それが期待する挙動)。
 
 ```hcl
-# 変数名変更時は両方サポート
+# 移行期間中だけ両方を受け付ける。削除予定の version を明記する
 variable "name" {
-  description = "Name prefix (deprecated: use name_prefix instead)"
+  description = "Deprecated: use name_prefix. Removed in v3.0.0"
   type        = string
   default     = null
 }
@@ -506,7 +508,7 @@ variable "name_prefix" {
 }
 
 locals {
-  name_prefix = coalesce(var.name_prefix, var.name, "default")
+  name_prefix = coalesce(var.name_prefix, var.name)
 }
 ```
 

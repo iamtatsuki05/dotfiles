@@ -1,3 +1,5 @@
+# HTML
+
 ## Table of Contents
 
 1. Fundamental Semantics and Validation
@@ -139,7 +141,7 @@
 - **DO** use the `<picture>` element with a fallback `<img>` for more fine-grained image control like switching between image formats, image sizes, and cropping images at different device sizes. 
 
 - **DON'T** apply `loading="lazy"` to above-the-fold or hero images. This delays LCP.
-- **DON'T** overuse `fetchpriority="high"`; prioritization is a zero-sum mechanism. Use `fetchpriority="low"` to demote non-critical trackers or carousel items.
+- **DON'T** overuse `fetchpriority="high"`; prioritization is a zero-sum mechanism. Use `fetchpriority="low"` to demote non-critical trackers or later carousel items.
 
 ### Code Example
 
@@ -199,7 +201,7 @@
 
 ### Guidelines
 
-See `declarative-dialog-popover-control` (via `npx -y modern-web-guidance@0.0.169 retrieve "declarative-dialog-popover-control"`) for more info on fallback strategies for using the Popover API in a cross-browser way.
+See `declarative-dialog-popover-control` (via `env DISABLE_TELEMETRY=1 ENABLE_FILE_LOGGING=false npx -y modern-web-guidance@0.0.196 retrieve "declarative-dialog-popover-control"`) for more info on fallback strategies for using the Popover API in a cross-browser way.
 - **DO** use `<dialog>` for modal overlays (requires JS `.showModal()`) to automatically trap focus, dim backgrounds, and support dismissing via `Esc`. Use the `closedby="any"` attribute to enable native "light-dismiss" (closing on backdrop click) without custom JavaScript.
 - **DO** utilize the Popover API (`popover` attribute) for non-modal UI (menus, tooltips) that do not require focus traps.
 - **DO** use `::backdrop` to style modal backgrounds.
@@ -317,7 +319,7 @@ See `declarative-dialog-popover-control` (via `npx -y modern-web-guidance@0.0.16
 
 ### Guidelines
 
-See `forms` (via `npx -y modern-web-guidance@0.0.169 retrieve "forms"`) for more details on creating modern web forms.
+See `forms` (via `env DISABLE_TELEMETRY=1 ENABLE_FILE_LOGGING=false npx -y modern-web-guidance@0.0.196 retrieve "forms"`) for more details on creating modern web forms.
 
 - **DO** utilize the `form="form-id"` attribute to decouple inputs from the physical `<form>` tree.
 - **DO** use `<datalist>` coupled with `<input list="id">` for lightweight auto-suggestions (note: visually unstylable and has screen-reader quirks). 

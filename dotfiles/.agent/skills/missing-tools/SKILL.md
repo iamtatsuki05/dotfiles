@@ -1,15 +1,11 @@
 ---
 name: missing-tools
-description: コマンドが見つからない、shell が command not found を返す、CLI tool が未導入、または brew install / npm install -g / uv tool install などの global install や永続的な環境変更なしで一時実行したい場合に使う。
+description: コマンドが見つからない、shell が command not found を返す、CLI tool が未導入、または brew install / npm install -g / uv tool install などの global install や永続的な環境変更なしで一時実行したい場合に使う。tool はあるが実行時に失敗する場合や、永続 install を明示された場合には使わない。
 ---
 
 # Missing Tools
 
-## USE FOR:
-
-- `command not found`、missing CLI、実行ファイルが見つからない。
-- global install なしの一時実行。
-- project env / `mise` / comma / Nix の選択。
+未導入のコマンドを global install や設定変更なしで実行する。project env → mise → Nix → comma の順で wrapper を試す。
 
 ## DO NOT USE FOR:
 
@@ -20,10 +16,10 @@ description: コマンドが見つからない、shell が command not found を
 ## 手順
 
 1. `command -v <command>` で本当に未導入か確認する。
-2. project-local 優先。direnv 採用プロジェクト(`command -v direnv` が通り `.envrc` がある場合)のみ `direnv exec . <command> <args>`。
-3. `config/mise/config.toml` にある tool は `mise exec <tool>@<version> -- <command> <args>`。
-4. package 名が分かる場合は `nix run nixpkgs#<package> -- <args>`。
-5. 最後に `nix shell nixpkgs#<package> --command <command> <args>`。
+2. direnv 採用プロジェクト(`command -v direnv` が通り `.envrc` がある場合)のみ `direnv exec . <command> <args>`。
+3. `config/mise/config.toml` にある tool は `mise exec <tool>@<version> -- <command> <args>`。pipx backend の tool は `mise exec 'pipx:<package>' -- <command> <args>`(例: `mise exec 'pipx:markitdown' -- markitdown --version`)。
+4. package 名が分かる場合は `nix run nixpkgs#<package> -- <args>`(例: `nix run nixpkgs#jq -- --version`)。
+5. package に複数の実行ファイルがある場合は `nix shell nixpkgs#<package> --command <command> <args>`(例: `nix shell nixpkgs#poppler-utils --command pdftotext -layout in.pdf -`)。
 6. comma が導入済みの環境(`command -v ,` が通る場合)だけ `, <command> <args>` も使える。
 
 ## 安全弁
@@ -32,10 +28,7 @@ description: コマンドが見つからない、shell が command not found を
 - 永続 install 指示がない限り、mise / Nix / Homebrew / shell / hook 設定を編集しない。
 - network、credential、telemetry、外部書き込みは非自明な影響を先に説明する。
 
-## Troubleshooting
+## 記録と報告
 
+- 解決した実行形(例: `mise exec uv -- uv run lint.py`)は session の `checkpoint.md` に 1 行記録し、以後は本 skill を再読せずその実行形を使う。
 - 全 fallback が失敗したら、試した wrapper と最小の永続 install 変更を報告する。
-
-## Examples
-
-`mise exec 'pipx:markitdown' -- markitdown --version`, `nix run nixpkgs#jq -- --version`.

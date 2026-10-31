@@ -11,7 +11,8 @@ must never contain usable secret values.
 The managed local file is `~/.config/shell/secrets.env`. On first setup,
 chezmoi creates it from `config/shell/secrets.env.example` when it does not
 already exist. Fill in only the values needed on that machine, then restart the
-shell.
+shell. The Bash-only `scripts/setup_shell.sh` intentionally leaves this file
+alone.
 
 Typical variable names include:
 
@@ -45,16 +46,20 @@ backups, diagnostics, and support bundles that may be shared.
 
 ## Shell startup ownership
 
-Chezmoi renders bash startup files and
-`~/.config/shell/dotfiles-shell-common.sh`. Home Manager's zsh configuration
-sources the same common file when it exists. Put shared environment loading in
-the canonical templates; do not copy secret values into each shell config.
+The shell ownership guide is the single reference for startup roles, fixed
+managed paths, custom `XDG_CONFIG_HOME`, and Fish/csh/tcsh adapter boundaries:
+[Configuration ownership](configuration-ownership.md#shell-roles-and-startup-boundaries).
+The Bash-only `scripts/setup_shell.sh` allowlist deliberately excludes
+`secrets.env`; keep secret loading in the managed Bash/Zsh path and never copy
+secret values into shell adapters or generated files.
 
 ## Preview changes before applying them
 
 Use non-mutating modes whenever they are available:
 
 ```sh
+bash scripts/setup_shell.sh --dry-run
+
 zsh scripts/chezmoi_apply.sh --dry-run
 zsh scripts/chezmoi_apply.sh --verify
 zsh scripts/nix_install.sh --cli-only --dry-run
@@ -83,7 +88,8 @@ behavior has been verified.
 
 ## Treat authentication changes as exclusive operations
 
-Claude Code profile switching changes one shared macOS Keychain credential.
-Exit all Claude processes before `claude-account auth-login`. Do not bypass the
-profile wrapper with a plain Claude launch during multi-account use. See
-[AI agent configuration](ai-agents.md) for the full procedure.
+Claude Code credentials are isolated by each profile's `CLAUDE_CONFIG_DIR`.
+Before `claude-account auth-login PROFILE`, exit only that profile's sessions.
+Running plain `claude auth login` against the same directory bypasses the lock;
+use the wrapper for credential changes. Transcripts are shared, so check data
+handling before resuming under another organization. See [AI agent configuration](ai-agents.md).

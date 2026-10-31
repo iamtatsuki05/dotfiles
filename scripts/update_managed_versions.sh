@@ -16,6 +16,7 @@ source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/homebrew.sh"
 source "$LIB_DIR/homebrew_fallback.sh"
 source "$LIB_DIR/runtime.sh"
+source "$LIB_DIR/features.sh"
 
 SELECTED_SHELL="zsh"
 INSTALL_GUI_APPS=0
@@ -402,6 +403,7 @@ end
 
 should_update_homebrew_fallback_packages() {
   dotfiles_is_macos || return 1
+  dotfiles_macos_features_enabled || return 1
 
   if dotfiles_homebrew_fallback_has_cli_entries; then
     return 0
@@ -519,6 +521,11 @@ cleanup_temporary_dirs() {
 
 resolve_nix_apply_profile() {
   local profile_name="$DOTFILES_PROFILE"
+
+  if dotfiles_is_macos && ! dotfiles_macos_features_enabled; then
+    REPLY="$profile_name"
+    return 0
+  fi
 
   if dotfiles_is_macos \
     && [[ "$profile_name" == "full" ]] \
@@ -831,6 +838,11 @@ main() {
   local nix_input_description
 
   parse_args "$@"
+  dotfiles_load_features "$REPO_ROOT" || return $?
+  if dotfiles_is_macos && ! dotfiles_macos_features_enabled; then
+    warn "features.macos=false: ignoring --with-gui-apps and integrated Homebrew fallback updates."
+    INSTALL_GUI_APPS=0
+  fi
   trap cleanup_temporary_dirs EXIT
   initialize_progress
   if [[ "$NIX_INPUT" == "all" ]]; then

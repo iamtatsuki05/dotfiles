@@ -7,7 +7,6 @@
 3. [Kubernetes](#kubernetes)
 4. [サーバーレス](#サーバーレス)
 5. [静的サイト](#静的サイト)
-6. [デプロイ戦略](#デプロイ戦略)
 
 ## コンテナデプロイ
 
@@ -432,89 +431,4 @@ jobs:
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
             --paths "/*"
-```
-
-## デプロイ戦略
-
-### Blue-Green デプロイ
-
-```yaml
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy to green
-        run: |
-          kubectl apply -f k8s/green/
-          kubectl rollout status deployment/app-green -n production
-
-      - name: Switch traffic
-        run: |
-          kubectl patch service app \
-            -n production \
-            -p '{"spec":{"selector":{"version":"green"}}}'
-
-      - name: Cleanup blue
-        run: kubectl delete -f k8s/blue/ || true
-```
-
-### Canary デプロイ
-
-```yaml
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy canary (10%)
-        run: |
-          kubectl apply -f k8s/canary/
-          kubectl scale deployment/app-canary --replicas=1
-
-      - name: Monitor
-        run: |
-          sleep 300
-          # Check error rate, latency, etc.
-
-      - name: Promote or rollback
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            kubectl set image deployment/app app=$IMAGE
-            kubectl delete -f k8s/canary/
-          else
-            kubectl delete -f k8s/canary/
-            exit 1
-          fi
-```
-
-### Rolling Update（Kubernetes標準）
-
-```yaml
-# deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: app
-spec:
-  replicas: 3
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-  template:
-    spec:
-      containers:
-        - name: app
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 15
-            periodSeconds: 10
 ```

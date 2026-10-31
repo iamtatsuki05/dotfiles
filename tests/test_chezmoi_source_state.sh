@@ -9,7 +9,7 @@ source "$TEST_DIR/lib/assertions.sh"
 
 test_chezmoi_root_points_to_home() {
   assert_file "$REPO_ROOT/.chezmoiroot"
-  [[ "$(cat "$REPO_ROOT/.chezmoiroot")" == "home" ]] || fail ".chezmoiroot should point to home"
+  [[ "$(cat "$REPO_ROOT/.chezmoiroot")" == home ]] || fail ".chezmoiroot should point to home"
 }
 
 test_copied_source_state_matches_current_sources() {
@@ -21,7 +21,7 @@ test_copied_source_state_matches_current_sources() {
   assert_same_file "$REPO_ROOT/config/shell/secrets.env.example" "$REPO_ROOT/home/private_dot_config/shell/create_private_secrets.env"
   assert_same_file "$REPO_ROOT/config/shell/bashrc.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bashrc"
   assert_same_file "$REPO_ROOT/config/shell/bash_profile.tmpl" "$REPO_ROOT/home/.chezmoitemplates/bash_profile"
-  assert_same_file "$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl" "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh"
+  assert_not_exists "$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl"
   assert_not_exists "$REPO_ROOT/home/dot_Brewfile.tmpl"
   assert_not_exists "$REPO_ROOT/home/dot_zshrc"
   assert_not_exists "$REPO_ROOT/home/private_dot_config/nvim/init.vim"
@@ -32,7 +32,12 @@ test_copied_source_state_matches_current_sources() {
   assert_contains "$REPO_ROOT/config/zellij/config.kdl" "serialization_interval 10"
 }
 
-test_templates_keep_repo_root_behavior() {
+test_templates_keep_static_integrity() {
+  local wrapper="$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl"
+  local fish="$REPO_ROOT/home/private_dot_config/fish/conf.d/zz-dotfiles.fish.tmpl"
+  local csh="$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.csh.tmpl"
+  local validator="$REPO_ROOT/home/.chezmoitemplates/shell-data-validate"
+
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" '__DOTFILES_REPO_ROOT__'
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" 'DOTFILES_REPO_ROOT'
   assert_contains "$REPO_ROOT/home/private_dot_config/mise/private_config.toml.tmpl" '.chezmoi.sourceDir'
@@ -42,54 +47,33 @@ test_templates_keep_repo_root_behavior() {
   assert_contains "$REPO_ROOT/home/.chezmoitemplates/mise-config.toml" '[tasks.chezmoi-status]'
   assert_contains "$REPO_ROOT/home/dot_bashrc.tmpl" '.chezmoitemplates/bashrc'
   assert_contains "$REPO_ROOT/home/dot_bash_profile.tmpl" '.chezmoitemplates/bash_profile'
-  assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '__DOTFILES_REPO_ROOT__'
-  assert_contains "$REPO_ROOT/home/private_dot_config/shell/dotfiles-shell-common.sh.tmpl" '.chezmoitemplates/dotfiles-shell-common.sh'
-}
-
-test_shell_common_loads_in_zsh_when_git_helper_aliases_exist() {
-  local output
-
-  output="$(
-    SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl" \
-      zsh -fc '
-        alias gt="git tag"
-        alias gr="git remote"
-        alias gs="git status"
-        . "$SHELL_COMMON_TEMPLATE_FILE"
-        whence -w gt
-        whence -w gr
-        whence -w gs
-      '
-  )"
-
-  assert_contains_text "$output" "gt: function"
-  assert_contains_text "$output" "gr: function"
-  assert_contains_text "$output" "gs: function"
-}
-
-test_shell_common_exposes_claude_account_command() {
-  local output
-
-  output="$(
-    SHELL_COMMON_TEMPLATE_FILE="$REPO_ROOT/config/shell/dotfiles-shell-common.tmpl" \
-      zsh -fc '
-        . "$SHELL_COMMON_TEMPLATE_FILE"
-        whence -w claude-account
-        functions claude-account
-      '
-  )"
-
-  assert_contains_text "$output" "claude-account: function"
-  assert_contains_text "$output" "scripts/claude_account.sh"
+  assert_contains "$wrapper" 'includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" $shellCommonContext'
+  assert_not_contains "$wrapper" 'includeTemplate ".chezmoitemplates/dotfiles-shell-common.sh" .'
+  assert_not_contains "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" '.chezmoi.sourceDir'
+  assert_not_contains "$wrapper" 'replace "__DOTFILES_REPO_ROOT__"'
+  assert_not_contains "$wrapper" '{{ include ".chezmoitemplates/dotfiles-shell-common.sh"'
+  assert_contains "$REPO_ROOT/home/.chezmoidata.toml" '[shell]'
+  assert_contains "$REPO_ROOT/home/.chezmoidata.toml" '[shell.aliases]'
+  assert_contains "$REPO_ROOT/home/.chezmoidata.toml" '[shell.mise]'
+  assert_file "$validator"
+  assert_contains "$validator" 'home_local_bin'
+  assert_contains "$validator" 'darwin_x86_64_homebrew_bin'
+  assert_contains "$validator" 'nix_state_relative'
+  assert_not_contains "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" '__DOTFILES_REPO_ROOT__'
+  for native_template in "$REPO_ROOT/home/.chezmoitemplates/dotfiles-shell-common.sh" "$fish" "$csh"; do
+    assert_contains "$native_template" 'shell-data-validate'
+  done
+  assert_contains "$fish" 'status is-interactive'
+  assert_contains "$csh" '$?prompt'
+  assert_not_contains "$fish" 'secrets.env'
+  assert_not_contains "$csh" 'secrets.env'
 }
 
 main() {
   test_chezmoi_root_points_to_home
   test_copied_source_state_matches_current_sources
-  test_templates_keep_repo_root_behavior
-  test_shell_common_loads_in_zsh_when_git_helper_aliases_exist
-  test_shell_common_exposes_claude_account_command
-  echo "chezmoi source state tests passed"
+  test_templates_keep_static_integrity
+  print -r -- 'chezmoi source state tests passed'
 }
 
 main "$@"
