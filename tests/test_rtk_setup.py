@@ -24,6 +24,7 @@ class RtkSetupTest(unittest.TestCase):
             agent = repo / "dotfiles/.agent"
             (repo / "scripts").mkdir(parents=True)
             home.mkdir()
+            shutil.copytree(REPO_ROOT / "scripts/agent-team", repo / "scripts/agent-team")
             for name in ("setup_agent_files.sh", "agent-run-compact"):
                 shutil.copy2(REPO_ROOT / "scripts" / name, repo / "scripts" / name)
             for name in ("apps", "hooks"):

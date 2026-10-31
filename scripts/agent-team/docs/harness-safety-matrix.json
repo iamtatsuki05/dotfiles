@@ -1,0 +1,1819 @@
+{
+  "schema_version": 1,
+  "matrix_revision": "issue-35-20260830-v1",
+  "profile_count": 17,
+  "candidate_count": 0,
+  "eligible": false,
+  "status_counts": {
+    "candidate": 0,
+    "rejected": 2,
+    "blocked": 11,
+    "not-run": 4
+  },
+  "required_phases_by_permission": {
+    "read-only": [
+      "positive-read",
+      "outside-path",
+      "symlink",
+      "git",
+      "secret",
+      "local-network",
+      "external-network",
+      "process",
+      "cleanup"
+    ],
+    "workspace-write": [
+      "positive-write",
+      "outside-path",
+      "symlink",
+      "git",
+      "secret",
+      "local-network",
+      "external-network",
+      "process",
+      "cleanup"
+    ]
+  },
+  "profiles": [
+    {
+      "profile_id": "opencode/raw-workspace-read-only",
+      "provider": "opencode",
+      "profile": "raw-workspace-read-only",
+      "permission": "read-only",
+      "transport": "direct",
+      "sandbox_policy": "opencode-raw-workspace-readonly-static-v3",
+      "status": "blocked",
+      "reason": "blocked-authentication",
+      "identity": {
+        "version": "1.18.25",
+        "hashes": {
+          "executable_sha256": "88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9",
+          "historical_source_sha256": "0238a41c5fd6e2def4a1457d5a21e52d565ada836d1e9e9555098db65aefd4c7",
+          "auth_observation_sha256": "8fc9336fb6cac498366d951c3a986c7bdf16efdd72e2beb13f39630c6fbcb225"
+        },
+        "probe_revision": "opencode-static-probe-20260830-v3",
+        "provenance": "PR #41 static identity and redacted historical observation; authentication is not current live evidence"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "authentication",
+        "approved": false,
+        "side_effects": [
+          "login",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 41,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/41",
+        "head_sha": "16ffe9de151371db8105fcab7ded4843759d752a",
+        "issue_number": 22,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/22"
+      },
+      "historical_evidence": {
+        "status": "rejected",
+        "reason": "boundary-violation",
+        "scope": "historical-unverified",
+        "not_current_evidence": true,
+        "observed_at": "2026-08-29",
+        "source_verification": "verified",
+        "source_digest": "0238a41c5fd6e2def4a1457d5a21e52d565ada836d1e9e9555098db65aefd4c7",
+        "verification_status": "historical-unverified",
+        "evidence": [
+          {
+            "tool": "filesystem",
+            "operation": "read",
+            "target": "symlink",
+            "result": "allowed",
+            "digest": "2aa16abf4c1f862152a95d088c5921ca16f01795dea3ed11181979602b4282b9"
+          }
+        ]
+      },
+      "cell_digest": "4f4f014ad72d2d17b49ab302d2555673112cb7019dd34458f17f22842850f0e9"
+    },
+    {
+      "profile_id": "opencode/snapshot-read-only",
+      "provider": "opencode",
+      "profile": "snapshot-read-only",
+      "permission": "read-only",
+      "transport": "direct",
+      "sandbox_policy": "opencode-snapshot-readonly-static-v3",
+      "status": "blocked",
+      "reason": "blocked-authentication",
+      "identity": {
+        "version": "1.18.25",
+        "hashes": {
+          "executable_sha256": "88eed7b0c2431162422cb0625aa68a55239970446951e4c9aad6a4f1fbc232b9"
+        },
+        "probe_revision": "opencode-static-probe-20260830-v3",
+        "provenance": "PR #41 snapshot policy descriptor and static identity; authentication is not current live evidence"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "authentication",
+        "approved": false,
+        "side_effects": [
+          "login",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 41,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/41",
+        "head_sha": "16ffe9de151371db8105fcab7ded4843759d752a",
+        "issue_number": 22,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/22"
+      },
+      "cell_digest": "001dac666c61e71a8ff428cd74867453030e10c84a63e7baa19f69fdc0faa8c2"
+    },
+    {
+      "profile_id": "cursor/direct-plan",
+      "provider": "cursor",
+      "profile": "direct-plan",
+      "permission": "read-only",
+      "transport": "argv",
+      "sandbox_policy": "cursor-advertised-plan-v1",
+      "status": "not-run",
+      "reason": "phase-not-attempted",
+      "identity": {
+        "version": "2026.05.09-0afadcc",
+        "hashes": {
+          "wrapper_sha256": "b7babf47d8b1eee28ac27a74affa02a559bb38103a6e71fbb1f120805d51fedf",
+          "bundle_sha256": "cbe95bd372a165cebd83658a293d844cae2dfddc7e1e0aef59e704d16d960257",
+          "node_sha256": "336b5b3ebc5deb86df842102b20b6e4761605b7a667823e68dda7761b91a161b",
+          "auth_observation_sha256": "a7310241b8829d8da6ff8dd753acb0841e2967fbafac6e3d8170e100f6ccc105"
+        },
+        "probe_revision": "cursor-static-preflight-20260830",
+        "provenance": "PR #40 static installation identity; historical authentication observation is unverified"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "authentication",
+        "approved": false,
+        "side_effects": [
+          "login",
+          "provider-turn",
+          "package-install"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 40,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/40",
+        "head_sha": "9b161824ed2ca0d5dbb000fc64187219293fb162",
+        "issue_number": 23,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/23"
+      },
+      "cell_digest": "b3730fd782c6d236c52496b8f201f51714e85a200f3fa4c319fa422c3650cd81"
+    },
+    {
+      "profile_id": "cursor/acp",
+      "provider": "cursor",
+      "profile": "acp",
+      "permission": "read-only",
+      "transport": "stdin",
+      "sandbox_policy": "cursor-acp-no-policy-v1",
+      "status": "not-run",
+      "reason": "phase-not-attempted",
+      "identity": {
+        "version": "2026.05.09-0afadcc",
+        "hashes": {
+          "wrapper_sha256": "b7babf47d8b1eee28ac27a74affa02a559bb38103a6e71fbb1f120805d51fedf",
+          "bundle_sha256": "cbe95bd372a165cebd83658a293d844cae2dfddc7e1e0aef59e704d16d960257",
+          "node_sha256": "336b5b3ebc5deb86df842102b20b6e4761605b7a667823e68dda7761b91a161b"
+        },
+        "probe_revision": "cursor-static-preflight-20260830",
+        "provenance": "PR #40 ACP descriptor is static only; ACP availability is not a filesystem sandbox"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "authentication",
+        "approved": false,
+        "side_effects": [
+          "login",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 40,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/40",
+        "head_sha": "9b161824ed2ca0d5dbb000fc64187219293fb162",
+        "issue_number": 23,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/23"
+      },
+      "cell_digest": "3114da8dd390d5a55871f88e23fcef4dcff84ad78543e91adee651336c49a2e2"
+    },
+    {
+      "profile_id": "devin/direct-auto-sandbox-read-only",
+      "provider": "devin",
+      "profile": "direct-auto-sandbox-read-only",
+      "permission": "read-only",
+      "transport": "stdin",
+      "sandbox_policy": "devin-direct-auto-sandbox-readonly-v2",
+      "status": "blocked",
+      "reason": "blocked-account",
+      "identity": {
+        "version": "3000.6.7 build 260a97c8",
+        "hashes": {
+          "executable_sha256": "82a95b4c7c4bfd73a3ad8ac31207d7ba815ceab2c2fc4a432d002adf7fe43590"
+        },
+        "probe_revision": "devin-static-probe-20260830-v2",
+        "provenance": "PR #38 exact executable and signing metadata; current account tool-turn is not established"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "account",
+        "approved": false,
+        "side_effects": [
+          "account-change",
+          "provider-turn",
+          "tier-change"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 38,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/38",
+        "head_sha": "120fa0f1e64b06e00fa0a1dd8e330051eb84f5c9",
+        "issue_number": 24,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/24"
+      },
+      "cell_digest": "e90c488f6cc86d4cf81a7a3e355df5d68ff5775cd5e5b42d53e8b53e347e3c93"
+    },
+    {
+      "profile_id": "devin/native-acp-review-no-sandbox",
+      "provider": "devin",
+      "profile": "native-acp-review-no-sandbox",
+      "permission": "read-only",
+      "transport": "stdin",
+      "sandbox_policy": "devin-native-acp-review-nonsandbox-v2",
+      "status": "blocked",
+      "reason": "blocked-account",
+      "identity": {
+        "version": "3000.6.7 build 260a97c8",
+        "hashes": {
+          "executable_sha256": "82a95b4c7c4bfd73a3ad8ac31207d7ba815ceab2c2fc4a432d002adf7fe43590"
+        },
+        "probe_revision": "devin-static-probe-20260830-v2",
+        "provenance": "PR #38 native ACP descriptor; tool turn and sandbox control are not established"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "account",
+        "approved": false,
+        "side_effects": [
+          "account-change",
+          "provider-turn",
+          "tier-change"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 38,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/38",
+        "head_sha": "120fa0f1e64b06e00fa0a1dd8e330051eb84f5c9",
+        "issue_number": 24,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/24"
+      },
+      "cell_digest": "cb4ec4b7db7f6cee38d68741748539d0bfabe20006312b0b95f24346bace576b"
+    },
+    {
+      "profile_id": "antigravity/raw-workspace",
+      "provider": "antigravity",
+      "profile": "raw-workspace",
+      "permission": "read-only",
+      "transport": "print",
+      "sandbox_policy": "antigravity-raw-workspace-readonly-v1",
+      "status": "rejected",
+      "reason": "boundary-violation",
+      "identity": {
+        "version": "agy 1.1.22",
+        "hashes": {
+          "executable_sha256": "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
+        },
+        "probe_revision": "antigravity-static-probe-20260830-v3",
+        "provenance": "PR #42 historical outside-read observation; signer metadata is not current live evidence"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "historical-unavailable",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "safety-revalidation",
+        "approved": false,
+        "side_effects": [
+          "provider-turn",
+          "workspace-read"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 42,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/42",
+        "head_sha": "aa767e89ad42b4fd1d6dcff9394c1a48d4ef019b",
+        "issue_number": 25,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/25"
+      },
+      "historical_evidence": {
+        "status": "rejected",
+        "reason": "boundary-violation",
+        "scope": "historical-unverified",
+        "not_current_evidence": true,
+        "observed_at": "2026-08-29",
+        "source_verification": "caller-supplied-unverified",
+        "source_digest": null,
+        "verification_status": "historical-unverified",
+        "evidence": [
+          {
+            "tool": "filesystem",
+            "operation": "read",
+            "target": "outside",
+            "result": "allowed",
+            "digest": "82ac65a092ba4c6efdb7946bfd1917c2c9f2c10d1f2da0a4d9630111b3ea1ba2"
+          }
+        ]
+      },
+      "cell_digest": "d1bf6b69379d435b5e8d375689eeb902d1ef0492e87d82158bb0ed714f0aee4a"
+    },
+    {
+      "profile_id": "antigravity/snapshot",
+      "provider": "antigravity",
+      "profile": "snapshot",
+      "permission": "read-only",
+      "transport": "print",
+      "sandbox_policy": "antigravity-snapshot-seatbelt-readonly-v1",
+      "status": "blocked",
+      "reason": "outer-sandbox-unverified",
+      "identity": {
+        "version": "agy 1.1.22",
+        "hashes": {
+          "executable_sha256": "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
+        },
+        "probe_revision": "antigravity-static-probe-20260830-v3",
+        "provenance": "PR #42 snapshot and outer-sandbox descriptors are static only"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "platform",
+        "approved": false,
+        "side_effects": [
+          "outer-sandbox-start",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 42,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/42",
+        "head_sha": "aa767e89ad42b4fd1d6dcff9394c1a48d4ef019b",
+        "issue_number": 25,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/25"
+      },
+      "cell_digest": "7cadf7938e8b29a57e16a6ff317aa58177be18406defc0c4c39af7ae7c64a764"
+    },
+    {
+      "profile_id": "hermes/direct-local-oneshot",
+      "provider": "hermes",
+      "profile": "direct-local-oneshot",
+      "permission": "read-only",
+      "transport": "argv",
+      "sandbox_policy": "hermes-direct-local-oneshot-v1",
+      "status": "rejected",
+      "reason": "boundary-violation",
+      "identity": {
+        "version": "0.20.4 release 2026.8.18",
+        "source_commit": "9162ea6db1fe0f57d6fc4de5120fac5c5a1938be",
+        "hashes": {
+          "launcher_sha256": "f2e2083aeab61839230ee3b19932e7302a5302261ec2fb3bcb0c45def48102df",
+          "target_sha256": "5e2ec9e800822fddae84ef1f337cc3b9ebb5c1ee7fcc8b28df7dfb91c9a8d75c",
+          "historical_source_artifact_sha256": "0238a41c5fd6e2def4a1457d5a21e52d565ada836d1e9e9555098db65aefd4c7"
+        },
+        "probe_revision": "hermes-probe-20260830-v2",
+        "provenance": "PR #37 historical direct write observations; current rerun was not performed"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "historical-unavailable",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "safety-revalidation",
+        "approved": false,
+        "side_effects": [
+          "provider-turn",
+          "workspace-write",
+          "outside-write"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 37,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/37",
+        "head_sha": "0aff332a5ebdcdd1be874bbc310e4b8c572c85d6",
+        "issue_number": 26,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/26"
+      },
+      "historical_evidence": {
+        "status": "rejected",
+        "reason": "boundary-violation",
+        "scope": "historical-unverified",
+        "not_current_evidence": true,
+        "observed_at": "2026-08-29",
+        "source_verification": "verified",
+        "source_digest": "0238a41c5fd6e2def4a1457d5a21e52d565ada836d1e9e9555098db65aefd4c7",
+        "verification_status": "historical-unverified",
+        "evidence": [
+          {
+            "tool": "filesystem",
+            "operation": "write",
+            "target": "workspace",
+            "result": "allowed",
+            "digest": "0f26a274496260c54e7d2cf1c09cd17c9f9d08a5c5de3a4a29b6e9d076eee719"
+          },
+          {
+            "tool": "filesystem",
+            "operation": "write",
+            "target": "git",
+            "result": "allowed",
+            "digest": "1ce6f52cd48c89a8bdde06e30a7912fa46191da64123d55232deb2fa1cf0fac1"
+          },
+          {
+            "tool": "filesystem",
+            "operation": "write",
+            "target": "outside",
+            "result": "allowed",
+            "digest": "aac87676a10c88d062869401608e2649b6c1f524474f1c4c652f52dd38c9985d"
+          }
+        ]
+      },
+      "cell_digest": "867c64bab9057a7fe3086a6102ba956cb955c66e51d3cc030a09b3725c8e70df"
+    },
+    {
+      "profile_id": "hermes/acp",
+      "provider": "hermes",
+      "profile": "acp",
+      "permission": "read-only",
+      "transport": "stdin",
+      "sandbox_policy": "hermes-acp-not-a-filesystem-sandbox-v1",
+      "status": "not-run",
+      "reason": "not-a-filesystem-sandbox",
+      "identity": {
+        "version": "0.20.4 release 2026.8.18",
+        "source_commit": "9162ea6db1fe0f57d6fc4de5120fac5c5a1938be",
+        "hashes": {
+          "target_sha256": "5e2ec9e800822fddae84ef1f337cc3b9ebb5c1ee7fcc8b28df7dfb91c9a8d75c"
+        },
+        "probe_revision": "hermes-probe-20260830-v2",
+        "provenance": "PR #37 ACP availability is not filesystem sandbox evidence"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "filesystem-sandbox",
+        "approved": false,
+        "side_effects": [
+          "provider-turn",
+          "workspace-read"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 37,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/37",
+        "head_sha": "0aff332a5ebdcdd1be874bbc310e4b8c572c85d6",
+        "issue_number": 26,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/26"
+      },
+      "cell_digest": "6a517ffbcbdad918d49801379f269cade9a805c8bc714394afeb293be3f5eb5e"
+    },
+    {
+      "profile_id": "hermes/external-docker",
+      "provider": "hermes",
+      "profile": "external-docker",
+      "permission": "read-only",
+      "transport": "argv",
+      "sandbox_policy": "hermes-external-docker-v1",
+      "status": "blocked",
+      "reason": "blocked-docker",
+      "identity": {
+        "version": "0.20.4 release 2026.8.18",
+        "source_commit": "9162ea6db1fe0f57d6fc4de5120fac5c5a1938be",
+        "hashes": {
+          "target_sha256": "5e2ec9e800822fddae84ef1f337cc3b9ebb5c1ee7fcc8b28df7dfb91c9a8d75c"
+        },
+        "probe_revision": "hermes-probe-20260830-v2",
+        "provenance": "PR #37 external Docker policy and image are unverified"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "docker",
+        "approved": false,
+        "side_effects": [
+          "daemon-start",
+          "image-pull",
+          "container-start"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 37,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/37",
+        "head_sha": "0aff332a5ebdcdd1be874bbc310e4b8c572c85d6",
+        "issue_number": 26,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/26"
+      },
+      "cell_digest": "a8a182a5c0a0a00a7f4fa6dd4db4adeffc9ca4ccb505f9d34c54701ccff3b903"
+    },
+    {
+      "profile_id": "hermes/external-openshell",
+      "provider": "hermes",
+      "profile": "external-openshell",
+      "permission": "read-only",
+      "transport": "argv",
+      "sandbox_policy": "hermes-external-openshell-v1",
+      "status": "blocked",
+      "reason": "blocked-platform",
+      "identity": {
+        "version": "0.20.4 release 2026.8.18",
+        "source_commit": "9162ea6db1fe0f57d6fc4de5120fac5c5a1938be",
+        "hashes": {
+          "target_sha256": "5e2ec9e800822fddae84ef1f337cc3b9ebb5c1ee7fcc8b28df7dfb91c9a8d75c"
+        },
+        "probe_revision": "hermes-probe-20260830-v2",
+        "provenance": "PR #37 external OpenShell platform and policy are unverified"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "platform",
+        "approved": false,
+        "side_effects": [
+          "runtime-start",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 37,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/37",
+        "head_sha": "0aff332a5ebdcdd1be874bbc310e4b8c572c85d6",
+        "issue_number": 26,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/26"
+      },
+      "cell_digest": "a052aaaa7901e61d9d574b05aef682710c7d7b031246ad4c6ce67fe4c3407c64"
+    },
+    {
+      "profile_id": "openclaw/direct-sandbox-off",
+      "provider": "openclaw",
+      "profile": "direct-sandbox-off",
+      "permission": "not-applicable",
+      "transport": "argv",
+      "sandbox_policy": "none",
+      "status": "not-run",
+      "reason": "sandbox-off-is-not-a-safe-profile",
+      "identity": {
+        "version": "2026.7.1 build 2d2ddc4",
+        "hashes": {
+          "executable_sha256": "f643b005d6db233a0b45204e8d8e943256874ccc6897b8a6e0cf42a9b376a188"
+        },
+        "probe_revision": "openclaw-docker-probe-20260830-v1",
+        "provenance": "PR #39 direct sandbox-off descriptor; no safety profile is claimed"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {},
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "safety-profile",
+        "approved": false,
+        "side_effects": [
+          "provider-turn",
+          "workspace-read"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 39,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/39",
+        "head_sha": "aff5423ec5e1dc8066cbc9edb2c1f811bc734474",
+        "issue_number": 27,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/27"
+      },
+      "cell_digest": "7811f0c7ee1baf01d524af8d2e7b71caf1db75d15e34f5a61302361d243595e7"
+    },
+    {
+      "profile_id": "openclaw/docker-read-only",
+      "provider": "openclaw",
+      "profile": "docker-read-only",
+      "permission": "read-only",
+      "transport": "argv",
+      "sandbox_policy": "openclaw-docker-sandbox-v1-read-only",
+      "status": "blocked",
+      "reason": "blocked-image",
+      "identity": {
+        "version": "2026.7.1 build 2d2ddc4",
+        "hashes": {
+          "executable_sha256": "f643b005d6db233a0b45204e8d8e943256874ccc6897b8a6e0cf42a9b376a188"
+        },
+        "probe_revision": "openclaw-docker-probe-20260830-v1",
+        "provenance": "PR #39 Docker image, context, and endpoint pins are unset"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "docker",
+        "approved": false,
+        "side_effects": [
+          "daemon-start",
+          "image-pull",
+          "container-start",
+          "container-remove"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 39,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/39",
+        "head_sha": "aff5423ec5e1dc8066cbc9edb2c1f811bc734474",
+        "issue_number": 27,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/27"
+      },
+      "cell_digest": "c1f2d3534299e142096c4bb888fc405e939d0ca950742615cb7ad682711c5b99"
+    },
+    {
+      "profile_id": "openclaw/docker-workspace-write",
+      "provider": "openclaw",
+      "profile": "docker-workspace-write",
+      "permission": "workspace-write",
+      "transport": "argv",
+      "sandbox_policy": "openclaw-docker-sandbox-v1-workspace-write",
+      "status": "blocked",
+      "reason": "blocked-image",
+      "identity": {
+        "version": "2026.7.1 build 2d2ddc4",
+        "hashes": {
+          "executable_sha256": "f643b005d6db233a0b45204e8d8e943256874ccc6897b8a6e0cf42a9b376a188"
+        },
+        "probe_revision": "openclaw-docker-probe-20260830-v1",
+        "provenance": "PR #39 Docker workspace-write profile is not enabled without audited image pins"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-write": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "docker",
+        "approved": false,
+        "side_effects": [
+          "daemon-start",
+          "image-pull",
+          "container-start",
+          "container-remove"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 39,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/39",
+        "head_sha": "aff5423ec5e1dc8066cbc9edb2c1f811bc734474",
+        "issue_number": 27,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/27"
+      },
+      "cell_digest": "685708e3453e7b75cabeff9861513377f57e0de20a4f53cccf1cd8f726acc96d"
+    },
+    {
+      "profile_id": "grok/direct",
+      "provider": "grok",
+      "profile": "direct",
+      "permission": "read-only",
+      "transport": "file",
+      "sandbox_policy": "grok-direct-probe-v2",
+      "status": "blocked",
+      "reason": "blocked-authentication",
+      "identity": {
+        "version": "1.0.13 alpha commit 5e9a58528b76",
+        "hashes": {
+          "binary_sha256": "8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80",
+          "wrapper_sha256": "13a2405556fe9e86108731a801771db1b9a742ef11e934ab2cb886f1089aeef0",
+          "package_sha256": "5c1a4a21cb52065961ba51cc74a4fc45984ccdf72d38863f4c7dca2214b924ca"
+        },
+        "probe_revision": "grok-probe-20260830-v2",
+        "provenance": "PR #43 static identity and unverified authentication marker; credential content is not recorded"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "authentication",
+        "approved": false,
+        "side_effects": [
+          "login",
+          "oauth",
+          "api-key-setup",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 43,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/43",
+        "head_sha": "bb8cdc7d0a439a316835f618c34672af355d858e",
+        "issue_number": 28,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/28"
+      },
+      "cell_digest": "7dd2c3339e39f3b3bbeb68b80125b3d82667d92c0e04d7d4bc868c81d847e9a8"
+    },
+    {
+      "profile_id": "grok/native-stdio",
+      "provider": "grok",
+      "profile": "native-stdio",
+      "permission": "read-only",
+      "transport": "stdin",
+      "sandbox_policy": "grok-native-stdio-unverified-v2",
+      "status": "blocked",
+      "reason": "blocked-authentication",
+      "identity": {
+        "version": "1.0.13 alpha commit 5e9a58528b76",
+        "hashes": {
+          "binary_sha256": "8669e0fdadceec25b8c159c355f427ffbd82583525d774b6ab1522197ea83b80",
+          "wrapper_sha256": "13a2405556fe9e86108731a801771db1b9a742ef11e934ab2cb886f1089aeef0",
+          "package_sha256": "5c1a4a21cb52065961ba51cc74a4fc45984ccdf72d38863f4c7dca2214b924ca"
+        },
+        "probe_revision": "grok-probe-20260830-v2",
+        "provenance": "PR #43 native stdio descriptor; authentication and permission enforcement are not verified"
+      },
+      "live_phase": {
+        "status": "not-run",
+        "attempted": false,
+        "evidence_digest": null
+      },
+      "phases": {
+        "positive-read": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "outside-path": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "symlink": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "git": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "secret": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "local-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "external-network": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "process": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        },
+        "cleanup": {
+          "attempted": false,
+          "outcome": "not-run",
+          "tool_used": false,
+          "evidence": []
+        }
+      },
+      "cleanup_evidence": {
+        "status": "no-evidence",
+        "attempted": false,
+        "inventory": null,
+        "evidence": []
+      },
+      "approval_gate": {
+        "required": "authentication",
+        "approved": false,
+        "side_effects": [
+          "login",
+          "oauth",
+          "api-key-setup",
+          "provider-turn"
+        ]
+      },
+      "safe_reproduction": "static-reference",
+      "source": {
+        "pr_number": 43,
+        "pr_url": "https://github.com/iamtatsuki05/dotfiles/pull/43",
+        "head_sha": "bb8cdc7d0a439a316835f618c34672af355d858e",
+        "issue_number": 28,
+        "issue_url": "https://github.com/iamtatsuki05/dotfiles/issues/28"
+      },
+      "cell_digest": "6e06601b7c9f31dea971f65a5a5ed8a642a3dcff3987a4c81e5b2f0c4963c3f1"
+    }
+  ]
+}
