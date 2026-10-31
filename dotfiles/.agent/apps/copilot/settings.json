@@ -59,5 +59,16 @@
         "timeoutSec": 10
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "tokeneconomizer": {
+      "source": {
+        "source": "directory",
+        "path": "~/.local/share/dotfiles/tokeneconomizer"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "tokeneconomizer@tokeneconomizer": true
   }
 }

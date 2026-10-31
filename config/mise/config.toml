@@ -1,7 +1,7 @@
 [tools]
 # lang
 bun = "latest"
-node = "22"
+node = "24"
 go = "1.25"
 golangci-lint = "latest"
 task = "latest"
@@ -15,6 +15,7 @@ poetry = "latest"
 rust = "latest"
 chezmoi = "latest"
 # ai
+"github:rtk-ai/rtk" = "0.51.0"
 codex = "latest"
 claude-code = "latest"
 "github:ogulcancelik/herdr" = "latest"
@@ -24,6 +25,8 @@ opencode = "latest"
 "npm:@github/copilot" = "latest"
 "npm:openclaw" = "latest"
 "npm:@xai-official/grok" = "latest"
+"npm:@deepseek-ai/dsh" = "0.2.0-rc.2"
+"npm:@earendil-works/pi-coding-agent" = "1.1.0"
 # infra
 docker-cli = "latest"
 docker-compose = "latest"
@@ -109,6 +112,16 @@ run = "zsh tests/run.sh"
 description = "AI agent設定/hooks/skillsを同期"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_agent_files.sh"
+
+[tasks.tokeneconomizer-setup]
+description = "対応AI agentへTokenEconomizerの固定版を導入"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "bash scripts/setup_tokeneconomizer.sh"
+
+[tasks.steermouse-setup]
+description = "SteerMouseの設定フォルダをリポジトリにリンク"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "bash scripts/setup_steermouse.sh"
 
 [tasks.hermes-setup]
 description = "Hermes Agentを公式installerで導入"

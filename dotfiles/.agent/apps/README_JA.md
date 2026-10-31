@@ -22,6 +22,8 @@ English version: [README.md](README.md)
 | `opencode/` | opencode | opencode config と JavaScript plugin。 |
 | `openclaw/` | OpenClaw | OpenClaw workspace と MCP 設定。 |
 | `grok/` | Grok CLI (xAI) | Grok CLI config と MCP 設定。 |
+| `deepseek/` | DeepSeek Harness | Native hooks、MCPのhome patch、RTK利用指示。 |
+| `pi/` | Pi | モデル既定値、MCP、native hooks、公式RTK extension。 |
 
 ## ファイル種別
 

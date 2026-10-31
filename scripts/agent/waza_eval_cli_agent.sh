@@ -12,7 +12,7 @@ Usage:
   zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
 
 Agents:
-  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, all
+  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, deepseek, pi, all
 
 Aliases:
   claude-code -> claude
@@ -36,6 +36,7 @@ EOF
 
 canonical_agent_specs() {
   print -r -- "codex"$'\t'"codex"
+  print -r -- "deepseek"$'\t'"deepseek"
   print -r -- "claude"$'\t'"claude"
   print -r -- "claude-code"$'\t'"claude"
   print -r -- "agy"$'\t'"antigravity"
@@ -50,6 +51,7 @@ canonical_agent_specs() {
   print -r -- "hermes-agent"$'\t'"hermes"
   print -r -- "openclaw"$'\t'"openclaw"
   print -r -- "grok"$'\t'"grok"
+  print -r -- "pi"$'\t'"pi"
   print -r -- "all"$'\t'"all"
 }
 
@@ -69,7 +71,7 @@ canonical_agent() {
 }
 
 all_cli_agents() {
-  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok
+  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok deepseek pi
 }
 
 agents_for() {
@@ -292,6 +294,9 @@ run_cli_agent() {
     codex)
       run_direct_or_mise codex codex exec -C "$workspace" "$prompt" >"$stdout_file" 2>"$stderr_file"
       ;;
+    deepseek)
+      (cd "$workspace" && run_direct_or_mise "npm:@deepseek-ai/dsh" dsh headless -- "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
     claude)
       (cd "$workspace" && run_direct_or_mise claude-code claude -p "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
@@ -342,6 +347,13 @@ run_cli_agent() {
     grok)
       (cd "$workspace" && run_direct_or_mise "npm:@xai-official/grok" grok \
         -p "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
+    pi)
+      (cd "$workspace" && run_direct_or_mise "npm:@earendil-works/pi-coding-agent" pi \
+        --print \
+        --no-session \
+        -- \
+        "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;
     *)
       fail "unsupported agent: $agent"

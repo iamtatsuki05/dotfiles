@@ -11,6 +11,7 @@ import pytest
 from agent_job_scheduler.adapters import AdapterRegistry
 from agent_job_scheduler.ledger import Ledger
 from agent_job_scheduler.models import ActiveRun, Agent, CommandSpec, JobRecord, JobStatus
+from agent_job_scheduler.rate_limit import detect_rate_limit
 from agent_job_scheduler.runtime import build_runtime_paths, ensure_runtime_layout
 from agent_job_scheduler.scheduler import Scheduler
 from agent_job_scheduler.settings import SchedulerSettings, load_settings
@@ -124,6 +125,18 @@ def test_settings_merge_new_default_rate_limit_profiles_with_existing_overrides(
     assert set(settings.rate_limit_profiles) == {agent.value for agent in Agent}
     assert settings.rate_limit_profiles["codex"].markers == ["custom marker"]
     assert settings.rate_limit_profiles["codex"].default_backoff_seconds == 123
+
+
+def test_new_agents_detect_default_rate_limits() -> None:
+    settings = SchedulerSettings.model_validate({})
+    observed_at = "2026-04-19T12:00:00+09:00"
+
+    for agent in (Agent.DEEPSEEK, Agent.PI):
+        window = detect_rate_limit(agent, "", "rate limit", observed_at, settings)
+
+        assert window is not None
+        assert window.reason == "rate limit"
+        assert window.blocked_until == "2026-04-19T12:15:00+09:00"
 
 
 def test_list_active_runs_returns_sorted_records(tmp_path: Path) -> None:

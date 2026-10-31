@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 10"
+  assert_contains_text "$output" "registered upstream skills: 15"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -30,6 +30,11 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "pstack-principles"
   assert_contains_text "$output" "delegate-skills"
   assert_contains_text "$output" "chatgpt-pro-line"
+  assert_contains_text "$output" "cognitive-rhythm-writing"
+  assert_contains_text "$output" "japanese-tech-writing"
+  assert_contains_text "$output" "k16shikano-gist-license"
+  assert_contains_text "$output" "core-message-writing"
+  assert_contains_text "$output" "consulting-pptx-skill"
 }
 
 test_pstack_principles_preserve_explicit_invocation() {
@@ -91,9 +96,9 @@ test_manifest_tracks_current_upstream_skill_paths() {
   local manifest_text
   manifest_text="$(cat "$MANIFEST")"
 
-  assert_contains_text "$manifest_text" '"source_path": "meta/empirical-prompt-tuning/SKILL-ja.md"'
+  assert_contains_text "$manifest_text" '"source_path": "empirical-prompt-tuning/SKILL-ja.md"'
   assert_contains_text "$manifest_text" '"source_path": "skills/herdr/SKILL.md"'
-  assert_not_contains_text "$manifest_text" '"source_path": "empirical-prompt-tuning/SKILL-ja.md"'
+  assert_not_contains_text "$manifest_text" '"source_path": "meta/empirical-prompt-tuning/SKILL-ja.md"'
 }
 
 test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
@@ -101,17 +106,16 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   local pin
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" superpowers)"
-  [[ "$pin" == "b36e0829c6d0140e93cfef2ca599b1b07d4a7797" ]] || fail "unexpected superpowers pin: $pin"
+  [[ "$pin" == "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b" ]] || fail "unexpected superpowers pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" empirical-prompt-tuning)"
-  [[ "$pin" == "7a0d72866a0bb3e9ac3e2768c328b09ba2bc40c4" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
+  [[ "$pin" == "ab4eb2f7a92a13fb37c225ab427f2f492143ace1" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" herdr)"
-  [[ "$pin" == "c2637dc182ddc5425108824d5ed15d24ce38c4e3" ]] || fail "unexpected herdr pin: $pin"
+  [[ "$pin" == "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde" ]] || fail "unexpected herdr pin: $pin"
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" mattpocock-skills)"
-  [[ "$pin" == "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76" ]] || fail "unexpected mattpocock-skills pin: $pin"
-  # This candidate adds query telemetry and an unpinned runtime, so it remains rejected.
+  [[ "$pin" == "a496f5513d4a4cf889bc48e189e579f4b0bdf6aa" ]] || fail "unexpected mattpocock-skills pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" modern-web-guidance)"
-  [[ "$pin" == "65d7f20ac85517a362107ce89b7be7f905105fd3" ]] || fail "unexpected modern-web-guidance pin: $pin"
+  [[ "$pin" == "4f2b13e25c5815b3f080ca0d983e828d96561a0f" ]] || fail "unexpected modern-web-guidance pin: $pin"
 
   assert_file "$skills_root/dispatching-parallel-agents/LICENSE"
   assert_file "$skills_root/test-driven-development/LICENSE"
@@ -137,9 +141,12 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   assert_contains "$skills_root/herdr/SKILL.md" 'choose the exact `$tmpdir/report.md` path before prompting'
   assert_contains "$skills_root/herdr/SKILL.md" 'reject symlinks'
   assert_contains "$skills_root/herdr/SKILL.md" 'agent_not_ready'
-  assert_contains "$skills_root/herdr/SKILL.md" 'sends text followed by encoded Enter after a short delay'
+  assert_contains "$skills_root/herdr/SKILL.md" 'sends text followed by encoded Enter as one ordered submission'
   assert_not_contains "$skills_root/herdr/SKILL.md" 'reply only with the file path, then read the file directly'
   assert_contains "$skills_root/herdr/LICENSE" 'Apache License'
+
+  assert_contains "$skills_root/codex-delegate/references/dispatch-and-poll.md" '**Preserve read-only review permissions.**'
+  assert_not_contains "$skills_root/codex-delegate/references/dispatch-and-poll.md" 'For a review that needs the network, dispatch under `workspace-write`'
 }
 
 test_superpowers_selection_has_five_non_conflicting_workflows() {
@@ -287,6 +294,75 @@ test_security_prompt_accepts_registered_review_agent() {
   assert_contains_text "$output" "Skill ID: superpowers"
 }
 
+test_review_agent_cli_invocations_preserve_arguments_and_status() {
+  python3 - "$SCRIPT" <<'PY' || fail "review-agent CLI invocation contract failed"
+import importlib.util
+import os
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+spec = importlib.util.spec_from_file_location("agent_skill_upstreams", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+prompt = '-- Keep "quoted" text, $variables, and\nnewlines intact.'
+expected_tools = {
+    "deepseek": "npm:@deepseek-ai/dsh",
+    "pi": "npm:@earendil-works/pi-coding-agent",
+}
+expected_arguments = {
+    "deepseek": ["headless", "--", prompt],
+    "pi": ["--print", "--no-session", "--", prompt],
+}
+
+with TemporaryDirectory() as temporary_directory:
+    root = Path(temporary_directory)
+    fake_bin = root / "bin"
+    fake_bin.mkdir()
+    for binary in ("dsh", "pi"):
+        executable = fake_bin / binary
+        executable.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\0' \"$PWD\" \"$@\" > \"$AGENT_TEST_CAPTURE\"\n"
+            "printf 'mock review output\\n'\n"
+            "exit \"${AGENT_TEST_STATUS:-0}\"\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    os.environ["PATH"] = f"{fake_bin}:{os.environ['PATH']}"
+    for agent, expected_tool in expected_tools.items():
+        module.validate_review_agent(agent)
+        assert module.MISE_TOOLS_BY_REVIEW_AGENT[agent] == expected_tool
+        for status in (0, 23):
+            capture = root / f"{agent}-{status}.argv"
+            prompt_file = root / f"{agent}-{status}.prompt"
+            report_file = root / f"{agent}-{status}.report"
+            prompt_file.write_text(prompt, encoding="utf-8")
+            os.environ["AGENT_TEST_CAPTURE"] = str(capture)
+            os.environ["AGENT_TEST_STATUS"] = str(status)
+
+            if status == 0:
+                module.run_review_agent(agent, prompt, prompt_file, report_file)
+                assert report_file.read_text(encoding="utf-8") == "mock review output\n"
+            else:
+                try:
+                    module.run_review_agent(agent, prompt, prompt_file, report_file)
+                except module.UpstreamError:
+                    pass
+                else:
+                    raise AssertionError(f"{agent} accepted mocked exit status {status}")
+
+            captured = capture.read_bytes().split(b"\0")
+            assert captured[-1] == b""
+            cwd = Path(os.fsdecode(captured[0]))
+            arguments = [os.fsdecode(value) for value in captured[1:-1]]
+            assert cwd == module.REPO_ROOT, (agent, cwd, module.REPO_ROOT)
+            assert arguments == expected_arguments[agent], (agent, arguments)
+PY
+}
+
 test_security_prompt_rejects_unknown_review_agent() {
   local output
   set +e
@@ -346,7 +422,12 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -366,6 +447,15 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: 1212121212121212121212121212121212121212"
   assert_contains_text "$output" "Skill ID: delegate-skills"
   assert_contains_text "$output" "candidate_commit: 1515151515151515151515151515151515151515"
+  assert_contains_text "$output" "Skill ID: cognitive-rhythm-writing"
+  assert_contains_text "$output" "Repository: https://gist.github.com/eb2929f13ed19c97188393d297be8432.git"
+  assert_contains_text "$output" "candidate_commit: 1717171717171717171717171717171717171717"
+  assert_contains_text "$output" "Skill ID: japanese-tech-writing"
+  assert_contains_text "$output" "candidate_commit: 1818181818181818181818181818181818181818"
+  assert_contains_text "$output" "Skill ID: core-message-writing"
+  assert_contains_text "$output" "candidate_commit: 2020202020202020202020202020202020202020"
+  assert_contains_text "$output" "Skill ID: k16shikano-gist-license"
+  assert_contains_text "$output" "candidate_commit: 1919191919191919191919191919191919191919"
 }
 
 test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() {
@@ -383,6 +473,11 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed stop-slop" > "$report_dir/stop-slop.md"
   print -r -- "reviewed delegate-skills" > "$report_dir/delegate-skills.md"
   print -r -- "reviewed chatgpt-pro-line" > "$report_dir/chatgpt-pro-line.md"
+  print -r -- "reviewed cognitive-rhythm-writing" > "$report_dir/cognitive-rhythm-writing.md"
+  print -r -- "reviewed japanese-tech-writing" > "$report_dir/japanese-tech-writing.md"
+  print -r -- "reviewed k16shikano-gist-license" > "$report_dir/k16shikano-gist-license.md"
+  print -r -- "reviewed core-message-writing" > "$report_dir/core-message-writing.md"
+  print -r -- "reviewed consulting-pptx-skill" > "$report_dir/consulting-pptx-skill.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -400,7 +495,12 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -418,6 +518,10 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "pstack-principles: plan update"
   assert_contains_text "$output" "stop-slop: plan update"
   assert_contains_text "$output" "candidate=1212121212121212121212121212121212121212"
+  assert_contains_text "$output" "cognitive-rhythm-writing: plan update"
+  assert_contains_text "$output" "candidate=1717171717171717171717171717171717171717"
+  assert_contains_text "$output" "k16shikano-gist-license: plan update"
+  assert_contains_text "$output" "core-message-writing: plan update"
   assert_not_contains_text "$output" "manifest updated"
 
   rm -rf "$report_dir"
@@ -613,7 +717,12 @@ EOF'
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -678,7 +787,12 @@ PY
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -691,10 +805,13 @@ print(float(sys.argv[2]) - float(sys.argv[1]))
 PY
 )"
 
+  # 各 review は sleep 1 なので直列なら 10 秒以上かかる。閾値はその半分にして、
+  # 遅い CI runner (macos-15-intel で 2〜3.5 秒) の process 起動 overhead を吸収しつつ
+  # 並列実行であることだけを確認する。
   python3 - "$elapsed" <<'PY' || fail "expected parallel review execution, elapsed=${elapsed}s"
 import sys
 elapsed = float(sys.argv[1])
-raise SystemExit(0 if elapsed < 1.8 else 1)
+raise SystemExit(0 if elapsed < 5.0 else 1)
 PY
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
@@ -737,7 +854,12 @@ EOF'
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
       --latest-commit stop-slop=1212121212121212121212121212121212121212 \
       --latest-commit delegate-skills=1515151515151515151515151515151515151515 \
-      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 2>&1
+      --latest-commit chatgpt-pro-line=1616161616161616161616161616161616161616 \
+      --latest-commit cognitive-rhythm-writing=1717171717171717171717171717171717171717 \
+      --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
+      --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
+      --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 2>&1
   )"
   local exit_status=$?
   set -e
@@ -809,6 +931,47 @@ EOF'
   rm -rf "$review_dir"
 }
 
+test_repository_url_accepts_github_and_gist_only() {
+  python3 - "$SCRIPT" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("agent_skill_upstreams", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+module.require_https_github_url("https://github.com/example/fixture.git")
+module.require_https_github_url("https://gist.github.com/eb2929f13ed19c97188393d297be8432.git")
+for rejected in (
+    "https://gist.github.com/k16shikano/eb2929f13ed19c97188393d297be8432.git",
+    "https://gist.github.com/eb2929f13ed19c97188393d297be8432",
+    "https://gitlab.com/example/fixture.git",
+    "git@github.com:example/fixture.git",
+):
+    try:
+        module.require_https_github_url(rejected)
+    except module.UpstreamError:
+        continue
+    raise SystemExit(f"unexpectedly accepted repository url: {rejected}")
+PY
+}
+
+test_k16shikano_gist_skills_keep_license_and_cross_reference() {
+  local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
+  local skill_name
+  for skill_name in cognitive-rhythm-writing japanese-tech-writing; do
+    assert_file "$skills_root/$skill_name/SKILL.md"
+    assert_file "$skills_root/$skill_name/LICENSE"
+    assert_file "$skills_root/$skill_name/LICENSE-NOTICE.ja.md"
+    assert_contains "$skills_root/$skill_name/SKILL.md" "name: $skill_name"
+    assert_contains "$skills_root/$skill_name/SKILL.md" "license: Unlicense"
+    assert_contains "$skills_root/$skill_name/LICENSE" "released into the public domain"
+    assert_contains "$skills_root/$skill_name/LICENSE-NOTICE.ja.md" "public gist"
+  done
+  cmp -s "$skills_root/cognitive-rhythm-writing/LICENSE" "$skills_root/japanese-tech-writing/LICENSE" || fail "Unlicense copies differ"
+  assert_contains "$skills_root/cognitive-rhythm-writing/SKILL.md" '../japanese-tech-writing/SKILL.md'
+}
+
 test_mise_has_agent_skill_update_task() {
   local mise_config="$REPO_ROOT/config/mise/config.toml"
 
@@ -830,6 +993,7 @@ main() {
   test_updates_accepts_fixture_ls_remote_output
   test_security_prompt_accepts_commit_alias
   test_security_prompt_accepts_registered_review_agent
+  test_review_agent_cli_invocations_preserve_arguments_and_status
   test_security_prompt_rejects_unknown_review_agent
   test_security_prompt_accepts_custom_review_prompt
   test_security_prompt_all_generates_prompts_for_registered_skills
@@ -842,6 +1006,8 @@ main() {
   test_update_blocks_when_agent_review_does_not_approve
   test_update_accepts_approve_with_changes_when_no_blocking_findings
   test_update_can_limit_to_one_skill_with_specific_commit
+  test_repository_url_accepts_github_and_gist_only
+  test_k16shikano_gist_skills_keep_license_and_cross_reference
   test_mise_has_agent_skill_update_task
 }
 

@@ -8,7 +8,7 @@ description: >-
   separate Claude session." Do not trigger merely because the current orchestrator is Claude, and do
   not use when the user asks the current Claude to implement directly without delegation.
 license: MIT
-compatibility: Requires the `claude` CLI (Claude Code) installed and authenticated, Node 18+, and git. The orchestrating agent must be able to run shell commands and read files. Claude's shell sandbox requires macOS, Linux, or WSL2; native Windows launch is pending verification.
+compatibility: Requires the `claude` CLI (Claude Code) installed and authenticated, Node 18+, and git. The orchestrating agent must be able to run shell commands and read files. Claude's shell sandbox requires macOS, Linux, or WSL2; on native Windows the npm `claude.cmd` launch is verified and a direct `claude.exe` launch is pending verification. The optional --autocompact flag requires claude 2.1.221 or newer.
 metadata:
   version: 0.5.0
 ---
@@ -69,12 +69,15 @@ Template and details: [references/writing-the-brief.md](references/writing-the-b
 
 ### 2. Dispatch
 
+Use the bundled relay and the host background-command facility below. Do not install or configure a separate MCP utility as part of delegation.
+
 ```bash
 node "<skill-dir>/scripts/relay.mjs" --brief brief.txt --cd /path/to/repo
 # review/diagnosis only:                 add --read-only
 # continue the latest session:           add --resume-last
 # continue the recorded session:         add --session <id>
 # choose limits:                         add --max-turns 40 --max-budget-usd 10
+# set the auto-compact window:           add --autocompact 400k
 # hard relay deadline:                   add --timeout 2h
 # inspect every option:                  node .../relay.mjs --help
 ```
@@ -85,7 +88,11 @@ The relay runs `claude -p --output-format stream-json --verbose`, sends the brie
 writes artifacts under the system temp directory by default. It never uses `--bg` or `--bare`, and it
 never commits. See [references/dispatch-and-poll.md](references/dispatch-and-poll.md).
 
+`--autocompact <auto|tokens>` passes Claude Code's auto-compact window setting on every new or resumed invocation, and needs Claude Code `2.1.221` or newer — older builds fail the dispatch with `unknown option '--autocompact'`. The installed CLI owns the accepted range (`auto`, or 100k–1M tokens); the relay records the requested value but does not claim that Claude applied or enforced it.
+
 ### 3. Wait
+
+Wait for the bundled relay through the host background-command facility; completion requires process exit and its result file.
 
 The relay blocks until Claude exits. Use the orchestrator's background-command facility, or run it in
 the foreground and wait. Completion means the process exited and `result.json` exists.
@@ -140,7 +147,9 @@ The normal profile is deliberately explicit:
 
 Native Windows does not support Claude's shell sandbox. The relay restricts the tool surface and
 pre-approves PowerShell so the run remains non-interactive, but that shell is not OS-isolated. Native
-`claude.exe` and npm `claude.cmd` launch paths are implemented; Windows verification is pending.
+`claude.exe` and npm `claude.cmd` launch paths are implemented. The `claude.cmd` path has a recorded
+native Windows run (see the README's Verification status); a directly spawned `claude.exe` is not yet
+verified.
 
 `--read-only` uses `plan` mode with only Read, Glob, and Grep. It removes edit, write, and shell paths,
 then compares parsed git porcelain and fingerprints the working-tree identity and index entries of

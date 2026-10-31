@@ -11,6 +11,35 @@ Choose the setup path that matches the host:
 The shell-only path is deliberately narrow. It does not install packages, Nix,
 Homebrew, mise, or another shell, and it does not change the login shell.
 
+## Apply settings only
+
+Use `--only` to select settings on an existing machine. Run from the repository root.
+
+```sh
+zsh main.sh --only config --dry-run
+zsh main.sh --only config
+zsh main.sh --only agent --dry-run
+zsh main.sh --only agent
+zsh main.sh --only config,agent
+```
+
+- `config`: applies the chezmoi-managed `home/` settings and updates the manager and profile markers. Settings owned by Nix / Home Manager are excluded.
+- `agent`: deploys agent configuration, shared instructions, skills, hooks, plugins, pets, and helper commands. Agent `.env` files are also generated or replaced when corresponding values exist in `shell/secrets.env`.
+- `config,agent`: applies ordinary settings first, then agent settings. A failure does not roll back changes already applied.
+
+This path does not run sudo, install applications or dependencies, or install Git hooks.
+`config` requires an already installed chezmoi executable and fails instead of downloading it.
+`--profile cli|full` remains available; the default is `full` on macOS and `cli` on Linux.
+It does not automatically select the saved profile.
+
+`--dry-run` requires `--only`. It previews operations without changing settings, links, permissions, or manager/profile markers.
+Agent secret values are hidden, but ordinary settings previews include configuration content; review output before sharing it.
+An actual apply can replace existing files or links. Agent sync does not edit individual configuration keys.
+Clients are not automatically reloaded or restarted.
+
+Without `--only`, the full setup retains its existing installation steps.
+`--skip-mas-apps` is for full setup and cannot be combined with `--only`.
+
 ## Install prerequisites
 
 Install missing tools through the operating system's package manager or their

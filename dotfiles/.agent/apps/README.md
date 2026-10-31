@@ -21,6 +21,8 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 | `opencode/` | opencode | opencode config and JavaScript plugins. |
 | `openclaw/` | OpenClaw | OpenClaw workspace and MCP configuration. |
 | `grok/` | Grok CLI (xAI) | Grok CLI config and settings. |
+| `deepseek/` | DeepSeek Harness | Native hooks, home MCP patch, and RTK usage guidance. |
+| `pi/` | Pi | Model defaults, MCP, native hooks, and the official RTK extension. |
 
 ## File Types
 

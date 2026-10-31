@@ -13,7 +13,7 @@ import されるものもあります。
 | `alacritty/` | Alacritty terminal config の source。 |
 | `ghostty/` | Ghostty terminal config の source。 |
 | `mise/` | repo 管理の mise tools、tasks、update command。 |
-| `mouse/` | pointing device 設定 export。 |
+| `mouse/` | [SteerMouseの設定本体とデバイス別エクスポート](mouse/README_JA.md)。 |
 | `nix/` | Nix、nix-darwin、Home Manager、package list、migration report。 |
 | `nvim/` | Home Manager で使う Neovim config source。 |
 | `shell/` | chezmoi が使う shell 起動 wrapper と local secret example。 |

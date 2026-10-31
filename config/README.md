@@ -13,7 +13,7 @@ into `$HOME`; many are rendered or imported by scripts.
 | `alacritty/` | Alacritty terminal config source. |
 | `ghostty/` | Ghostty terminal config source. |
 | `mise/` | Repo-managed mise tools, tasks, and update commands. |
-| `mouse/` | Pointing device configuration exports. |
+| `mouse/` | [SteerMouse live settings and per-device exports](mouse/README.md). |
 | `nix/` | Nix, nix-darwin, Home Manager, package lists, and migration reports. |
 | `nvim/` | Neovim config source used by Home Manager. |
 | `shell/` | Shell startup wrappers and the local secret example used by chezmoi. |

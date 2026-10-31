@@ -11,6 +11,35 @@ host に合わせて導入経路を選びます。
 shell 専用経路の範囲は意図的に限定しています。package、Nix、Homebrew、mise、
 別の shell を install せず、login shell も変更しません。
 
+## 設定だけを反映する
+
+既存環境では `--only` で反映対象を選べます。repository 直下で実行してください。
+
+```sh
+zsh main.sh --only config --dry-run
+zsh main.sh --only config
+zsh main.sh --only agent --dry-run
+zsh main.sh --only agent
+zsh main.sh --only config,agent
+```
+
+- `config`: chezmoi が管理する `home/` の設定を反映し、manager と profile の記録を更新します。Nix / Home Manager が管理する設定は対象外です。
+- `agent`: Agent の設定、共通指示、skills、hooks、plugins、pets、補助コマンドを配置します。既存の `shell/secrets.env` に対応する値がある場合は、Agent 用 `.env` も生成・置換します。
+- `config,agent`: 通常設定、Agent 設定の順で反映します。途中で失敗した場合、適用済みの変更は自動では戻しません。
+
+この経路では sudo、アプリ・依存パッケージの導入、Git hook の導入を実行しません。
+`config` には導入済みの chezmoi が必要です。見つからなければ自動取得せず停止します。
+`--profile cli|full` は従来どおり選択でき、省略時は macOS が `full`、Linux が `cli` です。
+保存済み profile を自動選択する指定ではありません。
+
+`--dry-run` は `--only` と併用します。適用予定を表示し、設定・リンク・権限・manager/profile の記録を変更しません。
+Agent の秘密値は表示しませんが、通常設定の preview には設定内容が含まれるため、出力の共有には注意してください。
+実際の適用は既存ファイルやリンクを置き換える場合があります。Agent の同期は設定項目単位の部分編集ではありません。
+反映後の再読み込みや再起動は自動では行いません。
+
+`--only` を付けない全体セットアップは従来の導入処理を維持します。
+`--skip-mas-apps` は全体セットアップ用なので `--only` とは併用できません。
+
 ## 前提を導入する
 
 不足している tool は、OS の package manager または各 tool の公式文書から導入します。
