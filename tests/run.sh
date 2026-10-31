@@ -95,6 +95,7 @@ run_unit_tests() {
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_delegation_analysis.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_html_preview_review.sh"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_skill_publish.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_rtk_setup.py"
   "$TEST_NODE_BIN" --experimental-strip-types --test "$REPO_ROOT/tests/test_pi_integration.mjs"
   "$TEST_NODE_BIN" --test "$REPO_ROOT/tests/test_deepseek_integration.mjs"

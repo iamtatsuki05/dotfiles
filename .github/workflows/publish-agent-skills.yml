@@ -1,0 +1,195 @@
+name: Publish Agent Skills
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "dotfiles/.agent/skills/**"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: publish-agent-skills
+  cancel-in-progress: true
+
+jobs:
+  merge_gate:
+    name: Confirm merged pull request
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.merged.outputs.publish }}
+    steps:
+      - name: Check source commit
+        id: merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          merged_count="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/$SOURCE_REPOSITORY/commits/$SOURCE_SHA/pulls" \
+              --jq "[.[] | select(.merged_at != null and .base.ref == \"main\" and .merge_commit_sha == \"$SOURCE_SHA\")] | length"
+          )"
+          if (( merged_count > 0 )); then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Source commit is not the result of a pull request merged into main"
+          fi
+
+  prepare:
+    name: Prepare reviewed export
+    needs: merge_gate
+    if: needs.merge_gate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merged source
+        # Pin the workflow dependency instead of trusting a mutable tag.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Export allowlisted skills
+        run: |
+          export_dir="$RUNNER_TEMP/skills-export"
+          python3 scripts/export_agent_skills.py --output "$export_dir"
+          test -f "$export_dir/.agent-skills-mirror.json"
+          test -f "$export_dir/.claude-plugin/plugin.json"
+          test -f "$export_dir/.claude-plugin/marketplace.json"
+
+      - name: Package export
+        run: |
+          artifact_dir="$RUNNER_TEMP/skills-artifact"
+          mkdir -p "$artifact_dir"
+          tar -C "$RUNNER_TEMP/skills-export" -czf "$artifact_dir/skills-export.tar.gz" .
+
+      - name: Upload export
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-skills-${{ github.sha }}
+          path: ${{ runner.temp }}/skills-artifact/skills-export.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish reviewed skills
+    needs:
+      - merge_gate
+      - prepare
+    if: >-
+      needs.merge_gate.outputs.publish == 'true' &&
+      needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    environment: skills-publishing
+    env:
+      TARGET_REPOSITORY: iamtatsuki05/skills
+      SOURCE_REPOSITORY: iamtatsuki05/dotfiles
+
+    steps:
+      - name: Download export
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: agent-skills-${{ github.sha }}
+          path: ${{ runner.temp }}/skills-artifact
+
+      - name: Extract and validate export
+        run: |
+          export_dir="$RUNNER_TEMP/skills-export"
+          mkdir -p "$export_dir"
+          tar -C "$export_dir" -xzf "$RUNNER_TEMP/skills-artifact/skills-export.tar.gz"
+          python3 - "$export_dir/.agent-skills-mirror.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert marker == {
+              "schema_version": 1,
+              "source_repository": "iamtatsuki05/dotfiles",
+              "destination_repository": "iamtatsuki05/skills",
+          }
+          PY
+
+      - name: Publish changed export
+        env:
+          GH_TOKEN: ${{ secrets.SKILLS_REPO_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          test -n "$GH_TOKEN" || {
+            echo "SKILLS_REPO_TOKEN is not configured" >&2
+            exit 1
+          }
+
+          source_check_dir="$RUNNER_TEMP/source-verification"
+          git clone --filter=blob:none --no-checkout --depth=1 \
+            "https://github.com/$SOURCE_REPOSITORY.git" "$source_check_dir"
+          current_source_sha="$(git -C "$source_check_dir" rev-parse origin/main)"
+          git -C "$source_check_dir" fetch --depth=1 origin "$SOURCE_SHA"
+          current_skill_tree="$(
+            git -C "$source_check_dir" rev-parse "origin/main:dotfiles/.agent/skills"
+          )"
+          source_skill_tree="$(
+            git -C "$source_check_dir" rev-parse "$SOURCE_SHA:dotfiles/.agent/skills"
+          )"
+          if [[ "$current_skill_tree" != "$source_skill_tree" ]]; then
+            echo "Skip stale skill publication for $SOURCE_SHA; main is $current_source_sha"
+            exit 0
+          fi
+
+          default_branch="$(
+            gh repo view "$TARGET_REPOSITORY" --json defaultBranchRef \
+              --jq '.defaultBranchRef.name // ""'
+          )"
+          if [[ -n "$default_branch" && "$default_branch" != "main" ]]; then
+            echo "Destination default branch must be main, got $default_branch" >&2
+            exit 1
+          fi
+
+          target_dir="$RUNNER_TEMP/skills-repository"
+          export_dir="$RUNNER_TEMP/skills-export"
+          gh auth setup-git --hostname github.com
+          gh repo clone "$TARGET_REPOSITORY" "$target_dir" -- --depth=1
+
+          if git -C "$target_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
+            [[ "$(git -C "$target_dir" branch --show-current)" == "main" ]] || {
+              echo "Destination checkout is not on main" >&2
+              exit 1
+            }
+            python3 - "$target_dir/.agent-skills-mirror.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          if not path.is_file():
+              raise SystemExit("Destination is not an initialized agent-skills mirror")
+          marker = json.loads(path.read_text(encoding="utf-8"))
+          if marker != {
+              "schema_version": 1,
+              "source_repository": "iamtatsuki05/dotfiles",
+              "destination_repository": "iamtatsuki05/skills",
+          }:
+              raise SystemExit("Destination mirror marker is not recognized")
+          PY
+          else
+            git -C "$target_dir" checkout -B main
+          fi
+
+          rsync -a --delete --exclude=.git/ "$export_dir/" "$target_dir/"
+          if git -C "$target_dir" diff --quiet && \
+             test -z "$(git -C "$target_dir" status --short --untracked-files=all)"; then
+            echo "Published skills are already up to date"
+            exit 0
+          fi
+
+          git -C "$target_dir" config user.name "github-actions[bot]"
+          git -C "$target_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$target_dir" add --all
+          git -C "$target_dir" commit -m "sync: update skills from ${SOURCE_SHA:0:12}"
+          git -C "$target_dir" push origin HEAD:main

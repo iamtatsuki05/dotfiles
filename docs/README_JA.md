@@ -21,6 +21,8 @@
   Mac App Store、Brewfile 移行。
 - [AI エージェント設定](ai-agents_JA.md): 管理対象ファイル、同期、Waza 評価、
   Claude Code のログインプロファイル。
+- [Agent skillの公開](agent-skills-publishing_JA.md): skillを変更するPull Requestが
+  `main`へmergeされたときだけ動く、allowlist方式の公開mirror。
 - [秘密情報と安全な操作](secrets-and-safety_JA.md): ローカル認証情報、dry-run、
   バックアップ、破壊的操作。
 
