@@ -62,7 +62,11 @@ the project's **actual** gate commands (discover them from the repo's CLAUDE.md/
 do not assume), and a report contract. Tell Codex it will **not** commit (you will). Keep one task per
 brief. Full guidance and a template: [references/writing-the-brief.md](references/writing-the-brief.md).
 
+This vendored subset uses its bundled relay and the host background-command facility. The separate codex-background MCP utility is not required or installed by this skill.
+
 ### 2. Dispatch
+
+Use the bundled relay and the host background-command facility below. Do not install or configure a separate MCP utility as part of delegation.
 
 Send the brief to Codex with the bundled helper. It wraps `codex exec`, captures the run, and writes a
 structured `result.json` — so your only job is "run a command, read a file." (`<skill-dir>` below is
@@ -75,6 +79,9 @@ orchestrators use that same directory — if unsure where it landed, run
 node "<skill-dir>/scripts/relay.mjs" --brief brief.txt --cd /path/to/repo
 # read-only (review/diagnosis, no edits):   add --read-only
 # isolated review (skip ambient MCP/user config): add --ignore-user-config
+# subagent defaults:                        add --subagent-model <name> --subagent-effort <level>  (again on every resume)
+# web search mode (disabled|cached|indexed|live): add --web-search live  (again on every resume)
+# network inside the sandbox (gh, curl, installs): add --network-access  (on resume: --sandbox workspace-write --network-access)
 # continue the exact Codex session:         add --session <threadId>  (from result.json; send only the delta brief)
 # fallback when no thread id is available:  add --resume-last
 # hard time limit (watchdog):               add --timeout 2h  (default: off; implementation runs routinely need 1-2h)
@@ -86,6 +93,8 @@ dir, so the repo under review stays clean. It **never commits** — see step 5. 
 `result.json` shape: [references/dispatch-and-poll.md](references/dispatch-and-poll.md).
 
 ### 3. Wait for completion
+
+Wait for the bundled relay through the host background-command facility; completion requires process exit and its result file.
 
 The helper blocks until Codex finishes, so back it with whatever your orchestrator offers and resume
 when it returns:

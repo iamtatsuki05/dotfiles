@@ -39,7 +39,10 @@ html,body{margin:0;background:var(--page-bg);font-family:var(--font-sans);color:
 .bar{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5px solid var(--navy);padding-bottom:2.2mm;margin-top:3mm;flex:0 0 auto}
 .logo{font-family:var(--font-serif);font-weight:600;font-size:18pt;color:var(--navy)}
 .date{font-size:7.5pt;letter-spacing:.15em;color:var(--muted)}
-h1{margin:4.5mm 0 0 0;font-family:var(--font-serif);font-size:22pt;line-height:1.3;color:var(--navy);font-weight:600;flex:0 0 auto} /* 2行まで可（意味の切れ目で <br>。slide-rules §2.1） */
+/* 本文ページの上部帯は右上のラベルだけを見せる（資料名はフッターにあるので出さない・罫線も引かない — slide-rules §4.62） */
+.s:not(.cover):not(.chap) .bar{border-bottom:0}
+.s:not(.cover):not(.chap) .bar .logo{visibility:hidden}
+h1{margin:4.5mm 0 0 0;font-family:var(--font-serif);font-size:22pt;line-height:1.3;color:var(--navy);font-weight:600;flex:0 0 auto;word-break:auto-phrase} /* 2行まで可。折り返しは文節単位（auto-phrase・lang="ja" が前提）に任せ、<br> は泣き別れのときだけ（slide-rules §2.13） */
 .c{margin-top:6mm;flex:1;min-height:0;display:flex;flex-direction:column;gap:5mm;margin-bottom:19mm}
 .c>.grid{flex:1;grid-auto-rows:1fr;min-height:0}
 .c>.grid.fix{flex:0 0 auto}
@@ -55,11 +58,10 @@ h1{margin:4.5mm 0 0 0;font-family:var(--font-serif);font-size:22pt;line-height:1
 .bd{padding:3.5mm 4.5mm;font-size:10pt;line-height:1.7;color:var(--ink);flex:1}
 .ref{font-size:8pt;color:var(--accent);font-weight:700;margin-left:auto;white-space:nowrap}
 .rows .r>div:last-child{display:flex;justify-content:space-between;align-items:baseline;gap:4mm} /* 「→ P.n」を右端に */
-.rows .r{display:grid;grid-template-columns:44mm 1fr;gap:6mm;padding:4mm 0;border-top:1px solid var(--rule);font-size:10.5pt;line-height:1.6}
+.rows .r{display:grid;grid-template-columns:48mm 1fr;gap:6mm;padding:3mm 0;border-top:1px solid var(--rule);font-size:11.5pt;line-height:1.45;align-items:center} /* 行は中身の高さ。引き伸ばさない（§4.12） */
 .rows .r:first-child{border-top:0}
-.rows .l{font-family:var(--font-serif);font-weight:700;font-size:11.5pt;color:var(--accent)}
-.c>.rows{flex:1;display:flex;flex-direction:column}
-.c>.rows .r{flex:1;align-items:center}
+.rows .l{font-family:var(--font-serif);font-weight:700;font-size:12.5pt;line-height:1.35;color:var(--accent)} /* 行見出しは列見出し（14.5pt）より小さく本文より大きく（§6） */
+.c>.rows{display:flex;flex-direction:column;margin:auto 0} /* 行の束は中身の高さのまま上下中央に置く（§4.12） */
 .stat{background:var(--navy);color:#fff;padding:4mm 5mm}
 .stat.l{background:var(--soft);color:var(--navy)}
 .stat .lb{font-size:7.5pt;letter-spacing:.1em;font-weight:700;color:var(--cyan)}
@@ -67,19 +69,29 @@ h1{margin:4.5mm 0 0 0;font-family:var(--font-serif);font-size:22pt;line-height:1
 .stat .v{font-size:22pt;font-weight:700;margin:1mm 0}
 .stat .cp{font-size:7.5pt;color:var(--cyan);line-height:1.6}
 .stat.l .cp{color:var(--muted)}
-table{border-collapse:collapse;width:100%;font-size:10pt;flex:0 0 auto}
-th{background:none;text-align:left;padding:2.5mm;font-size:11.5pt;font-weight:700;color:var(--navy);border-bottom:1.8px solid var(--navy)}
-td{padding:4.5mm 2.5mm;border-bottom:1px solid var(--rule);vertical-align:middle;line-height:1.65;color:var(--ink)}
-td.b{font-weight:700;color:var(--navy)}
+table{border-collapse:collapse;width:100%;font-size:11.5pt;flex:0 0 auto}
+th{background:none;text-align:left;padding:2.5mm;font-size:14.5pt;font-weight:700;color:var(--navy);border-bottom:1.8px solid var(--navy)}
+td{padding:3mm 2.5mm;border-bottom:1px solid var(--rule);vertical-align:middle;line-height:1.45;color:var(--ink)} /* 上下の余白と行間を詰めて、行が間延びしないようにする（§4.12） */
+td.b{font-weight:700;color:var(--navy);white-space:nowrap} /* 数字を折らない（「約／86%」と折れると大きさが違って見える） */
 tr:last-child td{border-bottom:0}
-td.ax{font-size:11pt;font-weight:700;color:var(--accent);font-family:var(--font-serif);border-right:1.8px solid var(--navy)}
-th.ax{border-right:1.8px solid var(--navy)}
-.c>table{flex:1 1 0;height:0}
+td.ax{font-size:12.5pt;line-height:1.35;font-weight:700;color:var(--accent);font-family:var(--font-serif);border-right:1.8px solid var(--navy)} /* 行見出しは列の見出し（14.5pt）より小さく、本文（11.5pt）より大きく（§6） */
+th.ax{border-right:0} /* 行の軸の縦線は本文の行だけ。見出しの行に通すと、見出しの下罫より上に線がはみ出る（§6） */
+/* 軸ボックスの表（b09:axb）: 行の軸を左の塗りの箱で示す（slide-rules §6「塗りの軸ボックス」） */
+table.axb{border-collapse:separate;border-spacing:5mm 0;width:calc(100% + 10mm)}
+.c>table.axb,.side .sb>table.axb,.two>div>table.axb,table.axb{margin-left:-5mm!important;margin-right:-5mm!important} /* 列の間の空き（border-spacing）を左右の端で打ち消し、左端をタイトルに揃える。デッキ側の table の margin 上書きで崩れないよう !important */ /* 列の間の空きの分だけ外へ広げ、左端をタイトルと揃える（上下中央の margin:auto 0 より強く） */
+table.axb th{border-bottom:1.8px solid var(--navy)}
+table.axb th.ax{border-bottom:0;border-right:0;color:transparent} /* 箱が軸を示すので、箱の列に見出しを置かない。下罫は箱の列の右から */
+table.axb td{border-bottom:1px solid var(--rule)} /* 行の線は列ごとに切れる（縦の区切りの位置で切る） */
+table.axb td.ax{background:var(--navy);color:#fff;border-right:0;border-bottom:1.5mm solid var(--slide-bg);font-size:12.5pt;padding:3mm 4mm} /* 箱の下に横線を通さない */
+table.axb tr:last-child td{border-bottom:0} /* 最終行の下に線を引かない */
+table.axb td:not(.ax)+td,table.axb th:not(.ax)+th{padding-left:4mm} /* 観点を並べた列なので縦の区切り線は引かない。列の間の空きと、列ごとに切れた行の線で区切る（§6） */
+/* 表は中身の高さのまま上下中央に置く。容器ごと中央寄せすると出典(.src)まで持ち上がるので、表自身の上下 margin:auto で寄せる（§4.12・§4.47） */
+.c>table{flex:0 0 auto;height:auto;margin:auto 0}
 /* 列の内容が同種（時点・案など）なら等幅にする。最後の列だけに余白を吸わせて右側を空けない（§4.12） */
 table.eq{table-layout:fixed}
 /* 表を縦に伸ばすと余剰高さが見出し行にも配分され見出しが沈む（slide-rules §4.21） */
 .c>table tr:first-child,.side .sb table tr:first-child{height:1px}
-.side .sb table{flex:1 1 0;height:0}
+.side .sb>table{flex:0 0 auto;height:auto;margin:auto 0}
 .chev{display:flex;gap:0;flex:0 0 auto}
 .chev .cv{flex:1;position:relative;background:var(--soft);border:0;padding:5mm 4mm 5mm 9mm;clip-path:polygon(0 0,calc(100% - 6mm) 0,100% 50%,calc(100% - 6mm) 100%,0 100%,6mm 50%);display:flex;flex-direction:column}
 .chev .cv:first-child{clip-path:polygon(0 0,calc(100% - 6mm) 0,100% 50%,calc(100% - 6mm) 100%,0 100%);padding-left:5mm}
@@ -93,7 +105,7 @@ table.eq{table-layout:fixed}
 .two>div:first-child table{flex:0 1 auto}
 .two>div>ul{flex:1;display:flex;flex-direction:column;justify-content:center} /* 左右どちらのブレットも縦中央（§4.5 下端揃え） */
 /* カラム見出し（.colh）と軸タイトル（.axh）は同じ高さ・同じ余白にして左右で罫線が揃うようにする（§4.21） */
-.two .colh,.axh{font-family:var(--font-serif);font-size:11.5pt;font-weight:700;color:var(--navy);border-bottom:1.8px solid var(--navy);height:7mm;box-sizing:content-box;padding:0 0 1.5mm 0;margin:0 0 3.5mm 0;flex:0 0 auto;display:flex;justify-content:space-between;align-items:flex-end}
+.two .colh,.axh{font-family:var(--font-serif);font-size:14.5pt;font-weight:700;color:var(--navy);border-bottom:1.8px solid var(--navy);height:7mm;box-sizing:content-box;padding:0 0 1.5mm 0;margin:0 0 3.5mm 0;flex:0 0 auto;display:flex;justify-content:space-between;align-items:flex-end}
 .two .colh{color:var(--accent)}
 .two ul{margin:0;padding-left:4.5mm;font-size:10pt;line-height:1.8;color:var(--ink)}
 .two li{margin-bottom:2.5mm}
@@ -112,39 +124,43 @@ table.eq{table-layout:fixed}
 .legend i{width:4mm;height:4mm;display:inline-block}
 .legend .li-a{background:var(--soft)}
 .legend .li-b{background:var(--navy)}
-.legend.left{justify-content:flex-start} /* チャート直下に左寄せで置くとき */
+.legend.left{justify-content:flex-start}
+/* 凡例はグラフの見出し（軸タイトル）の上に右揃えで置く。グラフの下に置かない（slide-rules §5.18） */
+:has(> .legend + .axh){position:relative}
+.legend:has(+ .axh){position:absolute;right:0;bottom:calc(100% + 1.2mm)}
 @media print{html,body{background:#fff}.s{margin:0!important;transform:none!important}.fitwrap{width:auto!important;height:auto!important;margin:0!important}}
 /* ── 追加パーツ用 ── */
 .axh .u{font-family:var(--font-sans);font-size:8.5pt;font-weight:400;color:var(--muted)}
 .note{font-size:8pt;letter-spacing:.08em;font-weight:700;color:var(--accent);border-bottom:1px solid var(--cyan);align-self:flex-start;padding-bottom:.8mm;flex:0 0 auto}
 /* 左サイドの主張パネル */
-.side{display:grid;grid-template-columns:62mm 1fr;gap:0;flex:1;min-height:0}
+.side{display:grid;grid-template-columns:62mm 1fr;gap:0;flex:0 1 auto;min-height:0;margin:auto 0} /* 中身の高さで上下中央。パネルをページの高さまで伸ばさない（§4.12） */
 .side .sp{background:var(--navy);color:#fff;padding:6mm 6mm;display:flex;flex-direction:column}
 .side .sp .cn{font-family:var(--font-serif);font-size:26pt;font-weight:700;color:var(--cyan);line-height:1}
 .side .sp .ct{font-size:9.5pt;font-weight:700;letter-spacing:.08em;color:var(--cyan);margin-top:1.5mm}
-.side .sp .cm{font-family:var(--font-serif);font-size:14pt;font-weight:700;line-height:1.55;margin-top:auto}
+.side .sp .cm{font-family:var(--font-serif);font-size:14pt;font-weight:700;line-height:1.55;margin-top:5mm} /* 主張の文を最下部へ押し下げない（パネルの中に空きを作らない） */
 .side .sb{padding:0 0 0 8mm;display:flex;flex-direction:column;min-height:0}
 /* レバー矢印表 */
-.lev{width:100%;border-collapse:collapse;font-size:10pt}
-.lev th{font-size:11.5pt}
+.lev{width:100%;border-collapse:collapse;font-size:11.5pt}
+.lev th{font-size:14.5pt}
 .lev td{padding:3mm 2.5mm}
 .lev .ar{height:5.5mm;display:flex;align-items:center;color:#fff;font-size:9pt;font-weight:700;padding-left:3mm;clip-path:polygon(0 0,calc(100% - 4mm) 0,100% 50%,calc(100% - 4mm) 100%,0 100%)}
 .lev .up{background:var(--accent)}.lev .dn{background:var(--rule);color:var(--navy)}
 /* 状態ヒートマップ */
 .hm{width:100%;border-collapse:collapse;font-size:9.5pt}
-.hm th{font-size:10.5pt;padding:2mm}
+.hm th{font-size:13pt;padding:2mm} /* 見出し行は行見出し（12.5pt）より大きく（§6） */
 .hm td{padding:2.2mm 2.5mm;border-bottom:1px solid var(--hairline)}
 .hm .cell{display:block;height:8mm}
 /* 4=大きく改善 3=改善 0=横ばい 2=悪化（悪化だけ意味のある赤。§5.8） */
 .hm .v4{background:var(--navy)}.hm .v3{background:var(--accent)}.hm .v2{background:var(--rose)}.hm .v1{background:var(--soft)}.hm .v0{background:var(--hairline)}
 /* ハーベイボール */
-.hb{width:4.6mm;height:4.6mm;display:inline-block;border:1px solid var(--navy);border-radius:50%;position:relative;vertical-align:-.7mm}
-.hb i{position:absolute;inset:0;background:var(--navy);border-radius:50%}
-.hb.q1 i{clip-path:polygon(50% 50%,50% 0,100% 0,100% 50%)}
-.hb.q2 i{clip-path:polygon(50% 0,100% 0,100% 100%,50% 100%)}
-.hb.q3 i{clip-path:polygon(50% 0,100% 0,100% 100%,0 100%,0 50%)}
-.hb.q4 i{clip-path:none}
-.hb.q0 i{display:none}
+.hb{width:4.6mm;height:4.6mm;display:inline-block;box-sizing:border-box;border:1px solid var(--navy);border-radius:50%;vertical-align:-.7mm;background:conic-gradient(var(--navy) var(--hbp,0%),transparent 0) border-box}
+/* 塗りは外枠ごと1枚で描く（内側の<i>を枠の内側に重ねると縁に白い隙間が出て塗りが中途半端に見える） */
+.hb i{display:none}
+.hb.q0{--hbp:0%}
+.hb.q1{--hbp:25%}
+.hb.q2{--hbp:50%}
+.hb.q3{--hbp:75%}
+.hb.q4{--hbp:100%}
 /* ドットマトリクス */
 .dots{display:grid;grid-template-columns:repeat(10,1fr);gap:1.2mm;width:36mm}
 .dots i{width:3mm;height:3mm;background:var(--hairline);display:block}
@@ -167,8 +183,8 @@ table.eq{table-layout:fixed}
 .clip .cg{align-self:flex-start;background:var(--navy);color:#fff;font-size:7.5pt;font-weight:700;padding:1mm 2.5mm;letter-spacing:.06em}
 /* 対向シェブロン */
 .opp{display:grid;grid-template-columns:1fr 46mm 1fr;gap:6mm;flex:1;min-height:0;align-items:stretch}
-.opp .ol{display:flex;flex-direction:column}
-.opp .ol .oi{flex:1;display:flex;align-items:center;font-size:10pt;line-height:1.55;color:var(--navy);border-bottom:1px solid var(--rule);padding:2mm 0}
+.opp .ol{display:flex;flex-direction:column;justify-content:center} /* 行は中身の高さで上下中央（§4.12） */
+.opp .ol .oi{display:flex;align-items:center;font-size:11.5pt;line-height:1.45;color:var(--navy);border-bottom:1px solid var(--rule);padding:3mm 0}
 .opp .ol .oi:last-child{border-bottom:0}
 .opp .oc{display:flex;flex-direction:column;gap:3mm;justify-content:center}
 .opp .oc .ob{background:var(--navy);color:#fff;text-align:center;font-family:var(--font-serif);font-size:14pt;font-weight:700;padding:9mm 3mm;clip-path:polygon(0 0,100% 0,100% 78%,50% 100%,0 78%)}
@@ -176,8 +192,7 @@ table.eq{table-layout:fixed}
 
 /* 縦の余白つぶし（slide-rules §4.5 下端揃え・§4.12 不自然な下部余白の禁止） */
 .grid>div{display:flex;flex-direction:column;min-height:0}
-.grid>div>.rows{flex:1;display:flex;flex-direction:column}
-.grid>div>.rows .r{flex:1;align-items:center}
+.grid>div>.rows{display:flex;flex-direction:column}
 .two>div>table{flex:0 1 auto;height:auto}
 .two>div>table tr:first-child{height:1px}
 .pil .p{justify-content:center}
@@ -195,11 +210,68 @@ table.eq{table-layout:fixed}
 .agd .ai.on .at{font-size:21pt}
 .agd .ai.on .ap{color:var(--muted)}
 
+/* 縦横に項目を並べる図の軸（パーツ28・29）。左上に縦軸の名前、上の帯に横軸の名前と向き（slide-rules §4.98）。
+   見出しの下罫の高さは .axh と同じ（右に .axh を並べたとき線が揃う。§4.21） */
+.gx-c{grid-row:1;grid-column:1;box-sizing:border-box;border-bottom:1.8px solid var(--navy);border-right:1.8px solid var(--navy);display:flex;align-items:flex-end;padding:0 2mm 1.5mm 0;font-size:11.5pt;font-weight:700;line-height:1.3;color:var(--navy)}
+.gx-f{grid-row:1;grid-column:2/-1;box-sizing:border-box;border-bottom:1.8px solid var(--navy);display:flex;align-items:flex-end;gap:3mm;padding:0 0 1.5mm 4mm;font-size:11.5pt;font-weight:700;line-height:1.3;color:var(--navy)}
+.gx-f .gx-a{flex:1;height:1.3em;display:flex;align-items:center}
+.gx-f .gx-a i{flex:1;height:1.2px;background:var(--accent)} /* 罫線と取り違えないよう塗りで引く */
+.gx-f .gx-a b{width:2.4mm;height:2.8mm;background:var(--accent);clip-path:polygon(0 0,100% 50%,0 100%)}
+.gx-l{grid-column:1;box-sizing:border-box;border-right:1.8px solid var(--navy);display:flex;align-items:center;padding-right:2mm;font-family:var(--font-serif);font-size:11.5pt;font-weight:700;line-height:1.4;color:var(--accent)}
+.gx-hr{grid-column:1/-1;align-self:start;border-top:1px solid var(--rule)}
+
+/* スイムレーン＋番号の付箋（パーツ28）。格子の寸法（見出し 9mm・レーン 28mm・列 40mm）と矢印の SVG の座標（単位 mm）を揃えてある */
+.slw{display:grid;grid-template-columns:186mm 1fr;gap:8mm;align-items:start;flex:0 0 auto;margin:auto 0}
+.sl{position:relative;display:grid;grid-template-columns:26mm repeat(4,40mm);grid-template-rows:9mm repeat(3,28mm)}
+.sl-c{display:flex;align-items:center;justify-content:center}
+.sl-b{position:relative;width:34mm;height:18mm;box-sizing:border-box;background:var(--soft);padding:2mm 4.5mm 2mm 3mm;display:flex;flex-direction:column;justify-content:center;gap:.8mm}
+.sl-b b{font-size:10pt;font-weight:700;line-height:1.35;color:var(--navy)}
+.sl-b .io{font-size:9pt;line-height:1.35;color:var(--muted)}
+.sl-d{width:26mm;height:18mm;background:var(--soft);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);display:flex;align-items:center;justify-content:center;text-align:center;font-size:9pt;font-weight:700;color:var(--navy)}
+.sl svg{position:absolute;left:0;top:0;width:186mm;height:93mm;overflow:visible;pointer-events:none}
+/* 付箋＝番号のチップ。色は種類（課題／適用例）だけを表し、凡例を置く（§5.2）。大きさは本文の文字の高さ程度まで（§4.95） */
+.sl-n{width:4.6mm;height:4.6mm;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:8.5pt;font-weight:700;font-style:normal;line-height:1;color:#fff;background:var(--accent)}
+.sl-n.ap{background:var(--cyan);color:var(--navy)}
+.sl-b .sl-n{position:absolute;top:-2.3mm;right:-2.3mm}
+.sl-ls{display:flex;flex-direction:column}
+/* 一覧の番号は文字と別の要素にし、文字との間を1文字ぶん（1em）空ける（§4.95） */
+.sl-it{display:flex;align-items:flex-start;gap:1em;padding:3.2mm 0;border-top:1px solid var(--rule);font-size:11pt;line-height:1.6;color:var(--ink)}
+.sl-it .sl-n{margin-top:.8mm}
+.axh+.sl-it{border-top:0;padding-top:0}
+
+/* 表と裏の2段（パーツ29）。上段と下段は同じ列に置き、列の中心で縦に対応させる */
+.tt{display:grid;grid-template-columns:32mm repeat(4,1fr);grid-template-rows:9mm auto 14mm auto;flex:0 0 auto;margin:auto 0}
+.tt-cv{grid-row:2;margin:4mm 0 0 3mm;min-height:24mm;box-sizing:border-box;background:var(--soft);clip-path:polygon(0 0,calc(100% - 5mm) 0,100% 50%,calc(100% - 5mm) 100%,0 100%,5mm 50%);padding:3mm 7mm 3mm 8.5mm;display:flex;align-items:center;gap:1em}
+.tt-cv.first{clip-path:polygon(0 0,calc(100% - 5mm) 0,100% 50%,calc(100% - 5mm) 100%,0 100%);padding-left:4mm}
+.tt-cv .n{flex:0 0 auto;font-size:13pt;font-weight:700;color:var(--accent)}
+.tt-cv .t{font-size:12pt;font-weight:700;line-height:1.4;color:var(--navy)}
+.tt-dn{grid-row:3;margin-left:3mm;display:flex;align-items:center;justify-content:center}
+.tt-dn i{width:9mm;height:5mm;background:var(--cyan);clip-path:polygon(0 0,100% 0,50% 100%)}
+.tt-bk{grid-row:4;margin-left:3mm;display:flex;flex-direction:column}
+.tt-bk b{font-size:12pt;font-weight:700;line-height:1.4;color:var(--navy);border-bottom:1.8px solid var(--navy);padding-bottom:1.5mm;margin-bottom:2.5mm}
+.tt-bk ul{margin:0;padding-left:4.5mm;font-size:11.5pt;line-height:1.7;color:var(--ink)}
+.tt-bk li{margin-bottom:1.5mm}
+
+/* 一問一答（パーツ30）。質問と回答の間は細い点線、行の罫線は点線の位置で切る（§6 縦の区切り線）。行の高さは揃える */
+.qa{display:flex;flex-direction:column;flex:0 0 auto;margin:auto 0}
+.qa-h,.qa-r{display:grid;grid-template-columns:1fr 8mm 1.3fr}
+.qa-b{display:grid;grid-auto-rows:1fr}
+.qa-q,.qa-a{border-top:1px solid var(--rule);padding:3.5mm 0;display:flex;align-items:center}
+.qa-h .axh{margin-bottom:0}
+.qa-r:first-child>.qa-q,.qa-r:first-child>.qa-a{border-top:0}
+.qa-q>div{display:flex;align-items:baseline;gap:1em;font-size:11.5pt;font-weight:700;line-height:1.6;color:var(--navy)}
+.qa-q .qa-n{flex:0 0 auto;font-family:var(--font-serif);font-style:normal;color:var(--accent)}
+.qa-v{justify-self:center;border-left:1px dotted var(--muted)}
+.qa-a ul{margin:0;padding-left:4.5mm;font-size:11.5pt;line-height:1.6;color:var(--ink)}
+.qa-a li{margin:.5mm 0}
+
 /* 表の詳細セル（理由・前提・読み取り）はブレット2〜3行で書く（slide-rules §6） */
 td ul.cb{margin:0;padding-left:4mm;line-height:1.6}
 td ul.cb li{margin:0 0 1mm 0}
 /* ハーベイボール列は見出しも玉も水平中央 */
 th.hbc,td.hbc{text-align:center}
+/* 社外向けに書き出すときは body に class="external" を付けて印刷すると、社内用のページ（section.internal）が外れる（slide-rules §8） */
+body.external section.internal{display:none!important}
 </style></head><body>
 
 <!-- ═══ パーツ01: 表紙 ═══ -->
@@ -292,7 +364,7 @@ th.hbc,td.hbc{text-align:center}
   <div class="foot"><b>資料名</b><span>6</span></div>
 </section>
 
-<!-- ═══ パーツ07: 大型数値（左=軸つき数値表・右=読み取れること。スタット羅列＋補足行の縦積みは読みにくいので使わない） ═══ -->
+<!-- ═══ パーツ07: 大型数値（左=軸つき数値表・右=数値から言える意味合い。右が数値の説明だけなら見出しを左右に分けず全幅1本にする — slide-rules §4.6。スタット羅列＋補足行の縦積みは読みにくいので使わない） ═══ -->
 <section class="s">
   <div class="bar"><div class="logo">資料名</div><div class="date">パーツ07｜大型数値の表＋読み取り</div></div>
   <h1>大型数値の表＋読み取り</h1>
@@ -308,7 +380,7 @@ th.hbc,td.hbc{text-align:center}
       </div>
       <div class="tri"></div>
       <div>
-        <div class="colh">数値から読み取れること</div>
+        <div class="colh">数値から言える意味合い</div>
         <ul>
           <li>Text 4</li>
           <li>Text 5</li>
@@ -519,6 +591,7 @@ th.hbc,td.hbc{text-align:center}
   <div class="c">
     <div class="two" style="grid-template-columns:1.6fr auto 1fr">
       <div>
+        <div class="legend"><span><i style="background:var(--accent)"></i>上位N社</span><span><i style="background:var(--rule)"></i>その他</span></div>
         <div class="axh"><span>指標名</span><span class="u">単位、YYYY〜YYYY年</span></div>
         <svg viewBox="0 0 620 250" style="flex:1;min-height:0" preserveAspectRatio="none">
           <g fill="var(--accent)">
@@ -539,7 +612,6 @@ th.hbc,td.hbc{text-align:center}
           </g>
           <line x1="0" y1="250" x2="620" y2="250" stroke="var(--navy)" stroke-width="2"/>
         </svg>
-        <div class="legend" style="justify-content:flex-start;margin-top:2mm"><span><i style="background:var(--accent)"></i>上位N社</span><span><i style="background:var(--rule)"></i>その他</span></div>
       </div>
       <div class="tri"></div>
       <div>
@@ -665,6 +737,7 @@ th.hbc,td.hbc{text-align:center}
   <div class="bar"><div class="logo">資料名</div><div class="date">パーツ23｜増減の縦棒＋左右合計</div></div>
   <h1>増減の縦棒＋左右合計</h1>
   <div class="c">
+    <div class="legend"><span><i style="background:var(--accent)"></i>増える分</span><span><i style="background:var(--navy)"></i>減る分</span></div>
     <div class="axh"><span>指標名</span><span class="u">単位、YYYY〜YYYY年</span></div>
     <svg viewBox="0 0 900 300" style="flex:1;min-height:0" preserveAspectRatio="xMidYMid meet">
       <text x="20" y="90" font-family="Yu Mincho" font-size="40" font-weight="700" fill="var(--accent)">＋200</text>
@@ -682,7 +755,6 @@ th.hbc,td.hbc{text-align:center}
         <text x="245" y="270">ラベル 2</text><text x="365" y="270">ラベル 3</text><text x="485" y="270">ラベル 4</text><text x="605" y="270">ラベル 5</text><text x="725" y="270">ラベル 6</text>
       </g>
     </svg>
-    <div class="legend"><span><i style="background:var(--accent)"></i>増える分</span><span><i style="background:var(--navy)"></i>減る分</span></div>
     <div class="src">出典：Source 1</div>
   </div>
   <div class="foot"><b>資料名</b><span>23</span></div>
@@ -694,6 +766,7 @@ th.hbc,td.hbc{text-align:center}
   <div class="bar"><div class="logo">資料名</div><div class="date">パーツ24｜シナリオ線＋成長率チップ</div></div>
   <h1>シナリオ線＋成長率チップ</h1>
   <div class="c">
+    <div class="legend"><span><i style="background:var(--navy)"></i>Text 3が進む場合</span><span><i style="background:var(--accent)"></i>現状の延長</span><span><i style="background:var(--rule)"></i>Text 4が遅れる場合</span></div>
     <div class="axh"><span>指標名</span><span class="u">単位、YYYY〜YYYY年</span></div>
     <svg viewBox="0 0 900 300" style="flex:1;min-height:0" preserveAspectRatio="xMidYMid meet">
       <line x1="60" y1="270" x2="760" y2="270" stroke="var(--navy)" stroke-width="2"/>
@@ -711,7 +784,6 @@ th.hbc,td.hbc{text-align:center}
       <rect x="770" y="99" width="100" height="26" fill="var(--accent)"/><text x="820" y="112" text-anchor="middle" dominant-baseline="central" font-family="Yu Gothic" font-size="15" font-weight="700" fill="#fff">23%</text>
       <rect x="770" y="142" width="100" height="26" fill="var(--rule)"/><text x="820" y="155" text-anchor="middle" dominant-baseline="central" font-family="Yu Gothic" font-size="15" font-weight="700" fill="var(--navy)">19%</text>
     </svg>
-    <div class="legend"><span><i style="background:var(--navy)"></i>Text 3が進む場合</span><span><i style="background:var(--accent)"></i>現状の延長</span><span><i style="background:var(--rule)"></i>Text 4が遅れる場合</span></div>
     <div class="src">出典：Source 1</div>
   </div>
   <div class="foot"><b>資料名</b><span>24</span></div>
@@ -792,6 +864,119 @@ th.hbc,td.hbc{text-align:center}
     </div>
   </div>
   <div class="foot"><b>資料名</b><span>27</span></div>
+</section>
+
+<!-- ═══ パーツ28: スイムレーン＋番号の付箋（課題・適用例を工程に重ね、右に番号つきの一覧） ═══
+     使いどころ: 業務の流れのどこに課題があり、どこに何を当てるかを1枚で見せる。縦＝担い手（部署・役割・システム）、横＝業務の流れ（slide-rules §4.77）。
+     縦軸・横軸の名前（左上の「担い手」、上の帯の「業務の流れ」）は図の中に書く（§4.98）。領域で分けるなら左上を「領域」にする。
+     付箋は番号だけを工程の箱の右上に重ね、中身は右の一覧に同じ番号で書く。付箋の色は種類（課題／適用例）だけを表し、凡例を置く（§5.2）。
+     番号のチップは文字と別の要素にし、文字との間を1文字ぶん空ける（§4.95）。他のページからはこの番号で指す（§4.98）。
+     各工程には、渡すもの（ファイルなら形式も）を2行目に書く（§4.77）。条件分岐は本流の中にひし形で入れ、分岐先も同じ図の中に置く。
+     現状の業務の図には、提案する仕組みを混ぜない（現状と導入後は別のページにする）。
+     箱は .sl の格子（見出し 9mm・レーン 28mm・列 40mm）に置き、矢印は同じ寸法の SVG（単位 mm）で引く。箱を動かしたら SVG の座標も直す。線の曲がりは1回まで（§5.14）。 -->
+<section class="s">
+  <div class="bar"><div class="logo">資料名</div><div class="date">パーツ28｜スイムレーン＋番号の付箋</div></div>
+  <h1>スイムレーン＋番号の付箋（課題・適用例を工程に重ね、右に一覧）</h1>
+  <div class="c">
+    <div class="slw">
+      <div class="sl">
+        <div class="gx-c">担い手</div>
+        <div class="gx-f"><span>業務の流れ</span><span class="gx-a"><i></i><b></b></span></div>
+        <div class="gx-l" style="grid-row:2">ラベル 1</div>
+        <div class="gx-l" style="grid-row:3">ラベル 2</div>
+        <div class="gx-l" style="grid-row:4">ラベル 3</div>
+        <div class="gx-hr" style="grid-row:3"></div>
+        <div class="gx-hr" style="grid-row:4"></div>
+        <div class="sl-c" style="grid-row:2;grid-column:2"><div class="sl-b"><b>Text 1</b><span class="io">→ ラベル 4（Excel）</span><i class="sl-n">1</i></div></div>
+        <div class="sl-c" style="grid-row:3;grid-column:3"><div class="sl-b"><b>Text 2</b><span class="io">→ ラベル 5（PDF）</span><i class="sl-n">2</i></div></div>
+        <div class="sl-c" style="grid-row:3;grid-column:4"><div class="sl-d">ラベル 6</div></div>
+        <div class="sl-c" style="grid-row:3;grid-column:5"><div class="sl-b"><b>Text 3</b><span class="io">→ ラベル 7</span><i class="sl-n ap">3</i></div></div>
+        <div class="sl-c" style="grid-row:4;grid-column:5"><div class="sl-b"><b>Text 4</b><span class="io">→ ラベル 8</span><i class="sl-n ap">4</i></div></div>
+        <svg viewBox="0 0 186 93" aria-hidden="true">
+          <defs><marker id="b28-ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="2.4" markerHeight="2.4" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>
+          <g fill="none" stroke="var(--accent)" stroke-width="0.35" marker-end="url(#b28-ah)">
+            <path d="M46,32 V51 H69"/>
+            <path d="M103,51 H113"/>
+            <path d="M139,51 H149"/>
+            <path d="M126,60 V79 H149"/>
+          </g>
+          <g font-size="3.2" fill="var(--ink)">
+            <text x="140.2" y="49.2">はい</text>
+            <text x="127.6" y="63.6">いいえ</text>
+          </g>
+        </svg>
+      </div>
+      <div class="sl-ls">
+        <div class="legend"><span><i style="background:var(--accent)"></i>課題</span><span><i style="background:var(--cyan)"></i>適用例</span></div>
+        <div class="axh"><span>課題と適用例</span></div>
+        <div class="sl-it"><i class="sl-n">1</i><span>Text 5</span></div>
+        <div class="sl-it"><i class="sl-n">2</i><span>Text 6</span></div>
+        <div class="sl-it"><i class="sl-n ap">3</i><span>Text 7</span></div>
+        <div class="sl-it"><i class="sl-n ap">4</i><span>Text 8</span></div>
+      </div>
+    </div>
+    <div class="src">出典：Source 1</div>
+  </div>
+  <div class="foot"><b>資料名</b><span>28</span></div>
+</section>
+
+<!-- ═══ パーツ29: 表と裏の2段（上段に利用者から見た流れ、下段に裏側の処理を縦に対応） ═══
+     使いどころ: 利用者が操作する順番（上段の矢羽）と、その裏で動く処理（下段）を同じ列に置き、縦に対応させて1枚で見せる。
+     変更を指示したときに何がどう変わるかを見せる前後の比較にも使う。行の名前を「指示する前」「指示した後」にし、
+     列は同じ手順のまま、変わったところだけ太字にする（§4.85。塗りで立てない）。変わらない列は前と同じ文言を残す。
+     縦軸（左上の「表と裏」と各行の名前）と横軸（上の帯の名前と向き）は図の中に書く（§4.98）。前後の比較では左上を「指示の前後」にする。段は4つまで（§4.26 の横に並べてよい条件）。
+     上段と下段は1対1。1つの処理が2つの手順にまたがるときは、下段の箱を grid-column で2列ぶんにし、点線の枠で括って凡例を置く（§6 またがる行）。
+     番号は文字と別の要素にし、文字との間を1文字ぶん空ける（§4.95）。 -->
+<section class="s">
+  <div class="bar"><div class="logo">資料名</div><div class="date">パーツ29｜表と裏の2段</div></div>
+  <h1>表と裏の2段（利用者から見た流れ／裏側の処理を縦に対応）</h1>
+  <div class="c">
+    <div class="tt">
+      <div class="gx-c">表と裏</div>
+      <div class="gx-f"><span>手順</span><span class="gx-a"><i></i><b></b></span></div>
+      <div class="gx-l" style="grid-row:2">利用者から<br>見た流れ</div>
+      <div class="gx-l" style="grid-row:3"></div>
+      <div class="gx-l" style="grid-row:4">裏側の処理</div>
+      <div class="tt-cv first" style="grid-column:2"><span class="n">1</span><span class="t">Text 1</span></div>
+      <div class="tt-cv" style="grid-column:3"><span class="n">2</span><span class="t">Text 2</span></div>
+      <div class="tt-cv" style="grid-column:4"><span class="n">3</span><span class="t">Text 3</span></div>
+      <div class="tt-cv" style="grid-column:5"><span class="n">4</span><span class="t">Text 4</span></div>
+      <div class="tt-dn" style="grid-column:2"><i></i></div>
+      <div class="tt-dn" style="grid-column:3"><i></i></div>
+      <div class="tt-dn" style="grid-column:4"><i></i></div>
+      <div class="tt-dn" style="grid-column:5"><i></i></div>
+      <div class="tt-bk" style="grid-column:2"><b>ラベル 1</b><ul><li>Text 5</li><li>Text 6</li><li>Text 7</li></ul></div>
+      <div class="tt-bk" style="grid-column:3"><b>ラベル 2</b><ul><li>Text 8</li><li>Text 9</li><li>Text 10</li></ul></div>
+      <div class="tt-bk" style="grid-column:4"><b>ラベル 3</b><ul><li>Text 11</li><li>Text 12</li><li>Text 13</li></ul></div>
+      <div class="tt-bk" style="grid-column:5"><b>ラベル 4</b><ul><li>Text 14</li><li>Text 15</li><li>Text 16</li></ul></div>
+    </div>
+    <div class="src">出典：Source 1</div>
+  </div>
+  <div class="foot"><b>資料名</b><span>29</span></div>
+</section>
+
+<!-- ═══ パーツ30: 一問一答（質問と回答を区切り線で分けて並べる） ═══
+     使いどころ: 打ち合わせ・事前の質問票で受けた質問に、1件ずつ答えるページ。
+     質問は相手の言葉のまま「」で書き、言い換え・要約をしない（どの質問への答えかを相手が見つけられるように）。
+     回答は結論の1文を先に置き、根拠・条件をブレットで続ける。まだ決まっていないことは言い切らない（§4.71）。
+     Q の番号は、後のページや口頭で番号を指すときだけ付ける（§7.13）。付けるなら文字と別の要素にし、1文字ぶん空ける（§4.95）。
+     質問と回答の間は細い点線、行の罫線は点線の位置で切る（§6 縦の区切り線）。行の高さは揃える。5件を超えたら2枚に分ける。 -->
+<section class="s">
+  <div class="bar"><div class="logo">資料名</div><div class="date">パーツ30｜一問一答</div></div>
+  <h1>一問一答（質問は相手の言葉のまま・回答は結論から）</h1>
+  <div class="c">
+    <div class="qa">
+      <div class="qa-h"><div class="axh"><span>いただいた質問</span></div><i></i><div class="axh"><span>回答</span></div></div>
+      <div class="qa-b">
+        <div class="qa-r"><div class="qa-q"><div><i class="qa-n">Q1</i><span>「Text 1」</span></div></div><i class="qa-v"></i><div class="qa-a"><ul><li>Text 6</li><li>Text 7</li></ul></div></div>
+        <div class="qa-r"><div class="qa-q"><div><i class="qa-n">Q2</i><span>「Text 2」</span></div></div><i class="qa-v"></i><div class="qa-a"><ul><li>Text 8</li><li>Text 9</li></ul></div></div>
+        <div class="qa-r"><div class="qa-q"><div><i class="qa-n">Q3</i><span>「Text 3」</span></div></div><i class="qa-v"></i><div class="qa-a"><ul><li>Text 10</li><li>Text 11</li></ul></div></div>
+        <div class="qa-r"><div class="qa-q"><div><i class="qa-n">Q4</i><span>「Text 4」</span></div></div><i class="qa-v"></i><div class="qa-a"><ul><li>Text 12</li><li>Text 13</li></ul></div></div>
+        <div class="qa-r"><div class="qa-q"><div><i class="qa-n">Q5</i><span>「Text 5」</span></div></div><i class="qa-v"></i><div class="qa-a"><ul><li>Text 14</li><li>Text 15</li></ul></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><b>資料名</b><span>30</span></div>
 </section>
 
 <script>

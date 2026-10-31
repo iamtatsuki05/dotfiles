@@ -96,9 +96,9 @@ test_manifest_tracks_current_upstream_skill_paths() {
   local manifest_text
   manifest_text="$(cat "$MANIFEST")"
 
-  assert_contains_text "$manifest_text" '"source_path": "meta/empirical-prompt-tuning/SKILL-ja.md"'
+  assert_contains_text "$manifest_text" '"source_path": "empirical-prompt-tuning/SKILL-ja.md"'
   assert_contains_text "$manifest_text" '"source_path": "skills/herdr/SKILL.md"'
-  assert_not_contains_text "$manifest_text" '"source_path": "empirical-prompt-tuning/SKILL-ja.md"'
+  assert_not_contains_text "$manifest_text" '"source_path": "meta/empirical-prompt-tuning/SKILL-ja.md"'
 }
 
 test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
@@ -106,17 +106,16 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   local pin
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" superpowers)"
-  [[ "$pin" == "b36e0829c6d0140e93cfef2ca599b1b07d4a7797" ]] || fail "unexpected superpowers pin: $pin"
+  [[ "$pin" == "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b" ]] || fail "unexpected superpowers pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" empirical-prompt-tuning)"
-  [[ "$pin" == "7a0d72866a0bb3e9ac3e2768c328b09ba2bc40c4" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
+  [[ "$pin" == "ab4eb2f7a92a13fb37c225ab427f2f492143ace1" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" herdr)"
-  [[ "$pin" == "c2637dc182ddc5425108824d5ed15d24ce38c4e3" ]] || fail "unexpected herdr pin: $pin"
+  [[ "$pin" == "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde" ]] || fail "unexpected herdr pin: $pin"
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" mattpocock-skills)"
-  [[ "$pin" == "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76" ]] || fail "unexpected mattpocock-skills pin: $pin"
-  # This candidate adds query telemetry and an unpinned runtime, so it remains rejected.
+  [[ "$pin" == "a496f5513d4a4cf889bc48e189e579f4b0bdf6aa" ]] || fail "unexpected mattpocock-skills pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" modern-web-guidance)"
-  [[ "$pin" == "65d7f20ac85517a362107ce89b7be7f905105fd3" ]] || fail "unexpected modern-web-guidance pin: $pin"
+  [[ "$pin" == "4f2b13e25c5815b3f080ca0d983e828d96561a0f" ]] || fail "unexpected modern-web-guidance pin: $pin"
 
   assert_file "$skills_root/dispatching-parallel-agents/LICENSE"
   assert_file "$skills_root/test-driven-development/LICENSE"
@@ -142,9 +141,12 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   assert_contains "$skills_root/herdr/SKILL.md" 'choose the exact `$tmpdir/report.md` path before prompting'
   assert_contains "$skills_root/herdr/SKILL.md" 'reject symlinks'
   assert_contains "$skills_root/herdr/SKILL.md" 'agent_not_ready'
-  assert_contains "$skills_root/herdr/SKILL.md" 'sends text followed by encoded Enter after a short delay'
+  assert_contains "$skills_root/herdr/SKILL.md" 'sends text followed by encoded Enter as one ordered submission'
   assert_not_contains "$skills_root/herdr/SKILL.md" 'reply only with the file path, then read the file directly'
   assert_contains "$skills_root/herdr/LICENSE" 'Apache License'
+
+  assert_contains "$skills_root/codex-delegate/references/dispatch-and-poll.md" '**Preserve read-only review permissions.**'
+  assert_not_contains "$skills_root/codex-delegate/references/dispatch-and-poll.md" 'For a review that needs the network, dispatch under `workspace-write`'
 }
 
 test_superpowers_selection_has_five_non_conflicting_workflows() {
