@@ -113,6 +113,11 @@ description = "AI agent設定/hooks/skillsを同期"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_agent_files.sh"
 
+[tasks.tokeneconomizer-setup]
+description = "対応AI agentへTokenEconomizerの固定版を導入"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "bash scripts/setup_tokeneconomizer.sh"
+
 [tasks.steermouse-setup]
 description = "SteerMouseの設定フォルダをリポジトリにリンク"
 dir = "__DOTFILES_REPO_ROOT__"

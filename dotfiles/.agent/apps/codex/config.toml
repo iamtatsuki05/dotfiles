@@ -153,3 +153,11 @@ selected-avatar-id = "custom:mirai"
 conversationDetailMode = "STEPS_COMMANDS"
 show-context-window-usage = true
 followUpQueueMode = "queue"
+
+[marketplaces.tokeneconomizer]
+source_type = "git"
+source = "https://github.com/microsoft/TokenEconomizer.git"
+ref = "e428fc91b0f8ffecb5a596d56b14fe2f1485a5f9"
+
+[plugins."tokeneconomizer@tokeneconomizer"]
+enabled = true

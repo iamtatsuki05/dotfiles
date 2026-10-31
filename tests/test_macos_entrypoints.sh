@@ -270,6 +270,10 @@ case "\${1:-}" in
   install)
     [[ \$# == 1 || ( \$# == 3 && "\$2" == python && "\$3" == uv ) ]] || exit 125
     ;;
+  exec)
+    [[ \$# == 4 && "\$2" == -- && "\$3" == bash && "\$4" == "\$fixture_root/scripts/setup_tokeneconomizer.sh" ]] || exit 125
+    /bin/bash "\$4"
+    ;;
   *)
     print -u2 -- "unexpected fake mise command: \$*"
     exit 125
@@ -399,6 +403,7 @@ write_main_fixture() {
     write_event_command "$repo/scripts/$script_name" "${script_name%.sh}"
   done
   printf 'printf "setup_steermouse:%%s\\n" "$*" >> "$DOTFILES_TEST_EVENT_LOG"\n' > "$repo/scripts/setup_steermouse.sh"
+  printf 'printf "setup_tokeneconomizer:%%s\\n" "$*" >> "$DOTFILES_TEST_EVENT_LOG"\n' > "$repo/scripts/setup_tokeneconomizer.sh"
   write_fake_uname "$repo/bin"
   write_fake_sudo_for_main "$repo/bin"
   write_event_command "$repo/bin/pkgutil" pkgutil '[[ "$#" == 2 && "$1" == --pkg-info && "$2" == com.apple.pkg.RosettaUpdateAuto ]] || exit 125; exit 1'
@@ -454,6 +459,7 @@ test_main_gate_off_keeps_core_setup_and_profile() {
   assert_contains "$repo/events.log" 'setup_git_hooks:--profile full'
   assert_contains "$repo/events.log" 'mise:install python uv'
   assert_contains "$repo/events.log" 'mise:install'
+  assert_contains "$repo/events.log" 'setup_tokeneconomizer:'
   assert_not_contains "$repo/events.log" 'install_homebrew:'
   assert_not_contains "$repo/events.log" 'install_mas_apps:'
   assert_not_contains "$repo/events.log" 'setup_steermouse:'
