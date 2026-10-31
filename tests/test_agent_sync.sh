@@ -894,8 +894,19 @@ test_agent_prompt_separates_task_boundary_triggers_from_signals() {
 test_agent_prompt_probes_shared_causes_before_parallel_dispatch() {
   local agents_file="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
 
-  assert_contains "$agents_file" '共通原因の probe を main agent または1体で先に実施'
+  assert_contains "$agents_file" '共通原因の probe を main agent または依頼範囲内の1体で先に実施'
   assert_contains "$agents_file" '結果を確認してから後続を分岐'
+}
+
+test_agent_prompt_defaults_to_single_agent_with_review_exception() {
+  local agents_file="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
+
+  assert_contains "$agents_file" '通常の調査・設計・実装・検証はメインの agent が単体で完遂'
+  assert_contains "$agents_file" 'subagent は「作業後レビュー」に定める独立レビューに使い'
+  assert_contains "$agents_file" 'それ以外の委譲はユーザーが明示的に依頼した場合だけ'
+  assert_contains "$agents_file" 'タスクを分割できることや、独立した対象が複数あることだけを理由に委譲しない'
+  assert_contains "$agents_file" '以下は、ユーザーがレビュー以外の委譲を明示的に依頼した場合だけ適用'
+  assert_contains "$agents_file" '通常はメインの agent が確認し、独立レビューを受けて'
 }
 
 test_agent_sync_wrapper_delegates_to_setup_script() {
@@ -1076,6 +1087,7 @@ main() {
   test_codex_subagent_defaults_match_configured_contract
   test_agent_prompt_separates_task_boundary_triggers_from_signals
   test_agent_prompt_probes_shared_causes_before_parallel_dispatch
+  test_agent_prompt_defaults_to_single_agent_with_review_exception
   test_agent_sync_wrapper_delegates_to_setup_script
   test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
