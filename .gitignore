@@ -14,6 +14,7 @@ dotfiles/.agent/skills/.curator_state
 dotfiles/.agent/skills/.hub/
 dotfiles/.agent/skills/codex-primary-runtime/
 dotfiles/.agent/skills/hatch-pet/
+dotfiles/.agent/skills/synced/
 
 # Local scratch, logs, and caches
 .tmp/

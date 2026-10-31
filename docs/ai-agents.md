@@ -126,6 +126,19 @@ Syncing files does not prove that an already-running agent process reloaded its
 configuration. Restart or reload the relevant client when its documented
 behavior requires it, then verify the live configuration separately.
 
+## Client-synced skill ownership
+
+`dotfiles/.agent/skills/synced/` contains account-specific data generated and updated by the client.
+Keep it locally, but do not distribute it through Git. CI validates tracked files and new,
+non-ignored skills, and rejects accidentally tracked sync data. Duplicate canonical skill names
+and missing related skills remain errors.
+
+Fresh clones obtain synced skills and their supporting scripts through the client again.
+This is separate from local skills and pinned imports in `upstreams.json`.
+When an existing clone takes the untracking commit, previously tracked sync files may be removed.
+Back up local customizations first, then resync through the client if needed.
+This change does not alter the client's runtime skill discovery or precedence.
+
 ## Evaluate skills and prompts
 
 Use a dry-run first when checking the Waza command routing:

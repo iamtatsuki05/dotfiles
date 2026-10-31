@@ -1135,20 +1135,22 @@ test_waza_eval_suites_cover_all_regular_agent_skills() {
 test_agent_skills_use_supported_discovery_paths() {
   local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
   local bundled_manifest="$skills_root/.bundled_manifest"
-  local skill_file
+  local inventory
   local skill_name
   local relative_path
 
   assert_file "$bundled_manifest"
 
-  while IFS= read -r skill_file; do
-    relative_path="${skill_file#$skills_root/}"
+  inventory="$(git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard -- 'dotfiles/.agent/skills/**/SKILL.md')" \
+    || fail "could not enumerate repository-owned skills"
+  while IFS= read -r relative_path; do
+    relative_path="${relative_path#dotfiles/.agent/skills/}"
     [[ "$relative_path" == */*/* ]] || continue
     [[ "$relative_path" == .* ]] && continue
     skill_name="${relative_path:h:t}"
     grep -Eq "^${skill_name}:" "$bundled_manifest" \
       || fail "nested agent skill must be registered in .bundled_manifest: $relative_path"
-  done < <(find "$skills_root" -type f -name SKILL.md -print | sort)
+  done <<< "$inventory"
 }
 
 test_flake_exposes_nix_darwin_and_home_manager_profiles() {
