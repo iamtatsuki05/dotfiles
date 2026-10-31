@@ -400,6 +400,64 @@ test_hook_scopes_multiedit_apply_patch_and_partial_edits() {
   rm -rf "$FIXTURE_DIR"
 }
 
+test_pi_hook_reports_only_successful_changed_text() {
+  local document output
+  make_fixture
+  document="$FIXTURE_DIR/report.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  print -r -- '' >> "$document"
+  print -r -- 'それだけ。それが本質だと考えます。' >> "$document"
+
+  print -r -- '{"type":"tool_result","toolName":"edit","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md","edits":[{"oldText":"旧","newText":"それだけ。それが本質だと考えます。"}]},"isError":false}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  assert_contains "$output" ':3:'
+  assert_not_contains "$output" ':1:'
+  python3 - "$output" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert set(data) == {"additionalContext"}
+assert "JP003" in data["additionalContext"]
+PY
+
+  print -r -- '{"type":"tool_result","toolName":"write","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md"},"isError":false}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  assert_contains "$output" ':1:'
+  assert_contains "$output" ':3:'
+
+  print -r -- '{"type":"tool_result","toolName":"write","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md"},"isError":true}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  [[ ! -s "$output" ]] || fail "failed Pi tool must not trigger lint"
+
+  print -r -- '{"type":"tool_result","toolName":"edit","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md","edits":[{"oldText":"削除","newText":""}]},"isError":false}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  [[ ! -s "$output" ]] || fail "Pi deletion must not relint unchanged text"
+  rm -rf "$FIXTURE_DIR"
+}
+
+test_dsh_hook_reports_native_write_and_changed_edit() {
+  local document output
+  make_fixture
+  document="$FIXTURE_DIR/report.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  print -r -- '' >> "$document"
+  print -r -- 'それだけ。それが本質だと考えます。' >> "$document"
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"edit","cwd":"'"$FIXTURE_DIR"'","tool_input":{"file_path":"report.md","old_string":"旧","new_string":"それだけ。それが本質だと考えます。"}}' \
+    | "$LINTER" --hook-agent dsh > "$output"
+  assert_contains "$output" ':3:'
+  assert_not_contains "$output" ':1:'
+  python3 - "$output" <<'PY'
+import json, sys
+assert set(json.load(open(sys.argv[1]))) == {"additionalContext"}
+PY
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"write","cwd":"'"$FIXTURE_DIR"'","tool_input":{"file_path":"report.md","content":"unused by linter"}}' \
+    | "$LINTER" --hook-agent dsh > "$output"
+  assert_contains "$output" ':1:'
+  assert_contains "$output" ':3:'
+  rm -rf "$FIXTURE_DIR"
+}
+
 test_hook_skips_agent_work_logs() {
   local document
   local output
@@ -637,6 +695,8 @@ PY
 }
 
 main() {
+  test_pi_hook_reports_only_successful_changed_text
+  test_dsh_hook_reports_native_write_and_changed_edit
   test_cli_reports_local_and_document_rules
   test_cli_ignores_non_prose_markdown_regions
   test_cli_respects_fence_length_and_closing_syntax

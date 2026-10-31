@@ -74,6 +74,10 @@ They call `scripts/apply_updates.sh`, which applies chezmoi files, synchronizes
 AI agent files, and refreshes the hooks. They do not switch nix-darwin or Home
 Manager, uninstall Homebrew, or install mise tools.
 
+Agent synchronization also no longer installs missing Hermes MCP dependencies.
+If needed, run `zsh dotfiles/.agent/sync.sh --install-deps` explicitly; this may download packages.
+
+
 Reinstall them manually with:
 
 ```sh

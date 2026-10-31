@@ -297,6 +297,10 @@ claude-account() {
   "$DOTFILES_REPO_ROOT/scripts/claude_account.sh" "$@"
 }
 
+claude() {
+  claude-account run-default "$@"
+}
+
 if [ -z "${dotfiles_mise_activation_bash+x}" ]; then
   dotfiles_mise_activation_bash=0
 fi

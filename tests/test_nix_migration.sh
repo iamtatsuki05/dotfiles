@@ -878,13 +878,26 @@ test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run() {
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" openclaw --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN openclaw"
 
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" deepseek --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN deepseek"
+
+  "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" pi --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
+  assert_output_contains "$output" "DRY-RUN pi"
+
   "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" all --dry-run --suite dotfiles/.agent/evals/markdown-docs/model.yaml >"$output"
   assert_output_contains "$output" "DRY-RUN codex"
   assert_output_contains "$output" "DRY-RUN antigravity"
   assert_output_contains "$output" "DRY-RUN copilot"
   assert_output_contains "$output" "DRY-RUN hermes"
   assert_output_contains "$output" "DRY-RUN openclaw"
+  assert_output_contains "$output" "DRY-RUN deepseek"
+  assert_output_contains "$output" "DRY-RUN pi"
   assert_not_contains "$output" "DRY-RUN agent-swarm"
+
+  if "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" deepseek-harness --dry-run >"$output" 2>&1; then
+    fail "expected an unregistered DeepSeek alias to fail"
+  fi
+  assert_output_contains "$output" "Usage:"
 
   rm -f "$output"
 }
@@ -920,6 +933,99 @@ EOF
 
   rm -rf "$fake_bin" "$output_dir"
   rm -f "$output"
+}
+
+test_waza_cli_agent_eval_script_preserves_new_agent_cli_contracts() {
+  local temporary_root
+  local fake_bin
+  local output_dir
+  local output
+  local agent
+  local requested_status
+  local cli_status
+  local capture_file
+  local result_dir
+  local workspace_path
+  local expected_output='This Markdown review identifies duplicate headings and explains structure, order, usage, troubleshooting, and heading cleanup with enough concrete detail to exceed the length threshold.'
+
+  make_temp_dir
+  temporary_root="$REPLY"
+  fake_bin="$temporary_root/bin"
+  output_dir="$temporary_root/output"
+  mkdir -p "$fake_bin"
+  output="$temporary_root/runner.log"
+
+  for agent in dsh pi; do
+    cat > "$fake_bin/$agent" <<'EOF'
+#!/bin/sh
+printf '%s\0' "$PWD" "$@" > "$AGENT_TEST_CAPTURE"
+printf '%s\n' 'This Markdown review identifies duplicate headings and explains structure, order, usage, troubleshooting, and heading cleanup with enough concrete detail to exceed the length threshold.'
+exit "${AGENT_TEST_STATUS:-0}"
+EOF
+    chmod +x "$fake_bin/$agent"
+  done
+
+  for agent in deepseek pi; do
+    result_dir="$output_dir/$agent/markdown-docs-model-eval/markdown-docs-restructure-guide-001"
+    for requested_status in 0 23; do
+      capture_file="$temporary_root/$agent-$requested_status.argv"
+      set +e
+      PATH="$fake_bin:$PATH" \
+        AGENT_TEST_CAPTURE="$capture_file" \
+        AGENT_TEST_STATUS="$requested_status" \
+        "$TEST_ZSH_BIN" "$WAZA_CLI_AGENT_EVAL_SCRIPT" "$agent" \
+        --allow \
+        --suite dotfiles/.agent/evals/markdown-docs/model.yaml \
+        --output-dir "$output_dir" \
+        --keep-workspace >"$output" 2>&1
+      cli_status=$?
+      set -e
+
+      if (( requested_status == 0 )); then
+        (( cli_status == 0 )) || fail "$agent CLI should accept a successful mocked run: $(cat "$output")"
+        assert_contains "$result_dir/summary.txt" "PASS regex_match:"
+      else
+        (( cli_status != 0 )) || fail "$agent CLI should propagate a non-zero mocked run"
+        assert_contains "$result_dir/summary.txt" "CLI failed with status $requested_status"
+      fi
+
+      assert_file "$result_dir/stdout.txt"
+      [[ "$(cat "$result_dir/stdout.txt")" == "$expected_output" ]] || fail "$agent stdout was not captured"
+      python3 - "$capture_file" "$agent" "$result_dir/prompt.txt" "$result_dir/workspace.txt" <<'PY' || fail "$agent CLI arguments or cwd changed"
+import os
+import sys
+from pathlib import Path
+
+capture_file = Path(sys.argv[1])
+agent = sys.argv[2]
+prompt_file = Path(sys.argv[3])
+workspace_file = Path(sys.argv[4])
+captured = capture_file.read_bytes().split(b"\0")
+assert captured[-1] == b""
+cwd = Path(os.fsdecode(captured[0]))
+arguments = [os.fsdecode(value) for value in captured[1:-1]]
+prompt = prompt_file.read_text(encoding="utf-8")
+workspace = workspace_file.read_text(encoding="utf-8").strip()
+assert cwd == Path(workspace), (cwd, workspace)
+prompt = prompt.rstrip("\n")
+if agent == "deepseek":
+    expected = ["headless", "--", prompt]
+elif agent == "pi":
+    expected = ["--print", "--no-session", "--", prompt]
+else:
+    raise AssertionError(f"unexpected agent: {agent}")
+if arguments != expected:
+    raise AssertionError(f"unexpected argv for {agent}: {arguments[:-1]}, prompt_matches={arguments[-1:] == expected[-1:]}")
+PY
+
+      workspace_path="$(cat "$result_dir/workspace.txt")"
+      [[ "$workspace_path" == "${TMPDIR:-/tmp}/waza-cli-agent-${agent}-"* ]] \
+        || fail "unexpected kept workspace path for $agent: $workspace_path"
+      rm -rf "$workspace_path"
+    done
+  done
+
+  rm -rf "$temporary_root"
 }
 
 test_waza_cli_agent_eval_script_grades_successful_cli_output() {
@@ -2105,6 +2211,7 @@ test_main_script_runs_homebrew_before_nix_setup() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2196,6 +2303,7 @@ test_main_script_can_skip_mas_apps_for_full_profile() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2277,6 +2385,7 @@ test_main_script_uses_cli_profile_when_requested() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
 #!/usr/bin/env zsh
@@ -2386,6 +2495,7 @@ test_main_script_bootstraps_nix_on_macos_when_missing() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2500,6 +2610,7 @@ test_main_script_keeps_sudo_authentication_alive_on_macos() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2590,6 +2701,7 @@ test_main_script_installs_rosetta_on_apple_silicon_full_profile() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2788,6 +2900,7 @@ test_main_script_reports_nix_portable_when_nix_missing_on_linux() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -2861,6 +2974,7 @@ test_main_script_applies_chezmoi_instead_of_copying_legacy_dotfiles() {
 
   mkdir -p "$repo/scripts/lib" "$repo/dotfiles/.agent" "$home_dir" "$bin_dir"
   cp "$MAIN_SCRIPT" "$repo/main.sh"
+  printf 'printf "setup_steermouse:%%s\\n" "$*" >> "%s"\n' "$log_file" > "$repo/scripts/setup_steermouse.sh"
   copy_script_libs "$repo"
 
   cat > "$repo/scripts/install_homebrew.sh" <<EOF
@@ -3504,7 +3618,7 @@ test_managed_update_script_updates_mise_and_nix() {
   assert_contains "$MISE_CONFIG" 'alias = "mise-upgrade"'
   assert_contains "$MISE_CONFIG" 'run = "zsh scripts/update_managed_versions.sh --only mise"'
   assert_not_contains "$MISE_CONFIG" 'git-head-commit-rest'
-  assert_contains "$MISE_CONFIG" 'node = "22"'
+  assert_contains "$MISE_CONFIG" 'node = "24"'
   assert_contains "$MISE_CONFIG" 'go = "1.25"'
   assert_contains "$MISE_CONFIG" 'java = "zulu-21"'
   assert_contains "$MISE_CONFIG" 'python = "3.13"'
@@ -6066,6 +6180,7 @@ main() {
   test_waza_is_integrated_for_agent_skill_evaluations
   test_waza_cli_agent_eval_script_is_guarded_and_can_dry_run
   test_waza_cli_agent_eval_script_preserves_cli_failure_status
+  test_waza_cli_agent_eval_script_preserves_new_agent_cli_contracts
   test_waza_cli_agent_eval_script_grades_successful_cli_output
   test_waza_eval_suites_cover_all_regular_agent_skills
   run_managed_all_bash_matrix

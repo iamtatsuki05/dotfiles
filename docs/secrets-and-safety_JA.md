@@ -94,7 +94,8 @@ nix-darwin の初回適用では、既存の `/etc/pam.d/sudo_local` を
 
 ## 認証変更は排他的な操作として扱う
 
-Claude Code の profile 切替は、macOS Keychain 内の共有 credential を1つ
-切り替えます。`claude-account auth-login` の前に、すべての Claude process を
-終了してください。複数アカウント運用中は、通常の Claude 起動で profile wrapper
-を迂回しないでください。手順は[AI エージェント設定](ai-agents_JA.md)を参照します。
+Claude Code の資格情報はprofileごとの `CLAUDE_CONFIG_DIR` に分離します。
+`claude-account auth-login PROFILE` の前に終了するのは、そのprofileのsessionだけです。
+同じディレクトリを使って通常の `claude auth login` を直接実行するとロックを迂回するため、
+認証変更にはwrapperを使ってください。会話ファイルは共有するので、別組織でresumeする前に
+送信先とデータの扱いを確認します。手順は[AI エージェント設定](ai-agents_JA.md)を参照してください。

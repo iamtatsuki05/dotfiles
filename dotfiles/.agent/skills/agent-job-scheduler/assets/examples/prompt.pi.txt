@@ -1,0 +1,2 @@
+Refactor or fix the requested area while preserving existing behavior.
+Report the exact files changed, commands run, and any remaining risks.

@@ -43,6 +43,7 @@ skills/
 | `eng-practices` | PR/CL のタイトル・説明、small PR への分割、reviewer コメントへの返答。 | PR description を書く段階でだけ読む。review の実施には使わず、出力形式は依頼文で決める。 |
 | `go-dev` | go.mod のバージョンに合わせた Go 実装・テスト・レビュー。テーブル駆動テスト、errgroup / context、-race 確認を含む。 | session で 1 回だけ読む。CI YAML や Go 以外のサービスは対象外。 |
 | `git-github-flow` | Git/GitHub 作業を確認・範囲内 write・readback で進める。owner/repo と login は remote から解決、PR は Draft + 明示 assignee / labels、CI gate 後だけ Ready、force-push 禁止。 | fork PR、review 投稿、履歴整理、gh-stack は references。 |
+| `issue-driven-development` | 既存Issueの仕様判断・実装・検証・レビュー・依頼されたPR提出まで進める。 | Issueの閲覧・起票だけ、PRレビューだけは対象外。Git/GitHub操作は `git-github-flow` が担当。 |
 | `goal-prompt-builder` | 依頼を、範囲・checkpoint・検証可能な停止条件を持つ Codex `/goal` prompt に変換する。 | `$goal-prompt-builder` で呼ぶ。本番・課金・権限判断を委ねる goal は拒否する。 |
 | `gws` | gws CLI の helper と低レベル API で Google Calendar / Drive / Gmail / Tasks を扱う。 | 読み取りは即実行、書き込みは dry-run か下書きで確認し、承認後に実行する。 |
 | `html-preview-review` | ユーザーが preview を求めたときだけ、検証済み結果を private な local HTML review board にして 1 つの presenter で表示する。 | OS ブラウザへの fallback 禁止。未表示は未達として報告する。 |
@@ -84,11 +85,15 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
+| `core-message-writing` | `shibayu36/agent-skills` | `core-message-writing/` | 想定読者と主メッセージを軸に文章を作成・推敲する。SKILL.md は原文のまま、MIT LICENSE を同梱。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |
 | `stop-slop` | `hardikpandya/stop-slop` | `stop-slop/` | 英語の AI pattern を strict checklist で除く。voice matching は `humanizer`。 |
 | `pstack-principles` | `cursor/plugins` | `principle-make-operations-idempotent/`, `principle-separate-before-serializing-shared-state/` | 再実行時の安全性と共有状態の分離に関する2原則。本文・MIT LICENSEは原文のまま。frontmatterを移植し、ローカルの `agents/openai.yaml` でCodexを明示呼び出し専用にする。他の実行環境ではこの制限が適用されない場合がある。 |
 | `delegate-skills` | `amElnagdy/delegate-skills` | `codex-delegate/`、`claude-delegate/` | 1 つの bounded なコーディング作業を別 process の Codex CLI / Claude Code に relay 経由で任せ、diff を自分で review して commit する。relay は commit しない。local safety overlay で read-only 既定と権限 bypass flag の禁止を固定。 |
 | `chatgpt-pro-line` | `pauljunsukhan/codex-chatgpt-pro-plugin` | `chatgpt-pro-line/` | ログイン済みの専用 Chrome profile(CDP、127.0.0.1)経由で ChatGPT Pro に設計・調査・デバッグ方針を尋ね、receipt と transcript を残す。runtime のみ vendoring(self-test と Codex MCP 設定は除外)。local overlay で明示依頼の限定、repo context upload の都度承認、`.devspace/` を commit しない規則を固定。 |
+| `japanese-tech-writing` | `k16shikano` gist `fd287c31…` | `japanese-tech-writing/` | 日本語の技術書の章・記事・解説文の文章規範(段落構成、論証の厳密さ、読み手の負荷、演出の抑制、LLM 調・翻訳調の禁止、冗長の排除)。本文は原文のまま。description 末尾に discovery 境界を 1 文追加。業務文書と文の自然さは `natural-japanese`、構成だけの整理は `shaping-japanese-longform`。 |
+| `cognitive-rhythm-writing` | `k16shikano` gist `eb2929f1…` | `cognitive-rhythm-writing/` | 読み物として読ませる説明文に、認知モードの切替と未回収の緊張で緩急を設計する規範。`japanese-tech-writing` と併用する前提。本文は原文のまま。frontmatter に license 行と、description 末尾の discovery 境界 1 文を追加。 |
+| `k16shikano-gist-license` | `k16shikano` gist `67625f2a…` | 上記 2 skill の `LICENSE`、`LICENSE-NOTICE.ja.md` | 作者の public gist 全体に適用される Unlicense 宣言。skill 本体とは別 entry で pinned commit を追跡する。 |
 
 ### mattpocock group
 

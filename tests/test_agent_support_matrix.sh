@@ -26,7 +26,7 @@ test_support_matrix_documents_managed_agents() {
   local agent
 
   assert_file "$SUPPORT_MATRIX"
-  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok; do
+  for agent in claude codex copilot cursor devin antigravity hermes opencode openclaw grok deepseek pi; do
     assert_agent_documented "$agent"
   done
   assert_contains "$SUPPORT_MATRIX" "brew cask: antigravity-cli"
@@ -41,7 +41,7 @@ test_support_matrix_documents_managed_agents() {
 test_review_agent_code_supports_matrix_agents() {
   local agent
 
-  for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw grok; do
+  for agent in codex claude-code antigravity-cli copilot cursor-agent devin hermes opencode openclaw grok deepseek pi; do
     assert_contains "$UPSTREAM_SCRIPT" "\"$agent\""
   done
   assert_contains "$UPSTREAM_SCRIPT" "brew-cask:antigravity-cli"
@@ -57,7 +57,7 @@ test_review_agent_code_supports_matrix_agents() {
 test_waza_cli_agent_code_supports_matrix_agents() {
   local agent
 
-  for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw grok; do
+  for agent in codex claude antigravity copilot devin cursor opencode hermes openclaw grok deepseek pi; do
     assert_contains "$WAZA_CLI_AGENT_IMPL" "$agent"
   done
   assert_contains "$WAZA_CLI_AGENT_SCRIPT" 'agent/waza_eval_cli_agent.sh'
@@ -76,7 +76,7 @@ test_waza_cli_agent_code_supports_matrix_agents() {
 test_agent_job_scheduler_code_supports_matrix_agents() {
   local enum_name
 
-  for enum_name in ANTIGRAVITY CLAUDE CODEX COPILOT CURSOR DEVIN HERMES OPENCODE OPENCLAW GROK; do
+  for enum_name in ANTIGRAVITY CLAUDE CODEX COPILOT CURSOR DEVIN HERMES OPENCODE OPENCLAW GROK DEEPSEEK PI; do
     assert_contains "$SCHEDULER_MODELS" "$enum_name"
   done
   assert_contains "$SCHEDULER_ADAPTERS" "Agent.ANTIGRAVITY"
