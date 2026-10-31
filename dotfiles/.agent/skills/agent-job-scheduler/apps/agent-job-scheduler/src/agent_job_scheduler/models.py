@@ -13,10 +13,12 @@ class Agent(StrEnum):
     CODEX = "codex"
     COPILOT = "copilot"
     CURSOR = "cursor"
+    DEEPSEEK = "deepseek"
     DEVIN = "devin"
     HERMES = "hermes"
     OPENCODE = "opencode"
     OPENCLAW = "openclaw"
+    PI = "pi"
     GROK = "grok"
 
 

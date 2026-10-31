@@ -1,3 +1,3 @@
 ---
-description: GitHub workflow skills for managing repositories, pull requests, code reviews, issues, and CI/CD pipelines using the gh CLI and git via terminal.
+description: Legacy bundled category containing only codebase inspection. Git and GitHub workflow is consolidated in the root git-github-flow skill.
 ---

@@ -1,6 +1,6 @@
 # Fallback Issue and Pull Request Templates
 
-リポジトリに該当テンプレートが無い場合だけ使う。Issue本文は同じリポジトリの最近のIssueに合わせる。以下のPR言語規則はReady/Draft PRだけに適用し、Issue見出しには適用しない。PRの見出し名は下記の英語表記を維持し、日本語見出しを過去PRからコピーしない。PRの説明文・箇条書き・チェック項目だけを、今回の明示指示、同じリポジトリ・同種作業のhuman-authoredな最近のReady/merged PR、デフォルト日本語の順で決める。言語が混在・不明なら日本語を使う。該当しない節は空欄で残さず削除する。Links は、PRのbaseが既定ブランチでmerge時にIssueを完了させる場合だけ `Closes`、それ以外は `Refs` を残す。
+リポジトリに該当テンプレートが無い場合だけ使う。見出し名と本文の言語は SKILL.md の規則に従い、Issue本文は同じリポジトリの最近のIssueに合わせる。該当しない節は空欄で残さず削除する。既存Issue・親・依存先がなければ `Links` 節ごと削除し、PRのためにIssueを作らない。
 
 ## Work Issue
 
@@ -75,7 +75,7 @@ Use the WHY / WHAT / VERIFICATION structure while keeping links and risk explici
 
 ## Verification
 
-- `<実行したコマンドまたは確認>`: <結果>
+- <受け入れ条件>: `<実行したコマンドまたは確認>` — <結果・未達/未検証事項>
 - <手動、表示、環境固有の確認>: <結果>
 
 ## Links
@@ -87,7 +87,8 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 
 ## Risks and remaining work
 
-- <既知のリスク、展開時の注意、後続Issue>
+- <既知のリスク、展開時の注意>
+- <別件の指摘>: <後続Issueの参照先、未起票、または見送る理由>
 ```
 
 ## Draft Pull Request
@@ -95,7 +96,7 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 ```markdown
 ## Status
 
-早期レビュー用のDraftです。まだマージ可能ではありません。
+必須CIとmetadata readbackの完了待ちです。まだマージ可能ではありません。
 
 ## Why
 
@@ -109,6 +110,7 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 
 - [ ] <残っている実装>
 - [ ] <残っている検証>
+- <別件の指摘があれば、後続Issueの参照先・未起票・見送る理由>
 
 ## Review focus
 
@@ -116,7 +118,7 @@ Depends on #<依存するPRまたはIssue。該当する場合>
 
 ## Partial verification
 
-- `<コマンドまたは確認>`: <現時点の結果と制約>
+- <受け入れ条件>: `<コマンドまたは確認>` — <現時点の結果と制約>
 
 ## Links
 

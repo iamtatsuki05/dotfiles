@@ -99,6 +99,28 @@ def test_default_agent_commands_match_cli_contracts(tmp_path: Path) -> None:
     )
 
 
+def test_deepseek_headless_command_matches_cli_contract(tmp_path: Path) -> None:
+    prompt = "--json must remain prompt text"
+    spec = AdapterRegistry().build(
+        _job(agent=Agent("deepseek"), workdir=tmp_path, prompt=prompt)
+    )
+
+    assert spec.argv == ("dsh", "headless", "--", prompt)
+    assert spec.cwd == tmp_path
+    assert spec.env == {}
+
+
+def test_pi_print_command_matches_cli_contract(tmp_path: Path) -> None:
+    prompt = "--no-session must remain prompt text"
+    spec = AdapterRegistry().build(
+        _job(agent=Agent("pi"), workdir=tmp_path, prompt=prompt)
+    )
+
+    assert spec.argv == ("pi", "--print", "--no-session", "--", prompt)
+    assert spec.cwd == tmp_path
+    assert spec.env == {}
+
+
 def _job(*, agent: Agent, workdir: Path, prompt: str = "prompt") -> JobRecord:
     return JobRecord(
         job_id=f"{agent.value}-job",

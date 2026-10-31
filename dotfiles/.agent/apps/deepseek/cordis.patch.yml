@@ -1,0 +1,40 @@
+- insert:
+    - id: dotfiles-deepseek-integrations
+      name: cordis:group
+      group: true
+      disabled: !!js "ctx.get('profileContext')?.name !== 'web' && ctx.get('profileContext')?.name !== 'headless'"
+      config:
+        - id: native
+          name: '@dotfiles/deepseek-native'
+
+        - id: mcp-deepwiki
+          name: '@deepseek-ai/dsh-mcp-client'
+          config:
+            serverName: deepwiki
+            transport: streamable-http
+            url: https://mcp.deepwiki.com/mcp
+
+        - id: mcp-devin
+          name: '@deepseek-ai/dsh-mcp-client'
+          config:
+            serverName: devin
+            transport: streamable-http
+            url: https://mcp.devin.ai/mcp
+            headers:
+              Authorization: !!js '`Bearer ${process.env.DEVIN_API_KEY}`'
+
+        - id: mcp-figma
+          name: '@deepseek-ai/dsh-mcp-client'
+          config:
+            serverName: figma
+            transport: streamable-http
+            url: https://mcp.figma.com/mcp
+
+        - id: mcp-notion
+          name: '@deepseek-ai/dsh-mcp-client'
+          config:
+            serverName: notion
+            transport: streamable-http
+            url: https://mcp.notion.com/mcp
+
+# The existing Codex profile disables Playwright; keep it absent from DSH.

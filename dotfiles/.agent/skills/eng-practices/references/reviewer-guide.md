@@ -30,7 +30,7 @@ Google eng-practices の Reviewer Guide のうち、Claude Code エージェン�
 | **ドキュメント** | 公開 API、README、設定例、エラーメッセージなど外部に見える変更の更新を含むか。 |
 | **文脈** | システム全体の健全性を損なわないか。直前 CL との相互作用、設定変更の波及、データ移行の整合性。 |
 
-加えて、各個別スキル（`security-check`, `api-design`, `database-dev`, `ci-cd`, `python-dev` 等）の専門観点を併用する。
+加えて、各個別スキル（`security-check`, `database-dev`, `ci-cd`, `python-dev` 等）の専門観点を併用する。
 
 ## 3. Navigating a CL in Review
 

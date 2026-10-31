@@ -1,0 +1,142 @@
+# トラブルシューティング
+
+[English](troubleshooting.md) · [ドキュメント一覧](README_JA.md)
+
+最初に、失敗したコマンドのエラー全体と `--help` を確認してください。この
+ページには、read-only の診断と、package、file、credential を変更する復旧コマンドが
+混在します。変更を伴う手順には明記しているため、実行前に内容を確認してください。
+
+## `main.sh` で Nix 導入後に処理を継続できない
+
+初回導入では、現在の shell の `PATH` がまだ更新されていない場合があります。
+terminal を再起動するか、エラーに表示された Nix daemon profile を source して、
+`zsh main.sh` を再実行してください。Nix 自体が使える状態なら、script は flake 内の
+`darwin-rebuild` または `home-manager` を利用できます。
+
+## Linux で sudo が使えない、または `/nix` を mount できない
+
+通常の installer ではなく nix-portable を使います。
+
+```sh
+zsh scripts/nix_portable_install.sh
+export PATH="$HOME/.local/bin:$PATH"
+nixp --version
+dotfiles-nix-shell
+```
+
+既定の `proot` runtime は、mount namespace が制限された host を想定しています。
+Linux の package path を暗黙に Homebrew へ切り替えないでください。
+
+## Linux で `nix_install.sh --with-gui-apps` が失敗する
+
+Linux の GUI application setup には `DISPLAY` または `WAYLAND_DISPLAY` が必要です。
+headless host では `--cli-only` を使います。
+
+```sh
+zsh scripts/nix_install.sh --cli-only --dry-run
+zsh scripts/nix_install.sh --cli-only
+```
+
+## Nix から Homebrew が必要だと表示される
+
+`config/nix/homebrew-fallback.nix` を確認します。formula fallback は CLI profile にも
+影響します。cask と VS Code extension は GUI application の適用時に影響します。
+entry が意図したものなら、選択 profile 用の Homebrew を導入します。
+
+macOS では、まず `features.macos` が `true`（既定値）であることを確認してください。
+`false` の場合は、任意の fallback が意図的に停止するため、この Homebrew 復旧経路を
+使いません。詳細は[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
+
+1つ目のコマンドは installer の preview です。2つ目は Homebrew を導入し、マシンの
+状態を変更します。
+
+```sh
+zsh scripts/install_homebrew.sh --profile full --dry-run
+zsh scripts/install_homebrew.sh --profile full
+```
+
+不要な entry であれば、check を迂回せず、canonical package config から移行または
+削除してください。
+
+## Chezmoi の verify で drift が見つかる
+
+適用前に変更内容を確認します。
+
+```sh
+zsh scripts/chezmoi_apply.sh --dry-run
+```
+
+展開済みファイルに残すべきローカル変更がある場合は、先に `home/` または
+`config/` 内の source へ戻します。その後、source-state test と適用を実行します。
+
+```sh
+zsh tests/test_chezmoi_source_state.sh
+zsh scripts/chezmoi_apply.sh --mark-default
+zsh scripts/chezmoi_apply.sh --verify
+```
+
+## Git pull 後に新しいパッケージが適用されない
+
+想定された挙動です。pull hook が行うのは chezmoi file の適用、agent file の同期、
+hook の更新です。Nix switch や mise tool の導入は実行しません。flake または Nix
+設定が変わった場合は、次を実行します。
+
+```sh
+zsh scripts/nix_install.sh --cli-only --dry-run
+zsh scripts/nix_install.sh --cli-only
+```
+
+## Mac App Store アプリが skip される、または個別に失敗する
+
+macOS で `features.macos` が `false` の場合、Mac App Store の処理停止は想定された挙動です。
+この停止を解消するために、サインインやインストーラの再実行を行う必要はありません。詳しくは
+[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
+
+`features.macos` が `true` の場合は、Mac App Store にサインインしているか、現在の
+アカウントで対象アプリを取得できるか確認します。installer は意図的に各アプリを
+best-effort で処理するため、1件の失敗で setup 全体は失敗しません。アカウント状態を
+直した後、対象スクリプトを再実行します。
+
+次のコマンドはアプリをインストールし、マシンの状態を変更します。
+
+```sh
+zsh scripts/install_mas_apps.sh --profile full
+```
+
+## Agent sync は成功したが、client の挙動が古い
+
+最初に canonical file と展開済み file を確認します。
+
+`sync.sh` は managed symlink、setting、ローカルの agent env file を更新します。
+read-only の test を実行する前に、ローカルの agent 設定を変更します。
+
+```sh
+zsh dotfiles/.agent/sync.sh
+zsh tests/test_agent_sync.sh
+```
+
+その後、必要に応じて対象 client を再起動または reload します。file sync の成功は、
+起動中 process が prompt、hook、MCP setting、skill を再読込した証拠ではありません。
+
+## Claude の profile 切替が拒否される
+
+`profile login lock is busy` は同じprofileのsessionが動いていることを示します。
+そのsessionを通常の手順で終了してから再認証します。他profileのsessionは継続できます。
+
+```sh
+claude-account auth-login <profile>
+```
+
+profileのloginと登録済みの本人情報が一致しない場合は、初回と同じアカウント・組織を
+ブラウザで選んでください。初回登録を間違えた場合は
+`claude-account auth-login <profile> --replace` を実行し、確認欄にprofile名を入力してから、
+意図したアカウントと組織を選び直します。
+旧版から更新した場合はprofileごとに一度再loginが必要です。Fableのcredits要求は
+login失敗とは限らないので、契約とFable専用枠も確認してください。
+
+## 全体テストで1件だけ skip される
+
+chezmoi が利用できない場合、ローカル runner は rendered-home integration test だけを
+skip することがあります。cross-platform の apply path を完全に検証したと判断する
+前に、chezmoi を導入するか CI で実行してください。それ以外の失敗は想定された
+skip ではありません。最初のエラーから原因を調べます。

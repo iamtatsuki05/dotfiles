@@ -22,7 +22,7 @@ Google eng-practices の Reviewer Guide のうち「How to write code review com
 | `Optional:` | 改善案だが採否は著者に委ねる | 任意 |
 | `FYI:` | 情報共有・関連事項 | 対応不要 |
 
-`pr-code-review` の severity（Critical / Warning / Suggestion）と整合させる：
+GitHub PR review の severity（Critical / Warning / Suggestion）と整合させる：
 - `Critical:` → Critical
 - `Warning:` → Warning
 - `Nit:` / `Optional:` / `FYI:` → Suggestion

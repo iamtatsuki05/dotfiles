@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "deepwiki": {
+      "type": "streamable-http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "devin": {
+      "type": "streamable-http",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
+      }
+    },
+    "figma": {
+      "type": "streamable-http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "notion": {
+      "type": "streamable-http",
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["@playwright/mcp@latest"],
+      "enabled": false
+    }
+  }
+}

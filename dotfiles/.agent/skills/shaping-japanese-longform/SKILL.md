@@ -1,9 +1,11 @@
 ---
 name: shaping-japanese-longform
-description: "USE FOR: revising Japanese long-form articles or essays with flat structure, evidence links, or document-progress narration. Triggers: restructure this article, remove progress narration, connect evidence. DO NOT USE FOR: progress reports, procedures, API references, or fixed-format submissions."
+description: "USE FOR: revising Japanese long-form articles, essays, or explanations with flat structure, disconnected evidence, or document-progress narration (ここまでで, 次に見る). Triggers: 構成を整えて, 進行予告を削って, 根拠をつないで. DO NOT USE FOR: progress reports, procedures, API references, short replies, fixed-format submissions, or sentence naturalness (natural-japanese)."
 ---
 
 # 日本語長文の構成を整える
+
+日本語の長文記事、論考、解説について、原文の事実と根拠を保ったまま、段落のつながりと問い・根拠の対応を整える。文の自然さや語彙の調整は `natural-japanese` の担当。
 
 ## USE FOR:
 
@@ -11,27 +13,27 @@ description: "USE FOR: revising Japanese long-form articles or essays with flat 
 
 ## DO NOT USE FOR:
 
-進捗報告、手順書、API リファレンス、定型提出物。
+進捗報告、手順書、API リファレンス、短い返信、定型提出物。依頼にこれらが混ざっていたら、その部分は「対象外」と 1 行で示し、順序、意味、条件、コマンドを変えずに読みやすさだけ直す。
 
 ## 手順
 
-1. 事実、判断、問い、保留、結論を拾い、追加禁止の台帳にする。
-2. 「ここまでで」「次に見る」など文書進行だけの文を削る。原文に明示された対比・因果・制約・時系列だけでつなぐ。なければ段落境界だけを直す。
-3. 問い・主張を回答・根拠へ対応させる。未解決は残し、根拠以上に断定しない。
-4. 観測、意味づけ、判断の順を整える。文や段落を一定の長さへ揃えない。
-5. 引用、リンク、脚注、出典を保持し、数値、固有名詞、因果、評価、未確定事項を照合する。
+1. 事実、数値、判断、問い、保留、結論、引用・URL・脚注を拾い、追加禁止・削除禁止の台帳にする。
+2. 「ここまでで」「次に見る」など文書進行だけの文を削る。後続のない予定は削り、実施済みなら結果を書く。
+3. 段落は原文に明示された対比、因果、制約、時系列だけでつなぐ。関係が書かれていなければ段落境界だけを直す。
+4. 問い・主張を回答・根拠へ対応させる。未解決は未解決のまま残し、根拠以上に断定しない。
+5. 観測、意味づけ、判断の順に整える。文や段落の長さを揃えない。未解決の問いを型として毎回作らない。
+6. 出力前に台帳と照合する。数値、固有名詞、因果、評価、未確定事項、引用、リンク、脚注がすべて残り、原文にない評価、因果、感情、問い、結論が増えていないことを確認する。
 
-## Examples
+## 出力
+
+- 修正後の本文を返す。原文と同程度の長さにし、要約、前置き、解説を足さない。
+- 方針だけを求められた場合は、削る文、つなぎ直す箇所、保持する要素を箇条書きで短く示す。
+- 変更点は求められたときだけ、削除した進行文と変えたつなぎを 1 行ずつ挙げる。
+
+## 例
 
 原文が関係を明記している場合:
 
 > 前: 次にページ種別を見る。縦書きは61%、ルビ付きは54%だった。
 >
 > 後: 総合値だけでは失敗したページ種別が分からない。縦書きは61%、ルビ付きは54%だった。
-
-## Troubleshooting
-
-- 後続のない予定は削り、実施済みなら結果を書く。
-- 原文にない評価、因果、問い、感情、反転を足さない。
-- 前提、未解決の問い、引用・出典を削らない。
-- 未解決の問いを常に作る型へしない。

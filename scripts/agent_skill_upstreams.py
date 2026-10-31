@@ -28,11 +28,13 @@ REVIEW_AGENTS = (
     "claude-code",
     "antigravity-cli",
     "copilot",
+    "deepseek",
     "cursor-agent",
     "devin",
     "hermes",
     "opencode",
     "openclaw",
+    "pi",
     "grok",
 )
 MISE_TOOLS_BY_REVIEW_AGENT = {
@@ -40,11 +42,13 @@ MISE_TOOLS_BY_REVIEW_AGENT = {
     "claude-code": "claude-code",
     "antigravity-cli": "brew-cask:antigravity-cli",
     "copilot": "npm:@github/copilot",
+    "deepseek": "npm:@deepseek-ai/dsh",
     "cursor-agent": "http:cursor-agent",
     "devin": "http:devin",
     "hermes": "pipx:git+https://github.com/NousResearch/hermes-agent.git",
     "opencode": "opencode",
     "openclaw": "npm:openclaw",
+    "pi": "npm:@earendil-works/pi-coding-agent",
     "grok": "npm:@xai-official/grok",
 }
 
@@ -89,9 +93,18 @@ def relative_path(value: str, field_name: str) -> Path:
     return path
 
 
+GIST_REPOSITORY_RE = re.compile(r"^https://gist\.github\.com/[0-9a-f]{32}\.git$")
+
+
 def require_https_github_url(value: str) -> None:
-    if not value.startswith("https://github.com/") or not value.endswith(".git"):
-        raise UpstreamError(f"repository must be an https GitHub .git URL: {value}")
+    if value.startswith("https://github.com/") and value.endswith(".git"):
+        return
+    if GIST_REPOSITORY_RE.match(value):
+        return
+    raise UpstreamError(
+        "repository must be https://github.com/<owner>/<repo>.git or "
+        f"https://gist.github.com/<32-hex-id>.git (no owner segment): {value}"
+    )
 
 
 def validate_review_agent(review_agent: str) -> None:
@@ -582,6 +595,13 @@ def run_review_agent(
             REPO_ROOT,
             env,
         )
+    elif review_agent == "deepseek":
+        output = run_direct_or_mise(
+            review_agent,
+            ["dsh", "headless", "--", prompt],
+            REPO_ROOT,
+            env,
+        )
     elif review_agent == "devin":
         output = run_direct_or_mise(
             review_agent,
@@ -626,6 +646,13 @@ def run_review_agent(
                 "--timeout",
                 "600",
             ],
+            REPO_ROOT,
+            env,
+        )
+    elif review_agent == "pi":
+        output = run_direct_or_mise(
+            review_agent,
+            ["pi", "--print", "--no-session", "--", prompt],
             REPO_ROOT,
             env,
         )

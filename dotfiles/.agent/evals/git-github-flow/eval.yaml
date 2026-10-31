@@ -1,0 +1,34 @@
+name: git-github-flow-eval
+description: |
+  Smoke evaluation for consolidated Git/GitHub workflow routing and safe
+  mutation boundaries.
+skill: git-github-flow
+version: "1.0"
+
+config:
+  trials_per_task: 1
+  timeout_seconds: 300
+  parallel: false
+  executor: mock
+  model: claude-sonnet-4.6
+
+metrics:
+  - name: github_flow_response
+    weight: 1.0
+    threshold: 0.8
+    description: Did the skill accept a Git/GitHub workflow request?
+
+graders:
+  - type: code
+    name: has_substantive_output
+    config:
+      assertions:
+        - "len(output) > 10"
+  - type: text
+    name: no_runtime_errors
+    config:
+      regex_not_match:
+        - "(?i)fatal error|crashed|exception occurred"
+
+tasks:
+  - "tasks/*.yaml"

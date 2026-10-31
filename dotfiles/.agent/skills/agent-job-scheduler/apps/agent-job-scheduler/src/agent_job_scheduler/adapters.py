@@ -28,10 +28,12 @@ def default_builders() -> dict[Agent, CommandBuilder]:
         Agent.CODEX: build_codex_command,
         Agent.COPILOT: build_copilot_command,
         Agent.CURSOR: build_cursor_command,
+        Agent.DEEPSEEK: build_deepseek_command,
         Agent.DEVIN: build_devin_command,
         Agent.HERMES: build_hermes_command,
         Agent.OPENCODE: build_opencode_command,
         Agent.OPENCLAW: build_openclaw_command,
+        Agent.PI: build_pi_command,
         Agent.GROK: build_grok_command,
     }
 
@@ -97,6 +99,11 @@ def build_devin_command(job: JobRecord) -> CommandSpec:
     return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
 
 
+def build_deepseek_command(job: JobRecord) -> CommandSpec:
+    argv = ("dsh", "headless", "--", job.prompt)
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
+
+
 def build_cursor_command(job: JobRecord) -> CommandSpec:
     argv = (
         "cursor-agent",
@@ -150,6 +157,11 @@ def build_openclaw_command(job: JobRecord) -> CommandSpec:
         "--timeout",
         "600",
     )
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
+
+
+def build_pi_command(job: JobRecord) -> CommandSpec:
+    argv = ("pi", "--print", "--no-session", "--", job.prompt)
     return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
 
 

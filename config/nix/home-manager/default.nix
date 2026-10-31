@@ -9,6 +9,12 @@
   ...
 }:
 
+let
+  features = import ../features.nix;
+  isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
+  effectiveEnableGuiApps = enableGuiApps && (!isDarwin || features.macos);
+in
+
 {
   imports = [
     ./packages.nix
@@ -26,7 +32,7 @@
 
   options.dotfiles.enableGuiApps = lib.mkOption {
     type = lib.types.bool;
-    default = enableGuiApps;
+    default = effectiveEnableGuiApps;
     description = "Install GUI applications from the Nix package set.";
   };
 
@@ -37,7 +43,8 @@
 
     programs.home-manager.enable = true;
 
-    targets.darwin.copyApps.enable = pkgs.stdenv.hostPlatform.isDarwin && config.dotfiles.enableGuiApps;
+    targets.darwin.copyApps.enable = pkgs.stdenv.hostPlatform.isDarwin && config.dotfiles.enableGuiApps
+      && (!isDarwin || features.macos);
     targets.darwin.linkApps.enable = false;
   };
 }

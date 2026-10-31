@@ -42,11 +42,20 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
     "$repo/dotfiles/.agent/apps/openclaw/extensions/japanese-prose-lint" \
     "$repo/dotfiles/.agent/apps/grok" \
+    "$repo/dotfiles/.agent/apps/pi/extensions" \
+    "$repo/dotfiles/.agent/apps/deepseek" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills" \
     "$repo/dotfiles/.agent/pets"
 
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
+  cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
+  print -r -- '{"defaultProvider":"openai","defaultModel":"gpt-6-luna","defaultThinkingLevel":"high"}' > "$repo/dotfiles/.agent/apps/pi/settings.json"
+  print -r -- '{"mcpServers":{"deepwiki":{"url":"https://mcp.deepwiki.com/mcp"}}}' > "$repo/dotfiles/.agent/apps/pi/mcp.json"
+  print -r -- 'export default function () {}' > "$repo/dotfiles/.agent/apps/pi/extensions/dotfiles.ts"
+  print -r -- 'export default function () {}' > "$repo/dotfiles/.agent/apps/pi/extensions/rtk.ts"
+  print -r -- '[]' > "$repo/dotfiles/.agent/apps/deepseek/cordis.patch.yml"
+  print -r -- '{"name":"@dotfiles/deepseek-native","type":"module"}' > "$repo/dotfiles/.agent/apps/deepseek/package.json"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
@@ -59,7 +68,10 @@ create_agent_fixture_repo() {
   chmod +x "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
   chmod +x "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
-  chmod +x "$repo/scripts/setup_agent_files.sh" "$repo/dotfiles/.agent/sync.sh"
+  chmod +x \
+    "$repo/scripts/agent-run-compact" \
+    "$repo/scripts/setup_agent_files.sh" \
+    "$repo/dotfiles/.agent/sync.sh"
 
   cat > "$repo/dotfiles/.agent/apps/claude/settings.json" <<'EOF'
 {"cleanupPeriodDays":36500,"hooks":{"Notification":[{"matcher":"idle_prompt","hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}],"Stop":[{"hooks":[{"type":"command","command":"~/.claude/hooks/agent_turn_done_notify.sh","timeout":5}]}]}}
@@ -185,6 +197,198 @@ enabled = true
 EOF
 }
 
+test_agent_sync_only_new_agents_preserves_existing_settings() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.claude" "$home_dir/.pi/agent/extensions"
+  print -r -- 'existing claude settings' > "$home_dir/.claude/settings.json"
+  print -r -- 'existing extension' > "$home_dir/.pi/agent/extensions/user.ts"
+  print -r -- '{"deviceId":"fixture-device","theme":"custom"}' > "$home_dir/.pi/agent/settings.json"
+  print -r -- '{"mcpServers":{"user-server":{"url":"https://example.test/mcp"}}}' > "$home_dir/.pi/agent/mcp.json"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only pi --dry-run >/dev/null
+  assert_not_exists "$home_dir/.pi/agent/extensions/rtk.ts"
+  assert_not_contains "$home_dir/.pi/agent/settings.json" 'defaultModel'
+  local iteration
+  for iteration in 1 2; do
+    HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only pi >/dev/null
+  done
+  assert_contains "$home_dir/.claude/settings.json" 'existing claude settings'
+  assert_contains "$home_dir/.pi/agent/extensions/user.ts" 'existing extension'
+  assert_symlink_target "$home_dir/.pi/agent/extensions/rtk.ts" "$repo/dotfiles/.agent/apps/pi/extensions/rtk.ts"
+  assert_symlink_target "$home_dir/.pi/agent/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  assert_not_exists "$home_dir/.dsh"
+  python3 - "$home_dir/.pi/agent" <<'PY'
+import json, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+settings=json.loads((root/'settings.json').read_text())
+assert settings['defaultModel']=='gpt-6-luna'
+assert settings['deviceId']=='fixture-device' and settings['theme']=='custom'
+servers=json.loads((root/'mcp.json').read_text())['mcpServers']
+assert set(servers)=={'deepwiki','user-server'}
+assert servers['user-server']['url']=='https://example.test/mcp'
+PY
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only deepseek >/dev/null
+  assert_contains "$home_dir/.claude/settings.json" 'existing claude settings'
+  assert_symlink_target "$home_dir/.dsh/cordis.patch.yml" "$repo/dotfiles/.agent/apps/deepseek/cordis.patch.yml"
+  assert_symlink_target "$home_dir/.dsh/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$home_dir/.dsh/profiles/web/node_modules/@dotfiles/deepseek-native" "$repo/dotfiles/.agent/apps/deepseek"
+  assert_symlink_target "$home_dir/.dsh/profiles/headless/node_modules/@dotfiles/deepseek-native" "$repo/dotfiles/.agent/apps/deepseek"
+}
+
+test_agent_sync_preserves_unmanaged_new_agent_integrations() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.pi/agent/extensions" "$home_dir/.dsh"
+  print -r -- 'custom rtk extension' > "$home_dir/.pi/agent/extensions/rtk.ts"
+  print -r -- '# custom patch' > "$home_dir/.dsh/cordis.patch.yml"
+  local agent
+  for agent in pi deepseek; do
+    if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only "$agent" >/dev/null 2>&1; then
+      fail "expected a conflicting $agent integration to fail"
+    fi
+  done
+  assert_contains "$home_dir/.pi/agent/extensions/rtk.ts" 'custom rtk extension'
+  assert_contains "$home_dir/.dsh/cordis.patch.yml" '# custom patch'
+  assert_not_exists "$home_dir/.pi/agent/AGENTS.md"
+  assert_not_exists "$home_dir/.dsh/AGENTS.md"
+}
+
+test_agent_sync_registers_deepseek_and_pi() {
+  local repo home_dir skill_root
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  skill_root="$repo/dotfiles/.agent/skills"
+  mkdir -p "$skill_root/research/example" "$skill_root/top-level" "$skill_root/.system/hidden" \
+    "$home_dir/.dsh/skills/local" "$home_dir/.pi/agent"
+  print -r -- 'nested skill' > "$skill_root/research/example/SKILL.md"
+  print -r -- 'top-level skill' > "$skill_root/top-level/SKILL.md"
+  print -r -- 'hidden skill' > "$skill_root/.system/hidden/SKILL.md"
+  print -r -- 'local skill' > "$home_dir/.dsh/skills/local/SKILL.md"
+  print -r -- '{"theme":"user-choice"}' > "$home_dir/.pi/agent/settings.json"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --dry-run >/dev/null
+  assert_not_exists "$home_dir/.dsh/AGENTS.md"
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-research--example"
+
+  local iteration
+  for iteration in 1 2; do
+    HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null
+  done
+  assert_symlink_target "$home_dir/.dsh/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.pi/agent/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.pi/agent/skills" "$skill_root"
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-research--example" "$skill_root/research/example"
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-top-level" "$skill_root/top-level"
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-.system--hidden"
+  assert_contains "$home_dir/.dsh/skills/local/SKILL.md" 'local skill'
+  assert_contains "$home_dir/.pi/agent/settings.json" 'user-choice'
+
+  rm -f "$skill_root/top-level/SKILL.md"
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null
+  [[ ! -L "$home_dir/.dsh/skills/dotfiles-top-level" ]] || fail "stale managed DeepSeek skill link remains"
+  assert_file "$home_dir/.dsh/skills/local/SKILL.md"
+}
+
+test_agent_sync_preserves_conflicting_deepseek_skills() {
+  local repo home_dir skill_root
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  skill_root="$repo/dotfiles/.agent/skills"
+  mkdir -p "$skill_root/example" "$home_dir/.dsh/skills/dotfiles-example"
+  print -r -- 'shared skill' > "$skill_root/example/SKILL.md"
+  print -r -- 'user skill' > "$home_dir/.dsh/skills/dotfiles-example/SKILL.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a conflicting DeepSeek skill to fail"
+  fi
+  assert_contains "$home_dir/.dsh/skills/dotfiles-example/SKILL.md" 'user skill'
+
+  mv "$home_dir/.dsh/skills/dotfiles-example" "$home_dir/foreign-skill"
+  ln -s "$home_dir/foreign-skill" "$home_dir/.dsh/skills/dotfiles-example"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a foreign DeepSeek skill link to fail"
+  fi
+  assert_symlink_target "$home_dir/.dsh/skills/dotfiles-example" "$home_dir/foreign-skill"
+
+  mv "$home_dir/.dsh/skills" "$home_dir/foreign-skills"
+  ln -s "$home_dir/foreign-skills" "$home_dir/.dsh/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a symlinked DeepSeek skill root to fail"
+  fi
+  assert_symlink_target "$home_dir/.dsh/skills" "$home_dir/foreign-skills"
+  assert_contains "$home_dir/foreign-skills/dotfiles-example/SKILL.md" 'user skill'
+}
+
+test_agent_sync_preserves_foreign_pi_skills() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.pi/agent" "$home_dir/custom-skills"
+  print -r -- 'user skill' > "$home_dir/custom-skills/SKILL.md"
+  ln -s "$home_dir/custom-skills" "$home_dir/.pi/agent/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a foreign Pi skills symlink to fail"
+  fi
+  assert_symlink_target "$home_dir/.pi/agent/skills" "$home_dir/custom-skills"
+  assert_contains "$home_dir/custom-skills/SKILL.md" 'user skill'
+  assert_not_exists "$home_dir/.dsh/skills"
+
+  rm "$home_dir/.pi/agent/skills"
+  print -r -- 'user file' > "$home_dir/.pi/agent/skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected a conflicting Pi skills file to fail"
+  fi
+  assert_contains "$home_dir/.pi/agent/skills" 'user file'
+}
+
+test_agent_sync_rejects_deepseek_flattened_name_collision() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$repo/dotfiles/.agent/skills/group/skill" "$repo/dotfiles/.agent/skills/group--skill"
+  print -r -- 'nested' > "$repo/dotfiles/.agent/skills/group/skill/SKILL.md"
+  print -r -- 'flat' > "$repo/dotfiles/.agent/skills/group--skill/SKILL.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected colliding DeepSeek skill paths to fail"
+  fi
+  assert_not_exists "$home_dir/.dsh/skills/dotfiles-group--skill"
+}
+
 test_agent_sync_links_managed_files_and_generates_runtime_state() {
   local repo
   local home_dir
@@ -208,6 +412,9 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
 
+  assert_symlink_target "$home_dir/.local/bin/agent-run-compact" "$repo/scripts/agent-run-compact"
+  assert_not_exists "$home_dir/.local/bin/pytest"
+  assert_not_exists "$home_dir/.local/bin/npm"
   assert_symlink_target "$home_dir/.claude/settings.json" "$repo/dotfiles/.agent/apps/claude/settings.json"
   assert_not_exists "$repo/AGENTS.md"
   assert_symlink_target "$home_dir/.claude/.mcp.json" "$repo/dotfiles/.agent/apps/claude/.mcp.json"
@@ -299,7 +506,8 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$xdg_config_home/opencode/opencode.json" '"mcp"'
   assert_contains "$xdg_config_home/opencode/opencode.json" '"permission"'
   assert_symlink_target "$home_dir/.hermes/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
-  assert_symlink_target "$home_dir/.hermes/skills" "$repo/dotfiles/.agent/skills"
+  [[ -d "$home_dir/.hermes/skills" && ! -L "$home_dir/.hermes/skills" ]] || fail "expected ~/.hermes/skills to be a real directory owned by Hermes"
+  assert_symlink_target "$home_dir/.hermes/dotfiles-skills" "$repo/dotfiles/.agent/skills"
   assert_symlink_target "$home_dir/.hermes/config.yaml" "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
@@ -369,6 +577,59 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_contains "$home_dir/.openclaw/.env" 'OPENCODE_API_KEY=opencode-test-key'
 
   rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_replaces_hermes_skill_symlink_with_local_directory() {
+  local repo
+  local home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.hermes"
+  ln -s "$repo/dotfiles/.agent/skills" "$home_dir/.hermes/skills"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null 2>&1
+
+  [[ -d "$home_dir/.hermes/skills" && ! -L "$home_dir/.hermes/skills" ]] || fail "expected the managed ~/.hermes/skills symlink to become a real directory"
+  assert_symlink_target "$home_dir/.hermes/dotfiles-skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.codex/skills" "$repo/dotfiles/.agent/skills"
+
+  rm -rf "$repo" "$home_dir"
+}
+
+test_agent_sync_fails_when_hermes_skill_symlink_points_at_a_foreign_target() {
+  local repo
+  local home_dir
+  local foreign_dir
+  local output
+  local exit_status
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  make_temp_dir
+  foreign_dir="$REPLY"
+
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.hermes"
+  ln -s "$foreign_dir" "$home_dir/.hermes/skills"
+
+  set +e
+  output="$(HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" 2>&1)"
+  exit_status=$?
+  set -e
+
+  [[ "$exit_status" -ne 0 ]] || fail "expected a foreign ~/.hermes/skills symlink to fail"
+  assert_contains_text "$output" "must be a real directory owned by Hermes"
+  [[ -L "$home_dir/.hermes/skills" && "$home_dir/.hermes/skills" -ef "$foreign_dir" ]] || fail "expected the foreign ~/.hermes/skills symlink to be left in place"
+  assert_not_exists "$home_dir/.hermes/dotfiles-skills"
+
+  rm -rf "$repo" "$home_dir" "$foreign_dir"
 }
 
 test_agent_sync_fails_when_required_claude_skill_link_conflicts() {
@@ -477,6 +738,13 @@ EOF
 
   HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
     run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" >/dev/null
+
+  assert_not_exists "$uv_log"
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" --install-deps --dry-run >/dev/null
+  assert_not_exists "$uv_log"
+  HOME="$home_dir" XDG_CONFIG_HOME="$xdg_config_home" PATH="$hermes_install/bin:$fake_bin:$PATH" \
+    run_with_timeout "$TEST_TIMEOUT_SECONDS" "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --repo-root "$repo" --install-deps >/dev/null
 
   assert_file "$uv_log"
   assert_contains "$uv_log" "pip install --python $hermes_install/hermes-agent/bin/python mcp>=1.24,<2"
@@ -593,25 +861,24 @@ assert "コード、設定、文書、データ、browser、外部操作を含�
 assert "外部操作の readback または結果確認" in prompt
 assert "送信、公開、外部反映を依頼されていない draft-only の文案" in prompt
 assert "危険または合理的な疑いが未解決" in prompt
-assert "stop_hook_active が true でも" in prompt
-assert "stop_hook_active は (1) と (2) を解除しません" in prompt
-assert "現在の turn で待機、検証、readback、修正により解消できる" in prompt
+assert "stop_hook_active が true の場合は、他の条件を評価せず必ず停止を許可する" in prompt
+assert "stop_hook_active が false の場合だけ" in prompt
 assert "ユーザー入力または外部状態の変化がなければ進められず" in prompt
 assert "重大な未解決安全問題" in prompt
 assert "セキュリティ、権限変更、個人情報、課金、法的・契約的問題、prompt injection" in prompt
 PY
 }
 
-test_codex_subagent_default_matches_configured_max_contract() {
+test_codex_subagent_defaults_match_configured_contract() {
   python3 - "$REPO_ROOT/dotfiles/.agent/apps/codex/config.toml" <<'PY'
 import sys
 import tomllib
 from pathlib import Path
 
 config = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert config["agents"]["default_subagent_model"] == "gpt-5.6-luna"
-assert config["agents"]["default_subagent_reasoning_effort"] == "max"
-assert config["agents"]["max_concurrent_threads_per_session"] == 100
+assert config["agents"]["default_subagent_model"] == "gpt-6-astra"
+assert config["agents"]["default_subagent_reasoning_effort"] == "low"
+assert config["agents"]["max_concurrent_threads_per_session"] == 25
 PY
 }
 
@@ -673,9 +940,10 @@ assert "リポジトリ hook リマインダー:" in context
 assert "現在の状態を確認" in context
 assert ".agent/work/sessions" in context
 assert "checkpoint.md" in context
-assert "まとまった変更や検証" in context
-assert "最初の待機前" in context
-assert "1つでもあれば直列" in context
+assert "AGENTS.md" in context
+assert "最初の待機前" not in context
+assert "参考情報として扱い" not in context
+assert "read-only reviewer" not in context
 assert "CHANGES.md" not in context
 '
 
@@ -722,6 +990,19 @@ assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 assert ".agent/work/sessions" in payload["additional_context"]
 assert "CHANGES.md" not in payload["additional_context"]
 '
+}
+
+test_agent_context_reminder_is_silent_without_git_or_agent_dir() {
+  local plain_dir output
+  plain_dir="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-test-plain-XXXXXX")"
+
+  output="$(printf '%s\n' '{"hook_event_name":"SessionStart","cwd":"'"$plain_dir"'"}' | "$REPO_ROOT/dotfiles/.agent/hooks/agent_context_reminder.sh")"
+  rm -rf "$plain_dir"
+
+  if [[ -n "$output" ]]; then
+    print -r -- "expected no reminder output outside git/.agent workspaces, got: $output" >&2
+    return 1
+  fi
 }
 
 test_agent_context_reminder_detects_managed_dotfiles_agent_dir() {
@@ -774,8 +1055,16 @@ test_colab_mcp_is_absent_from_managed_agent_assets() {
 }
 
 main() {
+  test_agent_sync_only_new_agents_preserves_existing_settings
+  test_agent_sync_preserves_unmanaged_new_agent_integrations
+  test_agent_sync_registers_deepseek_and_pi
+  test_agent_sync_preserves_conflicting_deepseek_skills
+  test_agent_sync_preserves_foreign_pi_skills
+  test_agent_sync_rejects_deepseek_flattened_name_collision
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_colab_mcp_is_absent_from_managed_agent_assets
+  test_agent_sync_replaces_hermes_skill_symlink_with_local_directory
+  test_agent_sync_fails_when_hermes_skill_symlink_points_at_a_foreign_target
   test_agent_sync_fails_when_required_claude_skill_link_conflicts
   test_agent_sync_fails_before_changes_when_required_codex_skill_link_conflicts
   test_agent_sync_uses_declarative_link_specs
@@ -784,12 +1073,13 @@ main() {
   test_claude_completion_notification_uses_stop_hook
   test_static_context_is_not_reinjected_on_every_claude_and_codex_prompt
   test_claude_stop_hook_contract_covers_completion_and_safety_boundaries
-  test_codex_subagent_default_matches_configured_max_contract
+  test_codex_subagent_defaults_match_configured_contract
   test_agent_prompt_separates_task_boundary_triggers_from_signals
   test_agent_prompt_probes_shared_causes_before_parallel_dispatch
   test_agent_sync_wrapper_delegates_to_setup_script
   test_retrospective_codify_requires_cross_session_recurrence
   test_agent_context_reminder_hook_outputs_valid_json_context
+  test_agent_context_reminder_is_silent_without_git_or_agent_dir
   test_agent_context_reminder_detects_managed_dotfiles_agent_dir
   echo "agent sync tests passed"
 }

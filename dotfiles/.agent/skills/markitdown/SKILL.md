@@ -1,80 +1,49 @@
 ---
 name: markitdown
-description: "Use when the user asks to convert PDF, Word, PowerPoint, Excel, HTML, image, audio, URL, or another supported source into Markdown, or explicitly asks to use MarkItDown."
+description: "Use when the user asks to convert PDF, Word, PowerPoint, Excel, HTML, image, audio, URL, or another supported source into Markdown, or explicitly asks to use MarkItDown. Do not use for editing existing Markdown, or for reading .ipynb (use the paired jupytext .py instead)."
 ---
 
 # MarkItDown
 
-## Overview
+MarkItDown(Microsoft 製、0.1.7 で確認)の CLI で PDF・Word・PowerPoint・Excel・HTML・URL などを Markdown に変換する。
 
-MarkItDown（Microsoft製）を使って、PDF・Word・PowerPoint・Excel・HTML・画像・URL など多様なソースを Markdown テキストに変換するスキル。
-
-## インストール確認と手順
-
-まず `markitdown` が利用可能かを確認する。
+## 実行形
 
 ```bash
 markitdown --version
+markitdown input.pdf                       # 標準出力
+markitdown input.pdf -o output.md          # ファイル保存(既存ファイルの上書きは事前確認)
+markitdown https://example.com -o page.md  # URL(外部アクセスが発生する)
+cat input.pdf | markitdown -x pdf          # stdin。拡張子を -x で渡す
 ```
 
-**インストールされていない場合:**
+- 未導入なら `mise exec 'pipx:markitdown' -- markitdown <args>`(それでも無ければ `missing-tools` skill)。`pip install markitdown` などの永続 install はユーザー承認後だけ行う。
+- `python3 -m markitdown` は markitdown を import できる interpreter でだけ動く。system の `python3` では `No module named 'markitdown'` になるので使わない。
+- ZIP は内包ファイルを一括変換する。`.ipynb` は変換できるが、この repo では `.ipynb` を直接読まず jupytext のペア `.py` を使う。
 
-global install はせず、まず `missing-tools` skill の方針に沿って ad-hoc 実行を試す。
+## PDF が失敗したとき
+
+`FileConversionException: File conversion failed after 1 attempts` が出たら同じコマンドを再試行しない。mise の `pipx:markitdown` は `[pdf]` extra なしで入っており `pdfminer` が無いのが原因なので、次の順で切り替える。
 
 ```bash
-# mise の pipx backend で一時実行（推奨）
-mise exec 'pipx:markitdown' -- markitdown --version
+uvx --from 'markitdown[pdf]' markitdown input.pdf -o output.md
+nix shell nixpkgs#poppler-utils --command pdftotext -layout input.pdf -   # poppler が無い環境
 ```
 
-永続インストール（`pip install markitdown`、全形式サポートなら `pip install 'markitdown[all]'`）は環境変更を伴うため、ユーザーに確認してから実行する。`[all]` は画像 OCR・音声文字起こしが必要な場合だけ検討する。
+出力が空のときはスキャン PDF(画像のみ)。OCR は `markitdown[all]` の追加依存と処理時間が要るので、必要性をユーザーに確認してから進める。
 
-## 対応フォーマット
+## 変換後の確認
 
-PDF / Word / PowerPoint / Excel・CSV / HTML・URL / Jupyter Notebook / JSON・XML / ZIP（内包ファイルを一括変換）に対応する。画像の OCR と音声の文字起こしは `[all]` インストール時のみ利用できる。
+1. 見出し: 元文書の章立てが `#` 階層になっているか。番号だけの行や本文に埋もれた見出しがないか。
+2. 表: 列数が揃った Markdown table になっているか。結合セルや複数行セルは崩れやすいので該当箇所を元文書と突き合わせる。
+3. 画像: PDF/Office の画像は本文に残らない(alt text か省略)。HTML の data URI は既定で切り詰められ、残すなら `--keep-data-uris`。図の内容が必要なら元文書を案内する。
+4. 先頭・末尾の欠落、文字化け(出力は UTF-8。端末で崩れるなら `-o` で保存)。
 
-## 使い方
-
-### CLI での変換
-
-```bash
-# 基本（標準出力）
-markitdown input.pdf
-
-# ファイルに保存
-markitdown input.pdf -o output.md
-
-# URL を変換
-markitdown https://example.com
-
-# パイプ経由
-cat input.pdf | markitdown
-```
-
-### Python API での変換
-
-```python
-from markitdown import MarkItDown
-
-md = MarkItDown()
-result = md.convert("input.xlsx")
-print(result.text_content)
-```
-
-## ワークフロー
-
-1. `markitdown --version` でインストールを確認
-2. 入力ファイル/URL、出力先、既存ファイルの上書き可否を確認する
-3. 未インストールなら `mise exec 'pipx:markitdown' -- markitdown` などの ad-hoc 実行を優先し、永続インストールはユーザー承認後に行う
-4. 変換コマンドを実行する
-5. 先頭・末尾・見出し・表・コードブロックなどを確認し、変換崩れや欠落を報告する
-6. ファイル保存が必要なら `-o` を使う。既存ファイルを上書きする場合は事前確認する
+崩れや欠落は修正せず、箇所と元文書での見え方を報告する。
 
 ## 注意
 
-- このリポジトリでは `.ipynb` を直接読み書きしない方針がある。ノートブック変換が必要な場合は、まず jupytext のペア `.py` があるか確認し、`.ipynb` 本体を丸ごと読み込まない。
-- URL 変換では外部アクセスが発生する。認証付きページ、社内資料、個人情報を含む URL はユーザー確認後に扱う。
-- 画像 OCR や音声文字起こしは追加依存・処理時間・外部モデル利用の可能性があるため、必要性を確認してから進める。
+- URL 変換は外部アクセスを伴う。認証付きページ、社内資料、個人情報を含む URL はユーザー確認後に扱う。
+- 画像 OCR・音声文字起こしは `[all]` extra が必要で、外部モデルを使う場合がある。
 
-## 詳細リファレンス
-
-詳細なオプションや利用例は [references/usage.md](references/usage.md) を参照。
+option の全一覧と形式別の例は [references/usage.md](references/usage.md)。

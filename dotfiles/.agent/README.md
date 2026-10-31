@@ -18,6 +18,8 @@ Managed agents:
 - `opencode`
 - `openclaw`
 - `grok`
+- `deepseek` (`dsh`)
+- `pi`
 
 The tools themselves are installed by `mise` where available. Herdr is also installed by `mise`, but it is treated as a terminal multiplexer / agent runtime rather than a canonical agent. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
 
@@ -41,6 +43,43 @@ zsh dotfiles/.agent/sync.sh
 ```
 
 `sync.sh` delegates to `scripts/setup_agent_files.sh`. It creates symlinks into tool homes and generates agent-specific env files from `~/.config/shell/secrets.env`.
+
+## DeepSeek Harness / Pi
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) uses the canonical ID `deepseek` and the `dsh` binary. [Pi](https://github.com/earendil-works/pi) uses `pi`. Native integrations are verified with DSH `0.2.0-rc.2`, Pi `1.1.0`, and RTK `0.51.0`; both mise definitions pin these versions and use Node.js 24.
+
+```sh
+mise install npm:@deepseek-ai/dsh npm:@earendil-works/pi-coding-agent
+zsh scripts/setup_agent_files.sh --only deepseek
+zsh scripts/setup_agent_files.sh --only pi
+```
+
+`--only` updates one new agent home without syncing the other agents. Omit it for the standard all-agent sync. Add `--dry-run` to preview. New integration file conflicts fail before deployment. Pi settings are merged as regular files: managed model defaults and named MCP servers are updated, while fields such as `deviceId`, unrelated servers, and other extensions are preserved. Pi defaults to `openai/gpt-6-luna` with high reasoning; use `/login openai` and choose **Sign in with ChatGPT**. Credentials remain in client-owned files outside this repository.
+
+Sync links the shared instructions to `~/.dsh/AGENTS.md` and `~/.pi/agent/AGENTS.md`. DeepSeek only discovers direct skill children, so it gets individual `dotfiles-<relative-path>` links under `~/.dsh/skills` (`/` becomes `--`); hidden directories such as `.system` are excluded. Only stale links into the current repository are removed. Pi recursively loads `~/.pi/agent/skills`; foreign links, files, and nonempty directories at that path are rejected.
+
+Both native plugins add repository context, completion notifications, paired `.py` notebook synchronization, and advisory Japanese prose lint after successful built-in `write`/`edit` calls. Shell/custom-tool writes are outside the edit hook contract. Pi uses the unchanged official RTK extension to rewrite Bash commands. DeepSeek receives RTK usage guidance because its public tool API forbids argument rewriting; usage depends on the model following the instruction. No permission or sandbox override is added.
+
+MCP definitions match the existing Codex set: DeepWiki, Devin, Figma, and Notion; Playwright remains disabled (absent from the DSH patch). Devin reads `DEVIN_API_KEY` from the process environment. MCP authorization is client-specific; configuration alone does not copy another client's OAuth grants. Pi supports `pi mcp login <server>`. The pinned DSH MCP client does not provide an OAuth login flow for Figma/Notion.
+
+DeepSeek's `web`/`headless` profile settings and credential store remain client-owned. Its built-in `llm-pi-ai/openai-codex` authorization flow supports ChatGPT subscription login through the public authorization service, although this release's Models form only exposes API-key entry. After native OAuth, use this selection in each profile's `cordis.patch.yml`:
+
+```yaml
+- id: llm-pi-ai
+  config:
+    providers:
+      openai-codex:
+        transport: sse
+- id: agent-default-model
+  config:
+    provider: openai-codex
+    model: gpt-6-luna
+    reasoningEffort: high
+```
+
+`transport: sse` avoids the pinned library's post-answer WebSocket cache delay ([upstream report](https://github.com/deepseek-ai/deepseek-harness/discussions/4190)) while retaining the same provider, model, credentials, and native tool loop. The home integration patch applies only to `web` and `headless`; sync links the local plugin package into those two profiles. Restart running clients after updating plugins.
+
+Run `dsh headless -- "task"` or `pi --print --no-session -- "task"`. Waza (`--agent deepseek` / `--agent pi`, including `all`), upstream skill review (`--review-agent`), and `agent-job-scheduler` accept both IDs. DeepSeek is a developer preview, and both agents execute tools with the launching user's access: see [DeepSeek safety](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md) and [Pi security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md).
 
 ## Herdr
 
@@ -70,6 +109,11 @@ Use the same scratch-home pattern with the target agent's documented config-home
 | `AGENTS.md` | `~/.hermes/AGENTS.md` |
 | `AGENTS.md` | `~/.openclaw/workspace/AGENTS.md` |
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
+| `AGENTS.md` | `~/.dsh/AGENTS.md` |
+| `AGENTS.md` | `~/.pi/agent/AGENTS.md` |
+| `skills/` | `~/.pi/agent/skills` |
+| Parent directories of `skills/**/SKILL.md` | `~/.dsh/skills/dotfiles-<relative-path>` |
+| `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |
 | `apps/claude/.mcp.json` | `~/.claude/.mcp.json` |
 | `apps/copilot/settings.json` | `~/.copilot/settings.json` |
@@ -90,7 +134,7 @@ Use the same scratch-home pattern with the target agent's documented config-home
 | `apps/openclaw/openclaw.json` | `~/.openclaw/openclaw.json` |
 | `apps/grok/config.toml` | `~/.grok/config.toml` |
 
-`skills/` is linked to each supported agent home. For Antigravity CLI, it is linked into `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills`. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/antigravity-cli/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
+`skills/` is linked to each supported agent home. For Antigravity CLI, it is linked into `~/.gemini/antigravity-cli/plugins/dotfiles-agent/skills`. For OpenClaw, it is linked to `~/.openclaw/workspace/skills`. Hermes also uses a separate shared-skill path: `~/.hermes/skills` stays a real directory that Hermes owns, so its bundled-skill sync, `.bundled_manifest`, hub, and curator writes land there, and the shared tree is linked to `~/.hermes/dotfiles-skills` and loaded through `skills.external_dirs` in the managed `config.yaml`. Hermes treats that external tree as externally owned, but a user-directed `skill_manage` edit still writes to the repository. Shared hook scripts are linked to `~/.claude/hooks/`, `~/.codex/hooks/`, `~/.copilot/hooks/`, `~/.cursor/hooks/`, `~/.config/devin/hooks/`, `~/.gemini/antigravity-cli/hooks/`, `~/.config/opencode/hooks/`, and `~/.hermes/agent-hooks/`.
 
 Hermes also links files from `apps/hermes-agent/agent-hooks/` into `~/.hermes/agent-hooks/`.
 
@@ -152,13 +196,15 @@ mise run waza-eval-model -- --agent opencode --allow
 mise run waza-eval-model -- --agent hermes --allow
 mise run waza-eval-model -- --agent openclaw --allow
 mise run waza-eval-model -- --agent grok --allow
+mise run waza-eval-model -- --agent deepseek --allow
+mise run waza-eval-model -- --agent pi --allow
 ```
 
 Use `--dry-run` to inspect suites without invoking an AI CLI. Results are written under `.waza-results/`.
 
 ## External Skill Upstreams
 
-Vendored third-party skills are tracked in `skills/upstreams.json`. The manifest records the upstream GitHub repository, branch, pinned commit, local paths, and local tree hash.
+Vendored third-party skills are tracked in `skills/upstreams.json`. The manifest records the upstream GitHub repository (or public gist), branch, pinned commit, local paths, and local tree hash.
 
 Common commands:
 
@@ -178,7 +224,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, and `grok`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, and `pi`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
 
 For manual review workflows, lower-level commands are still available:
 

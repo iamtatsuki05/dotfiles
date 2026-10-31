@@ -339,6 +339,142 @@ test_hook_is_silent_for_clean_or_unsupported_files() {
   rm -rf "$FIXTURE_DIR"
 }
 
+test_hook_reports_only_lines_introduced_by_an_edit() {
+  local document
+  local output
+
+  make_fixture
+  document="$FIXTURE_DIR/long.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  print -r -- '' >> "$document"
+  print -r -- '検証は完了しています。' >> "$document"
+  print -r -- '' >> "$document"
+  print -r -- 'それだけ。それが本質だと考えます。' >> "$document"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"'"$document"'","old_string":"旧","new_string":"それだけ。それが本質だと考えます。"}}' \
+    | "$LINTER" --hook-agent claude > "$output"
+  assert_contains "$output" ":5:"
+  assert_not_contains "$output" ":1:"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"'"$document"'"}}' \
+    | "$LINTER" --hook-agent claude > "$output"
+  assert_contains "$output" ":1:"
+  assert_contains "$output" ":5:"
+
+  rm -rf "$FIXTURE_DIR"
+}
+
+test_hook_scopes_multiedit_apply_patch_and_partial_edits() {
+  local document
+  local output
+
+  make_fixture
+  document="$FIXTURE_DIR/long.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  print -r -- '' >> "$document"
+  print -r -- '検証は完了しています。' >> "$document"
+  print -r -- '' >> "$document"
+  print -r -- 'それだけ。それが本質だと考えます。' >> "$document"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"MultiEdit","tool_input":{"file_path":"'"$document"'","edits":[{"old_string":"旧","new_string":"それだけ。それが本質だと考えます。"}]}}' \
+    | "$LINTER" --hook-agent claude > "$output"
+  assert_contains "$output" ":5:"
+  assert_not_contains "$output" ":1:"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: '"$document"'\n@@\n-旧\n+それだけ。それが本質だと考えます。\n*** End Patch"}}' \
+    | "$LINTER" --hook-agent codex > "$output"
+  assert_contains "$output" ":5:"
+  assert_not_contains "$output" ":1:"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"'"$document"'","old_string":"それが本質だと思います","new_string":"それが本質だと考えます"}}' \
+    | "$LINTER" --hook-agent claude > "$output"
+  assert_contains "$output" ":5:"
+  assert_not_contains "$output" ":1:"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"'"$document"'","old_string":"削除した文。","new_string":""}}' \
+    | "$LINTER" --hook-agent claude > "$output"
+  [[ ! -s "$output" ]] || fail "expected a deletion edit to report nothing"
+
+  rm -rf "$FIXTURE_DIR"
+}
+
+test_pi_hook_reports_only_successful_changed_text() {
+  local document output
+  make_fixture
+  document="$FIXTURE_DIR/report.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  print -r -- '' >> "$document"
+  print -r -- 'それだけ。それが本質だと考えます。' >> "$document"
+
+  print -r -- '{"type":"tool_result","toolName":"edit","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md","edits":[{"oldText":"旧","newText":"それだけ。それが本質だと考えます。"}]},"isError":false}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  assert_contains "$output" ':3:'
+  assert_not_contains "$output" ':1:'
+  python3 - "$output" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert set(data) == {"additionalContext"}
+assert "JP003" in data["additionalContext"]
+PY
+
+  print -r -- '{"type":"tool_result","toolName":"write","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md"},"isError":false}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  assert_contains "$output" ':1:'
+  assert_contains "$output" ':3:'
+
+  print -r -- '{"type":"tool_result","toolName":"write","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md"},"isError":true}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  [[ ! -s "$output" ]] || fail "failed Pi tool must not trigger lint"
+
+  print -r -- '{"type":"tool_result","toolName":"edit","cwd":"'"$FIXTURE_DIR"'","input":{"path":"report.md","edits":[{"oldText":"削除","newText":""}]},"isError":false}' \
+    | "$LINTER" --hook-agent pi > "$output"
+  [[ ! -s "$output" ]] || fail "Pi deletion must not relint unchanged text"
+  rm -rf "$FIXTURE_DIR"
+}
+
+test_dsh_hook_reports_native_write_and_changed_edit() {
+  local document output
+  make_fixture
+  document="$FIXTURE_DIR/report.md"
+  output="$FIXTURE_DIR/output.json"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+  print -r -- '' >> "$document"
+  print -r -- 'それだけ。それが本質だと考えます。' >> "$document"
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"edit","cwd":"'"$FIXTURE_DIR"'","tool_input":{"file_path":"report.md","old_string":"旧","new_string":"それだけ。それが本質だと考えます。"}}' \
+    | "$LINTER" --hook-agent dsh > "$output"
+  assert_contains "$output" ':3:'
+  assert_not_contains "$output" ':1:'
+  python3 - "$output" <<'PY'
+import json, sys
+assert set(json.load(open(sys.argv[1]))) == {"additionalContext"}
+PY
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"write","cwd":"'"$FIXTURE_DIR"'","tool_input":{"file_path":"report.md","content":"unused by linter"}}' \
+    | "$LINTER" --hook-agent dsh > "$output"
+  assert_contains "$output" ':1:'
+  assert_contains "$output" ':3:'
+  rm -rf "$FIXTURE_DIR"
+}
+
+test_hook_skips_agent_work_logs() {
+  local document
+  local output
+
+  make_fixture
+  mkdir -p "$FIXTURE_DIR/.agent/work/sessions/demo"
+  document="$FIXTURE_DIR/.agent/work/sessions/demo/checkpoint.md"
+  output="$FIXTURE_DIR/output.txt"
+  print -r -- 'シンプル。それだけ。それが本質です。' > "$document"
+
+  print -r -- '{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"'"$document"'"}}' \
+    | "$LINTER" --hook-agent claude > "$output"
+  [[ ! -s "$output" ]] || fail "expected .agent/work documents to be skipped"
+
+  rm -rf "$FIXTURE_DIR"
+}
+
 test_hook_caps_feedback_volume() {
   local document
   local output
@@ -559,6 +695,8 @@ PY
 }
 
 main() {
+  test_pi_hook_reports_only_successful_changed_text
+  test_dsh_hook_reports_native_write_and_changed_edit
   test_cli_reports_local_and_document_rules
   test_cli_ignores_non_prose_markdown_regions
   test_cli_respects_fence_length_and_closing_syntax
@@ -572,6 +710,9 @@ main() {
   test_cli_limits_repeated_endings_to_one_paragraph
   test_claude_hook_returns_strict_feedback_for_supported_document
   test_hook_is_silent_for_clean_or_unsupported_files
+  test_hook_reports_only_lines_introduced_by_an_edit
+  test_hook_scopes_multiedit_apply_patch_and_partial_edits
+  test_hook_skips_agent_work_logs
   test_hook_caps_feedback_volume
   test_hook_rejects_malformed_payload
   test_cli_reports_missing_files_as_usage_errors

@@ -1,10 +1,58 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="${0:A:h}"
+resolve_script_directory() {
+  local script_path="$1"
+  local script_dir
+  local link_target
+
+  if [[ "$script_path" != /* && "$script_path" != */* ]]; then
+    script_path="$(command -v "$script_path" 2>/dev/null || printf '%s' "$script_path")"
+  fi
+  while [[ -L "$script_path" ]]; do
+    script_dir="$(cd -P "$(dirname "$script_path")" && pwd)" || return 1
+    link_target="$(readlink "$script_path")" || return 1
+    if [[ "$link_target" == /* ]]; then
+      script_path="$link_target"
+    else
+      script_path="$script_dir/$link_target"
+    fi
+  done
+  cd -P "$(dirname "$script_path")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_directory "$0")" || {
+  echo "ERROR: failed to resolve setup_hermes_agent.sh directory." >&2
+  exit 1
+}
 readonly LIB_DIR="$SCRIPT_DIR/lib"
 readonly DEFAULT_INSTALLER_URL="https://hermes-agent.nousresearch.com/install.sh"
+
+detect_host_ostype() {
+  local uname_bin
+  local kernel_name
+
+  if [[ -x /usr/bin/uname ]]; then
+    uname_bin="/usr/bin/uname"
+  elif [[ -x /bin/uname ]]; then
+    uname_bin="/bin/uname"
+  else
+    echo "ERROR: uname is required to detect the host OS." >&2
+    return 1
+  fi
+  kernel_name="$("$uname_bin" -s)" || return 1
+  case "$kernel_name" in
+    Darwin) OSTYPE=darwin ;;
+    Linux) OSTYPE=linux ;;
+    *)
+      echo "ERROR: unsupported host kernel: $kernel_name" >&2
+      return 1
+      ;;
+  esac
+}
+
+detect_host_ostype
 
 source "$LIB_DIR/setup_profile.sh"
 source "$LIB_DIR/runtime.sh"
@@ -12,6 +60,31 @@ source "$LIB_DIR/runtime.sh"
 INSTALLER_URL="${HERMES_INSTALLER_URL:-$DEFAULT_INSTALLER_URL}"
 UPDATE_ONLY=0
 CHECK_ONLY=0
+HERMES_INSTALLER_TEMP_DIR=""
+HERMES_INSTALLER_TEMP_ROOT=""
+HERMES_INSTALLER_TEMP_PREFIX=""
+
+cleanup_hermes_installer_temp() {
+  local temp_dir="$HERMES_INSTALLER_TEMP_DIR"
+  local candidate
+  local suffix_index=0
+
+  HERMES_INSTALLER_TEMP_DIR=""
+  if [[ -n "$temp_dir" && -d "$temp_dir" ]]; then
+    rm -rf "$temp_dir"
+  fi
+  if [[ -z "$temp_dir" && -n "$HERMES_INSTALLER_TEMP_ROOT" && -n "$HERMES_INSTALLER_TEMP_PREFIX" ]]; then
+    while (( suffix_index < 1024 )); do
+      candidate="$HERMES_INSTALLER_TEMP_ROOT/$HERMES_INSTALLER_TEMP_PREFIX.$$.$suffix_index"
+      if [[ -d "$candidate" && ! -L "$candidate" ]]; then
+        rmdir "$candidate" 2>/dev/null || true
+      fi
+      suffix_index=$((suffix_index + 1))
+    done
+  fi
+  HERMES_INSTALLER_TEMP_ROOT=""
+  HERMES_INSTALLER_TEMP_PREFIX=""
+}
 
 usage() {
   cat <<EOF
@@ -95,29 +168,50 @@ install_hermes() {
   local temp_root
   local temp_dir
   local installer_file
+  local previous_umask
+  local temp_dir_status=0
 
+  trap cleanup_hermes_installer_temp EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   dotfiles_temporary_directory_root
   temp_root="$REPLY"
-  # mkdir is atomic, so a private directory keeps the downloaded installer from
-  # being swapped between the download and the execution in a shared /tmp.
-  dotfiles_create_unique_temp_directory "$temp_root" "dotfiles-hermes-installer" || return 1
-  temp_dir="$REPLY"
-  chmod 700 "$temp_dir"
-  installer_file="$temp_dir/install.sh"
+  HERMES_INSTALLER_TEMP_ROOT="$temp_root"
+  HERMES_INSTALLER_TEMP_PREFIX="dotfiles-hermes-installer"
+  previous_umask="$(umask)"
+  umask 077
+  if dotfiles_create_unique_temp_directory "$temp_root" "dotfiles-hermes-installer"; then
+    temp_dir="$REPLY"
+    HERMES_INSTALLER_TEMP_DIR="$temp_dir"
+  else
+    temp_dir_status="$?"
+    HERMES_INSTALLER_TEMP_ROOT=""
+    HERMES_INSTALLER_TEMP_PREFIX=""
+  fi
+  (( temp_dir_status == 0 )) || return "$temp_dir_status"
+  if ! chmod 700 "$temp_dir"; then
+    return 1
+  fi
+  if ! installer_file="$(mktemp "$temp_dir/install.XXXXXX")"; then
+    return 1
+  fi
+  if ! chmod 600 "$installer_file"; then
+    return 1
+  fi
+  umask "$previous_umask"
 
   log "Downloading the Hermes Agent installer from $INSTALLER_URL"
   if ! curl -fsSL "$INSTALLER_URL" -o "$installer_file"; then
-    rm -rf "$temp_dir"
     echo "ERROR: failed to download the Hermes Agent installer from $INSTALLER_URL" >&2
     return 1
   fi
 
   log "Running the Hermes Agent installer"
   if ! bash "$installer_file"; then
-    rm -rf "$temp_dir"
     return 1
   fi
-  rm -rf "$temp_dir"
+  cleanup_hermes_installer_temp
 }
 
 main() {

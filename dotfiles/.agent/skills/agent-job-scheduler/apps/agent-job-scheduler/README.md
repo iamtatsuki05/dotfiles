@@ -1,6 +1,6 @@
 # Agent Job Scheduler
 
-Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、Devin CLI、Hermes Agent、opencode、OpenClaw、Grok CLI を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Harness、Devin CLI、Hermes Agent、opencode、OpenClaw、Pi、Grok CLI を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
 
 現在は、runtime 初期化、CSV 台帳、prompt sidecar、atomic write、`enqueue`、`run-once`、`status`、`show`、`retry`、`cancel`、`requeue`、`active-runs`、allowlist、stale recovery、`launchd` 連携まで入った実用初版です。
 
@@ -97,6 +97,20 @@ copilot -C "$workdir" --allow-all --no-remote --output-format text -p "$prompt"
 devin --permission-mode dangerous --respect-workspace-trust true -p "$prompt"
 ```
 
+### DeepSeek Harness CLI
+
+- 非対話実行は `dsh headless -- "$prompt"`
+- `--` 以降を task として渡し、prompt が CLI option として解釈されるのを防ぐ
+- headless は最終回答を stdout、診断を stderr に出力し、成功時は終了コード 0、失敗時は 1 を返す
+- adapter は権限 override を追加しない。各起動は dsh の既定動作に従い、新しい永続 session を作る
+- スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
+
+想定コマンド:
+
+```bash
+dsh headless -- "$prompt"
+```
+
 ### Cursor Agent
 
 - 非対話実行は `cursor-agent --print "$prompt"`
@@ -144,6 +158,20 @@ HERMES_ACCEPT_HOOKS=1 hermes --accept-hooks --yolo -z "$prompt"
 
 ```bash
 openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$prompt" --timeout 600
+```
+
+### Pi CLI
+
+- 非対話実行は `pi --print --no-session -- "$prompt"`
+- `--print` は回答を stdout に出して終了し、`--no-session` は会話を保存しない
+- `--` 以降を message として渡すため、prompt が option として解釈されない
+- adapter は権限・sandbox override を追加しない。Pi の tool は scheduler を実行する OS account の権限で動く
+- スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
+
+想定コマンド:
+
+```bash
+pi --print --no-session -- "$prompt"
 ```
 
 ### Grok CLI
