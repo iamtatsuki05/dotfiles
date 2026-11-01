@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 16"
+  assert_contains_text "$output" "registered upstream skills: 17"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -36,6 +36,7 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "core-message-writing"
   assert_contains_text "$output" "consulting-pptx-skill"
   assert_contains_text "$output" "hallmark"
+  assert_contains_text "$output" "yomiyasu"
 }
 
 test_pstack_principles_preserve_explicit_invocation() {
@@ -487,7 +488,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
       --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
-      --latest-commit hallmark=2222222222222222222222222222222222222222
+      --latest-commit hallmark=2222222222222222222222222222222222222222 \
+      --latest-commit yomiyasu=2323232323232323232323232323232323232323
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -539,6 +541,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed core-message-writing" > "$report_dir/core-message-writing.md"
   print -r -- "reviewed consulting-pptx-skill" > "$report_dir/consulting-pptx-skill.md"
   print -r -- "reviewed hallmark" > "$report_dir/hallmark.md"
+  print -r -- "reviewed yomiyasu" > "$report_dir/yomiyasu.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -562,7 +565,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
       --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
-      --latest-commit hallmark=2222222222222222222222222222222222222222
+      --latest-commit hallmark=2222222222222222222222222222222222222222 \
+      --latest-commit yomiyasu=2323232323232323232323232323232323232323
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -785,7 +789,8 @@ EOF'
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
       --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
-      --latest-commit hallmark=2222222222222222222222222222222222222222
+      --latest-commit hallmark=2222222222222222222222222222222222222222 \
+      --latest-commit yomiyasu=2323232323232323232323232323232323232323
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -856,7 +861,8 @@ PY
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
       --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
-      --latest-commit hallmark=2222222222222222222222222222222222222222
+      --latest-commit hallmark=2222222222222222222222222222222222222222 \
+      --latest-commit yomiyasu=2323232323232323232323232323232323232323
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -924,7 +930,8 @@ EOF'
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
       --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
-      --latest-commit hallmark=2222222222222222222222222222222222222222 2>&1
+      --latest-commit hallmark=2222222222222222222222222222222222222222 \
+      --latest-commit yomiyasu=2323232323232323232323232323232323232323 2>&1
   )"
   local exit_status=$?
   set -e

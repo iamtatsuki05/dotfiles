@@ -105,6 +105,14 @@ render検証にはChromeまたはChromiumが必要です。標準位置にない
 APIキーがあるだけでは画像生成を行いません。optionalな編集時hookは導入しません。
 Agentを再起動するか、新しい会話で `/hallmark`、Codexでは `$hallmark` を指定してください。
 
+## Yomiyasuによる日本語の推敲
+
+[Yomiyasu](https://github.com/nanaism/yomiyasu)を、上流から変更せず固定版の共有skillとして管理します。
+使うときは `yomiyasuで推敲して` と明示してください。既存の文章系skillと適用条件は変更しません。
+Python標準ライブラリの検査で表現と原文との差分を確認し、提出する本文が検査済みの最終稿と一致するか照合します。意味の正しさを保証する検査ではありません。
+既定では原文と最終稿の写しがローカルの `.yomiyasu/` に残ります。保存が不要な場合は記録を残さないよう指定してください。その場合、記録とのハッシュ照合はできません。
+任意hookは有効にしません。追加したskillは新しいAgentの会話で読み込んでください。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

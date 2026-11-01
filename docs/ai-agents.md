@@ -107,6 +107,14 @@ connections, and additional hooks, and remove broad tool-permission advice.
 An API key alone never authorizes image generation. The optional edit-time hook is not installed.
 Restart the agent or start a new conversation, then invoke `/hallmark` (`$hallmark` in Codex).
 
+## Yomiyasu Japanese revision
+
+[Yomiyasu](https://github.com/nanaism/yomiyasu) is a pinned, unmodified shared skill.
+Explicitly ask `yomiyasu` to revise a draft; existing writing skills and their selection rules remain unchanged.
+Its Python standard-library tools check wording and source/final differences, then verify that the submitted text matches the checked version. These checks do not guarantee semantic correctness.
+By default, checks retain source and final text in a local `.yomiyasu/` directory. Request no records when retention is unwanted; final hash verification is then unavailable.
+The optional hook is not enabled. Start a new agent conversation to discover the added skill.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

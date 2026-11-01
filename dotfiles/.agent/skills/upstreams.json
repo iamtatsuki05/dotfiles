@@ -1440,6 +1440,29 @@
         "last_reviewed_at": "2026-11-01T06:42:48+00:00",
         "review_report": ".agent/work/sessions/2026-11-01-hallmark-install-codex/subagents/upstream-review.md"
       }
+    },
+    {
+      "id": "yomiyasu",
+      "description": "Japanese prose revision with meaning-preservation checks and final-text verification.",
+      "repository": "https://github.com/nanaism/yomiyasu.git",
+      "branch": "main",
+      "pinned_commit": "29d67ccb05e370b5958d72920a9cd1aa829dee80",
+      "mappings": [
+        {
+          "source_path": "skills/yomiyasu",
+          "local_path": "dotfiles/.agent/skills/yomiyasu"
+        }
+      ],
+      "source_url": "https://github.com/nanaism/yomiyasu/tree/29d67ccb05e370b5958d72920a9cd1aa829dee80/skills/yomiyasu",
+      "provenance_note": "Unmodified upstream skill including MIT and Unicode licenses. Explicit invocation; no optional hook registration or changes to existing writing skills. Checks store manuscript copies locally by default; respect user data-retention instructions.",
+      "local_tree_sha256": "7b568ce53cab0b3579815da88a6419a373ff15357480ac5b38cdea795c051461",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "29d67ccb05e370b5958d72920a9cd1aa829dee80",
+        "last_reviewed_at": "2026-11-01T18:27:59+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-yomiyasu-codex/subagents/upstream-review.md"
+      }
     }
   ]
 }
