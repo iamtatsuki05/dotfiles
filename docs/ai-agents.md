@@ -88,6 +88,25 @@ then uninstall the native plugins/packages. Remove TokenEconomizer entries from 
 configuration too, so sync does not re-enable them.
 See the [upstream installation guide](https://github.com/microsoft/TokenEconomizer/blob/main/plugin/README.md) for removal commands.
 
+## Hallmark web design
+
+[Hallmark](https://github.com/Nutlope/hallmark) is a pinned shared skill, available through the
+managed skill locations for Claude Code, Codex, Cursor, OpenCode, and Copilot.
+Use it for new pages. Explicitly name `hallmark redesign <path>` for existing designs,
+or `hallmark audit <path>` for a report without edits.
+
+The full setup installs its browser-check dependencies after mise tools.
+For an existing environment, run `mise run hallmark-setup`. It uses mise's Node 24 and
+installs pinned `puppeteer-core` into `dotfiles/.agent/node_modules`, with package scripts disabled.
+It does not install Chrome. Rendering requires Chrome or Chromium; set `CHROME_PATH`
+when the executable is outside the usual locations.
+
+Upstream code, the MIT LICENSE, and photo attribution are retained. The five declared instruction
+overlays in `upstreams.json` require explicit authorization for paid Together calls, existing-browser
+connections, and additional hooks, and remove broad tool-permission advice.
+An API key alone never authorizes image generation. The optional edit-time hook is not installed.
+Restart the agent or start a new conversation, then invoke `/hallmark` (`$hallmark` in Codex).
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

@@ -88,6 +88,7 @@ create_runner_fixture() {
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
   print -r -- 'print("unit:rtk-setup")' > "$repo/tests/test_rtk_setup.py"
   print -r -- 'printf "%s\n" "unit:tokeneconomizer-setup"' > "$repo/tests/test_tokeneconomizer_setup.sh"
+  print -r -- 'printf "%s\n" "unit:hallmark-setup"' > "$repo/tests/test_hallmark_setup.sh"
   print -r -- 'console.log("unit:pi-integration")' > "$repo/tests/test_pi_integration.mjs"
   print -r -- 'console.log("unit:deepseek-integration")' > "$repo/tests/test_deepseek_integration.mjs"
   write_fixture_zsh_script "$repo/tests/test_selective_setup.sh" "unit:selective-setup"

@@ -1385,6 +1385,61 @@
           "expected_count": 1
         }
       ]
+    },
+    {
+      "id": "hallmark",
+      "description": "Hallmark design skill and browser/static checks, with local authorization policy.",
+      "repository": "https://github.com/Nutlope/hallmark.git",
+      "branch": "main",
+      "pinned_commit": "4f6a46c6dc325d40ab268c93e25c7b96676ebccd",
+      "mappings": [
+        {
+          "source_path": "skills/hallmark",
+          "local_path": "dotfiles/.agent/skills/hallmark"
+        }
+      ],
+      "source_url": "https://github.com/Nutlope/hallmark/tree/4f6a46c6dc325d40ab268c93e25c7b96676ebccd/skills/hallmark",
+      "provenance_note": "MIT license/attribution and upstream code retained unchanged. Declared instruction overlays require explicit authorization for paid Together calls, existing-browser capture and optional hooks; preserve permission boundaries and actual host capabilities. Puppeteer runtime is separately locked in dotfiles/.agent/package-lock.json.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/hallmark/SKILL.md",
+          "old": "# Hallmark\n\nMakes the UIs",
+          "new": "# Hallmark\n\n## Local integration policy\n\nUser/repository rules prevail. Use `mise run hallmark-setup` and shared dotfiles skill placement. Do not run upstream installers or add edit-time hooks without a separate explicit request. Use actual host capabilities, including available Codex subagents.\n\nA key is not consent: Together calls require approval of the provider, prompt data and cost; use host image generation when required. Launch an isolated browser; existing CDP/authenticated sessions require explicit authorization. Never broaden tool permissions.\n\nMakes the UIs",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/hallmark/SKILL.md",
+          "old": "`TOGETHER_API_KEY` set (signal 9, the comp step).",
+          "new": "`TOGETHER_API_KEY` set and the user explicitly authorized Together image generation (signal 9, the comp step).",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/hallmark/references/flow.md",
+          "old": "Fires only when `TOGETHER_API_KEY` is set.",
+          "new": "Fires only when `TOGETHER_API_KEY` is set and the user explicitly authorized the Together provider, transmitted prompt and cost.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/hallmark/references/comp.md",
+          "old": "Loaded **only** when the pre-flight found `TOGETHER_API_KEY` (signal 9):",
+          "new": "Loaded **only** when the pre-flight found `TOGETHER_API_KEY` and the user explicitly authorized the Together provider, transmitted prompt and cost (signal 9):",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/hallmark/references/flow.md",
+          "old": "if *ask*, warn once and suggest allowing `node *` for the session; never edit the permission config",
+          "new": "if *ask*, request permission for the exact needed command; never suggest broad `node *` permission or edit the permission config",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "992860412043e0234775ad7b267be3598d16c212eb38d87d188218ccf6787e85",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "4f6a46c6dc325d40ab268c93e25c7b96676ebccd",
+        "last_reviewed_at": "2026-11-01T06:42:48+00:00",
+        "review_report": ".agent/work/sessions/2026-11-01-hallmark-install-codex/subagents/upstream-review.md"
+      }
     }
   ]
 }

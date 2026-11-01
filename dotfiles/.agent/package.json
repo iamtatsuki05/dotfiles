@@ -1,0 +1,11 @@
+{
+  "name": "dotfiles-agent-runtime",
+  "private": true,
+  "description": "Browser runtime for the vendored Hallmark skill",
+  "dependencies": {
+    "puppeteer-core": "25.16.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

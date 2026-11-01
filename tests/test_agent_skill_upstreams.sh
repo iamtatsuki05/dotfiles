@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 15"
+  assert_contains_text "$output" "registered upstream skills: 16"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -35,6 +35,7 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "k16shikano-gist-license"
   assert_contains_text "$output" "core-message-writing"
   assert_contains_text "$output" "consulting-pptx-skill"
+  assert_contains_text "$output" "hallmark"
 }
 
 test_pstack_principles_preserve_explicit_invocation() {
@@ -485,7 +486,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
-      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
+      --latest-commit hallmark=2222222222222222222222222222222222222222
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -536,6 +538,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed k16shikano-gist-license" > "$report_dir/k16shikano-gist-license.md"
   print -r -- "reviewed core-message-writing" > "$report_dir/core-message-writing.md"
   print -r -- "reviewed consulting-pptx-skill" > "$report_dir/consulting-pptx-skill.md"
+  print -r -- "reviewed hallmark" > "$report_dir/hallmark.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -558,7 +561,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
-      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
+      --latest-commit hallmark=2222222222222222222222222222222222222222
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -780,7 +784,8 @@ EOF'
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
-      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
+      --latest-commit hallmark=2222222222222222222222222222222222222222
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -850,7 +855,8 @@ PY
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
-      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
+      --latest-commit hallmark=2222222222222222222222222222222222222222
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -917,7 +923,8 @@ EOF'
       --latest-commit japanese-tech-writing=1818181818181818181818181818181818181818 \
       --latest-commit k16shikano-gist-license=1919191919191919191919191919191919191919 \
       --latest-commit core-message-writing=2020202020202020202020202020202020202020 \
-      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 2>&1
+      --latest-commit consulting-pptx-skill=2121212121212121212121212121212121212121 \
+      --latest-commit hallmark=2222222222222222222222222222222222222222 2>&1
   )"
   local exit_status=$?
   set -e

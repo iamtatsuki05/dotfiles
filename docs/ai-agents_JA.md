@@ -86,6 +86,25 @@ Claude CodeとCopilotでは、初回とCLI更新後にツール一覧を取得�
 アンインストールします。再同期で復活しないよう管理元のTokenEconomizer設定も取り除きます。
 詳しい解除手順は[上流の導入ガイド](https://github.com/microsoft/TokenEconomizer/blob/main/plugin/README.md)を参照してください。
 
+## HallmarkによるWebデザイン
+
+[Hallmark](https://github.com/Nutlope/hallmark)を固定コミットの共有skillとして管理します。
+Claude Code、Codex、Cursor、OpenCode、Copilotの共有skill配置から利用できます。
+新規ページの作成に使い、既存デザインの変更は `hallmark redesign <path>`、
+確認だけなら `hallmark audit <path>` と明示します。
+
+通常の全体セットアップは、miseのツール導入後にブラウザ検証用の依存を導入します。
+既存環境では `mise run hallmark-setup` を実行してください。Nodeはmise管理の24を使い、
+固定した `puppeteer-core` を `dotfiles/.agent/node_modules` に配置します。
+インストール時のpackage scriptは実行せず、Chrome自体は追加導入しません。
+render検証にはChromeまたはChromiumが必要です。標準位置にない場合は `CHROME_PATH` を指定します。
+
+上流コード、MIT LICENSE、写真の帰属情報は保持しています。上流との差分は
+`upstreams.json` の5件の指示変更です。有料Together API、既存ブラウザへの接続、
+追加hookには明示的な依頼・許可を必要とし、toolの権限を広げる提案を除いています。
+APIキーがあるだけでは画像生成を行いません。optionalな編集時hookは導入しません。
+Agentを再起動するか、新しい会話で `/hallmark`、Codexでは `$hallmark` を指定してください。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

@@ -89,6 +89,7 @@ run_unit_tests() {
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_feature_flags.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_steermouse_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_tokeneconomizer_setup.sh"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_hallmark_setup.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_entrypoints.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_update_features.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_macos_nix_features.sh"
