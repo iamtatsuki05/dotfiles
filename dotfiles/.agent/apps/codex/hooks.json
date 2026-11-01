@@ -30,6 +30,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 -B \"$HOME/.codex/skills/yomiyasu/scripts/yomiyasu_hook.py\" --host codex"
+          }
+        ],
+        "matcher": "^Bash$"
       }
     ],
     "PreToolUse": [
@@ -39,6 +49,49 @@
           {
             "type": "command",
             "command": "rtk hook codex"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 -B \"$HOME/.codex/skills/yomiyasu/scripts/yomiyasu_hook.py\" --host codex"
+          }
+        ],
+        "matcher": "^Bash$|^mcp__.*"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "python3 -B \"$HOME/.codex/skills/yomiyasu/scripts/yomiyasu_hook.py\" --host codex"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 30,
+            "command": "python3 -B \"$HOME/.codex/skills/yomiyasu/scripts/yomiyasu_hook.py\" --host codex"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 2,
+            "command": "python3 -B \"$HOME/.codex/skills/yomiyasu/scripts/yomiyasu_hook.py\" --host codex"
           }
         ]
       }

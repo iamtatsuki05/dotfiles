@@ -104,7 +104,7 @@ when the executable is outside the usual locations.
 Upstream code, the MIT LICENSE, and photo attribution are retained. The five declared instruction
 overlays in `upstreams.json` require explicit authorization for paid Together calls, existing-browser
 connections, and additional hooks, and remove broad tool-permission advice.
-An API key alone never authorizes image generation. The optional edit-time hook is not installed.
+An API key alone never authorizes image generation. Claude Code enables the upstream edit-time hook for Hallmark-marked HTML/CSS and components in a `.hallmark` project. It reports findings without blocking; no Hallmark hook is registered for Codex.
 Restart the agent or start a new conversation, then invoke `/hallmark` (`$hallmark` in Codex).
 
 ## Yomiyasu Japanese revision
@@ -113,7 +113,8 @@ Restart the agent or start a new conversation, then invoke `/hallmark` (`$hallma
 Explicitly ask `yomiyasu` to revise a draft; existing writing skills and their selection rules remain unchanged.
 Its Python standard-library tools check wording and source/final differences, then verify that the submitted text matches the checked version. These checks do not guarantee semantic correctness.
 By default, checks retain source and final text in a local `.yomiyasu/` directory. Request no records when retention is unwanted; final hash verification is then unavailable.
-The optional hook is not enabled. Start a new agent conversation to discover the added skill.
+The upstream hook is enabled in the managed Claude Code and Codex settings. It follows explicitly registered manuscripts, checks final-text records before completion or posting, and can block unchecked output. Unregistered documents are untouched. The existing Japanese prose lint hook remains enabled for general Edit/Write checks.
+Restart the agent after syncing. New Codex hook definitions still require approval in `/hooks`; setup does not grant hook trust. Start a new conversation to discover the added skill.
 
 ## Canonical files and boundaries
 

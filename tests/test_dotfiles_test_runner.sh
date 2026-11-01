@@ -24,6 +24,7 @@ typeset -r -a RUNNER_TEST_FILES=(
   tests/test_agent_html_preview_review.sh
   tests/test_agent_run_compact.py
   tests/test_rtk_setup.py
+  tests/test_skill_hooks.py
   tests/test_pi_integration.mjs
   tests/test_deepseek_integration.mjs
   tests/test_selective_setup.sh
@@ -87,6 +88,7 @@ create_runner_fixture() {
   write_fixture_zsh_script "$repo/tests/test_agent_html_preview_review.sh" "unit:html-preview-review"
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
   print -r -- 'print("unit:rtk-setup")' > "$repo/tests/test_rtk_setup.py"
+  print -r -- 'print("unit:skill-hooks")' > "$repo/tests/test_skill_hooks.py"
   print -r -- 'printf "%s\n" "unit:tokeneconomizer-setup"' > "$repo/tests/test_tokeneconomizer_setup.sh"
   print -r -- 'printf "%s\n" "unit:hallmark-setup"' > "$repo/tests/test_hallmark_setup.sh"
   print -r -- 'console.log("unit:pi-integration")' > "$repo/tests/test_pi_integration.mjs"

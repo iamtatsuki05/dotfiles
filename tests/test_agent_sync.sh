@@ -830,8 +830,11 @@ codex = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 
 claude_hooks = claude.get("hooks", {})
 codex_hooks = codex.get("hooks", {})
-assert "UserPromptSubmit" not in claude_hooks
-assert "UserPromptSubmit" not in codex_hooks
+for hooks in (claude_hooks, codex_hooks):
+    commands = [hook.get("command", "")
+                for entry in hooks.get("UserPromptSubmit", [])
+                for hook in entry.get("hooks", [])]
+    assert not any("agent_context_reminder.sh" in command for command in commands), commands
 assert "SessionStart" in claude_hooks
 assert "SessionStart" in codex_hooks
 assert "SubagentStart" in claude_hooks
