@@ -44,6 +44,7 @@
     "ghostty"
     "google-drive"
     "google-japanese-ime"
+    "herdr-app"
     "hhkb-studio"
     "iriunwebcam"
     "karabiner-elements"
