@@ -22,6 +22,7 @@ claude-code = "latest"
 opencode = "latest"
 # hermes は upstream が pip/PyPI と Homebrew 配布を廃止したため mise 管理外。
 # 導入/更新は mise run hermes-setup / hermes-update (公式 installer + hermes update)。
+"npm:agent-desktop" = "latest"
 "npm:@github/copilot" = "latest"
 "npm:openclaw" = "latest"
 "npm:@xai-official/grok" = "latest"
