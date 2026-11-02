@@ -1,7 +1,6 @@
 ---
 name: statechart
 description: "Check a TLA+ model of a system that moves between states, such as a product flow, a protocol, or a service, and draw it as a Mermaid statechart. The report gives the shortest path to each state that breaks a rule. Use for /statechart, or to show a bug as a path through states."
-disable-model-invocation: true
 ---
 
 Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.

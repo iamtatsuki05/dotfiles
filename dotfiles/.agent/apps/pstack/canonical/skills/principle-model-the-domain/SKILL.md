@@ -1,7 +1,7 @@
 ---
 name: principle-model-the-domain
 description: "Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files."
-disable-model-invocation: true
+user-invocable: false
 ---
 
 Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.

@@ -1,5 +1,7 @@
 ### Investigation
 
+Before applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.
+
 **You own the answer. Plan, route, write.**
 
 Investigation requests are read-only. They produce a cited explanation or a recommendation, not a code change.

@@ -9,9 +9,12 @@ setup="$repo_root/scripts/setup_pstack.sh"
 [[ -f "$setup" ]] || { echo 'FAIL: pstack setup entrypoint is missing' >&2; exit 1; }
 cp "$setup" "$fixture/repo/scripts/setup_pstack.sh"
 market="$fixture/repo/dotfiles/.agent/apps/pstack"
-mkdir -p "$market/canonical/skills/example" "$market/claude-code" "$market/.agents/plugins" "$market/.claude-plugin"
-printf '{"name":"pstack","version":"fixture"}\n' > "$market/canonical/plugin.json"
-printf 'original\n' > "$market/canonical/skills/example/SKILL.md"
+mkdir -p "$market/canonical/skills/example" "$market/canonical/.claude-plugin" "$market/canonical/.codex-plugin" "$market/cursor/skills/example" "$market/.agents/plugins" "$market/.claude-plugin"
+printf '{"name":"pstack","version":"native-fixture"}\n' > "$market/canonical/.claude-plugin/plugin.json"
+printf '{"name":"pstack","version":"native-fixture"}\n' > "$market/canonical/.codex-plugin/plugin.json"
+printf '{"name":"pstack","version":"cursor-fixture"}\n' > "$market/cursor/plugin.json"
+printf 'new native plugin\n' > "$market/canonical/skills/example/SKILL.md"
+printf 'original\n' > "$market/cursor/skills/example/SKILL.md"
 printf '{}\n' > "$market/.agents/plugins/marketplace.json"
 printf '{}\n' > "$market/.claude-plugin/marketplace.json"
 for agent in claude codex cursor-agent; do
@@ -53,7 +56,7 @@ printf 'user edit\n' > "$cursor_home/skills/example/SKILL.md"
 if run_setup --agent cursor; then fail 'modified Cursor plugin overwritten'; fi
 [[ "$(cat "$cursor_home/skills/example/SKILL.md")" == 'user edit' ]] || fail 'modified plugin lost'
 printf 'original\n' > "$cursor_home/skills/example/SKILL.md"
-printf 'updated\n' > "$market/canonical/skills/example/SKILL.md"
+printf 'updated\n' > "$market/cursor/skills/example/SKILL.md"
 run_setup --agent cursor || fail 'managed Cursor update failed'
 [[ "$(cat "$cursor_home/skills/example/SKILL.md")" == updated ]] || fail 'managed update missing'
 for profile in first second; do
@@ -67,17 +70,33 @@ run_setup --agent claude || fail 'Claude install failed'
 python3 - "$fixture/events" "$market" <<'PY'
 import sys
 rows = open(sys.argv[1]).read().splitlines()
-assert len(rows) == 6, rows
-assert all('plugin marketplace add ' + sys.argv[2] in r or r.endswith('plugin install pstack@dotfiles-pstack') for r in rows)
-assert sum('/accounts/first|' in r for r in rows) == 2
-assert sum('/accounts/second|' in r for r in rows) == 2
+assert len(rows) == 9, rows
+assert all('plugin marketplace add ' + sys.argv[2] in r or r.endswith('plugin install pstack@dotfiles-pstack') or r.endswith('plugin update pstack@dotfiles-pstack --scope user') for r in rows)
+assert sum('/accounts/first|' in r for r in rows) == 3
+assert sum('/accounts/second|' in r for r in rows) == 3
 PY
 : > "$fixture/events"
 env CLAUDE_CONFIG_DIR="$fixture/specific" HOME="$fixture/home with spaces" PATH="$fixture/bin:$PATH" EVENT_LOG="$fixture/events" \
   bash "$fixture/repo/scripts/setup_pstack.sh" --agent claude > "$fixture/output" 2>&1 || fail 'explicit Claude home failed'
-[[ "$(wc -l < "$fixture/events" | tr -d ' ')" == 2 ]] || fail 'explicit Claude home installed other profiles'
+[[ "$(wc -l < "$fixture/events" | tr -d ' ')" == 3 ]] || fail 'explicit Claude home installed other profiles'
 : > "$fixture/events"
 run_setup --agent codex || fail 'Codex install failed'
 [[ "$(wc -l < "$fixture/events" | tr -d ' ')" == 2 ]] || fail 'Codex registration mismatch'
 if FAIL_AGENT=codex run_setup --agent codex; then fail 'native CLI failure hidden'; fi
-echo 'PASS: pstack dry-run, host registration, profile scope and Cursor ownership/update protection'
+hook_root="$repo_root/dotfiles/.agent/apps/pstack/canonical"
+mkdir -p "$fixture/hook-home/claude" "$fixture/hook-home/codex"
+for runtime in claude codex; do
+  env HOME="$fixture/hook-home" CLAUDE_CONFIG_DIR="$fixture/hook-home/claude" \
+    CODEX_HOME="$fixture/hook-home/codex" CLAUDE_PLUGIN_ROOT="$hook_root" \
+    sh "$hook_root/hooks/session-start.sh" "$runtime" > "$fixture/hook-output"
+  grep -Fq 'pstack:poteto-mode' "$fixture/hook-output" || fail 'routing context missing'
+  grep -Fq 'Local integration policy' "$fixture/hook-output" || fail 'routing policy missing'
+  [[ ! -e "$fixture/hook-home/$runtime/pstack-models.md" ]] || fail 'hook created model settings'
+  printf 'session hook: off\n' > "$fixture/hook-home/$runtime/pstack-models.md"
+  env HOME="$fixture/hook-home" CLAUDE_CONFIG_DIR="$fixture/hook-home/claude" \
+    CODEX_HOME="$fixture/hook-home/codex" CLAUDE_PLUGIN_ROOT="$hook_root" \
+    sh "$hook_root/hooks/session-start.sh" "$runtime" > "$fixture/hook-output"
+  [[ ! -s "$fixture/hook-output" ]] || fail 'disabled routing hook produced context'
+  [[ "$(cat "$fixture/hook-home/$runtime/pstack-models.md")" == 'session hook: off' ]] || fail 'hook changed model settings'
+done
+echo 'PASS: pstack native registration, retained Cursor payload, profile scope and routing hook boundaries'

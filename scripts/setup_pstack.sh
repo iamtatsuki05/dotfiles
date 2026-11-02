@@ -37,13 +37,13 @@ done
 if ((dry_run)); then
   echo "Pstack marketplace: $marketplace"
   printf 'Register pstack: %s\n' "${agents[@]}"
-  echo 'Keep model rules, automations, hook trust and existing skills unchanged.'
+  echo 'Claude Code/Codex use pstack-claude; Cursor keeps the pinned Cursor package.'
+  echo 'Keep model rules, automations, hook trust and standalone skills unchanged.'
   exit 0
 fi
-for file in .agents/plugins/marketplace.json .claude-plugin/marketplace.json canonical/plugin.json; do
+for file in .agents/plugins/marketplace.json .claude-plugin/marketplace.json canonical/.codex-plugin/plugin.json canonical/.claude-plugin/plugin.json cursor/plugin.json; do
   [[ -f "$marketplace/$file" ]] || { echo "ERROR: missing pstack file: $file" >&2; exit 1; }
 done
-[[ -d "$marketplace/claude-code" ]] || { echo 'ERROR: missing pstack Claude adapter tree' >&2; exit 1; }
 for host in "${agents[@]}"; do
   case "$host" in
     claude)
@@ -57,6 +57,8 @@ for host in "${agents[@]}"; do
       for claude_home in "${claude_homes[@]}"; do
         CLAUDE_CONFIG_DIR="$claude_home" claude plugin marketplace add "$marketplace"
         CLAUDE_CONFIG_DIR="$claude_home" claude plugin install pstack@dotfiles-pstack
+        # Local installs refresh the source path; update also refreshes cached version metadata.
+        CLAUDE_CONFIG_DIR="$claude_home" claude plugin update pstack@dotfiles-pstack --scope user
       done
       ;;
     codex)
@@ -64,7 +66,7 @@ for host in "${agents[@]}"; do
       codex plugin add pstack@dotfiles-pstack
       ;;
     cursor)
-      python3 - "$marketplace/canonical" "$HOME/.cursor/plugins/local/pstack" <<'PY'
+      python3 - "$marketplace/cursor" "$HOME/.cursor/plugins/local/pstack" <<'PY'
 import hashlib
 import json
 from pathlib import Path

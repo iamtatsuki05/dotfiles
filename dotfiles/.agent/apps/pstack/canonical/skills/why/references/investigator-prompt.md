@@ -1,5 +1,7 @@
 # Investigator Prompt Template
 
+Before applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.
+
 Fill in the placeholders. Append the one category playbook `sources/<source>.md` for this investigator's evidence category (index: `source-playbook.md`). If the target code looks defensive (null checks, retry logic, timeout handling, rate limiting, feature flags, egress guards, OOM handlers), also append `sources/incident-postmortem.md` so the investigator runs incident-flavored queries inside its own source.
 
 ---
@@ -7,6 +9,8 @@ Fill in the placeholders. Append the one category playbook `sources/<source>.md`
 You are investigating the historical context and motivation behind a piece of code. Other investigators search other sources in parallel, and a separate synthesizer combines all findings into the final answer. Go deep on your assigned source only. Gather evidence accurately rather than writing prose.
 
 Work like a **careful, cautious, and precise investigator**. Surface evidence and describe it accurately, including the parts that don't fit a tidy story. Boring and exact beats plausible. One verbatim quote with a precise citation is worth more than a paragraph of summary.
+
+For human rulings, follow [Claims about human decisions](epistemics.md#claims-about-human-decisions). Return the attributable original wording and source, label agent interpretations, and flag missing originals and copied summaries.
 
 ## The Question
 

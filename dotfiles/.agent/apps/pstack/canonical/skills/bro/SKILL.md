@@ -1,7 +1,6 @@
 ---
 name: bro
-description: Restate the last message in plain human language, with no jargon.
-disable-model-invocation: true
+description: Restate the last message in plain human language, with no jargon. Use for /bro or when asked to say it plainly.
 ---
 
 Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.

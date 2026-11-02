@@ -16,11 +16,16 @@ ${rule}
 
 ## Program checklist
 ### Arm the program
+- [ ] Write the standing orders. Read the playbook from the installed plugin. Arm the hourly audit tick.
 ### Spawn owners
+- [ ] Spawn one owner per PR.
 ### PR mechanics
+- [ ] Open each PR ready.
 ### Verdict and merge
+- [ ] Record each verdict.
 ### Boot recipe
 \`git show origin/main:\` /loop 1h status message
+- [ ] Boot each live lane.
 
 ## PR 1
 **Depends on.** None.
@@ -32,7 +37,7 @@ ${rule}
 - [ ] Do the thing.
 **Verify, unit.** ${rule}
 - [ ] Check the thing.
-**Verify, live.** ${rule} Ten lanes on \`example-model\` at the PR head
+**Verify, live.** ${rule} Ten lanes on the configured \`swarm workers\` model at the PR head
 ${Array.from({ length: 10 }, (_, i) => `- [ ] Lane ${i + 1}. Save \`lane-${i + 1}.png\`. Pass when evidence exists.`).join("\n")}
 **Verify, perf.** ${rule}
 - [ ] Metric. Recorded.
@@ -44,7 +49,7 @@ ${Array.from({ length: 10 }, (_, i) => `- [ ] Lane ${i + 1}. Save \`lane-${i + 1
 - [ ] Merge when approved.
 
 ## Close the program
-Close.
+- [ ] Close.
 
 ## Appendix Prototype evidence
 Recorded.

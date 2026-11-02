@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 24"
+  assert_contains_text "$output" "registered upstream skills: 25"
   assert_not_contains_text "$output" "modern-web-guidance"
   [[ ! -e "$REPO_ROOT/dotfiles/.agent/skills/modern-web-guidance" ]] || fail "removed skill still exists"
   assert_contains_text "$output" "html-plan"
@@ -42,6 +42,7 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "i-have-adhd"
   assert_contains_text "$output" "unslop"
   assert_contains_text "$output" "pstack"
+  assert_contains_text "$output" "pstack-cursor"
   assert_contains_text "$output" "cursor-team-kit"
   assert_contains_text "$output" "cli-for-agent"
   assert_contains_text "$output" "create-plugin"
@@ -441,6 +442,7 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit i-have-adhd=2424242424242424242424242424242424242424 \
       --latest-commit unslop=2525252525252525252525252525252525252525 \
       --latest-commit pstack=2626262626262626262626262626262626262626 \
+      --latest-commit pstack-cursor=3232323232323232323232323232323232323232 \
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
@@ -498,6 +500,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed i-have-adhd" > "$report_dir/i-have-adhd.md"
   print -r -- "reviewed unslop" > "$report_dir/unslop.md"
   print -r -- "reviewed pstack" > "$report_dir/pstack.md"
+  print -r -- "reviewed pstack-cursor" > "$report_dir/pstack-cursor.md"
   print -r -- "reviewed cursor-team-kit" > "$report_dir/cursor-team-kit.md"
   print -r -- "reviewed cli-for-agent" > "$report_dir/cli-for-agent.md"
   print -r -- "reviewed create-plugin" > "$report_dir/create-plugin.md"
@@ -530,6 +533,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit i-have-adhd=2424242424242424242424242424242424242424 \
       --latest-commit unslop=2525252525252525252525252525252525252525 \
       --latest-commit pstack=2626262626262626262626262626262626262626 \
+      --latest-commit pstack-cursor=3232323232323232323232323232323232323232 \
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
@@ -759,6 +763,7 @@ EOF'
       --latest-commit i-have-adhd=2424242424242424242424242424242424242424 \
       --latest-commit unslop=2525252525252525252525252525252525252525 \
       --latest-commit pstack=2626262626262626262626262626262626262626 \
+      --latest-commit pstack-cursor=3232323232323232323232323232323232323232 \
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
@@ -835,6 +840,7 @@ PY
       --latest-commit i-have-adhd=2424242424242424242424242424242424242424 \
       --latest-commit unslop=2525252525252525252525252525252525252525 \
       --latest-commit pstack=2626262626262626262626262626262626262626 \
+      --latest-commit pstack-cursor=3232323232323232323232323232323232323232 \
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
@@ -910,6 +916,7 @@ EOF'
       --latest-commit i-have-adhd=2424242424242424242424242424242424242424 \
       --latest-commit unslop=2525252525252525252525252525252525252525 \
       --latest-commit pstack=2626262626262626262626262626262626262626 \
+      --latest-commit pstack-cursor=3232323232323232323232323232323232323232 \
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \

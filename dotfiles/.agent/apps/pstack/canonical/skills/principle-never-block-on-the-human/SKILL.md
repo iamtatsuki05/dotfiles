@@ -1,7 +1,7 @@
 ---
 name: principle-never-block-on-the-human
 description: "Apply when tempted to ask 'should I do X?' on reversible work."
-disable-model-invocation: true
+user-invocable: false
 ---
 
 Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.

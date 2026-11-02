@@ -1,5 +1,7 @@
 # Explainer Prompt Template
 
+Before applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.
+
 Build the explainer subagent's prompt from this template. Fill in the placeholders.
 
 ---
