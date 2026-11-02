@@ -121,6 +121,14 @@ Codexでは `$i-have-adhd`、Claude Codeでは `/i-have-adhd` と明示して呼
 上流のメタデータで自動呼び出しは無効です。常時適用hookや利用者についての永続的な前提は追加せず、既存の文章系skillとAgentの規約は変更しません。
 同期後、新しいAgentの会話で追加したskillを読み込んでください。
 
+## UnslopによるUIの改善
+
+[Unslop](https://github.com/heydamir/unslop)は、Damir Sokolovsky（@heydamir）による既存UIの点検・改善用skillです。固定版に補助ツールの利用条件を示す指示だけを追加し、コードは変更せず管理します。Codexでは `$unslop`、Claude Codeでは `/unslop` と指定でき、UI改善の依頼内容から選ばれる場合もあります。既存のデザイン系skillは変更しません。
+CC BY 4.0のライセンス、作者表記、`CITATION.cff`を保持します。hookや画像生成サービスの設定は追加せず、有料画像生成には明示的な許可を必要とします。
+任意機能のライブサイト取得には実行先プロジェクトのPlaywright、動画作成にはさらにffmpegが必要です。これらは機能を使うときに導入してください。生成したページや動画はローカルファイルで、自動公開されません。
+取得したHTMLは未信頼の実行可能コンテンツとして扱い、取得結果や出所不明のHTMLを動画helperへ渡しません。動画helperは `.story-frames` を削除し、出力を上書きするため、信頼済みの生成HTMLを、機密ファイルやsymlinkのない新規の使い捨てディレクトリで処理してください。明示的な上書き依頼がなければ、新しい出力先を使います。
+追加したskillは新しいAgentの会話で読み込んでください。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

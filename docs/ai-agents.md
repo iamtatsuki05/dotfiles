@@ -123,6 +123,14 @@ Invoke it explicitly with `$i-have-adhd` in Codex or `/i-have-adhd` in Claude Co
 Automatic invocation is disabled in the upstream metadata. No always-on hook or persistent user-profile assumption is installed; existing writing skills and agent policies remain unchanged.
 Start a new agent conversation after syncing to discover the added skill.
 
+## Unslop UI refinement
+
+[Unslop](https://github.com/heydamir/unslop), by Damir Sokolovsky (@heydamir), is a pinned shared skill for reviewing and refining existing UI. One declared instruction overlay sets helper-use boundaries; upstream code remains unchanged. Use `$unslop` in Codex or `/unslop` in Claude Code; its description also allows selection for matching UI-refinement requests. Existing design skills remain unchanged.
+The CC BY 4.0 license, author credit, and `CITATION.cff` are retained. No hooks or image-provider settings are installed; paid image generation requires explicit authorization.
+Optional live-site snapshots require Playwright in the project where the tool runs; story videos also require ffmpeg. Install these only when using those features. Generated snapshots and videos are local files, not automatically published.
+Use snapshot output as untrusted active HTML; never pass snapshots or unknown HTML to the story helper. Run the story helper only with trusted generated HTML in a new disposable directory without sensitive files or symlinks; it deletes `.story-frames` and overwrites its output. Choose a new output path unless overwriting was explicitly requested.
+Start a new agent conversation to discover the added skill.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

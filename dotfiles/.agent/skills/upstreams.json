@@ -1490,6 +1490,45 @@
         "last_reviewed_at": "2026-11-01T19:10:58+00:00",
         "review_report": ".agent/work/sessions/2026-11-02-i-have-adhd-codex/subagents/security-review.md"
       }
+    },
+    {
+      "id": "unslop",
+      "description": "Product-led UI redesign passes with optional snapshot and story-video tools.",
+      "repository": "https://github.com/heydamir/unslop.git",
+      "branch": "main",
+      "pinned_commit": "a6f121eee5f29c2f74976b75456feae8b66afb3a",
+      "mappings": [
+        {
+          "source_path": "skills/unslop",
+          "local_path": "dotfiles/.agent/skills/unslop"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/unslop/LICENSE"
+        },
+        {
+          "source_path": "CITATION.cff",
+          "local_path": "dotfiles/.agent/skills/unslop/CITATION.cff"
+        }
+      ],
+      "source_url": "https://github.com/heydamir/unslop/tree/a6f121eee5f29c2f74976b75456feae8b66afb3a/skills/unslop",
+      "provenance_note": "Skill by Damir Sokolovsky (@heydamir), https://github.com/heydamir/unslop. CC BY 4.0 license, attribution and CITATION.cff retained unchanged. One declared local instruction overlay limits helper execution and preserves user authorization; upstream helper code is unchanged. No hooks, dependencies or image-provider configuration installed. Playwright is project-local for optional snapshot/story tools; story also needs ffmpeg.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/unslop/SKILL.md",
+          "old": "# Unslop\n\nunslop was created",
+          "new": "# Unslop\n\n## Local integration policy\n\nUser/repository authorization and verification requirements take precedence; do not impose extra approvals or a three-render ceiling on already authorized work. Installation does not authorize dependency installation, image-service connections, paid generation, or publishing.\n\nTreat snapshots as untrusted active HTML, not sanitized pages. Never pass snapshots or unknown HTML to `story.mjs`. Use that helper only with trusted authored HTML in a newly created dedicated disposable directory, without sensitive files or outward-pointing symlinks. It deletes `.story-frames`, and its local file server does not provide a secure directory boundary. Choose new snapshot/video output paths unless the user explicitly authorized overwriting them. The helpers remain unmodified and are not approved for unrestricted execution.\n\nunslop was created",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "8cd3babeca68a27cc17afe29d512f83039064471e8852ed64cc7b3aed1fc15bd",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "a6f121eee5f29c2f74976b75456feae8b66afb3a",
+        "last_reviewed_at": "2026-11-01T19:21:28+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-unslop-codex/subagents/security-review.md"
+      }
     }
   ]
 }
