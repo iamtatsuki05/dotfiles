@@ -205,19 +205,6 @@ Agent 関連だけを反映する入口は `zsh main.sh --only agent` です。
 限りません。対象 client の仕様に応じて再起動または reload し、live config は
 別に確認してください。
 
-## クライアント同期skillの管理範囲
-
-`dotfiles/.agent/skills/synced/` はクライアントがアカウント別に生成・更新するデータです。
-ローカルには保持しますが、Gitで配布するskillには含めません。CIでは、追跡済みファイルと
-ignore対象ではない新規skillを検証し、同期データが再び追跡された場合はエラーにします。
-管理対象skillの名前の重複と参照先の欠落は、引き続き検出します。
-
-新しいcloneでは、同期skillとその付属スクリプトはクライアントによる再同期で取得します。
-これは既存のlocal skillや、`upstreams.json` で固定した外部skillとは別の配布経路です。
-既存cloneが追跡解除のコミットを取り込むと、以前追跡していた同期ファイルが削除される
-場合があります。独自に編集したものは先に退避し、必要に応じてクライアントから再同期してください。
-この変更は、クライアントが実行時に表示するskillの一覧や優先順位を変更するものではありません。
-
 ## Skill と prompt を評価する
 
 Waza の command routing を確認するときは、先に dry-run を使います。
@@ -300,14 +287,3 @@ codexbar usage --provider claude --all-accounts --format json --pretty
 ```
 
 この一覧は `CLAUDE_CONFIG_DIR` を自動探索しません。setup-tokenや短命なOAuth tokenをコピーして同期する仕組みも追加していません。Webセッションの期限切れ時はCodexBar側で更新します。cookieはログイン資格情報なので、Gitやチャットへ貼り付けないでください。[CodexBarの認証・複数アカウント仕様](https://github.com/steipete/CodexBar/blob/v0.56.3/docs/claude.md)も参照してください。`claude-account work /usage` では選択profileの利用状況を直接確認できます。
-
-Codexのセットアップでは `scripts/deduplicate_synced_skills.py` に共有スキルと同期スキルの両rootを渡します。ローカルの `productivity/docx`、`productivity/pdf`、`productivity/xlsx`、`productivity/powerpoint` と、同期版の `docs`、`docx`、`pdf`、`xlsx`、`pptx` の全コピーをCodexでのみ無効化します。元ファイルと他のagentは変更しません。残りの同期スキルは、Pythonバイトコードキャッシュを除く全ファイルの内容で重複を判定します。除外対象に明示的な `enabled = true` がある場合は設定を変更せず停止し、明示的な無効化は保持します。クライアントの再同期後はセットアップを再実行してください。既存チャットの表示は即時更新されません。
-
-Hermes専用の `codex`、`claude-code`、`plan` は `apps/hermes-agent/skills` に保存し、`~/.hermes/dotfiles-hermes-skills` から公開します。`systematic-debugging` は通常の探索対象外の `skill-archives` に保管し、通常は `auto-debugger` または `diagnosing-bugs` を使います。
-
-管理ブロックにはローカルの絶対パスが入ります。標準のsymlink構成では元のCodex設定ファイルのローカル差分として残るため、この端末固有のブロックはcommitしないでください。
-
-
-Codexの `developer_instructions` で、標準の文書・PDF・表計算・プレゼンスキルを主担当に指定しています。Google Docsの新規作成・既存編集・ネイティブテンプレートのコピーは直接操作を優先し、Wordからのimportは変換依頼時に使います。既存Google Sheets・Slidesはサービス専用スキルを使います。プレゼンの保存先が未指定ならローカルPPTXとし、既存成果物の編集では保存先を維持します。Spaces・Google Slidesの明示指定を優先します。consulting版は明示指定、経営会議向け様式、同形式の既存資料に限定します。同期版pptxのXML編集ツールは、明示的に利用を依頼された場合の参照用に保持し、通常の候補には戻しません。これらの規則は競合するスキル既定値に優先し、外部プラグインの原本は編集しません。
-
-Codexのスキル公開設定にはPython 3.11以降（`tomllib`）が必要です。`python3` がそのPythonを指すようにしてください。macOS標準のPythonは古い場合があります。

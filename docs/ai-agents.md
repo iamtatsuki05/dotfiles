@@ -207,19 +207,6 @@ Syncing files does not prove that an already-running agent process reloaded its
 configuration. Restart or reload the relevant client when its documented
 behavior requires it, then verify the live configuration separately.
 
-## Client-synced skill ownership
-
-`dotfiles/.agent/skills/synced/` contains account-specific data generated and updated by the client.
-Keep it locally, but do not distribute it through Git. CI validates tracked files and new,
-non-ignored skills, and rejects accidentally tracked sync data. Duplicate canonical skill names
-and missing related skills remain errors.
-
-Fresh clones obtain synced skills and their supporting scripts through the client again.
-This is separate from local skills and pinned imports in `upstreams.json`.
-When an existing clone takes the untracking commit, previously tracked sync files may be removed.
-Back up local customizations first, then resync through the client if needed.
-This change does not alter the client's runtime skill discovery or precedence.
-
 ## Evaluate skills and prompts
 
 Use a dry-run first when checking the Waza command routing:
@@ -303,14 +290,3 @@ codexbar usage --provider claude --all-accounts --format json --pretty
 ```
 
 This list does not discover `CLAUDE_CONFIG_DIR` profiles. No synchronization of setup-tokens or short-lived OAuth tokens is added. Renew expired Web sessions in CodexBar. Cookies are login credentials: never put them in Git or chat. See [CodexBar's authentication and multi-account documentation](https://github.com/steipete/CodexBar/blob/v0.56.3/docs/claude.md). You can also run `claude-account work /usage` to inspect the selected profile directly.
-
-Codex setup runs `scripts/deduplicate_synced_skills.py` with both the shared skills root and client-synced root. It disables local `productivity/docx`, `productivity/pdf`, `productivity/xlsx`, and `productivity/powerpoint`, and all synced copies of `docs`, `docx`, `pdf`, `xlsx`, and `pptx`, only in Codex. Source files and other agents remain unchanged. The remaining synced skills are deduplicated by full directory contents excluding Python bytecode caches. A conflicting explicit `enabled = true` stops the update without changing the config; explicit disabled entries are preserved. Re-run setup after client synchronization. Existing chats are not live-refreshed.
-
-Hermes-only `codex`, `claude-code`, and `plan` live under `apps/hermes-agent/skills`, exposed through `~/.hermes/dotfiles-hermes-skills`. `systematic-debugging` is retained under `skill-archives` outside normal discovery; use `auto-debugger` or `diagnosing-bugs` instead.
-
-The managed block contains local absolute paths. With the standard symlinked Codex configuration, it appears as a local change in the source config; do not commit that machine-specific block.
-
-
-Codex's `developer_instructions` selects the bundled documents/PDF/spreadsheets/presentations skills. Google Docs creation, existing edits and native template copies use the Google Docs native route; Word import is reserved for requested conversion. Existing Google Sheets/Slides use their service-specific skills. Unspecified presentation destinations default to local PPTX; edits retain the existing destination and explicit Spaces/Google Slides requests take precedence. Consulting presentation rules apply only to explicit requests, executive-meeting styles, or matching existing decks. Synced PPTX XML tooling remains stored for explicitly requested low-level use, not normal discovery. These rules override conflicting skill defaults without modifying vendored plugin files.
-
-Codex skill publication setup requires Python 3.11 or later (`tomllib`). Ensure `python3` resolves to that interpreter; the macOS system Python may be older.
