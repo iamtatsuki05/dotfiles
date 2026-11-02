@@ -36,11 +36,11 @@
         },
         {
           "source_path": "skills/systematic-debugging/condition-based-waiting.md",
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md"
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md"
         },
         {
           "source_path": "LICENSE",
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/LICENSE"
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/LICENSE"
         },
         {
           "source_path": "LICENSE",
@@ -103,37 +103,37 @@
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
           "old": "await waitFor(() => getResult() !== undefined);",
           "new": "await waitFor(() => getResult() !== undefined, 'result');",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
           "old": "| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'))` |\n| Wait for state | `waitFor(() => machine.state === 'ready')` |\n| Wait for count | `waitFor(() => items.length >= 5)` |\n| Wait for file | `waitFor(() => fs.existsSync(path))` |\n| Complex condition | `waitFor(() => obj.ready && obj.value > 10)` |",
           "new": "| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'), 'DONE event')` |\n| Wait for state | `waitFor(() => machine.state === 'ready', 'ready state')` |\n| Wait for count | `waitFor(() => items.length >= 5, 'five items')` |\n| Wait for file | `waitFor(() => fs.existsSync(path), 'output file')` |\n| Complex condition | `waitFor(() => obj.ready && obj.value > 10, 'ready value above 10')` |",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
           "old": "    if (result) return result;",
           "new": "    if (result !== undefined && result !== null && result !== false) return result;",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
           "old": "See `condition-based-waiting-example.ts` in this directory for complete implementation with domain-specific helpers (`waitForEvent`, `waitForEventCount`, `waitForEventMatch`) from actual debugging session.",
           "new": "Capture a baseline cursor or count before starting the operation when the observable state retains history; otherwise stale events can satisfy the wait. Adapt the generic pattern to the repository's existing test utilities rather than copying a domain-specific helper.",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
           "old": "await waitForEvent(manager, 'TOOL_STARTED'); // First: wait for condition",
           "new": "await waitForEvent(manager, threadId, 'TOOL_STARTED'); // First: wait for condition",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
           "old": "## Real-World Impact\n\nFrom debugging session (2025-10-03):\n- Fixed 15 flaky tests across 3 files\n- Pass rate: 60% → 100%\n- Execution time: 40% faster\n- No more race conditions",
           "new": "## Historical upstream report\n\nThe upstream document reports a 2025 debugging session with fewer flaky tests and faster execution. Treat those figures as historical context, not as a guarantee for the current repository; measure the local test before and after the change.",
           "expected_count": 1
