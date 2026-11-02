@@ -1529,6 +1529,803 @@
         "last_reviewed_at": "2026-11-01T19:21:28+00:00",
         "review_report": ".agent/work/sessions/2026-11-02-unslop-codex/subagents/security-review.md"
       }
+    },
+    {
+      "id": "pstack",
+      "description": "Full namespaced pstack plugin: canonical Cursor/Codex source and official Claude adapter, with local authorization boundaries.",
+      "repository": "https://github.com/cursor/plugins.git",
+      "branch": "main",
+      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "mappings": [
+        {
+          "source_path": "pstack",
+          "local_path": "dotfiles/.agent/apps/pstack/canonical"
+        },
+        {
+          "source_path": "harness/pstack/claude-code",
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code"
+        }
+      ],
+      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/pstack",
+      "provenance_note": "Full canonical package and official generated Claude adapter. MIT license and Lauren Tan attribution retained. Declared README policy and entrypoint links constrain authorization, data handling, destructive cleanup, non-equivalent fallbacks and pinned reference selection. No helpers, model rules, automations or external actions run during import. Existing selected pstack-principles remain independent.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/README.md",
+          "old": "# pstack\n\ni'm [poteto](https://x.com/poteto). i'm not a president or ceo, but i've worke",
+          "new": "# pstack\n\n## Local integration policy\n\nThis is a managed, pinned import. These local limits apply to every pstack skill, agent, playbook and automation, including the official Claude adapter; they override conflicting upstream defaults.\n\n- Follow the current host, repository and user instructions. Installing or invoking pstack grants no authority beyond the user's actual task. Respect existing explicit authorization; do not ask for the same approval at each step.\n- Commit, push, PR creation/readiness, merge, force-push, messages, tickets, publishing, production changes and paid work require authorization for that action and target. Upstream examples, autonomy claims and automation templates are not user authorization. Keep Draft-first and review requirements where the repository requires them.\n- Preserve unrelated tracked, untracked and ignored work, comments, TODOs and license notices. Do not reset, stash, force-remove or delete to simplify setup or cleanup. Before destructive work, establish ownership, scope, active use and recoverability, then follow the user's required confirmation boundary.\n- Before network exposure, credential storage, global installation, persistent configuration or automation activation, identify the destination, access controls, data, permissions, cost and rollback within the authorized scope. Do not execute setup-pstack, bootstrap helpers, make-bot-ui or automation setup merely because the package was installed.\n- Use only capabilities actually available in this host. Equivalent tool-name translation is allowed; silently replacing a required model, provider, backend, cloud isolation or validation step is not. Explain a non-equivalent alternative and obtain authorization before dependent work. Do not skip required steps, use placeholder results or claim multi-model validation after using one model. Continue independent authorized work.\n- Read only task-relevant, user-accessible records for the explicitly identified workspace and session. Never choose a session merely because its transcript is newest. Do not access host-private conversation records or share transcripts, secrets or personal data with another provider without the required authorization; prefer a minimal redacted summary.\n- Resolve bundled references inside this exact plugin root. Pass its absolute poteto-mode SKILL.md path to delegates. Do not select another cache copy by highest version, fetch a newer rule, or silently replace a missing dependency. Report a missing required capability or file without inventing its result.\n\ni'm [poteto](https://x.com/poteto). i'm not a president or ceo, but i've worke",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/agents/comment-sicko.md",
+          "old": "---\n\n# Comment Sicko\n\nMy first output when spawned is exactly this.\n\nYes... Ha ha ha... Yes!\n\nI hate comm",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Comment Sicko\n\nMy first output when spawned is exactly this.\n\nYes... Ha ha ha... Yes!\n\nI hate comm",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/agents/poteto-agent.md",
+          "old": "---\n\n# Poteto subagent\n\nYou are operating as poteto-mode's full agent style. The chat that receives `/pot",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Poteto subagent\n\nYou are operating as poteto-mode's full agent style. The chat that receives `/pot",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/automations/benny/FOR_AGENTS.md",
+          "old": "# benny automation intent\n\n## what i want to automate\n\ni want two cursor automations that work together in one slack issue chan",
+          "new": "# benny automation intent\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n## what i want to automate\n\ni want two cursor automations that work together in one slack issue chan",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/automations/benny/skills/reproduce-and-fix-issues/SKILL.md",
+          "old": "---\n\n# Reproduce and fix issues\n\nWait for a trusted triage marker in the source thread. Reproduce the exa",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Reproduce and fix issues\n\nWait for a trusted triage marker in the source thread. Reproduce the exa",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/automations/benny/skills/setup-benny/SKILL.md",
+          "old": "---\n\n# Set up Benny\n\nBenny ships as a dormant automation pack inside pstack. The plugin manifest exposes ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Set up Benny\n\nBenny ships as a dormant automation pack inside pstack. The plugin manifest exposes ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/automations/benny/skills/triage-issue-reports/SKILL.md",
+          "old": "---\n\n# Triage issue reports\n\nClassify one Slack report and post one useful verdict in its source thread. ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Triage issue reports\n\nClassify one Slack report and post one useful verdict in its source thread. ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/automations/benny/templates/reproduce-automation-prompt.md",
+          "old": "# Reproduce automation prompt\n\n> Source material for the copied setup workflow. Paraphrase this intent into a built-in `automate` d",
+          "new": "# Reproduce automation prompt\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n> Source material for the copied setup workflow. Paraphrase this intent into a built-in `automate` d",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/automations/benny/templates/triage-automation-prompt.md",
+          "old": "# Triage automation prompt\n\n> Source material for the copied setup workflow. Paraphrase this intent into a built-in `automate` d",
+          "new": "# Triage automation prompt\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n> Source material for the copied setup workflow. Paraphrase this intent into a built-in `automate` d",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/architect/SKILL.md",
+          "old": "---\n\n# Architect\n\nSketch types, function signatures, class shapes, and module boundaries with `not implem",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Architect\n\nSketch types, function signatures, class shapes, and module boundaries with `not implem",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/arena/SKILL.md",
+          "old": "---\n\n# Arena\n\nOpen a todolist with one entry per phase (Frame, Fan out, Cross-judge, Pick, Graft, Verify)",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Arena\n\nOpen a todolist with one entry per phase (Frame, Fan out, Cross-judge, Pick, Graft, Verify)",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/automate-me/SKILL.md",
+          "old": "---\n\n# Automate me\n\nA guided flow for turning the user's working conventions into a skill agents will fol",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Automate me\n\nA guided flow for turning the user's working conventions into a skill agents will fol",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/benchmark-checklist/SKILL.md",
+          "old": "---\n\n# Benchmark checklist\n\nUse this when you produce a performance number: a PR's before and after, a re",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Benchmark checklist\n\nUse this when you produce a performance number: a PR's before and after, a re",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/blast-radius/SKILL.md",
+          "old": "---\n\n# Blast radius\n\nFind what a change breaks somewhere else, before it ships. Use for \"blast radius of ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Blast radius\n\nFind what a change breaks somewhere else, before it ships. Use for \"blast radius of ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/bro/SKILL.md",
+          "old": "---\n\nRestate your last message. Stop using jargon and speak coherently. State it more simply and concisel",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nRestate your last message. Stop using jargon and speak coherently. State it more simply and concisel",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/correct/SKILL.md",
+          "old": "---\n\n# Correct\n\nThe operator keeps correcting agents in this repo for the same mistakes. Change the repo ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Correct\n\nThe operator keeps correcting agents in this repo for the same mistakes. Change the repo ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/create-formal-verification-skill/SKILL.md",
+          "old": "---\n\n# Create a formal verification skill\n\nA test checks the cases that someone thought to write. Formal ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Create a formal verification skill\n\nA test checks the cases that someone thought to write. Formal ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/create-verification-skill/SKILL.md",
+          "old": "---\n\n# Create a verification skill\n\nEvery serious project needs a scripted way to drive the real app and ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Create a verification skill\n\nEvery serious project needs a scripted way to drive the real app and ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/figure-it-out/SKILL.md",
+          "old": "---\n\n# Figure it out\n\nWhen the task matches no playbook, design one. The deliverable before any code is t",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Figure it out\n\nWhen the task matches no playbook, design one. The deliverable before any code is t",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/how/SKILL.md",
+          "old": "---\n\n# How\n\nExplore the codebase to answer \"how does X work?\" questions. Produce architectural explanatio",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# How\n\nExplore the codebase to answer \"how does X work?\" questions. Produce architectural explanatio",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/in-your-own-words/SKILL.md",
+          "old": "---\n\nRestate in your own words what you think the user's goals are and what problem they're trying to sol",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nRestate in your own words what you think the user's goals are and what problem they're trying to sol",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/interrogate/SKILL.md",
+          "old": "---\n\n# Interrogate\n\nAdversaries try to break a change or a design. A finding survives only when a run pro",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Interrogate\n\nAdversaries try to break a change or a design. A finding survives only when a run pro",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/ketchup/SKILL.md",
+          "old": "---\n\n# Ketchup\n\nCatch the user up on what changed in this chat since the last message they wrote before `",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Ketchup\n\nCatch the user up on what changed in this chat since the last message they wrote before `",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/ketchup-video/SKILL.md",
+          "old": "---\n\n# Ketchup video\n\nFollow [`/ketchup`](../ketchup/SKILL.md), but show what happened in a short subtitl",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Ketchup video\n\nFollow [`/ketchup`](../ketchup/SKILL.md), but show what happened in a short subtitl",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/maintain-formal-verification-skill/SKILL.md",
+          "old": "---\n\n# Maintain a formal verification skill\n\nA formal check proves a property of what it describes. When ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Maintain a formal verification skill\n\nA formal check proves a property of what it describes. When ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/maintain-verification-skill/SKILL.md",
+          "old": "---\n\n# Maintain a verification skill\n\nA feature map rots the moment the app changes. This skill is the up",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Maintain a verification skill\n\nA feature map rots the moment the app changes. This skill is the up",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/make-bot-ui/SKILL.md",
+          "old": "---\n# How to make a bot UI\n\nBuild a page the user clicks. A server on this computer POSTs JSON to a webh",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# How to make a bot UI\n\nBuild a page the user clicks. A server on this computer POSTs JSON to a webh",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/no-comments/SKILL.md",
+          "old": "---\n\n# No comments\n\nSpawn Comment Sicko. Act on accepted findings.\n\nDefer to Comment Sicko's fresh perspe",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# No comments\n\nSpawn Comment Sicko. Act on accepted findings.\n\nDefer to Comment Sicko's fresh perspe",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/poteto-help/SKILL.md",
+          "old": "---\n\n# Poteto help\n\nAnswer the user's question about pstack, hand them a prompt they can send, and link t",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Poteto help\n\nAnswer the user's question about pstack, hand them a prompt they can send, and link t",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/poteto-mode/SKILL.md",
+          "old": "---\n\n# Poteto mode\n\nBundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolu",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Poteto mode\n\nBundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolu",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-attack-the-premise/SKILL.md",
+          "old": "---\n\n# Attack the Premise\n\nWhen two or more fixes that share one premise have failed the same gate, suspe",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Attack the Premise\n\nWhen two or more fixes that share one premise have failed the same gate, suspe",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-boundary-discipline/SKILL.md",
+          "old": "---\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at system boundaries. Tr",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at system boundaries. Tr",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-build-the-lever/SKILL.md",
+          "old": "---\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it instead of doing it by h",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it instead of doing it by h",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-encode-lessons-in-structure/SKILL.md",
+          "old": "---\n\n# Encode Lessons in Structure\n\nIf the lesson needs judgment and cannot be encoded, make the instruct",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Encode Lessons in Structure\n\nIf the lesson needs judgment and cannot be encoded, make the instruct",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-exhaust-the-design-space/SKILL.md",
+          "old": "---\n\n# Exhaust the Design Space\n\nIt also applies to product design decisions where user experience depend",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Exhaust the Design Space\n\nIt also applies to product design decisions where user experience depend",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-experience-first/SKILL.md",
+          "old": "---\n\n# Experience First\n\nWhen implementation convenience conflicts with user delight, choose delight.\n\n- ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Experience First\n\nWhen implementation convenience conflicts with user delight, choose delight.\n\n- ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-explain-the-number/SKILL.md",
+          "old": "---\n\n# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change a d",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change a d",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-fix-root-causes/SKILL.md",
+          "old": "---\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surfaced. The symptom is wh",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surfaced. The symptom is wh",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-foundational-thinking/SKILL.md",
+          "old": "---\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-level decisions** pro",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-level decisions** pro",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-guard-the-context-window/SKILL.md",
+          "old": "---\n\n# Guard the Context Window\n\n**Why:** Context overflow degrades reasoning quality, creates compressio",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Guard the Context Window\n\n**Why:** Context overflow degrades reasoning quality, creates compressio",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-laziness-protocol/SKILL.md",
+          "old": "---\n\n# Laziness Protocol\n\n- **Consolidate decisions.** Do not repeat the same choice in several places. P",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Laziness Protocol\n\n- **Consolidate decisions.** Do not repeat the same choice in several places. P",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-make-operations-idempotent/SKILL.md",
+          "old": "---\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct state regardless of ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct state regardless of ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md",
+          "old": "---\n\n# Migrate Callers Then Delete Legacy APIs\n\n- Update tests to assert the new contract, and delete tes",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Migrate Callers Then Delete Legacy APIs\n\n- Update tests to assert the new contract, and delete tes",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-minimize-reader-load/SKILL.md",
+          "old": "---\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understand code. Track two a",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understand code. Track two a",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-model-the-domain/SKILL.md",
+          "old": "---\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scattering it across condi",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scattering it across condi",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-never-block-on-the-human/SKILL.md",
+          "old": "---\n\n# Never Block on the Human\n\nThe human supervises asynchronously. Agents must stay unblocked. Make re",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Never Block on the Human\n\nThe human supervises asynchronously. Agents must stay unblocked. Make re",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-outcome-oriented-execution/SKILL.md",
+          "old": "---\n\n# Outcome-Oriented Execution\n\nOptimize for the intended, verifiable end state rather than preserving",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Outcome-Oriented Execution\n\nOptimize for the intended, verifiable end state rather than preserving",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-prove-it-works/SKILL.md",
+          "old": "---\n\n# Prove It Works\n\nVerify every task output by checking the real thing directly. Do not infer from pr",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Prove It Works\n\nVerify every task output by checking the real thing directly. Do not infer from pr",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-redesign-from-first-principles/SKILL.md",
+          "old": "---\n\n# Redesign From First Principles\n\nWhen integrating a change, don't bolt it onto the existing design.",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Redesign From First Principles\n\nWhen integrating a change, don't bolt it onto the existing design.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-separate-before-serializing-shared-state/SKILL.md",
+          "old": "---\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share mutable state, first ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share mutable state, first ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-sequence-verifiable-units/SKILL.md",
+          "old": "---\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, each ending in a sta",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, each ending in a sta",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-subtract-before-you-add/SKILL.md",
+          "old": "---\n\n# Subtract Before You Add\n\nWhen evolving a system, remove complexity first, then build. Default to s",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Subtract Before You Add\n\nWhen evolving a system, remove complexity first, then build. Default to s",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-test-behavior-not-implementation/SKILL.md",
+          "old": "---\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does for its users: a cal",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does for its users: a cal",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-type-system-discipline/SKILL.md",
+          "old": "---\n\n# Type System Discipline\n\nMake the compiler reject impossible states, mismatched primitives, and unh",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Type System Discipline\n\nMake the compiler reject impossible states, mismatched primitives, and unh",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/recall/SKILL.md",
+          "old": "---\n\n# Recall\n\n**Before you start or resume work, you rebuild the user's recent working context and hand ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Recall\n\n**Before you start or resume work, you rebuild the user's recent working context and hand ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reflect/SKILL.md",
+          "old": "---\n\n# Reflect\n\nMine the current conversation for durable learnings, then route them into skill edits.\n\nI",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Reflect\n\nMine the current conversation for durable learnings, then route them into skill edits.\n\nI",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/setup-pstack/SKILL.md",
+          "old": "---\n\n# Setup pstack\n\nWrite `~/.cursor/rules/pstack-models.mdc`, an always-applied rule that sets pstack's",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Setup pstack\n\nWrite `~/.cursor/rules/pstack-models.mdc`, an always-applied rule that sets pstack's",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/sharpen/SKILL.md",
+          "old": "---\n\nI want a deeper version of this task, not a bigger one. Before rewriting it, do four things:\n\n1. Say",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nI want a deeper version of this task, not a bigger one. Before rewriting it, do four things:\n\n1. Say",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/show-me-your-work/SKILL.md",
+          "old": "---\n\n# Show me your work\n\nKeep one canonical log.\n\n## The format\n\nA single TSV file, one row per decision",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Show me your work\n\nKeep one canonical log.\n\n## The format\n\nA single TSV file, one row per decision",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/statechart/SKILL.md",
+          "old": "---\n\n# Statechart\n\nThe chart shows how a system moves between states, in the words of the person who read",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Statechart\n\nThe chart shows how a system moves between states, in the words of the person who read",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/swarm/SKILL.md",
+          "old": "---\n\n# Swarm\n\n## Start\n\nOpen a todolist with one entry per phase before launching anything.\n\n1. Frame\n2. ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Swarm\n\n## Start\n\nOpen a todolist with one entry per phase before launching anything.\n\n1. Frame\n2. ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/tdd/SKILL.md",
+          "old": "---\n\n# TDD Bug Fix\n\nWhen fixing a bug with a clear, cheap test path, make the broken behavior executable ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TDD Bug Fix\n\nWhen fixing a bug with a clear, cheap test path, make the broken behavior executable ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/teach/SKILL.md",
+          "old": "---\n\n# Teach\n\n**You explain what a thing is, how it works, and why it's built that way, in one plain acco",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Teach\n\n**You explain what a thing is, how it works, and why it's built that way, in one plain acco",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/technical-writing/SKILL.md",
+          "old": "---\n\n# Technical writing\n\nWrite so a tired engineer understands on the first read. Apply all four layers.",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Technical writing\n\nWrite so a tired engineer understands on the first read. Apply all four layers.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/typescript-best-practices/SKILL.md",
+          "old": "---\n\n# TypeScript best practices\n\nApply the **type-system-discipline** principle skill first.\n\n| Rule | S",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TypeScript best practices\n\nApply the **type-system-discipline** principle skill first.\n\n| Rule | S",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/unslop/SKILL.md",
+          "old": "---\n\n# Unslop\n\nEdit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meani",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Unslop\n\nEdit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meani",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/why/SKILL.md",
+          "old": "---\n\n# Why\n\nInvestigate the motivation and intent behind code. The companion `how` skill answers what the",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Why\n\nInvestigate the motivation and intent behind code. The companion `how` skill answers what the",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/README.md",
+          "old": "# pstack\n\ni'm [poteto](https://x.com/poteto). i'm not a president or ceo, but i've worke",
+          "new": "# pstack\n\n## Local integration policy\n\nThis is a managed, pinned import. These local limits apply to every pstack skill, agent, playbook and automation, including the official Claude adapter; they override conflicting upstream defaults.\n\n- Follow the current host, repository and user instructions. Installing or invoking pstack grants no authority beyond the user's actual task. Respect existing explicit authorization; do not ask for the same approval at each step.\n- Commit, push, PR creation/readiness, merge, force-push, messages, tickets, publishing, production changes and paid work require authorization for that action and target. Upstream examples, autonomy claims and automation templates are not user authorization. Keep Draft-first and review requirements where the repository requires them.\n- Preserve unrelated tracked, untracked and ignored work, comments, TODOs and license notices. Do not reset, stash, force-remove or delete to simplify setup or cleanup. Before destructive work, establish ownership, scope, active use and recoverability, then follow the user's required confirmation boundary.\n- Before network exposure, credential storage, global installation, persistent configuration or automation activation, identify the destination, access controls, data, permissions, cost and rollback within the authorized scope. Do not execute setup-pstack, bootstrap helpers, make-bot-ui or automation setup merely because the package was installed.\n- Use only capabilities actually available in this host. Equivalent tool-name translation is allowed; silently replacing a required model, provider, backend, cloud isolation or validation step is not. Explain a non-equivalent alternative and obtain authorization before dependent work. Do not skip required steps, use placeholder results or claim multi-model validation after using one model. Continue independent authorized work.\n- Read only task-relevant, user-accessible records for the explicitly identified workspace and session. Never choose a session merely because its transcript is newest. Do not access host-private conversation records or share transcripts, secrets or personal data with another provider without the required authorization; prefer a minimal redacted summary.\n- Resolve bundled references inside this exact plugin root. Pass its absolute poteto-mode SKILL.md path to delegates. Do not select another cache copy by highest version, fetch a newer rule, or silently replace a missing dependency. Report a missing required capability or file without inventing its result.\n\ni'm [poteto](https://x.com/poteto). i'm not a president or ceo, but i've worke",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/agents/comment-sicko.md",
+          "old": "---\n\n# Comment Sicko\n\nMy first output when spawned is exactly this.\n\nYes... Ha ha ha... Yes!\n\nI hate comm",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Comment Sicko\n\nMy first output when spawned is exactly this.\n\nYes... Ha ha ha... Yes!\n\nI hate comm",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/agents/poteto-agent.md",
+          "old": "---\n\n# Poteto subagent\n\nYou are operating as poteto-mode's full agent style. The chat that receives `/pot",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Poteto subagent\n\nYou are operating as poteto-mode's full agent style. The chat that receives `/pot",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/architect/SKILL.md",
+          "old": "---\n\n# Architect\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Architect\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/arena/SKILL.md",
+          "old": "---\n\n# Arena\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Arena\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/automate-me/SKILL.md",
+          "old": "---\n\n# Automate me\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Automate me\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/benchmark-checklist/SKILL.md",
+          "old": "---\n\n# Benchmark checklist\n\nUse this when you produce a performance number: a PR's before and after, a re",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Benchmark checklist\n\nUse this when you produce a performance number: a PR's before and after, a re",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/blast-radius/SKILL.md",
+          "old": "---\n\n# Blast radius\n\nFind what a change breaks somewhere else, before it ships. Use for \"blast radius of ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Blast radius\n\nFind what a change breaks somewhere else, before it ships. Use for \"blast radius of ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/bro/SKILL.md",
+          "old": "---\n\nRestate your last message. Stop using jargon and speak coherently. State it more simply and concisel",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nRestate your last message. Stop using jargon and speak coherently. State it more simply and concisel",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/correct/SKILL.md",
+          "old": "---\n\n# Correct\n\nThe operator keeps correcting agents in this repo for the same mistakes. Change the repo ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Correct\n\nThe operator keeps correcting agents in this repo for the same mistakes. Change the repo ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/create-formal-verification-skill/SKILL.md",
+          "old": "---\n\n# Create a formal verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harn",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Create a formal verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harn",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/create-verification-skill/SKILL.md",
+          "old": "---\n\n# Create a verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/cla",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Create a verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/cla",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/figure-it-out/SKILL.md",
+          "old": "---\n\n# Figure it out\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) o",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Figure it out\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) o",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/how/SKILL.md",
+          "old": "---\n\n# How\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per se",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# How\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per se",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/in-your-own-words/SKILL.md",
+          "old": "---\n\nRestate in your own words what you think the user's goals are and what problem they're trying to sol",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nRestate in your own words what you think the user's goals are and what problem they're trying to sol",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/interrogate/SKILL.md",
+          "old": "---\n\n# Interrogate\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Interrogate\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/ketchup/SKILL.md",
+          "old": "---\n\n# Ketchup\n\nCatch the user up on what changed in this chat since the last message they wrote before `",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Ketchup\n\nCatch the user up on what changed in this chat since the last message they wrote before `",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/ketchup-video/SKILL.md",
+          "old": "---\n\n# Ketchup video\n\nFollow [`/ketchup`](../ketchup/SKILL.md), but show what happened in a short subtitl",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Ketchup video\n\nFollow [`/ketchup`](../ketchup/SKILL.md), but show what happened in a short subtitl",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/maintain-formal-verification-skill/SKILL.md",
+          "old": "---\n\n# Maintain a formal verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/ha",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Maintain a formal verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/ha",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/maintain-verification-skill/SKILL.md",
+          "old": "---\n\n# Maintain a verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/c",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Maintain a verification skill\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/c",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/make-bot-ui/SKILL.md",
+          "old": "---\n# How to make a bot UI\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-cod",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# How to make a bot UI\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-cod",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/no-comments/SKILL.md",
+          "old": "---\n\n# No comments\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# No comments\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/poteto-help/SKILL.md",
+          "old": "---\n\n# Poteto help\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Poteto help\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/poteto-mode/SKILL.md",
+          "old": "---\n\n# Poteto mode\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Poteto mode\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) onc",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-attack-the-premise/SKILL.md",
+          "old": "---\n\n# Attack the Premise\n\nWhen two or more fixes that share one premise have failed the same gate, suspe",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Attack the Premise\n\nWhen two or more fixes that share one premise have failed the same gate, suspe",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-boundary-discipline/SKILL.md",
+          "old": "---\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at system boundaries. Tr",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at system boundaries. Tr",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-build-the-lever/SKILL.md",
+          "old": "---\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it instead of doing it by h",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it instead of doing it by h",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-encode-lessons-in-structure/SKILL.md",
+          "old": "---\n\n# Encode Lessons in Structure\n\nIf the lesson needs judgment and cannot be encoded, make the instruct",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Encode Lessons in Structure\n\nIf the lesson needs judgment and cannot be encoded, make the instruct",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-exhaust-the-design-space/SKILL.md",
+          "old": "---\n\n# Exhaust the Design Space\n\nIt also applies to product design decisions where user experience depend",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Exhaust the Design Space\n\nIt also applies to product design decisions where user experience depend",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-experience-first/SKILL.md",
+          "old": "---\n\n# Experience First\n\nWhen implementation convenience conflicts with user delight, choose delight.\n\n- ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Experience First\n\nWhen implementation convenience conflicts with user delight, choose delight.\n\n- ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-explain-the-number/SKILL.md",
+          "old": "---\n\n# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change a d",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change a d",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-fix-root-causes/SKILL.md",
+          "old": "---\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surfaced. The symptom is wh",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surfaced. The symptom is wh",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-foundational-thinking/SKILL.md",
+          "old": "---\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-level decisions** pro",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-level decisions** pro",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-guard-the-context-window/SKILL.md",
+          "old": "---\n\n# Guard the Context Window\n\n**Why:** Context overflow degrades reasoning quality, creates compressio",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Guard the Context Window\n\n**Why:** Context overflow degrades reasoning quality, creates compressio",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-laziness-protocol/SKILL.md",
+          "old": "---\n\n# Laziness Protocol\n\n- **Consolidate decisions.** Do not repeat the same choice in several places. P",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Laziness Protocol\n\n- **Consolidate decisions.** Do not repeat the same choice in several places. P",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-make-operations-idempotent/SKILL.md",
+          "old": "---\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct state regardless of ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct state regardless of ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md",
+          "old": "---\n\n# Migrate Callers Then Delete Legacy APIs\n\n- Update tests to assert the new contract, and delete tes",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Migrate Callers Then Delete Legacy APIs\n\n- Update tests to assert the new contract, and delete tes",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-minimize-reader-load/SKILL.md",
+          "old": "---\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understand code. Track two a",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understand code. Track two a",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-model-the-domain/SKILL.md",
+          "old": "---\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scattering it across condi",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scattering it across condi",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-never-block-on-the-human/SKILL.md",
+          "old": "---\n\n# Never Block on the Human\n\nThe human supervises asynchronously. Agents must stay unblocked. Make re",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Never Block on the Human\n\nThe human supervises asynchronously. Agents must stay unblocked. Make re",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-outcome-oriented-execution/SKILL.md",
+          "old": "---\n\n# Outcome-Oriented Execution\n\nOptimize for the intended, verifiable end state rather than preserving",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Outcome-Oriented Execution\n\nOptimize for the intended, verifiable end state rather than preserving",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-prove-it-works/SKILL.md",
+          "old": "---\n\n# Prove It Works\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Prove It Works\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-redesign-from-first-principles/SKILL.md",
+          "old": "---\n\n# Redesign From First Principles\n\nWhen integrating a change, don't bolt it onto the existing design.",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Redesign From First Principles\n\nWhen integrating a change, don't bolt it onto the existing design.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-separate-before-serializing-shared-state/SKILL.md",
+          "old": "---\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share mutable state, first ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share mutable state, first ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-sequence-verifiable-units/SKILL.md",
+          "old": "---\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, each ending in a sta",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, each ending in a sta",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-subtract-before-you-add/SKILL.md",
+          "old": "---\n\n# Subtract Before You Add\n\nWhen evolving a system, remove complexity first, then build. Default to s",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Subtract Before You Add\n\nWhen evolving a system, remove complexity first, then build. Default to s",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-test-behavior-not-implementation/SKILL.md",
+          "old": "---\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does for its users: a cal",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does for its users: a cal",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/principle-type-system-discipline/SKILL.md",
+          "old": "---\n\n# Type System Discipline\n\nMake the compiler reject impossible states, mismatched primitives, and unh",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Type System Discipline\n\nMake the compiler reject impossible states, mismatched primitives, and unh",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/recall/SKILL.md",
+          "old": "---\n\n# Recall\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Recall\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/reflect/SKILL.md",
+          "old": "---\n\n# Reflect\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once pe",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Reflect\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once pe",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/setup-pstack/SKILL.md",
+          "old": "---\n\n# Setup pstack\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) on",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Setup pstack\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) on",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/sharpen/SKILL.md",
+          "old": "---\n\nI want a deeper version of this task, not a bigger one. Before rewriting it, do four things:\n\n1. Say",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nI want a deeper version of this task, not a bigger one. Before rewriting it, do four things:\n\n1. Say",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/show-me-your-work/SKILL.md",
+          "old": "---\n\n# Show me your work\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.m",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Show me your work\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.m",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/statechart/SKILL.md",
+          "old": "---\n\n# Statechart\n\nThe chart shows how a system moves between states, in the words of the person who read",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Statechart\n\nThe chart shows how a system moves between states, in the words of the person who read",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/swarm/SKILL.md",
+          "old": "---\n\n# Swarm\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Swarm\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/tdd/SKILL.md",
+          "old": "---\n\n# TDD Bug Fix\n\nWhen fixing a bug with a clear, cheap test path, make the broken behavior executable ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TDD Bug Fix\n\nWhen fixing a bug with a clear, cheap test path, make the broken behavior executable ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/teach/SKILL.md",
+          "old": "---\n\n# Teach\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per ",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Teach\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per ",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/technical-writing/SKILL.md",
+          "old": "---\n\n# Technical writing\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.m",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Technical writing\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.m",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/typescript-best-practices/SKILL.md",
+          "old": "---\n\n# TypeScript best practices\n\nApply the **type-system-discipline** principle skill first.\n\n| Rule | S",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TypeScript best practices\n\nApply the **type-system-discipline** principle skill first.\n\n| Rule | S",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/unslop/SKILL.md",
+          "old": "---\n\n# Unslop\n\nEdit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meani",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Unslop\n\nEdit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meani",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/claude-code/skills/why/SKILL.md",
+          "old": "---\n\n# Why\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per se",
+          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Why\n\nIn Claude Code, read [the Claude Code adapter](../../docs/harness/claude-code.md) once per se",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "ce0b0809e408fd09f189b4e6dff631aa42372cf8cceb4c78a83350257b8a012c",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+        "last_reviewed_at": "2026-11-02T01:30:50+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-pstack-codex/subagents/security-review.md"
+      }
     }
   ]
 }

@@ -129,6 +129,15 @@ CC BY 4.0のライセンス、作者表記、`CITATION.cff`を保持します。
 取得したHTMLは未信頼の実行可能コンテンツとして扱い、取得結果や出所不明のHTMLを動画helperへ渡しません。動画helperは `.story-frames` を削除し、出力を上書きするため、信頼済みの生成HTMLを、機密ファイルやsymlinkのない新規の使い捨てディレクトリで処理してください。明示的な上書き依頼がなければ、新しい出力先を使います。
 追加したskillは新しいAgentの会話で読み込んでください。
 
+## Pstackのワークフロー
+
+[pstack](https://github.com/cursor/plugins/tree/main/pstack)全体を固定版として `dotfiles/.agent/apps/pstack` で管理します。以前選んで導入した2個の原則skillも残します。
+`mise run pstack-setup` で、導入済みのClaude Code・Codex・Cursor Agentへ登録します。`--agent claude|codex|cursor` で対象を限定でき、`--dry-run` では変更せず予定を表示します。通常の全体セットアップでもmiseのツール導入後に実行します。
+Codexは `.agents/plugins/marketplace.json` からcanonical版を、Claude Codeは `.claude-plugin/marketplace.json` から上流公式のClaude対応版を読み込みます。登録名はどちらも `pstack@dotfiles-pstack` です。Claudeの既存アカウントも対象とし、`CLAUDE_CONFIG_DIR` を指定した場合はその設定先だけに登録します。
+Cursorは `~/.cursor/plugins/local/pstack` に管理用の実ディレクトリを配置します。再実行では同じ内容を保持し、記録と内容が一致する管理済みコピーだけを更新します。非管理の同名ディレクトリやローカル変更がある場合は停止します。起動ごとに指定するなら `cursor-agent --plugin-dir <repo>/dotfiles/.agent/apps/pstack/canonical` も使えます。
+再起動後、Codexでは `$pstack:poteto-mode`、Claudeでは `/pstack:poteto-mode` と指定してください。この2つのAgentではpstackの文章推敲用 `pstack:unslop` と既存のUIデザイン用 `unslop` を別名で扱います。Cursorはpluginの識別情報を保持しますが、同名のスラッシュメニューの選択は実クライアントで確認が必要です。曖昧な場合は意図したskillのフルパスを指定してください。既存skillは上書きしません。
+導入時に `setup-pstack` の実行、モデル規則の変更、automationの起動は行いません。commit・公開・有料サービス利用の許可も追加しません。全体にはCursor固有のツール・モデル・ワークフローが含まれ、配置だけで他のAgentでも使えるようになるわけではありません。ローカルの統合方針に従い、利用できない機能はモデルやrunnerへ黙って置き換えず報告します。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

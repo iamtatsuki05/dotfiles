@@ -131,6 +131,15 @@ Optional live-site snapshots require Playwright in the project where the tool ru
 Use snapshot output as untrusted active HTML; never pass snapshots or unknown HTML to the story helper. Run the story helper only with trusted generated HTML in a new disposable directory without sensitive files or symlinks; it deletes `.story-frames` and overwrites its output. Choose a new output path unless overwriting was explicitly requested.
 Start a new agent conversation to discover the added skill.
 
+## Pstack workflows
+
+The pinned full [pstack](https://github.com/cursor/plugins/tree/main/pstack) package is managed under `dotfiles/.agent/apps/pstack`, alongside the two previously selected standalone principles.
+Run `mise run pstack-setup` to register it with installed Claude Code, Codex and Cursor Agent clients; `--agent claude|codex|cursor` limits the target and `--dry-run` previews without writing. Full setup also runs this task after mise tools.
+Codex loads the canonical package from `.agents/plugins/marketplace.json`; Claude Code loads the official generated Claude adapter from `.claude-plugin/marketplace.json`. Both use `pstack@dotfiles-pstack`. The setup includes existing Claude account profiles unless `CLAUDE_CONFIG_DIR` selects one profile.
+Cursor receives a managed real directory at `~/.cursor/plugins/local/pstack`; repeat setup preserves an unchanged copy and updates only a copy whose recorded content is intact. An existing non-managed or locally modified directory causes an error. `cursor-agent --plugin-dir <repo>/dotfiles/.agent/apps/pstack/canonical` is the explicit per-launch alternative.
+Restart the client, then use Codex `$pstack:poteto-mode` or Claude `/pstack:poteto-mode`. In these two clients, pstack's writing skill is namespaced as `pstack:unslop`, distinct from the standalone UI-design `unslop`. Cursor preserves the plugin identity, but same-name slash-menu selection needs client verification; use the intended skill's full path when ambiguous. Existing standalone skills are not replaced.
+Installation does not run `setup-pstack`, change model rules, start automations, or authorize commits, publication or paid services. The full source includes Cursor-specific tools/models/workflows: loading the package does not make those capabilities available in other hosts. Follow the local integration policy; report unavailable capabilities rather than silently substituting a model or runner.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

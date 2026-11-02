@@ -114,6 +114,11 @@ description = "AI agent設定/hooks/skillsを同期"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_agent_files.sh"
 
+[tasks.pstack-setup]
+description = "pstack全体を対応Agentへ導入"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "bash scripts/setup_pstack.sh"
+
 [tasks.hallmark-setup]
 description = "Hallmarkのブラウザ検証依存を導入"
 dir = "__DOTFILES_REPO_ROOT__"

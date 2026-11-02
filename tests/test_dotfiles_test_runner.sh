@@ -16,6 +16,7 @@ source "$TEST_DIR/lib/chezmoi.sh"
 typeset -r -a RUNNER_TEST_FILES=(
   tests/test_fixture_isolation.sh
   tests/test_feature_flags.sh
+  tests/test_pstack_setup.sh
   tests/test_steermouse_setup.sh
   tests/test_macos_entrypoints.sh
   tests/test_macos_update_features.sh
@@ -91,6 +92,7 @@ create_runner_fixture() {
   print -r -- 'print("unit:skill-hooks")' > "$repo/tests/test_skill_hooks.py"
   print -r -- 'printf "%s\n" "unit:tokeneconomizer-setup"' > "$repo/tests/test_tokeneconomizer_setup.sh"
   print -r -- 'printf "%s\n" "unit:hallmark-setup"' > "$repo/tests/test_hallmark_setup.sh"
+  print -r -- 'printf "%s\n" "unit:pstack-setup"' > "$repo/tests/test_pstack_setup.sh"
   print -r -- 'console.log("unit:pi-integration")' > "$repo/tests/test_pi_integration.mjs"
   print -r -- 'console.log("unit:deepseek-integration")' > "$repo/tests/test_deepseek_integration.mjs"
   write_fixture_zsh_script "$repo/tests/test_selective_setup.sh" "unit:selective-setup"

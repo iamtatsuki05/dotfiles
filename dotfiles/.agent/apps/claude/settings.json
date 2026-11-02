@@ -209,7 +209,8 @@
   },
   "enabledPlugins": {
     "agent-sdk-dev@claude-code-plugins": true,
-    "tokeneconomizer@tokeneconomizer": true
+    "tokeneconomizer@tokeneconomizer": true,
+    "pstack@dotfiles-pstack": true
   },
   "outputStyle": "Concise",
   "effortLevel": "high",

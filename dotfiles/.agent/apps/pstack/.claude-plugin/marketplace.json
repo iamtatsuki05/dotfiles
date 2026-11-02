@@ -1,0 +1,7 @@
+{
+  "name": "dotfiles-pstack",
+  "owner": {"name": "dotfiles"},
+  "plugins": [
+    {"name": "pstack", "source": "./claude-code", "description": "Pinned pstack workflows for Claude Code"}
+  ]
+}

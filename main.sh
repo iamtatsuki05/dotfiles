@@ -480,6 +480,7 @@ main() {
   install_mise_tools
   "$(mise_command)" exec -- bash "$SCRIPTS_DIR/setup_tokeneconomizer.sh"
   "$(mise_command)" exec -- bash "$SCRIPTS_DIR/setup_hallmark.sh"
+  "$(mise_command)" exec -- bash "$SCRIPTS_DIR/setup_pstack.sh"
 
   echo
   echo "Setup completed successfully!"
