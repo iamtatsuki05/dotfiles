@@ -8,7 +8,7 @@ developer_instructions = """
 - Codexで無効化したローカル版・同期版の文書スキルを通常の候補へ戻さない。低レベルOOXML編集が必要で、ユーザーが同期版pptxの利用を明示指定した場合のみ、保存済み本文・補助ツールを必要な範囲で参照する。同一内容のコピーはパスの辞書順で1つを選び、内容が異なる場合は必要な機能を比較して選択理由を明示する。他のagent向けの元ファイルは保持する。
 """
 
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_context_window = 1000000
 model_auto_compact_token_limit = 900000
 sandbox_mode = "danger-full-access"
@@ -34,7 +34,7 @@ ignore_patterns = [
   "dotfiles/.agent/changes/",
   "dotfiles/.agent/work/"
 ]
-model_reasoning_effort = "medium"
+model_reasoning_effort = "low"
 hide_agent_reasoning = true
 network_access = true
 web_search = "live"
@@ -97,9 +97,6 @@ enabled = true
 [plugins."template-creator@openai-primary-runtime"]
 enabled = true
 
-[plugins."sites@openai-bundled"]
-enabled = true
-
 [plugins."browser@openai-bundled"]
 enabled = true
 
@@ -115,6 +112,9 @@ enabled = true
 [plugins."computer-history@openai-bundled"]
 enabled = true
 
+[plugins."unified-computer-use@openai-bundled"]
+enabled = true
+
 [memories]
 extract_model = "gpt-6-luna"
 consolidation_model = "gpt-6.1-terra"
@@ -126,7 +126,7 @@ disable_on_external_context = true
 ambient-suggestions-enabled = false
 preventSleepWhileRunning = true
 keepRemoteControlAwakeWhilePluggedIn = true
-selected-avatar-id = "custom:mirai"
+selected-avatar-id = "pet_6abb36899b008191af97fe3139e5d45a"
 conversationDetailMode = "STEPS_COMMANDS"
 show-context-window-usage = true
 followUpQueueMode = "queue"
