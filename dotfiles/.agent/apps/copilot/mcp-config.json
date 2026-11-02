@@ -17,18 +17,6 @@
       "type": "http",
       "url": "https://mcp.figma.com/mcp",
       "tools": ["*"]
-    },
-    "notion": {
-      "type": "http",
-      "url": "https://mcp.notion.com/mcp",
-      "tools": ["*"]
-    },
-    "playwright": {
-      "type": "local",
-      "command": "bunx",
-      "args": ["@playwright/mcp@latest"],
-      "env": {},
-      "tools": ["*"]
     }
   }
 }

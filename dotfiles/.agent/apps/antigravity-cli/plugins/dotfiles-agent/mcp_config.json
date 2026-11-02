@@ -7,16 +7,8 @@
       ],
       "env": {}
     },
-    "notion": {
-      "serverUrl": "https://mcp.notion.com/mcp"
-    },
-    "playwright": {
-      "command": "bunx",
-      "args": [
-        "@playwright/mcp@latest"
-      ],
-      "env": {}
-    },
+
+
     "deepwiki": {
       "serverUrl": "https://mcp.deepwiki.com/mcp"
     },

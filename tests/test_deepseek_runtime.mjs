@@ -218,12 +218,13 @@ test("published DSH composes the local plugin and MCP patch without starting mod
       timeout: 30_000,
     });
     assert.equal(dump.status, 0, dump.stderr || dump.error?.message);
-    for (const server of ["deepwiki", "devin", "figma", "notion"]) {
+    for (const server of ["deepwiki", "devin", "figma"]) {
       assert.match(dump.stdout, new RegExp(`serverName: ${server}`));
     }
     assert.match(dump.stdout, /name: '@dotfiles\/deepseek-native'/);
     assert.match(dump.stdout, /profileContext/);
     assert.doesNotMatch(dump.stdout, /mcp-playwright/);
+    assert.doesNotMatch(dump.stdout, /serverName: notion/);
 
     const schema = spawnSync(installedDsh.bin, ["--profile", "fixture", "--dump-config-schema"], {
       cwd: temp,

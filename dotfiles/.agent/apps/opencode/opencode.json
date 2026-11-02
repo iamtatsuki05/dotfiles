@@ -64,16 +64,6 @@
         "Authorization": "Bearer {env:DEVIN_API_KEY}"
       },
       "enabled": true
-    },
-    "notion": {
-      "type": "remote",
-      "url": "https://mcp.notion.com/mcp",
-      "enabled": true
-    },
-    "playwright": {
-      "type": "local",
-      "command": ["bunx", "@playwright/mcp@latest"],
-      "enabled": true
     }
   }
 }

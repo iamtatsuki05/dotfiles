@@ -76,39 +76,6 @@ startup_timeout_sec = 60
 url = "https://mcp.figma.com/mcp"
 startup_timeout_sec = 60
 
-[mcp_servers.notion]
-url = "https://mcp.notion.com/mcp"
-startup_timeout_sec = 60
-
-[mcp_servers.playwright]
-command = "bunx"
-args = ["@playwright/mcp@latest"]
-enabled = false
-
-[mcp_servers.playwright.tools.browser_resize]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_evaluate]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_run_code]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_navigate]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_tabs]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_fill_form]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_click]
-approval_mode = "approve"
-
-[mcp_servers.playwright.tools.browser_press_key]
-approval_mode = "approve"
-
 [plugins."gmail@openai-curated"]
 enabled = true
 

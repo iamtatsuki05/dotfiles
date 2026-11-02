@@ -70,16 +70,6 @@
         "headers": {
           "Authorization": "Bearer ${DEVIN_API_KEY}"
         }
-      },
-      "notion": {
-        "url": "https://mcp.notion.com/mcp",
-        "transport": "streamable-http"
-      },
-      "playwright": {
-        "command": "bunx",
-        "args": [
-          "@playwright/mcp@latest"
-        ]
       }
     }
   }

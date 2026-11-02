@@ -175,7 +175,7 @@ test_skill_contract_exists() {
   assert_contains "$PLAYWRIGHT_PRESENTER_REFERENCE" '`browser_take_screenshot`'
   assert_contains "$PLAYWRIGHT_PRESENTER_REFERENCE" 'Confirm all three tools are callable before starting the helper'
   assert_contains "$PLAYWRIGHT_PRESENTER_REFERENCE" 'Do not enable unrestricted `file://` access'
-  assert_contains "$CLAUDE_MCP_CONFIG" '"playwright"'
+  assert_not_contains "$CLAUDE_MCP_CONFIG" '"playwright"'
   assert_not_contains "$SKILL_FILE" "private OS temporary directory"
   assert_not_contains "$SKILL_FILE" "OS temporary storage"
   assert_contains "$AGENTS_FILE" '.agent/work/sessions/<session>/artifacts/html-preview-review/'

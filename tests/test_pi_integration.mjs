@@ -113,7 +113,7 @@ test("Pi settings select the requested OpenAI model and thinking level", () => {
 test("Pi MCP config mirrors the supported Codex servers without approval-only fields", () => {
   const config = readJson(mcpPath, "Pi mcp.json");
   const servers = config.mcpServers;
-  assert.deepEqual(Object.keys(servers).sort(), ["deepwiki", "devin", "figma", "notion", "playwright"]);
+  assert.deepEqual(Object.keys(servers).sort(), ["deepwiki", "devin", "figma"]);
   assert.deepEqual(servers.deepwiki, {
     type: "streamable-http",
     url: "https://mcp.deepwiki.com/mcp",
@@ -127,16 +127,8 @@ test("Pi MCP config mirrors the supported Codex servers without approval-only fi
     type: "streamable-http",
     url: "https://mcp.figma.com/mcp",
   });
-  assert.deepEqual(servers.notion, {
-    type: "streamable-http",
-    url: "https://mcp.notion.com/mcp",
-  });
-  assert.deepEqual(servers.playwright, {
-    type: "stdio",
-    command: "bunx",
-    args: ["@playwright/mcp@latest"],
-    enabled: false,
-  });
+  assert.equal("notion" in servers, false);
+  assert.equal("playwright" in servers, false);
   assert.equal(JSON.stringify(config).includes("approval_mode"), false);
 });
 

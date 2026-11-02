@@ -4,13 +4,8 @@
       "command": "codex",
       "args": ["mcp-server"]
     },
-    "notion": {
-      "url": "https://mcp.notion.com/mcp"
-    },
-    "playwright": {
-      "command": "bunx",
-      "args": ["@playwright/mcp@latest"]
-    },
+
+
     "deepwiki": {
       "url": "https://mcp.deepwiki.com/mcp"
     },

@@ -7,11 +7,6 @@ command = "codex"
 args = [ "mcp-server" ]
 enabled = true
 
-[mcp_servers.playwright]
-command = "bunx"
-args = [ "@playwright/mcp@latest" ]
-enabled = true
-
 [mcp_servers.deepwiki]
 url = "https://mcp.deepwiki.com/mcp"
 enabled = true
@@ -23,11 +18,6 @@ enabled = true
 
   [mcp_servers.devin.headers]
   Authorization = "Bearer ${DEVIN_API_KEY}"
-
-[mcp_servers.notion]
-url = "https://mcp.notion.com/mcp"
-type = "http"
-enabled = true
 
 [mcp_servers.figma]
 url = "https://mcp.figma.com/mcp"
@@ -116,7 +106,6 @@ paths = [
   "~/.grok/dotfiles-skills/mlops/huggingface-hub",
   "~/.grok/dotfiles-skills/mlops/inference/llama-cpp",
   "~/.grok/dotfiles-skills/mlops/inference/serving-llms-vllm",
-  "~/.grok/dotfiles-skills/modern-web-guidance",
   "~/.grok/dotfiles-skills/natural-japanese",
   "~/.grok/dotfiles-skills/note-taking/obsidian",
   "~/.grok/dotfiles-skills/principle-make-operations-idempotent",

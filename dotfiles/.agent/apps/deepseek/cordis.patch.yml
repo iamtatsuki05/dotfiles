@@ -30,11 +30,5 @@
             transport: streamable-http
             url: https://mcp.figma.com/mcp
 
-        - id: mcp-notion
-          name: '@deepseek-ai/dsh-mcp-client'
-          config:
-            serverName: notion
-            transport: streamable-http
-            url: https://mcp.notion.com/mcp
 
 # The existing Codex profile disables Playwright; keep it absent from DSH.
