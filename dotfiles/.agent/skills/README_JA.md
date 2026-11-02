@@ -83,6 +83,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | Group | Upstream | Local path | 内容 |
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
+| `html-plan` | `anthropics/claude-plugins-community` | `html-plan/` | 対話型HTMLの実装計画とoffline pack。指定Git版の取得失敗はエラー。rootのApache-2.0 LICENSEとpluginのMIT表記を両方保持。 |
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`../skill-archives/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は公開対象外の `../skill-archives/` に本文と固定 upstream の条件待ち資料を保管、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |

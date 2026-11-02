@@ -84,6 +84,7 @@ An update fails before overwriting local files if a source match count differs f
 | Group | Upstream | Local path | Contents |
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | Japanese skill for iteratively improving agent instructions through executor feedback. |
+| `html-plan` | `anthropics/claude-plugins-community` | `html-plan/` | Interactive implementation plans with offline packing. Requested Git revisions fail fast; root Apache-2.0 license and plugin MIT declaration are both retained. |
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`, `diagnosing-bugs/`, `domain-modeling/`, etc. | Current design, diagnosis, handoff, and architecture skills without deprecated aliases. Each skill includes the upstream LICENSE. |
 | `superpowers` | `obra/superpowers` | `brainstorming/`, `dispatching-parallel-agents/`, `../skill-archives/systematic-debugging/`, `test-driven-development/`, `writing-skills/` | Five selected workflow areas. Three skills are vendored directly; systematic debugging is retained outside discovery in `../skill-archives/` with pinned upstream waiting references, and brainstorming is a minimal local Three Paths router. |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |

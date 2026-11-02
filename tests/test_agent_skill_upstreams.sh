@@ -20,9 +20,10 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 23"
+  assert_contains_text "$output" "registered upstream skills: 24"
   assert_not_contains_text "$output" "modern-web-guidance"
   [[ ! -e "$REPO_ROOT/dotfiles/.agent/skills/modern-web-guidance" ]] || fail "removed skill still exists"
+  assert_contains_text "$output" "html-plan"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
@@ -443,6 +444,7 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
+      --latest-commit html-plan=3131313131313131313131313131313131313131 \
       --latest-commit teaching=3030303030303030303030303030303030303030
   )"
 
@@ -500,6 +502,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed cli-for-agent" > "$report_dir/cli-for-agent.md"
   print -r -- "reviewed create-plugin" > "$report_dir/create-plugin.md"
   print -r -- "reviewed teaching" > "$report_dir/teaching.md"
+  print -r -- "reviewed html-plan" > "$report_dir/html-plan.md"
 
   output="$(
     python3 "$SCRIPT" apply-update \
@@ -530,6 +533,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
+      --latest-commit html-plan=3131313131313131313131313131313131313131 \
       --latest-commit teaching=3030303030303030303030303030303030303030
   )"
 
@@ -758,6 +762,7 @@ EOF'
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
+      --latest-commit html-plan=3131313131313131313131313131313131313131 \
       --latest-commit teaching=3030303030303030303030303030303030303030
   )"
 
@@ -833,6 +838,7 @@ PY
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
+      --latest-commit html-plan=3131313131313131313131313131313131313131 \
       --latest-commit teaching=3030303030303030303030303030303030303030
   )"
   ended_at="$(python3 - <<'PY'
@@ -907,6 +913,7 @@ EOF'
       --latest-commit cursor-team-kit=2727272727272727272727272727272727272727 \
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
+      --latest-commit html-plan=3131313131313131313131313131313131313131 \
       --latest-commit teaching=3030303030303030303030303030303030303030 2>&1
   )"
   local exit_status=$?

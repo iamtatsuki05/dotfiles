@@ -2249,6 +2249,57 @@
         "last_reviewed_at": "2026-11-02T02:07:57+00:00",
         "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/workflows.md"
       }
+    },
+    {
+      "id": "html-plan",
+      "description": "Interactive implementation-plan HTML skill and its bundled offline packer from Anthropic community plugins.",
+      "repository": "https://github.com/anthropics/claude-plugins-community.git",
+      "branch": "main",
+      "pinned_commit": "06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1",
+      "mappings": [
+        {
+          "source_path": "html-plan/skills/html-plan",
+          "local_path": "dotfiles/.agent/skills/html-plan"
+        },
+        {
+          "source_path": "LICENSE",
+          "local_path": "dotfiles/.agent/skills/html-plan/LICENSE"
+        },
+        {
+          "source_path": "html-plan/.claude-plugin/plugin.json",
+          "local_path": "dotfiles/.agent/skills/html-plan/upstream-plugin.json"
+        }
+      ],
+      "source_url": "https://github.com/anthropics/claude-plugins-community/tree/06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1/html-plan",
+      "provenance_note": "The complete skill subtree is distributed through the shared skill tree, not registered as a native marketplace plugin. The plugin has no hooks or MCP servers; its metadata is retained as upstream-plugin.json. The repository LICENSE says Apache-2.0 while plugin metadata declares MIT; both are preserved unchanged without resolving that discrepancy. User/repository language, authorization and publication rules take precedence over upstream prose and approval conventions. Local packer changes reject missing requested Git revisions/blobs instead of substituting working-tree content.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/html-plan/runtime/pack.mjs",
+          "old": "#!/usr/bin/env node\n// pack.mjs",
+          "new": "#!/usr/bin/env node\n// Local integration: a requested Git revision must not be replaced by working-tree content.\n// pack.mjs",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/html-plan/runtime/pack.mjs",
+          "old": "        let text = null, sha = ''; const g = a.ref ? gitShow(a.ref, nd.file) : null; if (g) { text = g.text; sha = a.ref; } else { const f = findFile(nd.file); if (f) { text = readFileSync(f, 'utf8'); sha = stamp(f, false); } }\n",
+          "new": "        let text = null, sha = ''; const g = a.ref ? gitShow(a.ref, nd.file) : null;\n        if (a.ref && !g) { err(`${at}: ref=\"${a.ref}\" file=\"${nd.file}\" — unable to read the requested git blob under --root`); continue; }\n        if (g) { text = g.text; sha = a.ref; } else { const f = findFile(nd.file); if (f) { text = readFileSync(f, 'utf8'); sha = stamp(f, false); } }\n",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/html-plan/runtime/pack.mjs",
+          "old": "        else { if (a.ref) { const f0 = findFile(a.src); if (!f0) { err(`${at}: src=\"${a.src}\" ref=\"${a.ref}\" — git show failed in ${roots.map((r) => relative(process.cwd(), r) || '.').join(', ')} and no plain file by that path either (is --root a checkout with that ref, or a snapshot dir containing the file?)`); return whole; } info.push(`${a.src}: no git ref ${a.ref} under the roots — using the plain file (assuming it is a snapshot at that ref)`); sha = a.ref; }\n",
+          "new": "        else { if (a.ref) { err(`${at}: src=\"${a.src}\" ref=\"${a.ref}\" — unable to read the requested git blob under --root`); return whole; }\n",
+          "expected_count": 1
+        }
+      ],
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1",
+        "last_reviewed_at": "2026-11-02T14:41:43+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-232526-install-html-plan-codex/security-review.md"
+      },
+      "local_tree_sha256": "c45dd5d7daf5fcd3d39acf7ade7208089b2322a0ea3199094de6590d6093914d"
     }
   ]
 }

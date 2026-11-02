@@ -99,6 +99,7 @@ run_unit_tests() {
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_rtk_setup.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_skill_hooks.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_html_plan.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_managed_skill_sync.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_skill_distribution.py"
   "$TEST_NODE_BIN" --experimental-strip-types --test "$REPO_ROOT/tests/test_pi_integration.mjs"
