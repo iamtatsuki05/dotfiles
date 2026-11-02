@@ -25,7 +25,7 @@ class RtkSetupTest(unittest.TestCase):
             (repo / "scripts").mkdir(parents=True)
             home.mkdir()
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
-            for name in ("setup_agent_files.sh", "sync_agent_skills.py", "agent-run-compact"):
+            for name in ("setup_agent_files.sh", "sync_agent_skills.py", "deduplicate_synced_skills.py", "agent-run-compact"):
                 shutil.copy2(REPO_ROOT / "scripts" / name, repo / "scripts" / name)
             for name in ("apps", "hooks"):
                 shutil.copytree(REPO_ROOT / "dotfiles/.agent" / name, agent / name)

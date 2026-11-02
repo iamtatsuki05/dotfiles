@@ -51,6 +51,7 @@ create_agent_fixture_repo() {
 
   git init -q "$repo"
   cp "$REPO_ROOT/scripts/sync_agent_skills.py" "$repo/scripts/sync_agent_skills.py"
+  cp "$REPO_ROOT/scripts/deduplicate_synced_skills.py" "$repo/scripts/deduplicate_synced_skills.py"
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
   cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
   print -r -- '{"defaultProvider":"openai","defaultModel":"gpt-6-luna","defaultThinkingLevel":"high"}' > "$repo/dotfiles/.agent/apps/pi/settings.json"

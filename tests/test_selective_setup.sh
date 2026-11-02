@@ -76,7 +76,7 @@ mkdir -p "$fixture/repo/dotfiles/.agent/skills"
 cp -R "$REPO_ROOT/dotfiles/.agent/apps" "$REPO_ROOT/dotfiles/.agent/hooks" "$fixture/repo/dotfiles/.agent/"
 cp "$REPO_ROOT/dotfiles/.agent/AGENTS.md" "$REPO_ROOT/dotfiles/.agent/sync.sh" "$fixture/repo/dotfiles/.agent/"
 git init -q "$fixture/repo"
-cp "$REPO_ROOT/scripts/setup_agent_files.sh" "$REPO_ROOT/scripts/sync_agent_skills.py" "$REPO_ROOT/scripts/agent-run-compact" "$fixture/repo/scripts/"
+cp "$REPO_ROOT/scripts/setup_agent_files.sh" "$REPO_ROOT/scripts/sync_agent_skills.py" "$REPO_ROOT/scripts/deduplicate_synced_skills.py" "$REPO_ROOT/scripts/agent-run-compact" "$fixture/repo/scripts/"
 chmod -x "$fixture/repo/dotfiles/.agent/hooks/jupytext_sync.sh"
 
 mkdir -p "$fixture/home/.config/shell"

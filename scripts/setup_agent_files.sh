@@ -634,9 +634,9 @@ main() {
   [[ -n "$ONLY_AGENT" ]] && return 0
   sync_hooks
   sync_tool_configs
-  if [[ -d "$AGENT_DIR/skills/synced" && -f "$HOME/.codex/config.toml" ]]; then
+  if [[ -f "$HOME/.codex/config.toml" ]]; then
     local -a dedup_args
-    dedup_args=(--skills-root "$AGENT_DIR/skills/synced" --config "$HOME/.codex/config.toml")
+    dedup_args=(--skills-root "$AGENT_DIR/skills/synced" --local-skills-root "$AGENT_DIR/skills" --config "$HOME/.codex/config.toml")
     (( DRY_RUN )) && dedup_args+=(--dry-run)
     python3 -B "$SCRIPT_DIR/deduplicate_synced_skills.py" "${dedup_args[@]}"
   fi

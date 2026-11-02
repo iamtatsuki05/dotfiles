@@ -1,3 +1,13 @@
+developer_instructions = """
+文書系スキルの選択では、ユーザーが指定した形式・保存先・既存成果物を優先する。
+- ローカルWordは documents:documents、PDFは pdf:pdf、Excelは spreadsheets:Spreadsheets、一般プレゼンは presentations:Presentations を主担当にする。
+- Google Docsの新規作成・既存編集・ネイティブテンプレートのコピーは google-drive:google-docs のネイティブ経路を優先する。documents側の新規Google Docs向けDOCX生成・import必須規則は適用しない。DOCXからのimportはユーザーが変換を依頼した場合に google-drive:google-docs で行う。
+- 既存Google Sheetsの直接編集は google-drive:google-sheets、既存Google Slidesの編集・テンプレート踏襲は google-drive:google-slides を使う。
+- プレゼンの保存先が未指定ならローカルPPTXを既定とし、PresentationsのSpaces既定規則より優先する。既存成果物の編集では元の形式・保存先を維持する。SpacesやGoogle Slidesが指定された場合はその指定に従う。
+- consulting-pptx-skill は明示指定、経営会議向け資料の指定、または同形式の既存資料への追記に限る。一般的なプレゼン依頼では自動適用しない。上記条件で consulting を使う場合、編集可能な図表が必要なら consulting の構成・様式規則を使い、PPTX作成は Presentations の編集可能な要素を使う。両要件を満たせない場合は画像化せず、制約を示して確認する。
+- Codexで無効化したローカル版・同期版の文書スキルを通常の候補へ戻さない。低レベルOOXML編集が必要で、ユーザーが同期版pptxの利用を明示指定した場合のみ、保存済み本文・補助ツールを必要な範囲で参照する。同一内容のコピーはパスの辞書順で1つを選び、内容が異なる場合は必要な機能を比較して選択理由を明示する。他のagent向けの元ファイルは保持する。
+"""
+
 model = "gpt-5.6-sol"
 model_context_window = 1000000
 model_auto_compact_token_limit = 900000
