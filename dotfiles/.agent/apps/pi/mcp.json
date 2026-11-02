@@ -14,16 +14,6 @@
     "figma": {
       "type": "streamable-http",
       "url": "https://mcp.figma.com/mcp"
-    },
-    "notion": {
-      "type": "streamable-http",
-      "url": "https://mcp.notion.com/mcp"
-    },
-    "playwright": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@playwright/mcp@latest"],
-      "enabled": false
     }
   }
 }

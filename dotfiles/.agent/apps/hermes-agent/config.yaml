@@ -42,13 +42,6 @@ mcp_servers:
     url: https://mcp.devin.ai/mcp
     headers:
       Authorization: Bearer ${DEVIN_API_KEY}
-  notion:
-    url: https://mcp.notion.com/mcp
-    auth: oauth
-  playwright:
-    command: bunx
-    args:
-      - '@playwright/mcp@latest'
 onboarding:
   seen:
     openclaw_residue_cleanup: true

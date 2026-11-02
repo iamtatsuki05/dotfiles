@@ -6,16 +6,8 @@
       "args": ["mcp-server"],
       "env": {}
     },
-    "notion": {
-      "type": "http",
-      "url": "https://mcp.notion.com/mcp"
-    },
-    "playwright": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@playwright/mcp@latest"],
-      "env": {}
-    },
+
+
     "deepwiki": {
       "type": "http",
       "url": "https://mcp.deepwiki.com/mcp"

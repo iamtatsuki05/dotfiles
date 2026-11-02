@@ -12,8 +12,7 @@
     "api.github.com",
     "*.githubusercontent.com",
     "mcp.deepwiki.com",
-    "mcp.devin.ai",
-    "mcp.notion.com"
+    "mcp.devin.ai"
   ],
   "deniedUrls": [],
   "footer": {
