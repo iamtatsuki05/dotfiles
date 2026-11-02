@@ -57,7 +57,7 @@ Do not manually copy external skill trees without recording provenance and revie
 | `security-check` | Attacker-view review: secret leaks, injection, auth gaps, vulnerable dependencies. | Only when security is asked for explicitly. "Safety" reviews of launchers, rollouts, or destructive ops are normal reviews. Phase 1 secret grep is reusable alone. |
 | `shaping-japanese-longform` | Restructure long-form Japanese articles, essays, and explanations without inventing facts, causes, or drama. | Removes document-progress narration and connects claims to evidence; sentence-level naturalness stays with `natural-japanese`. |
 | `terraform-dev` | Write, validate, and review Terraform / OpenTofu with a plan-first workflow, moved/import blocks, state and secret handling, and approval gates for apply. | Read once per session; plan by default, apply only on request. |
-| `typescript-dev` | Implement, test, and debug TypeScript / TSX using the project's tsconfig, lint, and test runner; covers Zod, type guards, and API-change sync. | Read once per session; HTML/CSS layout goes to `modern-web-guidance`. |
+| `typescript-dev` | Implement, test, and debug TypeScript / TSX using the project's tsconfig, lint, and test runner; covers Zod, type guards, and API-change sync. | Read once per session; Excludes HTML/CSS layout questions. |
 
 ## System Skills
 
@@ -82,7 +82,6 @@ An update fails before overwriting local files if a source match count differs f
 | Group | Upstream | Local path | Contents |
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | Japanese skill for iteratively improving agent instructions through executor feedback. |
-| `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | Search skill for current HTML / CSS / client-side JavaScript best practices. |
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`, `diagnosing-bugs/`, `domain-modeling/`, etc. | Current design, diagnosis, handoff, and architecture skills without deprecated aliases. Each skill includes the upstream LICENSE. |
 | `superpowers` | `obra/superpowers` | `brainstorming/`, `dispatching-parallel-agents/`, `software-development/systematic-debugging/`, `test-driven-development/`, `writing-skills/` | Five selected workflow areas. Three skills are vendored directly; systematic debugging keeps the richer local skill with pinned upstream waiting references, and brainstorming is a minimal local Three Paths router. |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | Japanese work-document writing and revision with deterministic linting, document-type guidance, and a local safety overlay. |

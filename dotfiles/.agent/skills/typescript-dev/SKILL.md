@@ -1,6 +1,6 @@
 ---
 name: typescript-dev
-description: "Use when the user asks to implement, refactor, test, debug, or review TypeScript/TSX code, type definitions, Jest/Vitest tests, ESLint/Biome/Prettier findings, Zod validation, or tsc build errors. Read once per session. Do not use for HTML/CSS layout questions (modern-web-guidance), CI YAML, or Markdown docs."
+description: "Use when the user asks to implement, refactor, test, debug, or review TypeScript/TSX code, type definitions, Jest/Vitest tests, ESLint/Biome/Prettier findings, Zod validation, or tsc build errors. Read once per session. Do not use for HTML/CSS layout questions, CI YAML, or Markdown docs."
 ---
 
 # TypeScript 開発スキル

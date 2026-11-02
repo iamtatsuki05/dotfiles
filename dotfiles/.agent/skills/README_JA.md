@@ -56,7 +56,7 @@ skills/
 | `security-check` | 攻撃者視点の review(secret 露出、injection、認証・認可、脆弱な依存)。 | security が明示された依頼だけで使う。launcher や破壊的操作の「安全性レビュー」は通常レビュー。Phase 1 の secret grep は単独で使える。 |
 | `shaping-japanese-longform` | 事実・因果・ドラマを作らず、日本語の長文記事、論考、解説の構成を整える。 | 文書進行の実況を削り、主張と根拠をつなぐ。文レベルの自然さは `natural-japanese`。 |
 | `terraform-dev` | plan 優先の手順、moved / import ブロック、state と秘匿値の扱い、apply の承認手順を含む Terraform / OpenTofu の実装・検証・レビュー。 | session で 1 回だけ読む。既定は plan まで。 |
-| `typescript-dev` | tsconfig、lint、テストランナーに合わせた TypeScript / TSX の実装・テスト・デバッグ。Zod、型ガード、公開 API 変更時の同期を含む。 | session で 1 回だけ読む。HTML / CSS レイアウトは `modern-web-guidance`。 |
+| `typescript-dev` | tsconfig、lint、テストランナーに合わせた TypeScript / TSX の実装・テスト・デバッグ。Zod、型ガード、公開 API 変更時の同期を含む。 | session で 1 回だけ読む。HTML / CSS レイアウトの質問は対象外。 |
 
 ## system skill
 
@@ -81,7 +81,6 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | Group | Upstream | Local path | 内容 |
 |---|---|---|---|
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
-| `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
 | `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |

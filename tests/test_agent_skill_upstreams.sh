@@ -20,11 +20,12 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 15"
+  assert_contains_text "$output" "registered upstream skills: 14"
+  assert_not_contains_text "$output" "modern-web-guidance"
+  [[ ! -e "$REPO_ROOT/dotfiles/.agent/skills/modern-web-guidance" ]] || fail "removed skill still exists"
   assert_contains_text "$output" "superpowers"
   assert_contains_text "$output" "empirical-prompt-tuning"
   assert_contains_text "$output" "mattpocock-skills"
-  assert_contains_text "$output" "modern-web-guidance"
   assert_contains_text "$output" "herdr"
   assert_contains_text "$output" "stop-slop"
   assert_contains_text "$output" "pstack-principles"
@@ -114,8 +115,6 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" mattpocock-skills)"
   [[ "$pin" == "a496f5513d4a4cf889bc48e189e579f4b0bdf6aa" ]] || fail "unexpected mattpocock-skills pin: $pin"
-  pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" modern-web-guidance)"
-  [[ "$pin" == "4f2b13e25c5815b3f080ca0d983e828d96561a0f" ]] || fail "unexpected modern-web-guidance pin: $pin"
 
   assert_file "$skills_root/dispatching-parallel-agents/LICENSE"
   assert_file "$skills_root/test-driven-development/LICENSE"
@@ -416,7 +415,6 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit superpowers=dddddddddddddddddddddddddddddddddddddddd \
       --latest-commit empirical-prompt-tuning=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
       --latest-commit mattpocock-skills=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-      --latest-commit modern-web-guidance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
       --latest-commit natural-japanese=cccccccccccccccccccccccccccccccccccccccc \
       --latest-commit herdr=7777777777777777777777777777777777777777 \
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
@@ -436,8 +434,6 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
   assert_contains_text "$output" "candidate_commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   assert_contains_text "$output" "Skill ID: mattpocock-skills"
   assert_contains_text "$output" "candidate_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  assert_contains_text "$output" "Skill ID: modern-web-guidance"
-  assert_contains_text "$output" "candidate_commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   assert_contains_text "$output" "Skill ID: natural-japanese"
   assert_contains_text "$output" "candidate_commit: cccccccccccccccccccccccccccccccccccccccc"
   assert_contains_text "$output" "Skill ID: herdr"
@@ -466,7 +462,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed superpowers" > "$report_dir/superpowers.md"
   print -r -- "reviewed empirical-prompt-tuning" > "$report_dir/empirical-prompt-tuning.md"
   print -r -- "reviewed mattpocock-skills" > "$report_dir/mattpocock-skills.md"
-  print -r -- "reviewed modern-web-guidance" > "$report_dir/modern-web-guidance.md"
   print -r -- "reviewed natural-japanese" > "$report_dir/natural-japanese.md"
   print -r -- "reviewed herdr" > "$report_dir/herdr.md"
   print -r -- "reviewed pstack-principles" > "$report_dir/pstack-principles.md"
@@ -489,7 +484,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit superpowers=ffffffffffffffffffffffffffffffffffffffff \
       --latest-commit empirical-prompt-tuning=1111111111111111111111111111111111111111 \
       --latest-commit mattpocock-skills=2222222222222222222222222222222222222222 \
-      --latest-commit modern-web-guidance=3333333333333333333333333333333333333333 \
       --latest-commit natural-japanese=4444444444444444444444444444444444444444 \
       --latest-commit herdr=6666666666666666666666666666666666666666 \
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
@@ -509,8 +503,6 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   assert_contains_text "$output" "candidate=1111111111111111111111111111111111111111"
   assert_contains_text "$output" "mattpocock-skills: plan update"
   assert_contains_text "$output" "candidate=2222222222222222222222222222222222222222"
-  assert_contains_text "$output" "modern-web-guidance: plan update"
-  assert_contains_text "$output" "candidate=3333333333333333333333333333333333333333"
   assert_contains_text "$output" "natural-japanese: plan update"
   assert_contains_text "$output" "candidate=4444444444444444444444444444444444444444"
   assert_contains_text "$output" "herdr: plan update"
@@ -711,7 +703,6 @@ EOF'
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
       --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
-      --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
@@ -728,7 +719,6 @@ EOF'
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
   assert_contains_text "$output" "mattpocock-skills: review approved"
-  assert_contains_text "$output" "modern-web-guidance: review approved"
   assert_contains_text "$output" "natural-japanese: review approved"
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "pstack-principles: review approved"
@@ -739,8 +729,6 @@ EOF'
   assert_contains_text "$output" "candidate=4444444444444444444444444444444444444444"
   assert_contains_text "$output" "mattpocock-skills: plan update"
   assert_contains_text "$output" "candidate=5555555555555555555555555555555555555555"
-  assert_contains_text "$output" "modern-web-guidance: plan update"
-  assert_contains_text "$output" "candidate=6666666666666666666666666666666666666666"
   assert_contains_text "$output" "herdr: plan update"
   assert_contains_text "$output" "candidate=9999999999999999999999999999999999999999"
   assert_contains_text "$output" "pstack-principles: plan update"
@@ -781,7 +769,6 @@ PY
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
       --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
-      --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
@@ -816,7 +803,6 @@ PY
   assert_contains_text "$output" "superpowers: review approved"
   assert_contains_text "$output" "empirical-prompt-tuning: review approved"
   assert_contains_text "$output" "mattpocock-skills: review approved"
-  assert_contains_text "$output" "modern-web-guidance: review approved"
   assert_contains_text "$output" "natural-japanese: review approved"
   assert_contains_text "$output" "herdr: review approved"
   assert_contains_text "$output" "pstack-principles: review approved"
@@ -848,7 +834,6 @@ EOF'
       --latest-commit superpowers=3333333333333333333333333333333333333333 \
       --latest-commit empirical-prompt-tuning=4444444444444444444444444444444444444444 \
       --latest-commit mattpocock-skills=5555555555555555555555555555555555555555 \
-      --latest-commit modern-web-guidance=6666666666666666666666666666666666666666 \
       --latest-commit natural-japanese=7777777777777777777777777777777777777777 \
       --latest-commit herdr=9999999999999999999999999999999999999999 \
       --latest-commit pstack-principles=1313131313131313131313131313131313131313 \
