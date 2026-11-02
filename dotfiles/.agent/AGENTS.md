@@ -117,7 +117,7 @@
 
 ## Skill 作成
 
-- ユーザーが skill 作成を依頼した場合は、`skill-creator` を使ってください。`skill-creator` が skill 一覧に無い harness(`.system/` 配下を読まない Claude Code など)では `writing-skills` を使い、skill directory を探し回らないでください。
+- ユーザーが skill 作成を依頼した場合は、`skill-creator` を使ってください。`skill-creator` が skill 一覧に無い harness では `writing-skills` を使い、skill directory を探し回らないでください。
 - プロジェクト固有の skill は、現在の作業ディレクトリに `$PWD/.agent` が存在するなら、その配下の `skills` 以下に作成してください。
 - skill、prompt、重要な指示文を新規作成・大幅改訂する場合は、subagent が使える環境なら白紙の subagent を実行者として使い、baseline の失敗、不明瞭点、実行者が裁量で補った箇所を確認して、実際に出た問題を潰す最小内容を優先してください。同じ評価用 subagent の使い回しは避けてください。
 
