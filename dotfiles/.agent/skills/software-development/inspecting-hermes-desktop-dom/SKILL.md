@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [desktop, electron, cdp, dom, ui-verification, self-inspection]
-    related_skills: [node-inspect-debugger, systematic-debugging, dogfood]
+    related_skills: [node-inspect-debugger, diagnosing-bugs, dogfood]
 ---
 
 # Inspecting the live Hermes desktop DOM

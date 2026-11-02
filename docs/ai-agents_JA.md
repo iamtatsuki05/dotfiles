@@ -300,3 +300,9 @@ codexbar usage --provider claude --all-accounts --format json --pretty
 ```
 
 この一覧は `CLAUDE_CONFIG_DIR` を自動探索しません。setup-tokenや短命なOAuth tokenをコピーして同期する仕組みも追加していません。Webセッションの期限切れ時はCodexBar側で更新します。cookieはログイン資格情報なので、Gitやチャットへ貼り付けないでください。[CodexBarの認証・複数アカウント仕様](https://github.com/steipete/CodexBar/blob/v0.56.3/docs/claude.md)も参照してください。`claude-account work /usage` では選択profileの利用状況を直接確認できます。
+
+Codexのセットアップでは `scripts/deduplicate_synced_skills.py` が同期スキルを比較し、同一コピーを `skills.config` の管理ブロックで無効化します。Pythonのバイトコードキャッシュを除く補助ファイルも比較し、同期元とユーザー設定を保持します。内容が異なるようになったコピーは次回実行で除外を解除します。クライアントの再同期後はセットアップを再実行してください。他のagentの公開や既存チャットの表示は変更しません。
+
+Hermes専用の `codex`、`claude-code`、`plan` は `apps/hermes-agent/skills` に保存し、`~/.hermes/dotfiles-hermes-skills` から公開します。`systematic-debugging` は通常の探索対象外の `skill-archives` に保管し、通常は `auto-debugger` または `diagnosing-bugs` を使います。
+
+管理ブロックにはローカルの絶対パスが入ります。標準のsymlink構成では元のCodex設定ファイルのローカル差分として残るため、この端末固有のブロックはcommitしないでください。

@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [code-review, security, verification, quality, pre-commit, auto-fix]
-    related_skills: [dispatching-parallel-agents, plan, test-driven-development, git-github-flow]
+    related_skills: [dispatching-parallel-agents, test-driven-development, git-github-flow]
 ---
 
 # Pre-Commit Code Verification

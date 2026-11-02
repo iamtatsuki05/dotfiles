@@ -11,7 +11,7 @@ metadata:
   hermes:
     tags: [Research, Paper Writing, Experiments, ML, AI, NeurIPS, ICML, ICLR, ACL, AAAI, COLM, LaTeX, Citations, Statistical Analysis]
     category: research
-    related_skills: [arxiv, dispatching-parallel-agents, plan]
+    related_skills: [arxiv, dispatching-parallel-agents]
     requires_toolsets: [terminal, files]
 
 ---

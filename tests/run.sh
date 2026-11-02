@@ -101,6 +101,7 @@ run_unit_tests() {
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_skill_hooks.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_managed_skill_sync.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_skill_distribution.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_synced_skill_deduplication.py"
   "$TEST_NODE_BIN" --experimental-strip-types --test "$REPO_ROOT/tests/test_pi_integration.mjs"
   "$TEST_NODE_BIN" --test "$REPO_ROOT/tests/test_deepseek_integration.mjs"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_selective_setup.sh"

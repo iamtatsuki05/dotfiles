@@ -59,6 +59,7 @@ agent:
 skills:
   external_dirs:
     - ~/.hermes/dotfiles-skills
+    - ~/.hermes/dotfiles-hermes-skills
 plugins:
   enabled:
     - orca-status

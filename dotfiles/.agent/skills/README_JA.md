@@ -83,7 +83,7 @@ flat layout 用の局所的な参照変更は `local_text_replacements` に宣�
 | `empirical-prompt-tuning` | `mizchi/skills` | `empirical-prompt-tuning/` | agent 向け指示を実行者評価で反復改善する日本語 skill。 |
 | `modern-web-guidance` | `GoogleChrome/modern-web-guidance` | `modern-web-guidance/` | HTML / CSS / client-side JS の最新 Web best practice 検索 skill。 |
 | `mattpocock-skills` | `mattpocock/skills` | `grilling/`、`diagnosing-bugs/`、`domain-modeling/` など | deprecated alias を除いた現行の設計、diagnosis、handoff、architecture 系 skill。各 skill に upstream LICENSE を同梱。 |
-| `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`software-development/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は既存の詳細版へ固定 upstream の条件待ち資料を接続、brainstorming は Three Paths だけの最小 local router とする。 |
+| `superpowers` | `obra/superpowers` | `brainstorming/`、`dispatching-parallel-agents/`、`../skill-archives/systematic-debugging/`、`test-driven-development/`、`writing-skills/` | 5つの workflow 領域を選択導入。3 skill は直接 vendor し、systematic debugging は公開対象外の `../skill-archives/` に本文と固定 upstream の条件待ち資料を保管、brainstorming は Three Paths だけの最小 local router とする。 |
 | `natural-japanese` | `coji/natural-japanese` | `natural-japanese/` | 日本語の業務文書を、決定的 lint、文書型別の指針、local safety overlay で作成・推敲する skill。 |
 | `core-message-writing` | `shibayu36/agent-skills` | `core-message-writing/` | 想定読者と主メッセージを軸に文章を作成・推敲する。SKILL.md は原文のまま、MIT LICENSE を同梱。 |
 | `herdr` | `ogulcancelik/herdr` | `herdr/` | Herdr の pane / workspace 制御 skill。local safety overlay と Apache-2.0 license を同梱。 |

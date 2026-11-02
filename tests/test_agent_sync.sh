@@ -37,6 +37,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/cursor" \
     "$repo/dotfiles/.agent/apps/devin" \
     "$repo/dotfiles/.agent/apps/antigravity-cli/plugins/dotfiles-agent" \
+    "$repo/dotfiles/.agent/apps/hermes-agent/skills" \
     "$repo/dotfiles/.agent/apps/hermes-agent/agent-hooks" \
     "$repo/dotfiles/.agent/apps/hermes-agent/plugins/japanese-prose-lint" \
     "$repo/dotfiles/.agent/apps/opencode/plugins" \
@@ -532,6 +533,7 @@ test_agent_sync_links_managed_files_and_generates_runtime_state() {
   assert_symlink_target "$home_dir/.hermes/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   [[ -d "$home_dir/.hermes/skills" && ! -L "$home_dir/.hermes/skills" ]] || fail "expected ~/.hermes/skills to be a real directory owned by Hermes"
   assert_symlink_target "$home_dir/.hermes/dotfiles-skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.hermes/dotfiles-hermes-skills" "$repo/dotfiles/.agent/apps/hermes-agent/skills"
   assert_symlink_target "$home_dir/.hermes/config.yaml" "$repo/dotfiles/.agent/apps/hermes-agent/config.yaml"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
   assert_symlink_target "$home_dir/.hermes/agent-hooks/japanese_prose_lint.sh" "$repo/dotfiles/.agent/hooks/japanese_prose_lint.sh"
@@ -620,6 +622,7 @@ test_agent_sync_replaces_hermes_skill_symlink_with_local_directory() {
 
   [[ -d "$home_dir/.hermes/skills" && ! -L "$home_dir/.hermes/skills" ]] || fail "expected the managed ~/.hermes/skills symlink to become a real directory"
   assert_symlink_target "$home_dir/.hermes/dotfiles-skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$home_dir/.hermes/dotfiles-hermes-skills" "$repo/dotfiles/.agent/apps/hermes-agent/skills"
   assert_symlink_target "$home_dir/.codex/skills" "$repo/dotfiles/.agent/skills"
 
   rm -rf "$repo" "$home_dir"

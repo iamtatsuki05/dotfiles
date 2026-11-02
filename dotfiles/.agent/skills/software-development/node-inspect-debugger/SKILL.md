@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [debugging, nodejs, node-inspect, cdp, breakpoints, ui-tui]
-    related_skills: [systematic-debugging, python-debugpy]
+    related_skills: [diagnosing-bugs, python-debugpy]
 ---
 
 # Node.js Inspect Debugger

@@ -27,6 +27,17 @@ class SkillDistributionTest(unittest.TestCase):
         self.assertEqual(set(actual), expected)
         self.assertEqual(len(actual), len(set(actual)))
 
+    def test_hermes_only_and_archived_skills_are_outside_shared_discovery(self):
+        root = ROOT / 'dotfiles/.agent'
+        for name in ('codex', 'claude-code', 'plan'):
+            self.assertTrue((root / 'apps/hermes-agent/skills' / name / 'SKILL.md').is_file())
+        for path in ('autonomous-ai-agents/codex', 'autonomous-ai-agents/claude-code',
+                     'software-development/plan', 'software-development/systematic-debugging'):
+            self.assertFalse((ROOT / SKILLS / path).exists())
+        self.assertTrue((root / 'skill-archives/systematic-debugging/SKILL.md').is_file())
+        config = (root / 'apps/hermes-agent/config.yaml').read_text()
+        self.assertIn('    - ~/.hermes/dotfiles-hermes-skills', config)
+
     def test_grok_explicit_paths_preserve_bundled_docx(self):
         config = tomllib.loads((ROOT / 'dotfiles/.agent/apps/grok/config.toml').read_text())
         # Explicit user paths override bundled skills; keep Grok's native docx.

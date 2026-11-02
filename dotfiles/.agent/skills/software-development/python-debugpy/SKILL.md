@@ -8,7 +8,7 @@ platforms: [linux, macos]
 metadata:
   hermes:
     tags: [debugging, python, pdb, debugpy, breakpoints, dap, post-mortem]
-    related_skills: [systematic-debugging, node-inspect-debugger]
+    related_skills: [diagnosing-bugs, node-inspect-debugger]
 ---
 
 # Python Debugger (pdb + debugpy)

@@ -303,3 +303,9 @@ codexbar usage --provider claude --all-accounts --format json --pretty
 ```
 
 This list does not discover `CLAUDE_CONFIG_DIR` profiles. No synchronization of setup-tokens or short-lived OAuth tokens is added. Renew expired Web sessions in CodexBar. Cookies are login credentials: never put them in Git or chat. See [CodexBar's authentication and multi-account documentation](https://github.com/steipete/CodexBar/blob/v0.56.3/docs/claude.md). You can also run `claude-account work /usage` to inspect the selected profile directly.
+
+Codex setup runs `scripts/deduplicate_synced_skills.py` to disable duplicate synced copies in a managed `skills.config` block. It compares the full skill directory (excluding Python bytecode caches), keeps one identical copy, preserves client source files and user-authored overrides, and re-enables copies when their contents diverge on the next run. Run setup again after client synchronization; this does not filter other agents or live-refresh an existing chat.
+
+Hermes-only `codex`, `claude-code`, and `plan` live under `apps/hermes-agent/skills`, exposed through `~/.hermes/dotfiles-hermes-skills`. `systematic-debugging` is retained under `skill-archives` outside normal discovery; use `auto-debugger` or `diagnosing-bugs` instead.
+
+The managed block contains local absolute paths. With the standard symlinked Codex configuration, it appears as a local change in the source config; do not commit that machine-specific block.
