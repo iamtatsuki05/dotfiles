@@ -116,6 +116,13 @@ By default, checks retain source and final text in a local `.yomiyasu/` director
 The upstream hook is enabled in the managed Claude Code and Codex settings. It follows explicitly registered manuscripts, checks final-text records before completion or posting, and can block unchecked output. Unregistered documents are untouched. The existing Japanese prose lint hook remains enabled for general Edit/Write checks.
 Restart the agent after syncing. New Codex hook definitions still require approval in `/hooks`; setup does not grant hook trust. Start a new conversation to discover the added skill.
 
+## I-have-ADHD response style
+
+[I-have-ADHD](https://github.com/ayghri/i-have-adhd) is a pinned shared skill for action-first responses.
+Invoke it explicitly with `$i-have-adhd` in Codex or `/i-have-adhd` in Claude Code. Its instructions remain active for the session until `stop adhd mode` or `normal mode`.
+Automatic invocation is disabled in the upstream metadata. No always-on hook or persistent user-profile assumption is installed; existing writing skills and agent policies remain unchanged.
+Start a new agent conversation after syncing to discover the added skill.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

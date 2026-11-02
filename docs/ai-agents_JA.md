@@ -114,6 +114,13 @@ Python標準ライブラリの検査で表現と原文との差分を確認し�
 Claude CodeとCodexの管理設定で上流hookを有効にしています。明示的に登録された原稿について、完了や投稿の前に最終稿の検査記録を確認し、未検査なら処理を止める場合があります。未登録の文書は対象外です。一般的なEdit/Write後の検査を行う既存の日本語文章lint hookも保持します。
 同期後はAgentを再起動してください。Codexの新しいhook定義は `/hooks` での承認が別途必要です。セットアップは信頼設定を変更しません。追加したskillは新しい会話で読み込んでください。
 
+## I-have-ADHDによる返答形式の切り替え
+
+[I-have-ADHD](https://github.com/ayghri/i-have-adhd)を、行動を先に示す返答形式の共有skillとして固定版で管理します。
+Codexでは `$i-have-adhd`、Claude Codeでは `/i-have-adhd` と明示して呼び出します。呼び出した会話では `stop adhd mode` または `normal mode` と伝えるまで適用する指示です。
+上流のメタデータで自動呼び出しは無効です。常時適用hookや利用者についての永続的な前提は追加せず、既存の文章系skillとAgentの規約は変更しません。
+同期後、新しいAgentの会話で追加したskillを読み込んでください。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。
