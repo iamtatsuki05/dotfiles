@@ -138,6 +138,19 @@ Cursorは `~/.cursor/plugins/local/pstack` に管理用の実ディレクトリ�
 再起動後、Codexでは `$pstack:poteto-mode`、Claudeでは `/pstack:poteto-mode` と指定してください。この2つのAgentではpstackの文章推敲用 `pstack:unslop` と既存のUIデザイン用 `unslop` を別名で扱います。Cursorはpluginの識別情報を保持しますが、同名のスラッシュメニューの選択は実クライアントで確認が必要です。曖昧な場合は意図したskillのフルパスを指定してください。既存skillは上書きしません。
 導入時に `setup-pstack` の実行、モデル規則の変更、automationの起動は行いません。commit・公開・有料サービス利用の許可も追加しません。全体にはCursor固有のツール・モデル・ワークフローが含まれ、配置だけで他のAgentでも使えるようになるわけではありません。ローカルの統合方針に従い、利用できない機能はモデルやrunnerへ黙って置き換えず報告します。
 
+## 選定したCursorプラグインのskill
+
+2026-11-02に `cursor/plugins@ae5650f` の全129件を確認し、4つの提供元から指示文のみの9個のskillを選定しました。pstack全体は別途導入済みです。既存の共有skill配置を使い、新しいhook・常時ルール・MCPサービス・カスタムAgentは登録しません。
+
+- `cursor-team-kit`：`control-cli`、`control-ui`、`deslop`、`verify-this`。CLI/UIの実証と、pstackが参照する操作・コード整理の依存を補います。
+- `cli-for-agent`：`cli-for-agents`。非対話CLIの設計・レビューに使います。
+- `create-plugin`：`create-plugin-scaffold`、`review-plugin-submission`。リポジトリ管理下でのプラグイン作成と、提出前の静的確認に使います。
+- `teaching`：`create-learning-path`、`run-learning-retrospective`。学習計画と、実績に基づく進捗の見直しに使います。
+
+MITライセンスとCursorの帰属情報を保持しています。宣言した指示差分で、作業範囲・既存コメント・ユーザーが起動したプロセスを保護し、非対話CLIの入力不足は勝手に対話モードへ移らずエラーにする方針を明記しました。プラグインの作成と有効化も区別します。ブラウザ・端末の操作は現在のホストの規約に従い、今回の導入では実操作や新しいプラグインの公開を行いません。
+
+残る124件は、既存機能との重複、自動記憶・ループ方針、未完成のcanvas、または現在の用途がないホスト・サービス・SDK依存を理由に見送りました。第三者サービスの112件は有効化せず、既存の接続を保持します。4プラグインの全機能ではなく、上記skillだけの選択導入です。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

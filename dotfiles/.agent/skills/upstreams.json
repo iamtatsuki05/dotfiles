@@ -2326,6 +2326,240 @@
         "last_reviewed_at": "2026-11-02T01:30:50+00:00",
         "review_report": ".agent/work/sessions/2026-11-02-pstack-codex/subagents/security-review.md"
       }
+    },
+    {
+      "id": "cursor-team-kit",
+      "description": "Selected portable cursor-team-kit skills; no plugin hooks, rules, MCP servers or agents are activated.",
+      "repository": "https://github.com/cursor/plugins.git",
+      "branch": "main",
+      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "mappings": [
+        {
+          "source_path": "cursor-team-kit/skills/control-cli",
+          "local_path": "dotfiles/.agent/skills/control-cli"
+        },
+        {
+          "source_path": "cursor-team-kit/LICENSE",
+          "local_path": "dotfiles/.agent/skills/control-cli/LICENSE"
+        },
+        {
+          "source_path": "cursor-team-kit/skills/control-ui",
+          "local_path": "dotfiles/.agent/skills/control-ui"
+        },
+        {
+          "source_path": "cursor-team-kit/LICENSE",
+          "local_path": "dotfiles/.agent/skills/control-ui/LICENSE"
+        },
+        {
+          "source_path": "cursor-team-kit/skills/deslop",
+          "local_path": "dotfiles/.agent/skills/deslop"
+        },
+        {
+          "source_path": "cursor-team-kit/LICENSE",
+          "local_path": "dotfiles/.agent/skills/deslop/LICENSE"
+        },
+        {
+          "source_path": "cursor-team-kit/skills/verify-this",
+          "local_path": "dotfiles/.agent/skills/verify-this"
+        },
+        {
+          "source_path": "cursor-team-kit/LICENSE",
+          "local_path": "dotfiles/.agent/skills/verify-this/LICENSE"
+        }
+      ],
+      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/cursor-team-kit",
+      "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/control-cli/SKILL.md",
+          "old": "---\n\n# Control CLI\n\nUse a repeatable local harness to exercise an interactive CLI instead of poking at it",
+          "new": "---\n\nLocal integration: Use only the authorized local target and a host-approved terminal tool. Examples below are illustrative, not a ready-made runner: handle EOF/errors, bound waits, and close file descriptors plus terminate/wait for processes you started even on failure. Never stop user-owned sessions or capture secrets; keep temporary artifacts minimal. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Control CLI\n\nUse a repeatable local harness to exercise an interactive CLI instead of poking at it",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/control-ui/SKILL.md",
+          "old": "---\n\n# Control UI\n\nUse local browser automation to verify UI behavior with evidence. First reuse the repo",
+          "new": "---\n\nLocal integration: Use the host-approved browser or computer-use interface and the existing authorized test surface. Debug ports must stay on loopback. Do not start, expose, or reconfigure a shared app merely to attach a debugger without authorization. For an existing user-owned browser, disconnect only; never call browser.close() or terminate its process. Close only browsers, servers and profiles you created for this task. Preserve private tabs and data; do not install dependencies or export sensitive captures without the required authorization. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Control UI\n\nUse local browser automation to verify UI behavior with evidence. First reuse the repo",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/deslop/SKILL.md",
+          "old": "---\n\n# Remove AI code slop\n\nCheck the diff against main and remove AI-generated slop introduced in the br",
+          "new": "---\n\nLocal integration: Limit cleanup to the current authorized change, not unrelated branch work. Preserve unrelated existing comments, TODOs, licenses, nontrivial WHY comments and dirty files. Keep behavior unchanged; a newly noticed bug is not permission to expand this cleanup. Never weaken validation, error handling or tests merely to remove a warning. This managed skill comes from cursor-team-kit and is available to pstack by its name. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Remove AI code slop\n\nCheck the diff against main and remove AI-generated slop introduced in the br",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/verify-this/SKILL.md",
+          "old": "---\n\n# Verify This\n\nVerification is not a recap. It proves or disproves a specific claim with repeatable ",
+          "new": "---\n\nLocal integration: Use existing evidence and safe disposable fixtures within the current task scope. Do not reset/stash the user checkout or touch production to construct a baseline. Use a separate temporary snapshot where necessary; if no valid comparison is possible, report INCONCLUSIVE. Save only authorized, minimal artifacts in a unique temporary directory. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Verify This\n\nVerification is not a recap. It proves or disproves a specific claim with repeatable ",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "2127a60a772791ce98f791457d683945359e3a546037b6773dfce559351979ef",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+        "last_reviewed_at": "2026-11-02T02:07:48+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/engineering.md"
+      }
+    },
+    {
+      "id": "cli-for-agent",
+      "description": "Selected portable cli-for-agent skills; no plugin hooks, rules, MCP servers or agents are activated.",
+      "repository": "https://github.com/cursor/plugins.git",
+      "branch": "main",
+      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "mappings": [
+        {
+          "source_path": "cli-for-agent/skills/cli-for-agents",
+          "local_path": "dotfiles/.agent/skills/cli-for-agents"
+        },
+        {
+          "source_path": "cli-for-agent/LICENSE",
+          "local_path": "dotfiles/.agent/skills/cli-for-agents/LICENSE"
+        }
+      ],
+      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/cli-for-agent",
+      "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/cli-for-agents/SKILL.md",
+          "old": "---\n\n# CLI for agents\n\nHuman-oriented CLIs often block agents: interactive prompts, huge upfront docs, an",
+          "new": "---\n\nLocal integration: This skill designs or reviews a CLI; it does not authorize executing example deployments or using confirmation-bypass flags. Preserve the actual user approval boundary for destructive actions. In headless operation, missing required input must fail with an actionable error rather than silently entering an interactive fallback. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# CLI for agents\n\nHuman-oriented CLIs often block agents: interactive prompts, huge upfront docs, an",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/cli-for-agents/SKILL.md",
+          "old": "  adding commands, writing --help, or when the user mentions agents, terminals,\n  or automation-friendly CLIs.",
+          "new": "  adding commands, writing --help, or reviewing non-interactive CLI contracts.\n  Do not trigger merely because agents or terminals are mentioned.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/cli-for-agents/SKILL.md",
+          "old": "- If flags are missing, **then** fall back to interactive mode—not the other way around.",
+          "new": "- Missing required flags fail fast in headless mode. Offer interactive input only through an explicitly selected human-facing mode.",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "34c1e3a66cc0edb22f01a8bcf5b5a8d4c41c25a61a1fe7281b6742591e4c0a34",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+        "last_reviewed_at": "2026-11-02T02:07:51+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/engineering.md"
+      }
+    },
+    {
+      "id": "create-plugin",
+      "description": "Selected portable create-plugin skills; no plugin hooks, rules, MCP servers or agents are activated.",
+      "repository": "https://github.com/cursor/plugins.git",
+      "branch": "main",
+      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "mappings": [
+        {
+          "source_path": "create-plugin/skills/create-plugin-scaffold",
+          "local_path": "dotfiles/.agent/skills/create-plugin-scaffold"
+        },
+        {
+          "source_path": "create-plugin/LICENSE",
+          "local_path": "dotfiles/.agent/skills/create-plugin-scaffold/LICENSE"
+        },
+        {
+          "source_path": "create-plugin/skills/review-plugin-submission",
+          "local_path": "dotfiles/.agent/skills/review-plugin-submission"
+        },
+        {
+          "source_path": "create-plugin/LICENSE",
+          "local_path": "dotfiles/.agent/skills/review-plugin-submission/LICENSE"
+        }
+      ],
+      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/create-plugin",
+      "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/create-plugin-scaffold/SKILL.md",
+          "old": "---\n\n# Create plugin scaffold\n\n## Trigger\n\nYou need to create a new Cursor plugin from scratch and make i",
+          "new": "---\n\nLocal integration: Create source in the repository-managed plugin area or the user-specified destination. If neither is established, ask for the destination. This overrides the live-home defaults below. Creating a scaffold does not authorize live plugin/hook/MCP activation, global installation, publication or unrelated configuration changes. Validate the requested host schema and report source creation separately from installation and runtime verification. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Create plugin scaffold\n\n## Trigger\n\nYou need to create a new Cursor plugin from scratch and make i",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/review-plugin-submission/SKILL.md",
+          "old": "---\n\n# Review plugin submission\n\n## Trigger\n\nA plugin is implemented and needs a final quality check befo",
+          "new": "---\n\nLocal integration: Review the supplied plugin and the requested host schema. This is a review, not authorization to publish, enable hooks/MCP servers, install dependencies or change live configuration. Distinguish static manifest validity, actual discovery, runtime behavior and publication status. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Review plugin submission\n\n## Trigger\n\nA plugin is implemented and needs a final quality check befo",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "c7f121b84512e05da1eaad152f6a4ce82866d96022c082c663c04a20163ab56e",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+        "last_reviewed_at": "2026-11-02T02:07:54+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/engineering.md"
+      }
+    },
+    {
+      "id": "teaching",
+      "description": "Selected portable teaching skills; no plugin hooks, rules, MCP servers or agents are activated.",
+      "repository": "https://github.com/cursor/plugins.git",
+      "branch": "main",
+      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "mappings": [
+        {
+          "source_path": "teaching/skills/create-learning-path",
+          "local_path": "dotfiles/.agent/skills/create-learning-path"
+        },
+        {
+          "source_path": "teaching/LICENSE",
+          "local_path": "dotfiles/.agent/skills/create-learning-path/LICENSE"
+        },
+        {
+          "source_path": "teaching/skills/run-learning-retrospective",
+          "local_path": "dotfiles/.agent/skills/run-learning-retrospective"
+        },
+        {
+          "source_path": "teaching/LICENSE",
+          "local_path": "dotfiles/.agent/skills/run-learning-retrospective/LICENSE"
+        }
+      ],
+      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/teaching",
+      "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/create-learning-path/SKILL.md",
+          "old": "---\n\n# Create a learning path\n\n## Trigger\n\nBuilding capability in a topic over multiple sessions.\n\n## Wor",
+          "new": "---\n\nLocal integration: Use the provided learning goals, schedule and prior knowledge; ask only for material missing information. Planning does not authorize calendar events, reminders, persistent user-memory edits or external sharing. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Create a learning path\n\n## Trigger\n\nBuilding capability in a topic over multiple sessions.\n\n## Wor",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/create-learning-path/SKILL.md",
+          "old": "- Use Ask user tool.",
+          "new": "- Use the host's available question tool, or ask a concise question in the conversation when no such tool exists. Reuse known context instead of asking again.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/run-learning-retrospective/SKILL.md",
+          "old": "---\n\n# Run a learning retrospective\n\n## Trigger\n\nLearner completed a milestone and needs data-driven adju",
+          "new": "---\n\nLocal integration: Base progress claims on the learner's reported work or supplied evidence; do not invent completed milestones or proficiency. Updating a learning plan does not authorize persistent user-memory edits, calendar changes or external sharing. Existing user/repository instructions and authorization take precedence; do not request redundant approval for already authorized work.\n\n# Run a learning retrospective\n\n## Trigger\n\nLearner completed a milestone and needs data-driven adju",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/run-learning-retrospective/SKILL.md",
+          "old": "- Use Ask user tool.",
+          "new": "- Use the host's available question tool, or ask a concise question in the conversation when no such tool exists. Reuse known context instead of asking again.",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "e620d33c792539059fb24e8874a5f14a637de61d6202028fea25c4ccd7ef6b56",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "codex",
+        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+        "last_reviewed_at": "2026-11-02T02:07:57+00:00",
+        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/workflows.md"
+      }
     }
   ]
 }

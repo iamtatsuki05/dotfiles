@@ -140,6 +140,19 @@ Cursor receives a managed real directory at `~/.cursor/plugins/local/pstack`; re
 Restart the client, then use Codex `$pstack:poteto-mode` or Claude `/pstack:poteto-mode`. In these two clients, pstack's writing skill is namespaced as `pstack:unslop`, distinct from the standalone UI-design `unslop`. Cursor preserves the plugin identity, but same-name slash-menu selection needs client verification; use the intended skill's full path when ambiguous. Existing standalone skills are not replaced.
 Installation does not run `setup-pstack`, change model rules, start automations, or authorize commits, publication or paid services. The full source includes Cursor-specific tools/models/workflows: loading the package does not make those capabilities available in other hosts. Follow the local integration policy; report unavailable capabilities rather than silently substituting a model or runner.
 
+## Selected Cursor plugin skills
+
+The 2026-11-02 review covered all 129 plugin entries at `cursor/plugins@ae5650f`. We selected nine instruction-only skills from four sources; full pstack remains separately installed. These use the existing shared skill locations, without registering new hooks, always-on rules, MCP services or custom agents.
+
+- `cursor-team-kit`: `control-cli`, `control-ui`, `deslop`, `verify-this`. These add local UI/CLI evidence and supply pstack's named control/cleanup dependencies.
+- `cli-for-agent`: `cli-for-agents`, for non-interactive CLI design and review.
+- `create-plugin`: `create-plugin-scaffold`, `review-plugin-submission`, for repository-managed plugin source and static submission checks.
+- `teaching`: `create-learning-path`, `run-learning-retrospective`, for learning plans and evidence-based progress reviews.
+
+MIT licenses and Cursor attribution are retained. Declared overlays preserve task scope, existing comments and user-owned processes; require headless CLI failures instead of silent interactive fallback; and separate scaffold creation from live activation. Tools must follow the current host's browser/terminal rules. Actual browser operations and new plugin publication are not performed by installation.
+
+The remaining 124 entries were deferred: overlapping workflows, automatic memory/loop policies, unfinished canvas content, or host/service/SDK requirements without a current use case. The 112 third-party service adapters are not enabled; existing connectors remain unchanged. This is a selective skill import, not installation of every component in those four plugins.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.
