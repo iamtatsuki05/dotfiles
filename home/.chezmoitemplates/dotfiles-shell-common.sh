@@ -53,6 +53,11 @@ export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/{{ shellQuote .shell.xdg.config
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/{{ shellQuote .shell.xdg.cache }}}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/{{ shellQuote .shell.xdg.data }}}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/{{ shellQuote .shell.xdg.state }}}"
+# eMudhra 中間CA侵害(Mozilla Bug 2083449)対策: OS同梱の cert.pem は AAA 経由の信頼経路を残すため、
+# 対策済みの certifi バンドルを OpenSSL 系ツールに使わせる。ファイルは端末ごとの手動配置。
+if [ -z "${SSL_CERT_FILE:-}" ] && [ -r "$HOME/.config/ca-bundle/cacert-certifi-2026.10.19.pem" ]; then
+  export SSL_CERT_FILE="$HOME/.config/ca-bundle/cacert-certifi-2026.10.19.pem"
+fi
 if [ -z "${MISE_GLOBAL_CONFIG_FILE:-}" ] && [ -r "$HOME/.config/mise/config.toml" ]; then
   export MISE_GLOBAL_CONFIG_FILE="$HOME/.config/mise/config.toml"
 fi

@@ -157,7 +157,7 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   assert_not_contains "$skills_root/codex-delegate/references/dispatch-and-poll.md" 'For a review that needs the network, dispatch under `workspace-write`'
 }
 
-test_superpowers_selection_preserves_archived_debugging_references() {
+test_superpowers_selection_has_five_non_conflicting_workflows() {
   local skills_root="$REPO_ROOT/dotfiles/.agent/skills"
   local eval_root="$REPO_ROOT/dotfiles/.agent/evals"
   local manifest_text
@@ -166,24 +166,24 @@ test_superpowers_selection_preserves_archived_debugging_references() {
   assert_file "$skills_root/dispatching-parallel-agents/SKILL.md"
   assert_file "$skills_root/test-driven-development/SKILL.md"
   assert_file "$skills_root/writing-skills/SKILL.md"
-  assert_file "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/SKILL.md"
+  assert_file "$skills_root/software-development/systematic-debugging/SKILL.md"
   assert_file "$skills_root/brainstorming/SKILL.md"
   assert_file "$skills_root/brainstorming/LICENSE"
 
-  assert_file "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md"
-  assert_file "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/LICENSE"
-  assert_not_exists "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting-example.ts"
+  assert_file "$skills_root/software-development/systematic-debugging/condition-based-waiting.md"
+  assert_file "$skills_root/software-development/systematic-debugging/LICENSE"
+  assert_not_exists "$skills_root/software-development/systematic-debugging/condition-based-waiting-example.ts"
   assert_contains_text "$manifest_text" '"source_path": "skills/systematic-debugging/condition-based-waiting.md"'
-  assert_contains_text "$manifest_text" '"local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md"'
-  assert_contains "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md" 'Capture a baseline cursor or count before starting the operation'
-  assert_contains "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md" 'Historical upstream report'
-  assert_not_contains "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md" 'await waitFor(() => getResult() !== undefined);'
+  assert_contains_text "$manifest_text" '"local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md"'
+  assert_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'Capture a baseline cursor or count before starting the operation'
+  assert_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'Historical upstream report'
+  assert_not_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'await waitFor(() => getResult() !== undefined);'
 
   assert_not_exists "$skills_root/brainstorming/scripts/server.cjs"
   assert_not_exists "$skills_root/brainstorming/scripts/start-server.sh"
   assert_not_contains "$skills_root/brainstorming/SKILL.md" 'docs/superpowers/specs'
   assert_not_contains "$skills_root/brainstorming/SKILL.md" 'git commit'
-  cmp -s "$skills_root/brainstorming/LICENSE" "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/LICENSE" || fail "Superpowers adapted-skill LICENSE copies differ"
+  cmp -s "$skills_root/brainstorming/LICENSE" "$skills_root/software-development/systematic-debugging/LICENSE" || fail "Superpowers adapted-skill LICENSE copies differ"
 
   assert_file "$eval_root/superpowers-systematic-debugging/model.yaml"
   assert_file "$eval_root/superpowers-systematic-debugging/tasks/replace-fixed-sleep.yaml"
@@ -210,12 +210,11 @@ test_mattpocock_skills_use_current_names_and_resolve_dependencies() {
   assert_contains "$skills_root/grilling/LICENSE" "MIT License"
 }
 
-validate_skill_metadata() {
-  python3 - "$1" <<'PY'
+test_regular_skill_names_are_unique_and_related_skills_resolve() {
+  python3 - "$REPO_ROOT/dotfiles/.agent/skills" <<'PY' || fail "skill names or related_skills are ambiguous"
 from collections import defaultdict
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 
@@ -240,23 +239,10 @@ def parse_skill_metadata(text):
         return name, []
     return name, [item.strip().strip("'\"") for item in related_value.split(",")]
 
-repo = Path(sys.argv[1])
-tracked_cache = subprocess.check_output([
-    "git", "-C", str(repo), "ls-files", "-z", "--cached", "--",
-    "dotfiles/.agent/skills/synced/",
-])
-if tracked_cache:
-    print("client-owned skill cache is tracked: skills/synced/", file=sys.stderr)
-    raise SystemExit(1)
-
-files = subprocess.check_output([
-    "git", "-C", str(repo), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
-    "dotfiles/.agent/skills/**/SKILL.md",
-]).decode("utf-8").split("\0")
+root = Path(sys.argv[1])
 by_name = defaultdict(list)
 related = []
-for relative in sorted(set(files) - {""}):
-    path = repo / relative
+for path in root.rglob("SKILL.md"):
     if ".system" in path.parts:
         continue
     parsed = parse_skill_metadata(path.read_text(encoding="utf-8"))
@@ -275,50 +261,6 @@ if duplicates or missing:
         print(f"missing related skill {target}: {path}", file=sys.stderr)
     raise SystemExit(1)
 PY
-}
-
-test_regular_skill_names_are_unique_and_related_skills_resolve() {
-  validate_skill_metadata "$REPO_ROOT" || fail "skill names or related_skills are ambiguous"
-}
-
-test_skill_inventory_respects_source_ownership() {
-  (
-    local fixture
-    local output
-    fixture="$(mktemp -d)"
-    trap 'rm -rf "$fixture"' EXIT
-    git -C "$fixture" init -q
-    local skills="$fixture/dotfiles/.agent/skills"
-    mkdir -p "$skills/local-doc" "$skills/synced/account/doc"
-    print -r -- '/dotfiles/.agent/skills/synced/' > "$fixture/.gitignore"
-    printf '%s\n' '---' 'name: doc' '---' > "$skills/local-doc/SKILL.md"
-    cp "$skills/local-doc/SKILL.md" "$skills/synced/account/doc/SKILL.md"
-    git -C "$fixture" add .gitignore dotfiles/.agent/skills/local-doc/SKILL.md
-    validate_skill_metadata "$fixture" || fail "ignored client cache entered the canonical inventory"
-
-    mkdir -p "$skills/new-doc"
-    cp "$skills/local-doc/SKILL.md" "$skills/new-doc/SKILL.md"
-    if output="$(validate_skill_metadata "$fixture" 2>&1)"; then
-      fail "duplicate untracked authored skill was accepted"
-    fi
-    assert_contains_text "$output" "duplicate doc:"
-    rm -r "$skills/new-doc"
-
-    printf '%s\n' '---' 'name: runtime-only' '---' > "$skills/synced/account/doc/SKILL.md"
-    printf '%s\n' '---' 'name: doc' 'related_skills: [runtime-only]' '---' > "$skills/local-doc/SKILL.md"
-    if output="$(validate_skill_metadata "$fixture" 2>&1)"; then
-      fail "ignored client cache satisfied a canonical dependency"
-    fi
-    assert_contains_text "$output" "missing related skill runtime-only:"
-    printf '%s\n' '---' 'name: doc' '---' > "$skills/local-doc/SKILL.md"
-
-    print -r -- '{}' > "$skills/synced/account/manifest.json"
-    git -C "$fixture" add -f dotfiles/.agent/skills/synced/account/manifest.json
-    if output="$(validate_skill_metadata "$fixture" 2>&1)"; then
-      fail "tracked client cache was accepted"
-    fi
-    assert_contains_text "$output" "client-owned skill cache is tracked"
-  )
 }
 
 test_updates_accepts_fixture_ls_remote_output() {
@@ -1093,9 +1035,8 @@ main() {
   test_tree_hash_ignores_generated_python_bytecode
   test_manifest_tracks_current_upstream_skill_paths
   test_reviewed_updates_preserve_local_security_and_compatibility_overlays
-  test_superpowers_selection_preserves_archived_debugging_references
+  test_superpowers_selection_has_five_non_conflicting_workflows
   test_mattpocock_skills_use_current_names_and_resolve_dependencies
-  test_skill_inventory_respects_source_ownership
   test_regular_skill_names_are_unique_and_related_skills_resolve
   test_updates_accepts_fixture_ls_remote_output
   test_security_prompt_accepts_commit_alias

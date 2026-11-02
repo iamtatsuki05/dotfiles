@@ -15,6 +15,12 @@ end
 if not set -q XDG_STATE_HOME; or test -z "$XDG_STATE_HOME"
     set -gx XDG_STATE_HOME "$HOME/{{ shellQuote .shell.xdg.state }}"
 end
+# eMudhra 中間CA侵害(Mozilla Bug 2083449)対策: 対策済みの certifi バンドルを OpenSSL 系ツールに使わせる。
+if not set -q SSL_CERT_FILE; or test -z "$SSL_CERT_FILE"
+    if test -r "$HOME/.config/ca-bundle/cacert-certifi-2026.10.19.pem"
+        set -gx SSL_CERT_FILE "$HOME/.config/ca-bundle/cacert-certifi-2026.10.19.pem"
+    end
+end
 if not set -q MISE_GLOBAL_CONFIG_FILE; or test -z "$MISE_GLOBAL_CONFIG_FILE"
     if test -r "$HOME/.config/mise/config.toml"
         set -gx MISE_GLOBAL_CONFIG_FILE "$HOME/.config/mise/config.toml"

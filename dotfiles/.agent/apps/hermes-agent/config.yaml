@@ -52,13 +52,12 @@ agent:
 skills:
   external_dirs:
     - ~/.hermes/dotfiles-skills
-    - ~/.hermes/dotfiles-hermes-skills
 plugins:
   enabled:
     - orca-status
     - japanese-prose-lint
     - rtk-rewrite
-_config_version: 37
+_config_version: 51
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,

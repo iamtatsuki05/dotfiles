@@ -224,7 +224,6 @@ shared_link_specs() {
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.cursor/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$xdg_config_home/opencode/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.hermes/dotfiles-skills"
-  print -r -- "$APPS_DIR/hermes-agent/skills"$'\t'"$HOME/.hermes/dotfiles-hermes-skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.openclaw/workspace/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.grok/dotfiles-skills"
 
@@ -634,12 +633,6 @@ main() {
   [[ -n "$ONLY_AGENT" ]] && return 0
   sync_hooks
   sync_tool_configs
-  if [[ -f "$HOME/.codex/config.toml" ]]; then
-    local -a dedup_args
-    dedup_args=(--skills-root "$AGENT_DIR/skills/synced" --local-skills-root "$AGENT_DIR/skills" --config "$HOME/.codex/config.toml")
-    (( DRY_RUN )) && dedup_args+=(--dry-run)
-    python3 -B "$SCRIPT_DIR/deduplicate_synced_skills.py" "${dedup_args[@]}"
-  fi
   enable_rtk_antigravity_plugin
   sync_agent_env_files
   if (( INSTALL_DEPS )); then
