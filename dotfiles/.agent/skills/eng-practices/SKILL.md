@@ -10,7 +10,7 @@ Google eng-practices の CL Author Guide を、PR を書く・分割する・指
 ## この skill を使わない場面
 
 - コードレビューの実施。観点と出力形式(重大 / 中 / 軽微 + file:line、問題がなければ「重大な問題なし」)は依頼文で決まる。reviewer subagent はこの skill を読まない。
-- 実装中のセルフチェック。Small CL、テスト同梱、Why コメントは AGENTS.md と各 dev skill に書いてある。
+- 実装中のセルフチェック。テスト同梱と Why コメントは AGENTS.md と各 dev skill に書いてある。
 - 他の dev skill からの参照は「`eng-practices` は PR description を書く段階でだけ読む」の 1 点に限る。
 
 ## PR / CL description

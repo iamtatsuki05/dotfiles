@@ -34,7 +34,7 @@ description: "Use when the user asks to improve, tune, or draft a prompt sent to
      -H "x-api-key: $ANTHROPIC_API_KEY" \
      -H "anthropic-version: 2023-06-01" \
      -H "content-type: application/json" \
-     -d '{"model":"<確認済みの対象モデル id>","max_tokens":1024,"system":"<プロンプト>","messages":[{"role":"user","content":"<テスト入力>"}]}'
+     -d '{"model":"<確認済みの対象モデル id>","max_tokens":16000,"system":"<プロンプト>","messages":[{"role":"user","content":"<テスト入力>"}]}'
    ```
 
    この例は Anthropic Messages API を選んだ場合だけ使う。model id はユーザーの表記のまま公式資料と実行環境で確認し、未知の名前を既知モデルの誤記と決めつけない。評価コードが無ければ、正確性、形式、簡潔さ、トーンの 4 観点で目視評価する。
