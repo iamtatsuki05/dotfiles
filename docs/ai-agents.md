@@ -153,6 +153,22 @@ MIT licenses and Cursor attribution are retained. Declared overlays preserve tas
 
 The remaining 124 entries were deferred: overlapping workflows, automatic memory/loop policies, unfinished canvas content, or host/service/SDK requirements without a current use case. The 112 third-party service adapters are not enabled; existing connectors remain unchanged. This is a selective skill import, not installation of every component in those four plugins.
 
+## Skill delivery across agents
+
+Pi and DeepSeek use owned per-skill links rather than importing client caches. For an explicitly requested move from another checkout of this same Git repository, run from the chosen source checkout:
+
+```sh
+python3 -B scripts/sync_agent_skills.py --repo-root "$PWD" --agent pi --migrate-from /absolute/previous-checkout/dotfiles/.agent/skills --dry-run
+python3 -B scripts/sync_agent_skills.py --repo-root "$PWD" --agent pi --migrate-from /absolute/previous-checkout/dotfiles/.agent/skills
+# Use --agent deepseek for the corresponding DeepSeek links.
+```
+
+The old checkout and personal/synced skill files are not deleted. Pi preserves them at their original locations; moving or deleting that checkout requires a separate migration of those references. Normal sync refuses an unapproved source switch or conflicting user files. The direct helper leaves model and hook settings unchanged.
+
+Antigravity's dotfiles-agent manifest explicitly lists managed nested skill directories because native discovery only covers direct children by default. Existing direct-child candidates remain available. Keep the native plugin root a real directory; its child paths may be symlinks.
+
+Grok uses `[skills].paths` pointing to individual managed directories through `~/.grok/dotfiles-skills`. It preserves the native bundled `docx` instead of overriding it; `pptx` is not added from synced caches. No broad `ignore` filter is applied because it would also remove candidates from other compatibility roots. New managed skills must be added to the appropriate delivery lists; `tests/test_skill_distribution.py` checks their coverage.
+
 ## Canonical files and boundaries
 
 - `dotfiles/.agent/AGENTS.md` is the shared agent policy.

@@ -56,7 +56,7 @@ zsh scripts/setup_agent_files.sh --only pi
 
 `--only` updates one new agent home without syncing the other agents. Omit it for the standard all-agent sync. Add `--dry-run` to preview. New integration file conflicts fail before deployment. Pi settings are merged as regular files: managed model defaults and named MCP servers are updated, while fields such as `deviceId`, unrelated servers, and other extensions are preserved. Pi defaults to `openai/gpt-6-luna` with high reasoning; use `/login openai` and choose **Sign in with ChatGPT**. Credentials remain in client-owned files outside this repository.
 
-Sync links the shared instructions to `~/.dsh/AGENTS.md` and `~/.pi/agent/AGENTS.md`. DeepSeek only discovers direct skill children, so it gets individual `dotfiles-<relative-path>` links under `~/.dsh/skills` (`/` becomes `--`); hidden directories such as `.system` are excluded. Only stale links into the current repository are removed. Pi recursively loads `~/.pi/agent/skills`; foreign links, files, and nonempty directories at that path are rejected.
+Sync links the shared instructions to `~/.dsh/AGENTS.md` and `~/.pi/agent/AGENTS.md`. Repository-managed skills (including non-ignored authored additions) are projected by `scripts/sync_agent_skills.py`; hidden and client-synced trees are excluded. DeepSeek uses `dotfiles-<relative-path>` links (`/` becomes `--`); Pi uses a real directory with links at the original relative paths. Ownership receipts protect personal entries and reject modified or foreign managed paths. A different source checkout requires explicit `--migrate-from` within the same Git repository. Pi migration preserves existing personal/synced entries as references to their original locations, so retain the old checkout until those entries are separately moved. This migration changes skills only, not models or hooks.
 
 Both native plugins add repository context, completion notifications, paired `.py` notebook synchronization, and advisory Japanese prose lint after successful built-in `write`/`edit` calls. Shell/custom-tool writes are outside the edit hook contract. Pi uses the unchanged official RTK extension to rewrite Bash commands. DeepSeek receives RTK usage guidance because its public tool API forbids argument rewriting; usage depends on the model following the instruction. No permission or sandbox override is added.
 
@@ -111,7 +111,7 @@ Use the same scratch-home pattern with the target agent's documented config-home
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
 | `AGENTS.md` | `~/.dsh/AGENTS.md` |
 | `AGENTS.md` | `~/.pi/agent/AGENTS.md` |
-| `skills/` | `~/.pi/agent/skills` |
+| Managed skill directories | `~/.pi/agent/skills/<relative-path>` |
 | Parent directories of `skills/**/SKILL.md` | `~/.dsh/skills/dotfiles-<relative-path>` |
 | `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |

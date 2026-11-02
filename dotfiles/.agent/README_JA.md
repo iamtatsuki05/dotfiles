@@ -56,7 +56,7 @@ zsh scripts/setup_agent_files.sh --only pi
 
 `--only` は指定した新Agentだけを同期し、他AgentのHOMEは変更しません。省略すると通常の全Agent同期になります。`--dry-run` で事前確認できます。新しい連携ファイルの同名衝突は反映前にエラーで停止します。Pi設定は実ファイルのまま統合し、管理対象のモデル既定値とMCPサーバー定義だけを更新します。`deviceId`、無関係なサーバー、既存extensionは保持します。Piの既定は `openai/gpt-6-luna`、推論強度highです。`/login openai` で **Sign in with ChatGPT** を選んでください。認証情報はrepo外のクライアント所有ファイルに保存します。
 
-共通指示は `~/.dsh/AGENTS.md` と `~/.pi/agent/AGENTS.md` にリンクします。DeepSeekはskillを1階層だけ検索するため、`~/.dsh/skills` に `dotfiles-<relative-path>` という個別リンクを作ります（`/` は `--` に置換）。`.system` などの隠しディレクトリは除外し、現在のrepoを指す不要なリンクだけ削除します。Piは `~/.pi/agent/skills` を再帰検索します。このパスに外部へのリンク、ファイル、非空ディレクトリがある場合はエラーで保護します。
+共通指示は `~/.dsh/AGENTS.md` と `~/.pi/agent/AGENTS.md` にリンクします。管理skill（ignoreされていない新規作成分を含む）は `scripts/sync_agent_skills.py` で配布し、隠しディレクトリとクライアント同期cacheは除外します。DeepSeekには `dotfiles-<relative-path>` の個別リンク（`/` は `--` に置換）、Piには元の相対パスを保ったリンクを実ディレクトリ内に作ります。管理記録で個人の項目を保護し、変更済み・外部の管理パスとの衝突はエラーにします。別checkoutからの移行は同じGitリポジトリ内に限り、`--migrate-from` の明示が必要です。Piの既存の個人・同期skillは元の場所への参照で保持するため、別途移すまで旧checkoutを残してください。この移行はskillだけを変更し、モデルやhookは変更しません。
 
 両native pluginはrepoの作業context、完了通知、paired `.py` のJupyter同期、成功した標準`write`/`edit`後の日本語lintを追加します。shellや独自toolによる書き込みは編集hookの対象外です。Piは公式RTK extensionを無変更で使い、Bashコマンドを自動変換します。DeepSeekの公開APIは引数変更を認めないため、RTK利用指示を追加します。こちらはモデルが指示に従うことが前提です。権限・sandbox設定は上書きしません。
 
@@ -111,7 +111,7 @@ find "$scratch_home" -maxdepth 3 -type f -print
 | `AGENTS.md` | `~/.grok/AGENTS.md` |
 | `AGENTS.md` | `~/.dsh/AGENTS.md` |
 | `AGENTS.md` | `~/.pi/agent/AGENTS.md` |
-| `skills/` | `~/.pi/agent/skills` |
+| 管理対象skillのディレクトリ | `~/.pi/agent/skills/<relative-path>` |
 | `skills/**/SKILL.md` の親ディレクトリ | `~/.dsh/skills/dotfiles-<relative-path>` |
 | `../../scripts/agent-run-compact` | `~/.local/bin/agent-run-compact` |
 | `apps/claude/settings.json` | `~/.claude/settings.json` |

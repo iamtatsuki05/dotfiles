@@ -151,6 +151,22 @@ MITライセンスとCursorの帰属情報を保持しています。宣言し�
 
 残る124件は、既存機能との重複、自動記憶・ループ方針、未完成のcanvas、または現在の用途がないホスト・サービス・SDK依存を理由に見送りました。第三者サービスの112件は有効化せず、既存の接続を保持します。4プラグインの全機能ではなく、上記skillだけの選択導入です。
 
+## Agentごとのskill配布
+
+PiとDeepSeekには、クライアント同期cacheを新たに取り込まず、管理対象のskillを個別リンクで配布します。同じGitリポジトリの別checkoutから明示的に移行する場合は、配布元にするcheckoutで次を実行します。
+
+```sh
+python3 -B scripts/sync_agent_skills.py --repo-root "$PWD" --agent pi --migrate-from /absolute/previous-checkout/dotfiles/.agent/skills --dry-run
+python3 -B scripts/sync_agent_skills.py --repo-root "$PWD" --agent pi --migrate-from /absolute/previous-checkout/dotfiles/.agent/skills
+# DeepSeekの場合は --agent deepseek を指定します。
+```
+
+旧checkoutと個人・同期skillのファイルは削除しません。Piでは元の場所への参照を保持するため、旧checkoutを移動・削除する前に、その参照も別途移す必要があります。通常の同期では、未承認の配布元変更やユーザーファイルとの衝突を拒否します。この専用helperはモデル・hook設定を変更しません。
+
+Antigravityのdotfiles-agent manifestには、管理対象のネストしたskillを明示列挙します。既定の直下探索で見つかる既存候補は保持します。native pluginのルートは実ディレクトリのままにし、その配下の参照にsymlinkを使います。
+
+Grokは `~/.grok/dotfiles-skills` 経由の個別パスを `[skills].paths` に登録します。既存のbundled `docx` は上書きせず、`pptx` を同期cacheから追加することもしません。他の互換経路の候補まで消える一括 `ignore` は設定しません。管理skillを追加したときは配布リストも更新し、`tests/test_skill_distribution.py` で網羅性を確認します。
+
 ## Canonical file と管理境界
 
 - `dotfiles/.agent/AGENTS.md`: 共通の agent policy。

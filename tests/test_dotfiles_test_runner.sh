@@ -26,6 +26,8 @@ typeset -r -a RUNNER_TEST_FILES=(
   tests/test_agent_run_compact.py
   tests/test_rtk_setup.py
   tests/test_skill_hooks.py
+tests/test_managed_skill_sync.py
+tests/test_skill_distribution.py
   tests/test_pi_integration.mjs
   tests/test_deepseek_integration.mjs
   tests/test_selective_setup.sh
@@ -90,6 +92,8 @@ create_runner_fixture() {
   print -r -- 'print("unit:agent-run-compact")' > "$repo/tests/test_agent_run_compact.py"
   print -r -- 'print("unit:rtk-setup")' > "$repo/tests/test_rtk_setup.py"
   print -r -- 'print("unit:skill-hooks")' > "$repo/tests/test_skill_hooks.py"
+  print -r -- 'print("unit:managed-skill-sync")' > "$repo/tests/test_managed_skill_sync.py"
+  print -r -- 'print("unit:skill-distribution")' > "$repo/tests/test_skill_distribution.py"
   print -r -- 'printf "%s\n" "unit:tokeneconomizer-setup"' > "$repo/tests/test_tokeneconomizer_setup.sh"
   print -r -- 'printf "%s\n" "unit:hallmark-setup"' > "$repo/tests/test_hallmark_setup.sh"
   print -r -- 'printf "%s\n" "unit:pstack-setup"' > "$repo/tests/test_pstack_setup.sh"

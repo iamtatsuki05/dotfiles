@@ -48,6 +48,8 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/skills" \
     "$repo/dotfiles/.agent/pets"
 
+  git init -q "$repo"
+  cp "$REPO_ROOT/scripts/sync_agent_skills.py" "$repo/scripts/sync_agent_skills.py"
   cp "$SETUP_AGENT_SCRIPT" "$repo/scripts/setup_agent_files.sh"
   cp "$REPO_ROOT/scripts/agent-run-compact" "$repo/scripts/agent-run-compact"
   print -r -- '{"defaultProvider":"openai","defaultModel":"gpt-6-luna","defaultThinkingLevel":"high"}' > "$repo/dotfiles/.agent/apps/pi/settings.json"
@@ -296,7 +298,9 @@ test_agent_sync_registers_deepseek_and_pi() {
   done
   assert_symlink_target "$home_dir/.dsh/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.pi/agent/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
-  assert_symlink_target "$home_dir/.pi/agent/skills" "$skill_root"
+  [[ -d "$home_dir/.pi/agent/skills" && ! -L "$home_dir/.pi/agent/skills" ]] || fail "expected managed Pi projection"
+  assert_symlink_target "$home_dir/.pi/agent/skills/research/example" "$skill_root/research/example"
+  assert_symlink_target "$home_dir/.grok/dotfiles-skills" "$skill_root"
   assert_symlink_target "$home_dir/.dsh/skills/dotfiles-research--example" "$skill_root/research/example"
   assert_symlink_target "$home_dir/.dsh/skills/dotfiles-top-level" "$skill_root/top-level"
   assert_not_exists "$home_dir/.dsh/skills/dotfiles-.system--hidden"
@@ -370,6 +374,26 @@ test_agent_sync_preserves_foreign_pi_skills() {
     fail "expected a conflicting Pi skills file to fail"
   fi
   assert_contains "$home_dir/.pi/agent/skills" 'user file'
+}
+
+test_agent_sync_preserves_foreign_grok_skills() {
+  local repo home_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  mkdir -p "$home_dir/.grok" "$home_dir/custom-skills"
+  print -r -- 'user skill' > "$home_dir/custom-skills/SKILL.md"
+  ln -s "$home_dir/custom-skills" "$home_dir/.grok/dotfiles-skills"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" >/dev/null 2>&1; then
+    fail "expected foreign Grok shared skill link to fail"
+  fi
+  assert_symlink_target "$home_dir/.grok/dotfiles-skills" "$home_dir/custom-skills"
+  assert_contains "$home_dir/custom-skills/SKILL.md" 'user skill'
+  assert_not_exists "$home_dir/.dsh/skills"
+  assert_not_exists "$home_dir/.codex/skills"
 }
 
 test_agent_sync_rejects_deepseek_flattened_name_collision() {
@@ -1063,6 +1087,7 @@ main() {
   test_agent_sync_registers_deepseek_and_pi
   test_agent_sync_preserves_conflicting_deepseek_skills
   test_agent_sync_preserves_foreign_pi_skills
+  test_agent_sync_preserves_foreign_grok_skills
   test_agent_sync_rejects_deepseek_flattened_name_collision
   test_agent_sync_links_managed_files_and_generates_runtime_state
   test_colab_mcp_is_absent_from_managed_agent_assets

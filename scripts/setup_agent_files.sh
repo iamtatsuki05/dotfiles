@@ -201,7 +201,6 @@ shared_link_specs() {
     return
   elif [[ "$ONLY_AGENT" == "pi" ]]; then
     print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.pi/agent/AGENTS.md"
-    print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.pi/agent/skills"
     return
   fi
 
@@ -226,7 +225,7 @@ shared_link_specs() {
   print -r -- "$AGENT_DIR/skills"$'\t'"$xdg_config_home/opencode/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.hermes/dotfiles-skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.openclaw/workspace/skills"
-  print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.pi/agent/skills"
+  print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.grok/dotfiles-skills"
 
   print -r -- "$AGENT_DIR/pets"$'\t'"$HOME/.codex/pets"
   print -r -- "$REPO_ROOT/scripts/agent-run-compact"$'\t'"$HOME/.local/bin/agent-run-compact"
@@ -252,76 +251,40 @@ ensure_hermes_local_skills_dir() {
   ensure_dir "$dst"
 }
 
-sync_deepseek_skills() {
-  local dst_dir="$HOME/.dsh/skills"
-  local skill_file relative_dir link_name dst target
-  local -A sources
-
-  if [[ -L "$dst_dir" || ( -e "$dst_dir" && ! -d "$dst_dir" ) ]]; then
-    echo "ERROR: $dst_dir must be a real directory; existing path was preserved" >&2
-    return 1
-  fi
-
-  # DSH discovers only direct children, while our shared skills include categories.
-  for skill_file in "$AGENT_DIR"/skills/**/SKILL.md(N.); do
-    relative_dir="${skill_file:h}"
-    relative_dir="${relative_dir#$AGENT_DIR/skills/}"
-    link_name="dotfiles-${relative_dir//\//--}"
-    if [[ -n "${sources[$link_name]-}" ]]; then
-      echo "ERROR: DeepSeek skill paths collide at $link_name" >&2
-      return 1
-    fi
-    sources[$link_name]="${skill_file:h}"
-    dst="$dst_dir/$link_name"
-    if [[ -L "$dst" ]]; then
-      target="$(readlink "$dst")"
-      [[ "$target" == "$AGENT_DIR/skills/"* ]] && continue
-    elif [[ ! -e "$dst" ]]; then
-      continue
-    fi
-    echo "ERROR: managed DeepSeek skill link is blocked by existing path: $dst" >&2
-    return 1
-  done
-
-  ensure_dir "$dst_dir"
-  for dst in "$dst_dir"/dotfiles-*(N@); do
-    link_name="${dst:t}"
-    if [[ -z "${sources[$link_name]-}" ]]; then
-      remove_managed_symlink "$dst" "$AGENT_DIR/skills"
-    fi
-  done
-  for link_name in ${(ok)sources}; do
-    link_symlink "${sources[$link_name]}" "$dst_dir/$link_name"
-  done
+sync_managed_skills() {
+  local agent="$1"
+  local -a args
+  args=(--repo-root "$REPO_ROOT" --agent "$agent")
+  (( DRY_RUN )) && args+=(--dry-run)
+  python3 -B "$SCRIPT_DIR/sync_agent_skills.py" "${args[@]}"
 }
 
 sync_shared_files() {
-  local pi_skills="$HOME/.pi/agent/skills"
+  local grok_skills="$HOME/.grok/dotfiles-skills"
 
-  if [[ "$ONLY_AGENT" == "deepseek" ]]; then
-    sync_deepseek_skills
+  if [[ "$ONLY_AGENT" == "deepseek" || "$ONLY_AGENT" == "pi" ]]; then
+    sync_managed_skills "$ONLY_AGENT"
     sync_link_specs shared_link_specs
     return
   fi
-  if [[ ( -L "$pi_skills" || -f "$pi_skills" ) && ! "$pi_skills" -ef "$AGENT_DIR/skills" ]]; then
-    echo "ERROR: Pi skills path is not managed by this repository; existing path was preserved: $pi_skills" >&2
+  if [[ ( -L "$grok_skills" || -f "$grok_skills" ) && ! "$grok_skills" -ef "$AGENT_DIR/skills" ]]; then
+    echo "ERROR: Grok shared skills path is not managed by this repository; existing path was preserved: $grok_skills" >&2
     return 1
-  fi
-  preflight_required_shared_skill_link "$pi_skills"
-  if [[ "$ONLY_AGENT" == "pi" ]]; then
-    sync_link_specs shared_link_specs
-    require_shared_skill_link "$pi_skills"
-    return
   fi
   preflight_required_shared_skill_link "$HOME/.codex/skills"
   preflight_required_shared_skill_link "$HOME/.claude/skills"
-  preflight_required_shared_skill_link "$HOME/.pi/agent/skills"
-  sync_deepseek_skills
+  preflight_required_shared_skill_link "$grok_skills"
+  local agent
+  for agent in deepseek pi; do
+    python3 -B "$SCRIPT_DIR/sync_agent_skills.py" --repo-root "$REPO_ROOT" --agent "$agent" --dry-run >/dev/null
+  done
+  sync_managed_skills deepseek
+  sync_managed_skills pi
   ensure_hermes_local_skills_dir
   sync_link_specs shared_link_specs
   require_shared_skill_link "$HOME/.codex/skills"
   require_shared_skill_link "$HOME/.claude/skills"
-  require_shared_skill_link "$HOME/.pi/agent/skills"
+  require_shared_skill_link "$grok_skills"
 }
 
 new_agent_link_specs() {
