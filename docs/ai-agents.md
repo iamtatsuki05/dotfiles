@@ -312,3 +312,5 @@ The managed block contains local absolute paths. With the standard symlinked Cod
 
 
 Codex's `developer_instructions` selects the bundled documents/PDF/spreadsheets/presentations skills. Google Docs creation, existing edits and native template copies use the Google Docs native route; Word import is reserved for requested conversion. Existing Google Sheets/Slides use their service-specific skills. Unspecified presentation destinations default to local PPTX; edits retain the existing destination and explicit Spaces/Google Slides requests take precedence. Consulting presentation rules apply only to explicit requests, executive-meeting styles, or matching existing decks. Synced PPTX XML tooling remains stored for explicitly requested low-level use, not normal discovery. These rules override conflicting skill defaults without modifying vendored plugin files.
+
+Codex skill publication setup requires Python 3.11 or later (`tomllib`). Ensure `python3` resolves to that interpreter; the macOS system Python may be older.

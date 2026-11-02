@@ -309,3 +309,5 @@ Hermes専用の `codex`、`claude-code`、`plan` は `apps/hermes-agent/skills` 
 
 
 Codexの `developer_instructions` で、標準の文書・PDF・表計算・プレゼンスキルを主担当に指定しています。Google Docsの新規作成・既存編集・ネイティブテンプレートのコピーは直接操作を優先し、Wordからのimportは変換依頼時に使います。既存Google Sheets・Slidesはサービス専用スキルを使います。プレゼンの保存先が未指定ならローカルPPTXとし、既存成果物の編集では保存先を維持します。Spaces・Google Slidesの明示指定を優先します。consulting版は明示指定、経営会議向け様式、同形式の既存資料に限定します。同期版pptxのXML編集ツールは、明示的に利用を依頼された場合の参照用に保持し、通常の候補には戻しません。これらの規則は競合するスキル既定値に優先し、外部プラグインの原本は編集しません。
+
+Codexのスキル公開設定にはPython 3.11以降（`tomllib`）が必要です。`python3` がそのPythonを指すようにしてください。macOS標準のPythonは古い場合があります。

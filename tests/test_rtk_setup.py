@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -32,10 +33,13 @@ class RtkSetupTest(unittest.TestCase):
             for name in ("skills", "pets"):
                 (agent / name).mkdir(parents=True)
             (agent / "AGENTS.md").write_text("# Existing shared policy\n")
+            fixture_bin = root / "bin"
+            fixture_bin.mkdir()
+            (fixture_bin / "python3").symlink_to(sys.executable)
             env = {
                 "HOME": str(home),
                 "XDG_CONFIG_HOME": str(config),
-                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "PATH": f"{fixture_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
                 "PYTHONPYCACHEPREFIX": str(home / "bytecode-cache"),
             }
             preview = subprocess.run(
