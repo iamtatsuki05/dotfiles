@@ -271,9 +271,10 @@ fallback の一覧変更や Homebrew の削除前に、[パッケージ管理と
 
 ## 共有 agent ファイルには別の同期手順がある
 
-共通 prompt の canonical source は `dotfiles/.agent/AGENTS.md` です。アプリ別設定、
-hook、skill、eval も同じ tree で管理します。リポジトリルートには、意図的に
-`AGENTS.md` symlink を置いていません。
+共通規約の canonical source は `dotfiles/.agent/AGENTS.md` です。委譲と作業記録の
+詳細は `agent-delegation` と `agent-work-log` を条件付きで参照します。アプリ別設定、
+hook、skill、eval も同じ tree で管理します。別ファイルの
+[リポジトリ直下の AGENTS.md](../AGENTS.md) には dotfiles 固有の規約を置き、agent home には配布しません。
 
 ```sh
 zsh dotfiles/.agent/sync.sh

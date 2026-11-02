@@ -35,6 +35,8 @@ Do not manually copy external skill trees without recording provenance and revie
 | Skill | Purpose | Notes |
 |---|---|---|
 | `agent-cli-consult` | Consult Codex CLI or Claude Code CLI read-only through stdin prompts for review, debugging, and analysis. | Only when the user explicitly asks for an external CLI. |
+| `agent-delegation` | Scope subagent and reviewer work, verify results, and manage waits and review decisions. | Read only before delegation; does not grant authority to delegate. |
+| `agent-work-log` | Maintain sessions and checkpoints for repository changes, handoffs, and delegated work. | Read supplemental-file and local-wiki references only when applicable. |
 | `agent-job-scheduler` | Queue, inspect, retry, and cancel long non-interactive jobs for ten agent CLIs, with allowlist, stale recovery, and launchd scheduling. | Bundles the app, README, and pytest. |
 | `alphaxiv-paper-lookup` | Summarize, compare, and extract implementation details from arXiv papers via the alphaxiv overview and full-text Markdown. | Verify numbers against the full text before reporting. |
 | `auto-debugger` | Explain or diagnose concrete errors and failing tests; make scoped fixes when requested. | Use tests, logs, or a debugger and add regression tests where useful. Route unstable reproduction or performance issues to `diagnosing-bugs`, and CI workflow issues to `ci-cd`. |

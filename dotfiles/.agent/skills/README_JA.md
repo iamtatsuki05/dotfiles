@@ -34,6 +34,8 @@ skills/
 | Skill | 用途 | 備考 |
 |---|---|---|
 | `agent-cli-consult` | Codex CLI / Claude Code CLI に stdin 経由の prompt で読み取り専用のレビュー・調査を依頼する。 | ユーザーが外部 CLI を明示した時だけ使う。 |
+| `agent-delegation` | subagent・reviewer への依頼範囲、結果確認、待機、採否判断を管理する。 | 委譲前だけ読む。委譲の権限を追加しない。 |
+| `agent-work-log` | repo の変更、引き継ぎ、委譲時の session と checkpoint を管理する。 | 補助ファイルと local wiki の詳細は該当時だけ読む。 |
 | `agent-job-scheduler` | 10 種の agent CLI の長時間・非対話ジョブを queue / retry / cancel し、allowlist、stale recovery、launchd も扱う。 | app 本体、README、pytest を同梱。 |
 | `alphaxiv-paper-lookup` | alphaxiv の overview と全文 Markdown で arXiv 論文を要約・比較・実装抽出する。 | 数値は全文で裏取りしてから報告する。 |
 | `auto-debugger` | 具体的なエラー・失敗テストを説明・調査し、修正の依頼があれば最小変更で直す。 | テスト・ログ・デバッガで検証し、必要な回帰テストを追加。再現困難・性能問題は `diagnosing-bugs`、CI定義の問題は `ci-cd` に引き継ぐ。 |

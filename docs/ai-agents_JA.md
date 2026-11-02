@@ -169,15 +169,16 @@ Grokは `~/.grok/dotfiles-skills` 経由の個別パスを `[skills].paths` に�
 
 ## Canonical file と管理境界
 
-- `dotfiles/.agent/AGENTS.md`: 共通の agent policy。
+- [`AGENTS.md`](../AGENTS.md): dotfiles 固有の規約。agent home には配布しません。
+- `dotfiles/.agent/AGENTS.md`: 常時読む共通規約。委譲と作業記録は `agent-delegation` と `agent-work-log` を条件付きで参照します。
 - `dotfiles/.agent/apps/`: アプリ別設定と hook。
 - `dotfiles/.agent/skills/`: local skill と review 済みの vendored skill。
 - `dotfiles/.agent/evals/`: Waza evaluation suite。
 - `dotfiles/.agent/sync.sh`: 対応する agent home への同期処理。
 
-リポジトリルートには、意図的に `AGENTS.md` symlink を置いていません。一部の
-展開先は canonical tree を指す symlink です。展開済みファイルは別の source of
-truth ではありません。
+リポジトリ直下の規約は、共通規約への symlink ではなく独立した通常ファイルです。
+一部の展開先は canonical tree を指す symlink です。展開済みファイルは別の
+source of truth ではありません。
 
 support matrix、ファイル対応、ignore、hook の挙動は、このリポジトリ全体の
 説明より頻繁に変わります。編集前に

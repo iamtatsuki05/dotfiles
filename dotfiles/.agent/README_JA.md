@@ -25,7 +25,8 @@ CLI 本体は可能な範囲で `mise` から導入します。Herdr も `mise` 
 
 ## 構成
 
-- `AGENTS.md`: 共通 prompt。対応する tool home に symlink します。リポジトリルートには `AGENTS.md` symlink を置きません。
+- `AGENTS.md`: 常時読む共通規約。対応する tool home に symlink します。[リポジトリ直下の規約](../../AGENTS.md) は別ファイルで、dotfiles 固有のルールだけを置きます。
+- `skills/agent-delegation/` と `skills/agent-work-log/`: 委譲と作業記録の条件付き手順。読む条件は共通規約に置き、local wiki の詳細は大きな作業・長期作業時だけ読みます。
 - `apps/`: agent 別の設定ファイル。詳細は [apps/README_JA.md](apps/README_JA.md) にまとめています。
 - `hooks/`: `jupytext_sync.sh`、`agent_context_reminder.sh`、`agent_turn_done_notify.sh` などの共通 hook script。詳細は [hooks/README_JA.md](hooks/README_JA.md) にまとめています。
 - `skills/`: Codex 互換 agent と Waza で使う共通 skill。階層、由来、各 skill の概要は [skills/README_JA.md](skills/README_JA.md) にまとめています。

@@ -171,15 +171,16 @@ Grok uses `[skills].paths` pointing to individual managed directories through `~
 
 ## Canonical files and boundaries
 
-- `dotfiles/.agent/AGENTS.md` is the shared agent policy.
+- [`AGENTS.md`](../AGENTS.md) contains dotfiles-only rules and is not deployed to agent homes.
+- `dotfiles/.agent/AGENTS.md` is the always-loaded shared policy; it routes delegation and work-record tasks to `agent-delegation` and `agent-work-log`.
 - `dotfiles/.agent/apps/` contains app-specific configuration and hooks.
 - `dotfiles/.agent/skills/` contains local and reviewed vendored skills.
 - `dotfiles/.agent/evals/` contains Waza evaluation suites.
 - `dotfiles/.agent/sync.sh` deploys the supported files to agent homes.
 
-The repository root intentionally has no `AGENTS.md` symlink. Some managed
-destinations are symlinks back to the canonical tree; a deployed file is not a
-second source of truth.
+The repository-root policy is a separate regular file, not a symlink to the
+shared policy. Some managed destinations are symlinks back to the canonical
+tree; a deployed file is not a second source of truth.
 
 The exact support matrix, file mappings, ignore rules, and hook behavior change
 more often than the repository-level documentation. Read the

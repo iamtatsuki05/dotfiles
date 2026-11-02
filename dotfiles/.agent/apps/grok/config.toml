@@ -27,7 +27,9 @@ enabled = true
 [skills]
 paths = [
   "~/.grok/dotfiles-skills/agent-cli-consult",
+  "~/.grok/dotfiles-skills/agent-delegation",
   "~/.grok/dotfiles-skills/agent-job-scheduler",
+  "~/.grok/dotfiles-skills/agent-work-log",
   "~/.grok/dotfiles-skills/alphaxiv-paper-lookup",
   "~/.grok/dotfiles-skills/apple/apple-notes",
   "~/.grok/dotfiles-skills/apple/apple-reminders",

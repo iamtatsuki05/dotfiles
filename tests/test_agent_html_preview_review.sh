@@ -5,6 +5,7 @@ set -euo pipefail
 readonly TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 readonly AGENTS_FILE="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
+readonly WORK_LOG_SKILL="$REPO_ROOT/dotfiles/.agent/skills/agent-work-log/SKILL.md"
 readonly SKILL_DIR="$REPO_ROOT/dotfiles/.agent/skills/html-preview-review"
 readonly SKILL_FILE="$SKILL_DIR/SKILL.md"
 readonly RENDERER="$SKILL_DIR/scripts/render_review.py"
@@ -179,7 +180,8 @@ test_skill_contract_exists() {
   assert_not_contains "$SKILL_FILE" "private OS temporary directory"
   assert_not_contains "$SKILL_FILE" "OS temporary storage"
   assert_contains "$AGENTS_FILE" '.agent/work/sessions/<session>/artifacts/html-preview-review/'
-  assert_contains "$AGENTS_FILE" '`html-preview-review` の private artifact はこの原則の例外'
+  assert_contains "$AGENTS_FILE" '`agent-work-log` skill'
+  assert_contains "$WORK_LOG_SKILL" '`html-preview-review` の private artifact はこの原則の例外'
   assert_contains "$SCHEMA_REFERENCE" '"schema_version": 1'
   assert_contains "$SCHEMA_REFERENCE" '"implementation_notes"'
   assert_contains "$SCHEMA_REFERENCE" '`open-question`'

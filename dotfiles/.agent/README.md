@@ -25,7 +25,8 @@ The tools themselves are installed by `mise` where available. Herdr is also inst
 
 ## Layout
 
-- `AGENTS.md`: shared prompt copied into each supported tool home. The repository root intentionally does not contain an `AGENTS.md` symlink.
+- `AGENTS.md`: always-loaded shared policy, symlinked into supported tool homes. [The repository-root policy](../../AGENTS.md) is a separate file for dotfiles-only rules.
+- `skills/agent-delegation/` and `skills/agent-work-log/`: conditional delegation and work-record procedures. The shared policy states when to read them; local-wiki details load only for large or long-running work.
 - `apps/`: per-agent config files. See [apps/README.md](apps/README.md).
 - `hooks/`: shared hook scripts such as `jupytext_sync.sh`, `agent_context_reminder.sh`, and `agent_turn_done_notify.sh`. See [hooks/README.md](hooks/README.md).
 - `skills/`: shared skills used by Codex-compatible agents and Waza. See [skills/README.md](skills/README.md) for the hierarchy, origins, and per-skill summaries.

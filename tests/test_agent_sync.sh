@@ -920,9 +920,11 @@ test_agent_prompt_separates_task_boundary_triggers_from_signals() {
 
 test_agent_prompt_probes_shared_causes_before_parallel_dispatch() {
   local agents_file="$REPO_ROOT/dotfiles/.agent/AGENTS.md"
+  local delegation_skill="$REPO_ROOT/dotfiles/.agent/skills/agent-delegation/SKILL.md"
 
-  assert_contains "$agents_file" '共通原因の probe を main agent または1体で先に実施'
-  assert_contains "$agents_file" '結果を確認してから後続を分岐'
+  assert_contains "$agents_file" '`agent-delegation` skill'
+  assert_contains "$delegation_skill" '共通原因の probe を main agent または1体で先に実施'
+  assert_contains "$delegation_skill" '結果を確認してから後続を分岐'
 }
 
 test_agent_sync_wrapper_delegates_to_setup_script() {

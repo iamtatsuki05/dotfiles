@@ -293,9 +293,11 @@ fallback lists or removing Homebrew.
 
 ## Shared agent files have a separate sync step
 
-`dotfiles/.agent/AGENTS.md` is the canonical shared prompt. App-specific
-configuration, hooks, skills, and evaluations live beside it. The repository
-root intentionally has no `AGENTS.md` symlink.
+`dotfiles/.agent/AGENTS.md` is the canonical shared policy. Delegation and
+work-record details live in the conditional `agent-delegation` and
+`agent-work-log` skills. App-specific configuration, hooks, skills, and
+evaluations live beside it. The separate [repository-root AGENTS.md](../AGENTS.md)
+holds dotfiles-only rules and is not deployed to agent homes.
 
 ```sh
 zsh dotfiles/.agent/sync.sh
