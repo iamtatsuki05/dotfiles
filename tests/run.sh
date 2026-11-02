@@ -88,6 +88,7 @@ run_unit_tests() {
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_fixture_isolation.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_feature_flags.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_steermouse_setup.sh"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_pi_extensions_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_tokeneconomizer_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_hallmark_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_pstack_setup.sh"

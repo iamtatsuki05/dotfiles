@@ -1,0 +1,21 @@
+{
+  "provider": "exa",
+  "webSearch": {
+    "allowedProviders": [
+      "exa"
+    ]
+  },
+  "fetchRouting": {
+    "providers": [
+      "http"
+    ],
+    "allowRemoteHostedProviders": false
+  },
+  "fetch": {
+    "allowedModes": [
+      "readable",
+      "raw"
+    ]
+  },
+  "summaryModel": "current"
+}
