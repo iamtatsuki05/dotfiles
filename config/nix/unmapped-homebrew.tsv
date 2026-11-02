@@ -180,3 +180,5 @@ vscode	yoavbls.pretty-ts-errors	managed-outside-nix-package-set
 vscode	yzhang.markdown-all-in-one	managed-outside-nix-package-set
 vscode	zwyx.autoclosetabs	managed-outside-nix-package-set
 uv	claude-monitor	managed-outside-nix-package-set
+tap	minghinmatthewlam/tap	homebrew-tap-not-managed-by-nix
+cask	minghinmatthewlam/tap/pi-gui	no-nixpkg-mapping

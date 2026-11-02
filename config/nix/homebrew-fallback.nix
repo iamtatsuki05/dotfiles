@@ -8,6 +8,7 @@
     "jakehilborn/jakehilborn"
     "lyraphase/pcloud"
     "microsoft/git"
+    "minghinmatthewlam/tap"
     "modularml/packages"
     "stablyai/orca"
   ];
@@ -61,6 +62,7 @@
     "one-switch"
     "parsec"
     "lyraphase/pcloud/pcloud-drive"
+    "minghinmatthewlam/tap/pi-gui"
     "pliim"
     "popclip"
     "pycharm"
@@ -89,6 +91,7 @@
   ];
 
   trustedCasks = [
+    "minghinmatthewlam/tap/pi-gui"
     "grishka/grishka/neardrop"
     "lyraphase/pcloud/pcloud-drive"
     "stablyai/orca/orca"
