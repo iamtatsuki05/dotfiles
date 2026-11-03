@@ -98,6 +98,7 @@ run_unit_tests() {
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_delegation_analysis.sh"
   "$TEST_ZSH_BIN" "$REPO_ROOT/tests/test_agent_html_preview_review.sh"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_run_compact.py"
+  "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_agent_skill_publish.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_rtk_setup.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_skill_hooks.py"
   "$TEST_PYTHON_BIN" "$REPO_ROOT/tests/test_html_plan.py"

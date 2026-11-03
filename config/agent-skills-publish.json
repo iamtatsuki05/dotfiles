@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "repository": "iamtatsuki05/skills",
+  "plugin": {
+    "name": "tatsuki-skills",
+    "marketplace_name": "tatsuki",
+    "description": "A curated collection of agent skills maintained by Tatsuki Okada.",
+    "author": {
+      "name": "Tatsuki Okada",
+      "url": "https://iamtatsuki05.com/"
+    }
+  },
+  "skills": [
+    "agent-cli-consult",
+    "alphaxiv-paper-lookup",
+    "compatibility-safety",
+    "git-github-flow",
+    "html-preview-review",
+    "shaping-japanese-longform"
+  ]
+}
