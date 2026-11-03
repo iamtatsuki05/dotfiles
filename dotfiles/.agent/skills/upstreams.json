@@ -2605,6 +2605,49 @@
         "review_report": ".agent/work/sessions/2026-11-02-232526-install-html-plan-codex/security-review.md"
       },
       "local_tree_sha256": "c45dd5d7daf5fcd3d39acf7ade7208089b2322a0ea3199094de6590d6093914d"
+    },
+    {
+      "id": "notion-cli",
+      "description": "Official Notion CLI (ntn) skill for Notion API requests, Markdown pages, file uploads and Workers.",
+      "repository": "https://github.com/makenotion/skills.git",
+      "branch": "main",
+      "pinned_commit": "10e976aa591995fd60c75ef13beba1a8aa827fcc",
+      "mappings": [
+        {
+          "source_path": "skills/notion-cli",
+          "local_path": "dotfiles/.agent/skills/notion-cli"
+        }
+      ],
+      "source_url": "https://github.com/makenotion/skills/tree/10e976aa591995fd60c75ef13beba1a8aa827fcc/skills/notion-cli",
+      "provenance_note": "MIT license from Notion Labs retained. Local overlays only: install ntn through the dotfiles mise entry instead of the upstream curl installer; replace the nonexistent `ntn pages update` with `ntn pages edit` (verified against ntn 0.23.26 help), noting that it replaces the whole page, that partial edits use update_content, and that deletion or confirmation-skipping flags need an explicit request; check NOTION_API_TOKEN without printing it or running `ntn auth token`. ntn acts with the authenticated user's Notion permissions.",
+      "local_text_replacements": [
+        {
+          "local_path": "dotfiles/.agent/skills/notion-cli/SKILL.md",
+          "old": "## Install\n\n```bash\ncurl -fsSL https://ntn.dev | bash\n```",
+          "new": "## Install\n\nThis dotfiles setup manages `ntn` through mise (`\"npm:ntn\" = \"latest\"`). If `ntn` is missing, run `mise install npm:ntn`. Do not run the upstream installer (`curl -fsSL https://ntn.dev | bash`) without a separate explicit request.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/notion-cli/SKILL.md",
+          "old": "Prefer `ntn pages create` / `ntn pages update` for Markdown page content.",
+          "new": "Prefer `ntn pages create` / `ntn pages edit` for Markdown page content. `ntn pages edit` replaces the whole page. For a partial edit, send `update_content` with `old_str`/`new_str` pairs through `ntn api v1/pages/<page-id>/markdown -X PATCH` (check the body shape with `--spec -X PATCH`). Unless the user explicitly asked for that deletion, do not pass `--allow-deleting-content` or `allow_deleting_content: true` (they allow deleting child pages and databases), and do not add `--yes` to `ntn pages trash` or other commands (it skips confirmation).",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/notion-cli/SKILL.md",
+          "old": "- Check `NOTION_API_TOKEN` first. If it is already set, prefer using it instead\n  of telling the user to run `ntn login`.",
+          "new": "- Check whether `NOTION_API_TOKEN` is set without printing its value (for\n  example `[ -n \"${NOTION_API_TOKEN:-}\" ] && echo set`). Never echo, log, or\n  write the token, and do not run commands that print it, such as `ntn auth token`.\n  If it is set, prefer using it instead of telling the user to run `ntn login`.",
+          "expected_count": 1
+        }
+      ],
+      "local_tree_sha256": "6d1975db1cfec4f73ee1ef1b47380dc66fbcd5795498108b96431f94bcf609af",
+      "security_review": {
+        "status": "reviewed",
+        "review_agent": "claude-code",
+        "last_reviewed_commit": "10e976aa591995fd60c75ef13beba1a8aa827fcc",
+        "last_reviewed_at": "2026-11-03T18:43:50+00:00",
+        "review_report": ".agent/work/sessions/2026-11-04-031548-add-ntn-claude/subagents/upstream-review.md"
+      }
     }
   ]
 }

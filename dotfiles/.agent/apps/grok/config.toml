@@ -113,6 +113,7 @@ paths = [
   "~/.grok/dotfiles-skills/mlops/inference/serving-llms-vllm",
   "~/.grok/dotfiles-skills/natural-japanese",
   "~/.grok/dotfiles-skills/note-taking/obsidian",
+  "~/.grok/dotfiles-skills/notion-cli",
   "~/.grok/dotfiles-skills/principle-make-operations-idempotent",
   "~/.grok/dotfiles-skills/principle-separate-before-serializing-shared-state",
   "~/.grok/dotfiles-skills/productivity/airtable",

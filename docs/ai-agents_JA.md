@@ -129,6 +129,12 @@ CC BY 4.0のライセンス、作者表記、`CITATION.cff`を保持します。
 取得したHTMLは未信頼の実行可能コンテンツとして扱い、取得結果や出所不明のHTMLを動画helperへ渡しません。動画helperは `.story-frames` を削除し、出力を上書きするため、信頼済みの生成HTMLを、機密ファイルやsymlinkのない新規の使い捨てディレクトリで処理してください。明示的な上書き依頼がなければ、新しい出力先を使います。
 追加したskillは新しいAgentの会話で読み込んでください。
 
+## Notion CLI
+
+Notion公式CLIの `ntn` を、miseのツール（`"npm:ntn" = "latest"`）として導入します。共有skillの `notion-cli` は [makenotion/skills](https://github.com/makenotion/skills) の固定版です。上流の文面からの変更は3点です。まず、導入方法を上流のcurl installerからmiseに置き換えました。次に、存在しない `ntn pages update` を `ntn pages edit` に直し、ページ全体が置き換わることと、削除や確認省略のflagは明示的な依頼があるときだけ使うことを注記しています。最後の1点は `NOTION_API_TOKEN` の確認方法の変更で、値の表示や `ntn auth token` の実行はせず、設定の有無だけを調べる形です。
+認証は `ntn login` か、個人用アクセストークンを `NOTION_API_TOKEN` に設定して行います。ただし、0.23.26の `ntn pages get --help` によると、`ntn pages` は現時点で `NOTION_API_TOKEN` が必須です。どちらの方法でも本人のNotion権限で動くため、Agentはあなたのアカウントで閲覧できるページを読み、編集できるページを変更できます。ゲストと制限付きメンバーは、ログインも個人用アクセストークンの作成もできません。複数のworkspaceを使う場合は、`NOTION_WORKSPACE_ID` でコマンドごとに対象を指定するか、workspaceごとのトークンを必要なコマンドにだけ `NOTION_API_TOKEN` で渡してください。shellの起動ファイルでトークンを常時exportすることは避けてください。
+追加したskillは新しいAgentの会話で読み込んでください。
+
 ## Pstackのワークフロー
 
 Claude CodeとCodexには、固定した [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) 版（`7c045e5617b5`、version `0.9.119`）を `dotfiles/.agent/apps/pstack/canonical` から配布します。Cursorは `cursor/plugins@ae5650febf43`、version `0.15.36` を `dotfiles/.agent/apps/pstack/cursor` に保持します。独立した2個の原則skillは、従来の導入元と明示呼び出しの方針を維持します。

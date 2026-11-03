@@ -20,7 +20,7 @@ test_check_validates_registered_upstreams() {
   local output
   output="$(python3 "$SCRIPT" check)"
 
-  assert_contains_text "$output" "registered upstream skills: 25"
+  assert_contains_text "$output" "registered upstream skills: 26"
   assert_not_contains_text "$output" "modern-web-guidance"
   [[ ! -e "$REPO_ROOT/dotfiles/.agent/skills/modern-web-guidance" ]] || fail "removed skill still exists"
   assert_contains_text "$output" "html-plan"
@@ -47,6 +47,7 @@ test_check_validates_registered_upstreams() {
   assert_contains_text "$output" "cli-for-agent"
   assert_contains_text "$output" "create-plugin"
   assert_contains_text "$output" "teaching"
+  assert_contains_text "$output" "notion-cli"
 }
 
 test_pstack_principles_preserve_explicit_invocation() {
@@ -447,7 +448,8 @@ test_security_prompt_all_generates_prompts_for_registered_skills() {
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
       --latest-commit html-plan=3131313131313131313131313131313131313131 \
-      --latest-commit teaching=3030303030303030303030303030303030303030
+      --latest-commit teaching=3030303030303030303030303030303030303030 \
+      --latest-commit notion-cli=3434343434343434343434343434343434343434
   )"
 
   assert_contains_text "$output" "Skill ID: superpowers"
@@ -505,6 +507,7 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
   print -r -- "reviewed cli-for-agent" > "$report_dir/cli-for-agent.md"
   print -r -- "reviewed create-plugin" > "$report_dir/create-plugin.md"
   print -r -- "reviewed teaching" > "$report_dir/teaching.md"
+  print -r -- "reviewed notion-cli" > "$report_dir/notion-cli.md"
   print -r -- "reviewed html-plan" > "$report_dir/html-plan.md"
 
   output="$(
@@ -538,7 +541,8 @@ test_apply_update_all_latest_dry_run_requires_review_dir_and_plans_each_skill() 
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
       --latest-commit html-plan=3131313131313131313131313131313131313131 \
-      --latest-commit teaching=3030303030303030303030303030303030303030
+      --latest-commit teaching=3030303030303030303030303030303030303030 \
+      --latest-commit notion-cli=3434343434343434343434343434343434343434
   )"
 
   assert_contains_text "$output" "superpowers: plan update"
@@ -768,7 +772,8 @@ EOF'
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
       --latest-commit html-plan=3131313131313131313131313131313131313131 \
-      --latest-commit teaching=3030303030303030303030303030303030303030
+      --latest-commit teaching=3030303030303030303030303030303030303030 \
+      --latest-commit notion-cli=3434343434343434343434343434343434343434
   )"
 
   assert_contains_text "$output" "superpowers: review approved"
@@ -845,7 +850,8 @@ PY
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
       --latest-commit html-plan=3131313131313131313131313131313131313131 \
-      --latest-commit teaching=3030303030303030303030303030303030303030
+      --latest-commit teaching=3030303030303030303030303030303030303030 \
+      --latest-commit notion-cli=3434343434343434343434343434343434343434
   )"
   ended_at="$(python3 - <<'PY'
 import time
@@ -921,7 +927,8 @@ EOF'
       --latest-commit cli-for-agent=2828282828282828282828282828282828282828 \
       --latest-commit create-plugin=2929292929292929292929292929292929292929 \
       --latest-commit html-plan=3131313131313131313131313131313131313131 \
-      --latest-commit teaching=3030303030303030303030303030303030303030 2>&1
+      --latest-commit teaching=3030303030303030303030303030303030303030 \
+      --latest-commit notion-cli=3434343434343434343434343434343434343434 2>&1
   )"
   local exit_status=$?
   set -e
