@@ -7,8 +7,8 @@
       "description": "External Superpowers skills vendored into the shared agent skill tree.",
       "repository": "https://github.com/obra/superpowers.git",
       "branch": "main",
-      "pinned_commit": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
-      "local_tree_sha256": "f85a1b9e54fa8b378a5185fb4d6247f602bc3e1e43ee545b04d4ce4c6550ff88",
+      "pinned_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "local_tree_sha256": "15e0fd340964801eb2241a735cbc4ccaf0b3bf91cd06ccbecbe2693b509e3ea3",
       "mappings": [
         {
           "source_path": "skills/dispatching-parallel-agents",
@@ -36,11 +36,11 @@
         },
         {
           "source_path": "skills/systematic-debugging/condition-based-waiting.md",
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md"
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md"
         },
         {
           "source_path": "LICENSE",
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/LICENSE"
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/LICENSE"
         },
         {
           "source_path": "LICENSE",
@@ -103,37 +103,37 @@
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
           "old": "await waitFor(() => getResult() !== undefined);",
           "new": "await waitFor(() => getResult() !== undefined, 'result');",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
           "old": "| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'))` |\n| Wait for state | `waitFor(() => machine.state === 'ready')` |\n| Wait for count | `waitFor(() => items.length >= 5)` |\n| Wait for file | `waitFor(() => fs.existsSync(path))` |\n| Complex condition | `waitFor(() => obj.ready && obj.value > 10)` |",
           "new": "| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'), 'DONE event')` |\n| Wait for state | `waitFor(() => machine.state === 'ready', 'ready state')` |\n| Wait for count | `waitFor(() => items.length >= 5, 'five items')` |\n| Wait for file | `waitFor(() => fs.existsSync(path), 'output file')` |\n| Complex condition | `waitFor(() => obj.ready && obj.value > 10, 'ready value above 10')` |",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
           "old": "    if (result) return result;",
           "new": "    if (result !== undefined && result !== null && result !== false) return result;",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
           "old": "See `condition-based-waiting-example.ts` in this directory for complete implementation with domain-specific helpers (`waitForEvent`, `waitForEventCount`, `waitForEventMatch`) from actual debugging session.",
           "new": "Capture a baseline cursor or count before starting the operation when the observable state retains history; otherwise stale events can satisfy the wait. Adapt the generic pattern to the repository's existing test utilities rather than copying a domain-specific helper.",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
           "old": "await waitForEvent(manager, 'TOOL_STARTED'); // First: wait for condition",
           "new": "await waitForEvent(manager, threadId, 'TOOL_STARTED'); // First: wait for condition",
           "expected_count": 1
         },
         {
-          "local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md",
+          "local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md",
           "old": "## Real-World Impact\n\nFrom debugging session (2025-10-03):\n- Fixed 15 flaky tests across 3 files\n- Pass rate: 60% → 100%\n- Execution time: 40% faster\n- No more race conditions",
           "new": "## Historical upstream report\n\nThe upstream document reports a 2025 debugging session with fewer flaky tests and faster execution. Treat those figures as historical context, not as a guarantee for the current repository; measure the local test before and after the change.",
           "expected_count": 1
@@ -166,9 +166,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
-        "last_reviewed_at": "2026-10-31T09:38:52+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/superpowers.md"
+        "last_reviewed_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/superpowers.verified.md"
       },
       "provenance_note": "Three skills are installed directly under the flat discovery root. The existing systematic-debugging skill receives the pinned condition-based-waiting reference, and the local Three Paths brainstorming router retains the upstream MIT LICENSE. Namespace-qualified references are rewritten to flat names. Local replacements preserve CommonJS compatibility, require authorization before paid API micro-tests, correct the waiting examples, exclude the Lace-specific helper, and mark upstream performance figures as historical."
     },
@@ -177,7 +177,7 @@
       "description": "External empirical prompt tuning skill kept in Japanese as local SKILL.md.",
       "repository": "https://github.com/mizchi/skills.git",
       "branch": "main",
-      "pinned_commit": "ab4eb2f7a92a13fb37c225ab427f2f492143ace1",
+      "pinned_commit": "195bb34cb5220c3610ec4ba49007cae2fb10373e",
       "local_tree_sha256": "fb37d5c63fb796d1113c76faa5530639ad388ec6e6dcc62ab69282c248c555fd",
       "mappings": [
         {
@@ -202,9 +202,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ab4eb2f7a92a13fb37c225ab427f2f492143ace1",
-        "last_reviewed_at": "2026-10-31T09:38:54+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/empirical-prompt-tuning.md"
+        "last_reviewed_commit": "195bb34cb5220c3610ec4ba49007cae2fb10373e",
+        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/empirical-prompt-tuning.verified.md"
       },
       "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning",
       "provenance_note": "関連 skill への参照は flat discovery root で認識される namespace なしの名前へ変更している。"
@@ -214,7 +214,7 @@
       "description": "Current Matt Pocock engineering and productivity skills vendored into the shared agent skill tree without deprecated aliases.",
       "repository": "https://github.com/mattpocock/skills.git",
       "branch": "main",
-      "pinned_commit": "a496f5513d4a4cf889bc48e189e579f4b0bdf6aa",
+      "pinned_commit": "5863806dd4e15c63174bee4e7515a4256792ecfa",
       "local_tree_sha256": "636f3fa79ad3575f606fa908ea057dd262d6f2aec94b7f199c6ccf3acaf37007",
       "mappings": [
         {
@@ -453,9 +453,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a496f5513d4a4cf889bc48e189e579f4b0bdf6aa",
-        "last_reviewed_at": "2026-10-31T09:38:56+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/mattpocock-skills.md"
+        "last_reviewed_commit": "5863806dd4e15c63174bee4e7515a4256792ecfa",
+        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/mattpocock-skills.verified.md"
       },
       "source_url": "https://github.com/mattpocock/skills/tree/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
       "provenance_note": "Deprecated local aliases and removed upstream skills are not retained: grill-me, diagnose, and zoom-out are removed; diagnosing-bugs is the canonical replacement. domain-modeling and codebase-design are vendored because the current grill-with-docs and improve-codebase-architecture skills require them. Unsupported Claude frontmatter and Skill-tool wording are converted deterministically for Codex. Handoff uses active sessions; architecture reports are offline and user-opened; durable domain docs, bisect, artifact/test deletion, and raw HITL error input are approval- or redaction-gated. Each skill carries the unchanged upstream MIT LICENSE."
@@ -465,8 +465,8 @@
       "description": "Japanese work-document writing and revision skill with deterministic linting and document-type guidance.",
       "repository": "https://github.com/coji/natural-japanese.git",
       "branch": "main",
-      "pinned_commit": "25a8638b780037a2012e2bb3f624a0b1710666fb",
-      "local_tree_sha256": "bc1ae0690b1f5e5c3ab779197f84241f6f470ba7e73ca7f2b430f6f9d10faad9",
+      "pinned_commit": "840bd400cbcb64c8b64d492a144da54fc05776c5",
+      "local_tree_sha256": "5117ba8bd8e5799b6167668d48cf65d5fb2040d0b723ac9aa132db3e91b35ac5",
       "mappings": [
         {
           "source_path": "skills/natural-japanese",
@@ -483,14 +483,20 @@
           "old": "argument-hint: \"[write|score] [quick|full|exp(score のみ)] [対象ファイルや依頼内容]\"",
           "new": "metadata:\n  invocation: \"Supports write requests in quick or full mode, and score requests in quick, full, or experimental mode.\"",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/natural-japanese/SKILL.md",
+          "old": "論旨(主張と根拠の対応、矛盾、前提)を見てほしいという依頼は、このスキルの範囲ではない。同じリポジトリの `critical-thinking` スキル(`/critical-thinking logic <ファイル>`、`/critical-thinking somosomo <ファイル>`)に渡す。",
+          "new": "論旨(主張と根拠の対応、矛盾、前提)を見てほしいという依頼は、このスキルの範囲ではない。",
+          "expected_count": 1
         }
       ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "25a8638b780037a2012e2bb3f624a0b1710666fb",
-        "last_reviewed_at": "2026-10-31T09:38:59+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/natural-japanese.md"
+        "last_reviewed_commit": "840bd400cbcb64c8b64d492a144da54fc05776c5",
+        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/natural-japanese.verified.md"
       },
       "source_url": "https://github.com/coji/natural-japanese/tree/0f1cc1c5a4e2aa7590598c88a15c213a60d9545a/skills/natural-japanese",
       "provenance_note": "The complete runtime skill directory and MIT LICENSE are copied from the pinned commit. The unsupported top-level argument-hint is moved into metadata. Repository hooks, plugin manifests, and release tooling are intentionally excluded."
@@ -580,7 +586,7 @@
       "description": "Delegate one bounded coding task to a separate Codex CLI or Claude Code process through a relay that never commits, then review the diff and land it yourself.",
       "repository": "https://github.com/amElnagdy/delegate-skills.git",
       "branch": "master",
-      "pinned_commit": "3aa72d681a79e2a9d09bd9a316353003ae1cb4a7",
+      "pinned_commit": "7f8ae3435e5bc68a54efdca9f67797e905845562",
       "local_tree_sha256": "d1b4f4cc4f20d1385f5b9d036f03a387636d53095016db41fdefa32fc6cefdc0",
       "mappings": [
         {
@@ -615,32 +621,26 @@
         },
         {
           "local_path": "dotfiles/.agent/skills/codex-delegate/SKILL.md",
-          "old": "This skill selects Codex as the **implementer**. Codex as the **orchestrator** is a separate role:\nbackground waiting requires codex-background and its configured MCP server. Installing\ncodex-delegate does not automatically install or configure that support utility. See the\n[codex-background setup guide](../codex-background/references/configuration.md).",
-          "new": "This vendored subset uses its bundled relay and the host background-command facility. The separate codex-background MCP utility is not required or installed by this skill.",
+          "old": "brief. Full guidance and a template: [references/writing-the-brief.md](references/writing-the-brief.md).\n\n### 2. Dispatch",
+          "new": "brief. Full guidance and a template: [references/writing-the-brief.md](references/writing-the-brief.md).\n\nThis vendored subset uses its bundled relay and the host background-command facility. The separate codex-background MCP utility is not required or installed by this skill.\n\n### 2. Dispatch\n\nUse the bundled relay and the host background-command facility below. Do not install or configure a separate MCP utility as part of delegation.",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/skills/codex-delegate/SKILL.md",
-          "old": "For **Codex orchestration of background work**, install and configure the separate\n**codex-background** support utility first. If its MCP tools or registry are missing, stop and\nreport the setup requirement; do not silently fall back to model-driven polling. Then invoke its\nregistered `delegate_run` MCP tool once in place of the shell example below.\nFollow that skill for structured common arguments, unchanged provider flags and reattachment by\nrunId. Keep the request pending until completion, then continue this skill's review and landing\nsteps. Other orchestrators keep the shell workflow below.",
-          "new": "Use the bundled relay and the host background-command facility below. Do not install or configure a separate MCP utility as part of delegation.",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/skills/codex-delegate/SKILL.md",
-          "old": "Codex using codex-background keeps the original MCP request pending: no model-driven sleep,\nstatus or log polling. Use `delegate_wait` only to reattach after an interrupted request.",
-          "new": "Wait for the bundled relay through the host background-command facility; completion requires process exit and its result file.",
+          "old": "### 3. Wait for completion\n\nThe helper blocks until Codex finishes, so back it with whatever your orchestrator offers and resume\n",
+          "new": "### 3. Wait for completion\n\nWait for the bundled relay through the host background-command facility; completion requires process exit and its result file.\n\nThe helper blocks until Codex finishes, so back it with whatever your orchestrator offers and resume\n",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/skills/claude-delegate/SKILL.md",
-          "old": "For **Codex orchestration of background work**, install and configure the separate\n**codex-background** support utility first. If its MCP tools or registry are missing, stop and\nreport the setup requirement; do not silently fall back to model-driven polling. Then invoke its\nregistered `delegate_run` MCP tool once in place of the shell example below.\nFollow that skill for structured common arguments, unchanged provider flags and reattachment by\nrunId. Keep the request pending until completion, then continue this skill's review and landing\nsteps. Other orchestrators keep the shell workflow below.",
-          "new": "Use the bundled relay and the host background-command facility below. Do not install or configure a separate MCP utility as part of delegation.",
+          "old": "### 2. Dispatch\n\n```bash\n",
+          "new": "### 2. Dispatch\n\nUse the bundled relay and the host background-command facility below. Do not install or configure a separate MCP utility as part of delegation.\n\n```bash\n",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/skills/claude-delegate/SKILL.md",
-          "old": "Codex using codex-background keeps the original MCP request pending: no model-driven sleep,\nstatus or log polling. Use `delegate_wait` only to reattach after an interrupted request.",
-          "new": "Wait for the bundled relay through the host background-command facility; completion requires process exit and its result file.",
+          "old": "### 3. Wait\n\nThe relay blocks until Claude exits. Use the orchestrator's background-command facility, or run it in\n",
+          "new": "### 3. Wait\n\nWait for the bundled relay through the host background-command facility; completion requires process exit and its result file.\n\nThe relay blocks until Claude exits. Use the orchestrator's background-command facility, or run it in\n",
           "expected_count": 1
         },
         {
@@ -653,9 +653,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "3aa72d681a79e2a9d09bd9a316353003ae1cb4a7",
-        "last_reviewed_at": "2026-10-31T09:42:40+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/delegate-skills.md"
+        "last_reviewed_commit": "7f8ae3435e5bc68a54efdca9f67797e905845562",
+        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/delegate-skills.verified.md"
       },
       "source_url": "https://github.com/amElnagdy/delegate-skills/tree/b781ee2e23089630e2fbee1cfd6174afe4edeb76/skills",
       "provenance_note": "Only codex-delegate and claude-delegate are vendored; delegate-setup and the other implementer relays are not. Each relay is Node built-ins only, spawns the local CLI, and never commits. The local safety overlay pins read-only defaults, forbids permission-bypass flags, and routes commits through git-github-flow. The upstream MIT LICENSE is copied into each skill directory. Local orchestration continues to use the bundled relay; the optional codex-background MCP utility is not required or installed."
@@ -778,7 +778,7 @@
       "description": "Two selected pstack principles for shared-state isolation and retry-safe operations.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "4dd1d05818d19792e7cd6e818f1667f95f7e1dbe",
+      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
       "mappings": [
         {
           "source_path": "pstack/skills/principle-make-operations-idempotent/SKILL.md",
@@ -817,9 +817,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "4dd1d05818d19792e7cd6e818f1667f95f7e1dbe",
-        "last_reviewed_at": "2026-10-31T09:39:07+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/pstack-principles.md"
+        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/pstack-principles.verified.md"
       }
     },
     {
@@ -954,10 +954,10 @@
     },
     {
       "id": "consulting-pptx-skill",
-      "description": "Carnot AI consulting slide rules, 62 HTML parts, editable PPTX catalog, and deck validators.",
+      "description": "Carnot AI consulting slide rules, HTML slide parts, PPTX generation, and deck validators.",
       "repository": "https://github.com/carnot-tech/consulting-pptx-skill.git",
       "branch": "main",
-      "pinned_commit": "e5f35e57e14d3998249a559c620a9286c95b4595",
+      "pinned_commit": "1d62cd1ef6fc509fb96556f609b69b2bb533b09c",
       "mappings": [
         {
           "source_path": ".gitignore",
@@ -974,10 +974,6 @@
         {
           "source_path": "SKILL.md",
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/SKILL.md"
-        },
-        {
-          "source_path": "assets",
-          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/assets"
         },
         {
           "source_path": "package.json",
@@ -1008,27 +1004,27 @@
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/examples"
         }
       ],
-      "source_url": "https://github.com/carnot-tech/consulting-pptx-skill/tree/e5f35e57e14d3998249a559c620a9286c95b4595",
+      "source_url": "https://github.com/carnot-tech/consulting-pptx-skill/tree/1d62cd1ef6fc509fb96556f609b69b2bb533b09c",
       "provenance_note": "Pinned upstream snapshot with MIT LICENSE and attribution unchanged; TRADEMARK.md, CONTRIBUTING.md and referenced examples included. Declared local overlays isolate browser profiles, read only the owned DevToolsActivePort, clean up failed CDP sessions, restrict stale-image deletion to literal deck names after successful generation, and keep vendor updates/external writes within explicit task authorization. No npm setup, global install, hook, or external upload executed.",
-      "local_tree_sha256": "4a4ec6946f019bcdd884d5ee51878ae70d270b6a7ea9639f14ed4aa2c2255f3f",
+      "local_tree_sha256": "73a3d27af1b4fffa2aab90f451619b4519b10e5f7374f0adb12002cff03cd3d2",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "e5f35e57e14d3998249a559c620a9286c95b4595",
-        "last_reviewed_at": "2026-10-31T10:10:55+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-safety-fixes-codex/reviews/consulting-pptx-skill.md"
+        "last_reviewed_commit": "1d62cd1ef6fc509fb96556f609b69b2bb533b09c",
+        "last_reviewed_at": "2026-11-12T10:47:40+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/consulting-pptx-skill.verified.md"
       },
       "local_text_replacements": [
         {
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/SKILL.md",
-          "old": "---\n\n# コンサル型スライド作成スキル\n\n主軸は規約の正典 `references/slide-rules.md`。ただし最初に全文を読み込まない。**工程ごとに `scripts/rules.py --phase <工程>` で、その工程の要点（数千字。出力は切らずに全部読む）を読み、詳しい根拠が要る項だけ `--sec` で引く。** 部品は規約を満たすことを確かめた20種類（`new_deck.py --list`）から選び、検査で出た指摘は、指摘に書かれた節だけを引いて直す。\n\n",
-          "new": "---\n\n# コンサル型スライド作成スキル\n\nローカル改変版です。上流は Carnot AI Inc. の consulting-pptx-skill です。ブラウザ接続・一時ファイル・画像削除と更新手順を、この dotfiles 環境向けに修正しています。上流公式の配布版ではありません。\n\n主軸は規約の正典 `references/slide-rules.md`。ただし最初に全文を読み込まない。**工程ごとに `scripts/rules.py --phase <工程>` で、その工程の要点（数千字。出力は切らずに全部読む）を読み、詳しい根拠が要る項だけ `--sec` で引く。** 部品は規約を満たすことを確かめた20種類（`new_deck.py --list`）から選び、検査で出た指摘は、指摘に書かれた節だけを引いて直す。\n\n",
+          "old": "---\n\n# コンサル型スライド作成スキル\n\n規約の正典は `references/slide-rules.md`。全文は読まず、**工程ごとに `scripts/rules.py --phase <工程>` の要点を切らずに読み、根拠が要る項だけ `--sec 4.12` で引く。** 成果物は HTML（16:9・1 section = 1スライド）と `snapshot.py` で印刷した PDF。\n",
+          "new": "---\n\n# コンサル型スライド作成スキル\n\nローカル改変版です。上流は Carnot AI Inc. の consulting-pptx-skill です。ブラウザ接続・一時ファイル・画像削除と更新手順を、この dotfiles 環境向けに修正しています。上流公式の配布版ではありません。\n\n規約の正典は `references/slide-rules.md`。全文は読まず、**工程ごとに `scripts/rules.py --phase <工程>` の要点を切らずに読み、根拠が要る項だけ `--sec 4.12` で引く。** 成果物は HTML（16:9・1 section = 1スライド）と `snapshot.py` で印刷した PDF。\n",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/SKILL.md",
-          "old": "\n「本資料は consulting-pptx-skill（github.com/carnot-tech/consulting-pptx-skill）で作成」の一文は裏表紙（b10）の左下の出典行に既定で入っている。置けるのは**最終ページの出典行だけ**。他のページにツール名が出ていると `check_deck.py` が FAIL にする（クライアントに出せる体裁）。裏表紙を使わないデッキでは最終ページの出典行に足す。\n\n## スキルを育てる（更新・自分の規約・PR）\n\nこのスキルは規約と機械チェックを使った人の指摘で良くなる。次の 3 つを作業の一部として行う。\n\n1. **最新を取り込む。** セッションの最初に、スキルのフォルダが git clone なら `git fetch` して `origin/main` より遅れていれば「スキルの最新版を取り込みますか」と一度だけ聞く（目安は週 1 回）。`git pull` で取り込む。利用者の変更は `local/` に置くので衝突しない。本体のファイルを直接直している場合は、その差分を先に `local/` か PR に逃がす\n2. **自分の規約は `local/` に置く。** 利用者から「当社ではこうする」という指摘を受けたら、本体の `references/slide-rules.md` を書き換えず `local/slide-rules.local.md` に 1 行足す。顧客名・案件コードは `local/forbid.txt` に入れて `--forbid` で検査する。自前のパーツ集・差し込み先の資料・`skin.json` は `local/templates/`\n3. **汎用化できる指摘は PR にする。** 作業中に、本体の規約の誤検知・見逃し・どの組織でも効く新しい指摘に当たったら、納品後に「この修正を本体に PR で出しませんか」と一度だけ提案する。出し方は `CONTRIBUTING.md`（規約 1 行＋`check_deck` の判定＋修正前に FAIL・修正後に通るテスト）。**PR を作る前に `CONTRIBUTING.md` の「PR に入れないもの」を読む**: 顧客名・案件コード・金額・担当者名・実案件のファイル・`skin.json` は差分にもコミットメッセージにも PR 説明にも入れない（会話に出た案件の文脈が混ざりやすいので push 前に差分と説明を見直す）。1 社の好みや理由の書けない規則は本体でなく `local/` へ。既定を変える規則は条件付きで書く。利用者が承諾したら `gh pr create` まで行う。断られたら次のセッションまで再提案しない\n\n## 色と書体\n\n",
-          "new": "\n「本資料は consulting-pptx-skill（github.com/carnot-tech/consulting-pptx-skill）で作成」の一文は裏表紙（b10）の左下の出典行に既定で入っている。置けるのは**最終ページの出典行だけ**。他のページにツール名が出ていると `check_deck.py` が FAIL にする（クライアントに出せる体裁）。裏表紙を使わないデッキでは最終ページの出典行に足す。\n\n## ローカルでの更新・記録\n\n- この skill は dotfiles の vendored ファイルです。更新は、依頼された場合だけ `dotfiles/.agent/skills/upstreams.json` と `scripts/agent_skill_upstreams.py` で固定コミット・ローカル差分・レビューを管理します。資料作成中に skill 内で `git fetch` / `git pull` を実行しないでください。\n- 利用者の規約や案件情報は、依頼で指定された保存先にだけ記録してください。顧客名・案件コード・資料・skin.json を skill の配布ディレクトリや upstream に保存しないでください。永続的な規約追加は、対象と文面を提示し、既存の許可範囲を確認してから行います。\n- skill の利用・更新依頼を、upstream の issue / PR、commit、push、外部送信の許可と解釈しないでください。外部投稿は明示的に依頼された範囲だけ行います。ライセンスと商標の扱いは同梱の LICENSE / TRADEMARK.md を保持します。\n\n## 色と書体\n\n",
+          "old": "## スキルを育てる\n\n自分の組織の規約は本体を書き換えず `local/` に足す。どの組織でも効く指摘・誤検知は、納品後に一度だけ PR を提案する。手順は `working-practices.md` の「スキルを育てる」、PR に入れないものは `CONTRIBUTING.md`。\n",
+          "new": "## ローカルでの更新・記録\n\n- この skill は dotfiles の vendored ファイルです。更新は、依頼された場合だけ `dotfiles/.agent/skills/upstreams.json` と `scripts/agent_skill_upstreams.py` で固定コミット・ローカル差分・レビューを管理します。資料作成中に skill 内で `git fetch` / `git pull` を実行しないでください。\n- 利用者の規約や案件情報は、依頼で指定された保存先にだけ記録してください。顧客名・案件コード・資料・skin.json を skill の配布ディレクトリや upstream に保存しないでください。永続的な規約追加は、対象と文面を提示し、既存の許可範囲を確認してから行います。\n- skill の利用・更新依頼を、upstream の issue / PR、commit、push、外部送信の許可と解釈しないでください。外部投稿は明示的に依頼された範囲だけ行います。ライセンスと商標の扱いは同梱の LICENSE / TRADEMARK.md を保持します。\n",
           "expected_count": 1
         },
         {
@@ -1045,14 +1041,14 @@
         },
         {
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/scripts/snapshot.py",
-          "old": "pdftoppm（poppler）、Pillow。\n\"\"\"\nimport argparse\nimport shutil\nimport subprocess\nimport sys\n",
-          "new": "pdftoppm（poppler）、Pillow。\n\"\"\"\nimport argparse\nimport re\nimport shutil\nimport subprocess\nimport sys\n",
+          "old": "import argparse\nimport shutil",
+          "new": "import argparse\nimport re\nimport shutil",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/scripts/snapshot.py",
-          "old": "    a = ap.parse_args()\n    deck = Path(a.deck).resolve()\n    pdf = deck.with_suffix(\".pdf\")\n    # 前回の実行で残ったまとめ画像を消す（ページ数が減ったときに古い sheet が紛れ込まないように）\n    for old in deck.parent.glob(f\"{deck.stem}_sheet-*.png\"):\n        old.unlink()\n    subprocess.run([chrome(), \"--headless\", \"--disable-gpu\", \"--no-pdf-header-footer\", f\"--print-to-pdf={pdf}\", str(deck)],\n                   capture_output=True, check=True)\n    try:\n        from PIL import Image, ImageDraw\n    except ImportError:\n",
-          "new": "    a = ap.parse_args()\n    deck = Path(a.deck).resolve()\n    pdf = deck.with_suffix(\".pdf\")\n    with tempfile.TemporaryDirectory(prefix=\"snapshot-chrome-\") as profile:\n        subprocess.run([chrome(), \"--headless\", \"--disable-gpu\", \"--no-pdf-header-footer\",\n                        f\"--user-data-dir={profile}\", f\"--print-to-pdf={pdf}\", str(deck)],\n                       capture_output=True, check=True)\n    try:\n        from PIL import Image, ImageDraw\n    except ImportError:\n",
+          "old": "    a = ap.parse_args()\n    deck = Path(a.deck).resolve()\n    pdf = deck.with_suffix(\".pdf\")\n    # 前回の実行で残ったまとめ画像を消す（ページ数が減ったときに古い sheet が紛れ込まないように）\n    for old in deck.parent.glob(f\"{deck.stem}_sheet-*.png\"):\n        old.unlink()\n    subprocess.run([chrome(), \"--headless\", \"--disable-gpu\", \"--no-pdf-header-footer\", f\"--print-to-pdf={pdf}\", str(deck)],\n                   capture_output=True, check=True)\n",
+          "new": "    a = ap.parse_args()\n    deck = Path(a.deck).resolve()\n    pdf = deck.with_suffix(\".pdf\")\n    with tempfile.TemporaryDirectory(prefix=\"snapshot-chrome-\") as profile:\n        subprocess.run([chrome(), \"--headless\", \"--disable-gpu\", \"--no-pdf-header-footer\",\n                        f\"--user-data-dir={profile}\", f\"--print-to-pdf={pdf}\", str(deck)],\n                       capture_output=True, check=True)\n",
           "expected_count": 1
         },
         {
@@ -1072,6 +1068,12 @@
           "old": "}\ndelete data.captures;\nwriteFileSync(join(outdir, \"dump.json\"), JSON.stringify(data));\nawait page.close();\nconsole.log(`${data.slides.length} slides → ${join(outdir, \"dump.json\")}`);\nprocess.exit(0);\n",
           "new": "}\ndelete data.captures;\nwriteFileSync(join(outdir, \"dump.json\"), JSON.stringify(data));\nconsole.log(`${data.slides.length} slides → ${join(outdir, \"dump.json\")}`);\n} finally {\n  await page.close();\n}\n",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/references/working-practices.md",
+          "old": "## スキルを育てる\n\n1. **最新を取り込む。** セッションの最初に、スキルのフォルダが git clone なら `git fetch` し、`origin/main` より遅れていれば「スキルの最新版を取り込みますか」と一度だけ聞く。本体のファイルを直接直している場合は、その差分を先に `local/` か PR に逃がす。\n2. **自分の規約は `local/` に置く。** 「当社ではこうする」という指摘は本体を書き換えず `local/slide-rules.local.md` に1行足す。顧客名・案件コードは `local/forbid.txt`。\n3. **汎用化できる指摘は PR にする。** 測れる指摘は、規約1行＋check の判定＋修正前に FAIL・修正後に通るテストの3点にする。PR を作る前に `CONTRIBUTING.md` の「PR に入れないもの」を読む。承諾されたら `gh pr create` まで行い、断られたら次のセッションまで再提案しない。\n",
+          "new": "## ローカルでの更新・記録\n\n更新・永続化・外部送信は SKILL.md の「ローカルでの更新・記録」に従う。\n",
+          "expected_count": 1
         }
       ]
     },
@@ -1080,7 +1082,7 @@
       "description": "Hallmark design skill and browser/static checks, with local authorization policy.",
       "repository": "https://github.com/Nutlope/hallmark.git",
       "branch": "main",
-      "pinned_commit": "4f6a46c6dc325d40ab268c93e25c7b96676ebccd",
+      "pinned_commit": "04977e15f3dfd6ee4b74c887dac3eb52665d6c92",
       "mappings": [
         {
           "source_path": "skills/hallmark",
@@ -1121,13 +1123,13 @@
           "expected_count": 1
         }
       ],
-      "local_tree_sha256": "992860412043e0234775ad7b267be3598d16c212eb38d87d188218ccf6787e85",
+      "local_tree_sha256": "f3df0120635b9264510bad39487fca0129434cefc07073a95eb1f420e7311303",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "4f6a46c6dc325d40ab268c93e25c7b96676ebccd",
-        "last_reviewed_at": "2026-11-01T06:42:48+00:00",
-        "review_report": ".agent/work/sessions/2026-11-01-hallmark-install-codex/subagents/upstream-review.md"
+        "last_reviewed_commit": "04977e15f3dfd6ee4b74c887dac3eb52665d6c92",
+        "last_reviewed_at": "2026-11-12T10:48:07+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/hallmark.verified.md"
       }
     },
     {
@@ -1135,7 +1137,7 @@
       "description": "Japanese prose revision with meaning-preservation checks and final-text verification.",
       "repository": "https://github.com/nanaism/yomiyasu.git",
       "branch": "main",
-      "pinned_commit": "29d67ccb05e370b5958d72920a9cd1aa829dee80",
+      "pinned_commit": "db78b9bc5e868549b517a037df7a4d1c93edac23",
       "mappings": [
         {
           "source_path": "skills/yomiyasu",
@@ -1144,13 +1146,13 @@
       ],
       "source_url": "https://github.com/nanaism/yomiyasu/tree/29d67ccb05e370b5958d72920a9cd1aa829dee80/skills/yomiyasu",
       "provenance_note": "Unmodified upstream skill including MIT and Unicode licenses. Explicit invocation; no optional hook registration or changes to existing writing skills. Checks store manuscript copies locally by default; respect user data-retention instructions.",
-      "local_tree_sha256": "7b568ce53cab0b3579815da88a6419a373ff15357480ac5b38cdea795c051461",
+      "local_tree_sha256": "28d12d80064830ba82171b8633cdc1f4074ce3b9c816c019289c9852c9dcfc8e",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "29d67ccb05e370b5958d72920a9cd1aa829dee80",
-        "last_reviewed_at": "2026-11-01T18:27:59+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-yomiyasu-codex/subagents/upstream-review.md"
+        "last_reviewed_commit": "db78b9bc5e868549b517a037df7a4d1c93edac23",
+        "last_reviewed_at": "2026-11-12T10:47:21+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/yomiyasu.verified.md"
       }
     },
     {
@@ -1185,7 +1187,7 @@
       "description": "Product-led UI redesign passes with optional snapshot and story-video tools.",
       "repository": "https://github.com/heydamir/unslop.git",
       "branch": "main",
-      "pinned_commit": "a6f121eee5f29c2f74976b75456feae8b66afb3a",
+      "pinned_commit": "97daa3eb365670ea3f87ed85356cbfcee18105a5",
       "mappings": [
         {
           "source_path": "skills/unslop",
@@ -1210,13 +1212,13 @@
           "expected_count": 1
         }
       ],
-      "local_tree_sha256": "8cd3babeca68a27cc17afe29d512f83039064471e8852ed64cc7b3aed1fc15bd",
+      "local_tree_sha256": "bada18705d60d4fb25a6e457e44d2d4c5f8e4207e3a68cba8108388555ad0e12",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a6f121eee5f29c2f74976b75456feae8b66afb3a",
-        "last_reviewed_at": "2026-11-01T19:21:28+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-unslop-codex/subagents/security-review.md"
+        "last_reviewed_commit": "97daa3eb365670ea3f87ed85356cbfcee18105a5",
+        "last_reviewed_at": "2026-11-12T10:47:21+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/unslop.verified.md"
       }
     },
     {
@@ -1224,7 +1226,7 @@
       "description": "Pinned michael-denyer/pstack-claude port for Claude Code and Codex; Cursor remains on pstack-cursor.",
       "repository": "https://github.com/michael-denyer/pstack-claude.git",
       "branch": "main",
-      "pinned_commit": "7c045e5617b5c5f8e2aa3667f1377c50b192b6b9",
+      "pinned_commit": "36f43364d9198e951f2b739bfb007eb747f834b7",
       "mappings": [
         {
           "source_path": "plugins/pstack",
@@ -1352,8 +1354,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/deslop/SKILL.md",
-          "old": "---\nname: deslop\ndescription: Remove AI-generated code slop and clean up code style\n---\n\n# Remove AI code slop\n\nCheck the diff against main and remove AI-generated slop ",
-          "new": "---\nname: deslop\ndescription: Remove AI-generated code slop and clean up code style\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Remove AI code slop\n\nCheck the diff against main and remove AI-generated slop ",
+          "old": "---\nname: deslop\ndescription: Remove AI-generated code slop and clean up code style\n---\n\n# Remove AI code slop\n",
+          "new": "---\nname: deslop\ndescription: Remove AI-generated code slop and clean up code style\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Remove AI code slop\n",
           "expected_count": 1
         },
         {
@@ -1748,8 +1750,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/recall/SKILL.md",
-          "old": "---\nname: recall\ndescription: \"Reconstruct your recent working context from your own chat history, live state, and the shared record (user reports, prior fixes, incidents), then hand back a tight current-state brief. Use for 'recall my work on X', 'catch me up', 'what have I been working on', 'where did I leave off', before starting or resuming work, and before telling the user that something was never recorded.\"\n---\n\n# Recall\n\nOn GitHub Copilot, read the [platform mapping](../poteto-mode/referenc",
-          "new": "---\nname: recall\ndescription: \"Reconstruct your recent working context from your own chat history, live state, and the shared record (user reports, prior fixes, incidents), then hand back a tight current-state brief. Use for 'recall my work on X', 'catch me up', 'what have I been working on', 'where did I leave off', before starting or resuming work, and before telling the user that something was never recorded.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Recall\n\nOn GitHub Copilot, read the [platform mapping](../poteto-mode/referenc",
+          "old": "---\nname: recall\ndescription: \"Reconstruct your recent working context from your own chat history, live state, and the shared record (user reports, prior fixes, incidents), then hand back a tight current-state brief. Use for 'recall my work on X', 'catch me up', 'what have I been working on', 'where did I leave off', before starting or resuming work, and before telling the user that something was never recorded.\"\n---\n\n# Recall\n",
+          "new": "---\nname: recall\ndescription: \"Reconstruct your recent working context from your own chat history, live state, and the shared record (user reports, prior fixes, incidents), then hand back a tight current-state brief. Use for 'recall my work on X', 'catch me up', 'what have I been working on', 'where did I leave off', before starting or resuming work, and before telling the user that something was never recorded.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Recall\n",
           "expected_count": 1
         },
         {
@@ -1790,8 +1792,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/show-me-your-work/SKILL.md",
-          "old": "---\nname: show-me-your-work\ndescription: \"Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, autonomous or multi-phase runs, or work a human reviews after stepping away.\"\n---\n\n# Show me your work\n\nOn GitHub Copilot, read the [platform mapping](../poteto-mo",
-          "new": "---\nname: show-me-your-work\ndescription: \"Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, autonomous or multi-phase runs, or work a human reviews after stepping away.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Show me your work\n\nOn GitHub Copilot, read the [platform mapping](../poteto-mo",
+          "old": "---\nname: show-me-your-work\ndescription: \"Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, autonomous or multi-phase runs, or work a human reviews after stepping away.\"\n---\n\n# Show me your work\n",
+          "new": "---\nname: show-me-your-work\ndescription: \"Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, autonomous or multi-phase runs, or work a human reviews after stepping away.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Show me your work\n",
           "expected_count": 1
         },
         {
@@ -1883,23 +1885,35 @@
           "old": "<EXTREMELY_IMPORTANT>\nYou have pstack.\n\nInvoke the ",
           "new": "<EXTREMELY_IMPORTANT>\nYou have pstack.\n\nBefore applying a pstack entrypoint, read the Local integration policy linked at its top. That policy and current host, repository and user instructions constrain this routing mandate.\n\nInvoke the ",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/hooks/session-start.sh",
+          "old": "    # A sheet committed with the project replaces the user's in that project.",
+          "new": "    # A project sheet may override roles, but the user's disabled hook takes precedence.\n    if [ -f \"$sheet\" ] && sh \"${CLAUDE_PLUGIN_ROOT}/skills/setup-pstack/scripts/read-sheet.sh\" \"$sheet\" | grep -qx 'session hook: off'; then\n      exit 0\n    fi",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/grok/skills/pstack-routing/SKILL.md",
+          "old": "---\nname: pstack-routing\ndescription: On every task, read pstack's poteto-mode skill first and follow its routing instructions when applicable.\n---\n\n# Pstack routing for Grok Build\n",
+          "new": "---\nname: pstack-routing\ndescription: On every task, read pstack's poteto-mode skill first and follow its routing instructions when applicable.\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Pstack routing for Grok Build\n",
+          "expected_count": 1
         }
       ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7c045e5617b5c5f8e2aa3667f1377c50b192b6b9",
-        "last_reviewed_at": "2026-11-02T15:26:20+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-235943-switch-pstack-source-codex/subagents/instructions-review.md"
+        "last_reviewed_commit": "36f43364d9198e951f2b739bfb007eb747f834b7",
+        "last_reviewed_at": "2026-11-12T10:46:55+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/pstack.verified.md"
       },
-      "local_tree_sha256": "6217f5617a2c1b798d753652a9ecb372bfa3ee925debb723faa012ad9575126c"
+      "local_tree_sha256": "cc56e367506c7b42b16e7e601acabbdc0863ba919d711e731573492ff79e8c3a"
     },
     {
       "id": "pstack-cursor",
       "description": "Retained Cursor pstack package; Claude Code and Codex use the separately pinned pstack-claude port.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
       "mappings": [
         {
           "source_path": "pstack",
@@ -2316,9 +2330,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
-        "last_reviewed_at": "2026-11-02T01:30:50+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-pstack-codex/subagents/security-review.md"
+        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/pstack-cursor.verified.md"
       }
     },
     {
@@ -2326,7 +2340,7 @@
       "description": "Selected portable cursor-team-kit skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
       "mappings": [
         {
           "source_path": "cursor-team-kit/skills/control-cli",
@@ -2393,9 +2407,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
-        "last_reviewed_at": "2026-11-02T02:07:48+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/engineering.md"
+        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/cursor-team-kit.verified.md"
       }
     },
     {
@@ -2403,7 +2417,7 @@
       "description": "Selected portable cli-for-agent skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
       "mappings": [
         {
           "source_path": "cli-for-agent/skills/cli-for-agents",
@@ -2440,9 +2454,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
-        "last_reviewed_at": "2026-11-02T02:07:51+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/engineering.md"
+        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/cli-for-agent.verified.md"
       }
     },
     {
@@ -2450,7 +2464,7 @@
       "description": "Selected portable create-plugin skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
       "mappings": [
         {
           "source_path": "create-plugin/skills/create-plugin-scaffold",
@@ -2489,9 +2503,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
-        "last_reviewed_at": "2026-11-02T02:07:54+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/engineering.md"
+        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/create-plugin.verified.md"
       }
     },
     {
@@ -2499,7 +2513,7 @@
       "description": "Selected portable teaching skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
+      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
       "mappings": [
         {
           "source_path": "teaching/skills/create-learning-path",
@@ -2550,9 +2564,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ae5650febf4320793844c12c4adaa937f417f8da",
-        "last_reviewed_at": "2026-11-02T02:07:57+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-cursor-plugin-adoption-codex/subagents/workflows.md"
+        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/teaching.verified.md"
       }
     },
     {
@@ -2560,7 +2574,7 @@
       "description": "Interactive implementation-plan HTML skill and its bundled offline packer from Anthropic community plugins.",
       "repository": "https://github.com/anthropics/claude-plugins-community.git",
       "branch": "main",
-      "pinned_commit": "06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1",
+      "pinned_commit": "163301d1904c0a994539f5226ce0fcd65b8652bf",
       "mappings": [
         {
           "source_path": "html-plan/skills/html-plan",
@@ -2600,9 +2614,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1",
-        "last_reviewed_at": "2026-11-02T14:41:43+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-232526-install-html-plan-codex/security-review.md"
+        "last_reviewed_commit": "163301d1904c0a994539f5226ce0fcd65b8652bf",
+        "last_reviewed_at": "2026-11-12T10:47:16+00:00",
+        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/html-plan.verified.md"
       },
       "local_tree_sha256": "c45dd5d7daf5fcd3d39acf7ade7208089b2322a0ea3199094de6590d6093914d"
     },

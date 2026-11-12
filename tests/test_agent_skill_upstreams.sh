@@ -119,14 +119,14 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   local pin
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" superpowers)"
-  [[ "$pin" == "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b" ]] || fail "unexpected superpowers pin: $pin"
+  [[ "$pin" == "22f0b463e7a5e579904dd6211a520321035526f7" ]] || fail "unexpected superpowers pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" empirical-prompt-tuning)"
-  [[ "$pin" == "ab4eb2f7a92a13fb37c225ab427f2f492143ace1" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
+  [[ "$pin" == "195bb34cb5220c3610ec4ba49007cae2fb10373e" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" herdr)"
   [[ "$pin" == "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde" ]] || fail "unexpected herdr pin: $pin"
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" mattpocock-skills)"
-  [[ "$pin" == "a496f5513d4a4cf889bc48e189e579f4b0bdf6aa" ]] || fail "unexpected mattpocock-skills pin: $pin"
+  [[ "$pin" == "5863806dd4e15c63174bee4e7515a4256792ecfa" ]] || fail "unexpected mattpocock-skills pin: $pin"
 
   assert_file "$skills_root/dispatching-parallel-agents/LICENSE"
   assert_file "$skills_root/test-driven-development/LICENSE"
@@ -169,24 +169,24 @@ test_superpowers_selection_has_five_non_conflicting_workflows() {
   assert_file "$skills_root/dispatching-parallel-agents/SKILL.md"
   assert_file "$skills_root/test-driven-development/SKILL.md"
   assert_file "$skills_root/writing-skills/SKILL.md"
-  assert_file "$skills_root/software-development/systematic-debugging/SKILL.md"
+  assert_file "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/SKILL.md"
   assert_file "$skills_root/brainstorming/SKILL.md"
   assert_file "$skills_root/brainstorming/LICENSE"
 
-  assert_file "$skills_root/software-development/systematic-debugging/condition-based-waiting.md"
-  assert_file "$skills_root/software-development/systematic-debugging/LICENSE"
-  assert_not_exists "$skills_root/software-development/systematic-debugging/condition-based-waiting-example.ts"
+  assert_file "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md"
+  assert_file "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/LICENSE"
+  assert_not_exists "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting-example.ts"
   assert_contains_text "$manifest_text" '"source_path": "skills/systematic-debugging/condition-based-waiting.md"'
-  assert_contains_text "$manifest_text" '"local_path": "dotfiles/.agent/skills/software-development/systematic-debugging/condition-based-waiting.md"'
-  assert_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'Capture a baseline cursor or count before starting the operation'
-  assert_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'Historical upstream report'
-  assert_not_contains "$skills_root/software-development/systematic-debugging/condition-based-waiting.md" 'await waitFor(() => getResult() !== undefined);'
+  assert_contains_text "$manifest_text" '"local_path": "dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md"'
+  assert_contains "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md" 'Capture a baseline cursor or count before starting the operation'
+  assert_contains "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md" 'Historical upstream report'
+  assert_not_contains "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/condition-based-waiting.md" 'await waitFor(() => getResult() !== undefined);'
 
   assert_not_exists "$skills_root/brainstorming/scripts/server.cjs"
   assert_not_exists "$skills_root/brainstorming/scripts/start-server.sh"
   assert_not_contains "$skills_root/brainstorming/SKILL.md" 'docs/superpowers/specs'
   assert_not_contains "$skills_root/brainstorming/SKILL.md" 'git commit'
-  cmp -s "$skills_root/brainstorming/LICENSE" "$skills_root/software-development/systematic-debugging/LICENSE" || fail "Superpowers adapted-skill LICENSE copies differ"
+  cmp -s "$skills_root/brainstorming/LICENSE" "$REPO_ROOT/dotfiles/.agent/skill-archives/systematic-debugging/LICENSE" || fail "Superpowers adapted-skill LICENSE copies differ"
 
   assert_file "$eval_root/superpowers-systematic-debugging/model.yaml"
   assert_file "$eval_root/superpowers-systematic-debugging/tasks/replace-fixed-sleep.yaml"

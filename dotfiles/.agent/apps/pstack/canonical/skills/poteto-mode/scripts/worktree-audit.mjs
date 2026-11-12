@@ -12,6 +12,10 @@
 // and archived_sessions under $CODEX_HOME, and Pi's sessions and pstack subagent
 // sessions under $PI_CODING_AGENT_DIR (defaults: ~/.claude, ~/.codex, ~/.pi/agent).
 //
+// Compressed rollouts use native Zstd when it reads complete streams. Other
+// runtimes fall back to zstd on PATH. A decode failure makes the whole chat
+// scan unknown, so no worktree can be declared safe from that scan.
+//
 // Every probe yields a Fact, { known: true, value } or { known: false }. A hold
 // bucket needs only its own fact; `safe` needs every fact known.
 import { execFileSync } from "node:child_process";
@@ -20,6 +24,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 
 import { candidates, rethrowUnlessRemoved } from "../../reflect/scripts/find-transcript.mjs";
 
@@ -84,11 +89,18 @@ export function parseWorktrees(output) {
   return worktrees;
 }
 
-export function defaultTranscriptRoots({ env = process.env, home = homedir(), stat = statSync } = {}) {
-  const claude = join(env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "projects");
-  const codex = env.CODEX_HOME || join(home, ".codex");
-  const piAgent = env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent");
-  const copilot = join(env.COPILOT_HOME || join(home, ".copilot"), "session-state");
+export function defaultTranscriptRoots({
+  claudeConfigDir = process.env.CLAUDE_CONFIG_DIR,
+  codexHome = process.env.CODEX_HOME,
+  piAgentDir = process.env.PI_CODING_AGENT_DIR,
+  copilotHome = process.env.COPILOT_HOME,
+  home = homedir(),
+  stat = statSync,
+} = {}) {
+  const claude = join(claudeConfigDir || join(home, ".claude"), "projects");
+  const codex = codexHome || join(home, ".codex");
+  const piAgent = piAgentDir || join(home, ".pi", "agent");
+  const copilot = join(copilotHome || join(home, ".copilot"), "session-state");
   const found = [claude, join(codex, "sessions"), join(codex, "archived_sessions"),
     join(piAgent, "sessions"), join(piAgent, "pstack"), copilot].filter((root) => {
       try {
@@ -110,7 +122,7 @@ const fileId = (path, stat) => {
 // the name realpathSync gives it when it gives one. The name alone misses
 // links: node resolves `..` in a target before the links in it and keeps a
 // firmlink route as written, and bun opens the target to name it, which macOS
-// refuses for its autofs /home. A dangling or looping link (ENOENT, ELOOP)
+// refuses for its autofs /home or can hang there. A dangling or looping link (ENOENT, ELOOP)
 // spells nothing. When stat fails any other way the route is closed to this
 // process and the link could land anywhere, so the error propagates and the
 // caller leaves the worktree's chat fact unknown.
@@ -118,7 +130,7 @@ export function symlinkTargets(dir, stat = statSync) {
   return readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isSymbolicLink()).flatMap((entry) => {
     const link = join(dir, entry.name);
     try {
-      return [[link, { id: fileId(link, stat), name: probe(() => realpathSync(link)).value }]];
+      return [[link, { id: fileId(link, stat), name: process.platform === "darwin" && process.versions.bun ? undefined : probe(() => realpathSync(link)).value }]];
     } catch (error) {
       if (["ENOENT", "ELOOP"].includes(error.code)) return [];
       throw error;
@@ -192,11 +204,38 @@ function transcriptNeedles(spellings) {
   return [...new Set(forms)].map((form) => Buffer.from(JSON.stringify(form).slice(1, -1)));
 }
 
+// Bun 1.4.4 returns the partial output of a truncated frame without an error,
+// and nodejs/node#64592 reports the same for Node. The check also turns down a
+// decoder that stops after the first frame. It runs once, not once per transcript.
+function nativeZstdDecoder() {
+  const decode = zlib.zstdDecompressSync;
+  if (typeof decode !== "function") return undefined;
+  // A complete Zstd frame containing "a", independent of compressor availability.
+  const frame = Buffer.from("28b52ffd200109000061", "hex");
+  const joined = Buffer.concat([frame, frame]);
+  try {
+    if (decode(joined).toString() !== "aa") return undefined;
+  } catch {
+    return undefined;
+  }
+  for (const partial of [frame.subarray(0, -1), joined.subarray(0, -1)]) {
+    try {
+      decode(partial);
+      return undefined;
+    } catch { /* A complete-stream decoder must reject an unfinished frame. */ }
+  }
+  return decode;
+}
+
+const decodeZstd = nativeZstdDecoder() ?? ((input) => execFileSync("zstd", ["-d", "-c"], {
+  input, stdio: ["pipe", "pipe", "pipe"], maxBuffer: Infinity, timeout: 30_000,
+}));
+
 // `spellings` maps each worktree path to every spelling a session could use.
 export function lastChats(roots, spellings) {
   const needles = [...spellings].map(([path, forms]) => [path, transcriptNeedles(forms)]);
   const latest = new Map();
-  for (const { path: file } of roots.flatMap((root) => candidates(root, Infinity))) {
+  for (const { path: file } of roots.flatMap((root) => candidates(root, Infinity, { includeCompressed: true }))) {
     let text, mtime;
     try {
       text = readFileSync(file);
@@ -206,6 +245,15 @@ export function lastChats(roots, spellings) {
     } catch (error) {
       rethrowUnlessRemoved(error);
       continue;
+    }
+    if (file.endsWith(".jsonl.zst")) {
+      try {
+        text = decodeZstd(text);
+      } catch (error) {
+        // A missing fallback executable is not a transcript removed during enumeration.
+        const hint = error.code === "ENOENT" ? " Use a runtime with complete native Zstd support or install zstd." : "";
+        throw new Error(`cannot decode ${file}: ${String(error.stderr ?? "").trim() || error.message}${hint}`);
+      }
     }
     for (const [path, forms] of needles) {
       if (mtime > (latest.get(path) ?? 0) && forms.some((needle) => mentions(text, needle))) latest.set(path, mtime);
@@ -223,7 +271,7 @@ function trunkName(repo) {
 
 function isAncestor(repo, head, trunk) {
   try {
-    git(repo, "merge-base", "--is-ancestor", head, `origin/${trunk}`);
+    git(repo, "merge-base", "--is-ancestor", head, `refs/remotes/origin/${trunk}`);
     return true;
   } catch (error) {
     if (error.status === 1) return false;
@@ -261,7 +309,9 @@ function remoteState(path, branch, head) {
   const sha = git(path, "for-each-ref", "--format=%(objectname)", `refs/remotes/origin/${branch}`);
   if (!sha) return "no-remote";
   if (sha === head) return "pushed";
-  return `ahead${git(path, "rev-list", "--count", `origin/${branch}..HEAD`)}`;
+  // `--left-right` prints the remote-only count, then the HEAD-only count.
+  const [behind, ahead] = git(path, "rev-list", "--left-right", "--count", `refs/remotes/origin/${branch}...HEAD`).split(/\s+/).map(Number);
+  return [ahead > 0 && `ahead${ahead}`, behind > 0 && `behind${behind}`].filter(Boolean).join(",");
 }
 
 export function duSize(output) {
@@ -309,7 +359,11 @@ function auditWorktree({ path, locked }, { repo, trunk, fetched, prs, chats, bra
     return name === "HEAD" ? null : name;
   });
   const remote = bind(branch, (name) => (name === null ? known("detached") : probe(() => remoteState(path, name, head.value))));
-  const pr = bind(prs, (list) => bind(branch, (name) => known(list.find((entry) => name !== null && entry.headRefName === name) ?? null)));
+  const pr = bind(prs, (list) => bind(branch, (name) => {
+    const matching = list.filter((entry) => name !== null && entry.headRefName === name);
+    // A branch can target several bases; a newer closed PR does not end an older open one.
+    return known(matching.find((entry) => entry.state === "OPEN") ?? matching[0] ?? null);
+  }));
   const lastChat = chats.get(path);
   const recent = bind(lastChat, (ts) => known(ts !== null && Math.trunc((now - ts) / DAY) <= RECENT_DAYS));
   const bucket = classify({ trunk: fetched, head, age, ancestry, dirty, orphans, remote, pr, recent, locked: known(locked) });

@@ -137,7 +137,7 @@ Notion公式CLIの `ntn` を、miseのツール（`"npm:ntn" = "latest"`）と�
 
 ## Pstackのワークフロー
 
-Claude CodeとCodexには、固定した [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) 版（`7c045e5617b5`、version `0.9.119`）を `dotfiles/.agent/apps/pstack/canonical` から配布します。Cursorは `cursor/plugins@ae5650febf43`、version `0.15.36` を `dotfiles/.agent/apps/pstack/cursor` に保持します。独立した2個の原則skillは、従来の導入元と明示呼び出しの方針を維持します。
+Claude CodeとCodexには、固定した [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) 版（`36f43364d919`、version `0.9.136`）を `dotfiles/.agent/apps/pstack/canonical` から配布します。Cursorは `cursor/plugins@a5539b15a3d5`、version `0.15.36` を `dotfiles/.agent/apps/pstack/cursor` に保持します。独立した2個の原則skillは、従来の導入元と明示呼び出しの方針を維持します。
 
 `mise run pstack-setup` で、導入済みのClaude Code・Codex・Cursor Agentへそれぞれの版を登録します。`--agent claude|codex|cursor` で対象を限定でき、`--dry-run` では変更せず予定を表示します。通常の全体セットアップでもmiseのツール導入後に実行します。登録名は `pstack@dotfiles-pstack` のままです。両native marketplaceは統合された `canonical` を参照し、各実行環境用のmanifestを使います。Claudeはinstallに続けて対象scopeのupdateを行い、参照先とcacheの版情報を更新します。既存アカウントも対象とし、`CLAUDE_CONFIG_DIR` を指定した場合はその設定先だけに登録します。
 

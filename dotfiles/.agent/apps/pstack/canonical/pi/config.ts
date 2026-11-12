@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,12 +43,12 @@ function piInvocation(): Settings["pi"] {
 
 // readDepth is called on each use: pi parses extension flags after it loads
 // the extension.
-export function defaultSettings(readDepth: () => number, env: NodeJS.ProcessEnv = process.env): Settings {
+export function defaultSettings(readDepth: () => number, agentDir = process.env.PI_CODING_AGENT_DIR): Settings {
   const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
   return {
     pluginRoot,
     modelsFile: join(pluginRoot, "models.json"),
-    agentDir: env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"),
+    agentDir: agentDir || join(homedir(), ".pi", "agent"),
     pi: piInvocation(),
     get depth() {
       return readDepth();
@@ -64,6 +64,9 @@ interface Sheet {
   // Leaves ask_user_question to another extension: Pi refuses to start when two
   // extensions register the same tool name.
   askToolOff: boolean;
+  // Drops agent, send_message, list_agents, stop_agent and /pstack-agents for a
+  // profile that delegates through another extension, such as pi-subagents.
+  agentToolsOff: boolean;
   piModels: Map<string, string>;
 }
 
@@ -82,6 +85,7 @@ export function parseSheet(text: string): Sheet {
     text,
     hookOff: lines.some((l) => l === "session hook: off"),
     askToolOff: lines.some((l) => l === "pi ask tool: off"),
+    agentToolsOff: lines.some((l) => l === "pi agent tools: off"),
     piModels,
   };
 }
@@ -114,10 +118,19 @@ const modelsConfig = Type.Object({
 });
 
 function readModels(modelsFile: string): Static<typeof modelsConfig> {
-  const raw: unknown = JSON.parse(readFileSync(modelsFile, "utf8"));
+  const text = readFileSync(modelsFile, "utf8");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${modelsFile} is not valid JSON: ${(e as Error).message}`);
+  }
   if (!Value.Check(modelsConfig, raw)) throw new Error(`${modelsFile} is not a pstack models file: it needs available[], efforts[] and pi.{fallback, models}.`);
   return raw;
 }
+
+// A model or effort value that is not valid, unlike a models.json that cannot be read.
+export class InvalidValueError extends Error {}
 
 // Returns the provider/id for --model, or undefined when the child should run
 // on Pi's default because the parent model is unknown.
@@ -132,7 +145,7 @@ export function resolveModel(
   const models = readModels(settings.modelsFile);
   if (!models.available.includes(requested)) {
     const valid = [...models.available, ...PARENT_MODEL_ALIASES, "<provider>/<model-id>"];
-    throw new Error(`Unknown model "${requested}". Valid values: ${valid.join(", ")}.`);
+    throw new InvalidValueError(`Unknown model "${requested}". Valid values: ${valid.join(", ")}.`);
   }
   // Family names follow the provider the session is signed in to, so a ChatGPT
   // subscription gets OpenAI models without any configuration.
@@ -140,78 +153,26 @@ export function resolveModel(
   const table = models.pi.models[Object.hasOwn(models.pi.models, provider) ? provider : models.pi.fallback];
   const id = sheet?.piModels.get(requested) ?? table[requested];
   if (!id) {
-    throw new Error(`No Pi model mapped for "${requested}": add a "pi models: ${requested}=<provider>/<id>" line to the override sheet.`);
+    throw new InvalidValueError(`No Pi model mapped for "${requested}": add a "pi models: ${requested}=<provider>/<id>" line to the override sheet.`);
   }
   return id;
 }
 
 export const GENERAL_PURPOSE = "general-purpose";
 
-interface AgentDefinition {
+export interface AgentDefinition {
+  // The agent file it was read from; general-purpose has none.
+  file?: string;
+  // When to use it, as the agent tool's type list shows it.
+  description?: string;
   body: string;
   model?: string;
   effort?: string;
 }
 
-export function frontmatter(text: string): { fields: Map<string, string>; body: string } {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
-  const fields = new Map<string, string>();
-  for (const line of (m?.[1] ?? "").split(/\r?\n/)) {
-    const kv = /^([\w-]+):\s*(.*)$/.exec(line);
-    if (kv) fields.set(kv[1], kv[2].trim());
-  }
-  return { fields, body: (m?.[2] ?? text).trim() };
-}
-
-function parseAgentFile(text: string): AgentDefinition {
-  const { fields, body } = frontmatter(text);
-  // Claude Code's `model: inherit` runs the agent on the parent's model, as no model does.
-  const model = fields.get("model");
-  return { body, model: model && model !== "inherit" ? model : undefined, effort: fields.get("effort") || undefined };
-}
-
 // The agent tool's effort parameter: one of models.json's levels.
 export function checkEffort(effort: string, settings: Pick<Settings, "modelsFile">): string {
   const { efforts } = readModels(settings.modelsFile);
-  if (!efforts.includes(effort)) throw new Error(`effort "${effort}" is not one of ${efforts.join(", ")}`);
+  if (!efforts.includes(effort)) throw new InvalidValueError(`effort "${effort}" is not one of ${efforts.join(", ")}`);
   return effort;
-}
-
-// Claude Code registers each plugin agent file as pstack:<file name>, beside
-// the built-in general-purpose type, which has no agent file, and a user agent
-// file under its bare name. A user file only adds a type, never replaces one.
-export function loadAgentTypes(settings: Pick<Settings, "pluginRoot" | "agentDir">): Map<string, AgentDefinition> {
-  const types = new Map<string, AgentDefinition>([[GENERAL_PURPOSE, { body: "" }]]);
-  const dir = join(settings.pluginRoot, "agents");
-  if (existsSync(dir)) {
-    for (const file of readdirSync(dir).filter((f) => f.endsWith(".md")).sort()) {
-      const type = `pstack:${basename(file, ".md")}`;
-      types.set(type, parseAgentFile(readFileSync(join(dir, file), "utf8")));
-    }
-  }
-  for (const [type, text] of userAgentFiles(join(settings.agentDir, USER_AGENTS_DIR))) {
-    if (!types.has(type)) types.set(type, parseAgentFile(text));
-  }
-  return types;
-}
-
-// Each readable .md file in the user's folder, by bare name. A hidden file, such
-// as a macOS ._ sidecar, a name with a colon, which Claude Code keeps for plugin
-// agents, an entry that is not a readable file, and a folder that cannot be
-// listed are skipped, so the user's folder never breaks the plugin's agent types.
-function userAgentFiles(dir: string): [string, string][] {
-  let files: string[];
-  try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith(".") && !f.includes(":")).sort();
-  } catch {
-    return [];
-  }
-  return files.flatMap((file): [string, string][] => {
-    const path = join(dir, file);
-    try {
-      return statSync(path).isFile() ? [[basename(file, ".md"), readFileSync(path, "utf8")]] : [];
-    } catch {
-      return [];
-    }
-  });
 }

@@ -87,10 +87,10 @@ class SkillHooksTest(unittest.TestCase):
                 final.write_text("設定を変更できます。\n")
                 common = ["--source", str(source), "--final", str(final), "--state-dir", str(root / ".yomiyasu")]
                 subprocess.run([sys.executable, str(check), "start", *common, "--host", host,
-                                "--session", "fixture"], check=True, capture_output=True, text=True)
+                                "--session", "fixture"], cwd=root, check=True, capture_output=True, text=True)
                 result = self.invoke(handler, payload, home, root)
                 self.assertEqual(result.get("decision"), "block", result)
-                subprocess.run([sys.executable, str(check), "run", *common], check=True,
+                subprocess.run([sys.executable, str(check), "run", *common], cwd=root, check=True,
                                capture_output=True, text=True)
                 result = self.invoke(handler, payload, home, root)
                 self.assertNotEqual(result.get("decision"), "block", result)

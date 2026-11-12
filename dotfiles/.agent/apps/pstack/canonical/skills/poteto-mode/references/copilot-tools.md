@@ -27,6 +27,7 @@ pstack skills are written in Claude Code tool language (the `Skill` tool, the `A
 poteto-mode's Subagents section sets Claude-specific defaults (`subagent_type: "pstack:poteto-agent"`, `run_in_background: true`). On GitHub Copilot:
 
 - The plugin's agents load as `task` agent types under their namespaced names, `pstack:poteto-agent`, `pstack:comment-sicko`, `pstack:thermo-nuclear-review-subagent`, and `pstack:thermo-nuclear-code-quality-review-subagent`. Pass the skill's `subagent_type` as `agent_type` unchanged.
+- The VS Code agents window rejects those agent types as unknown. There, dispatch `agent_type: "general-purpose"` and tell it in the prompt to read its instructions in full first: the `poteto-mode` skill for `pstack:poteto-agent`, `poteto-mode/references/agents/comment-sicko.md` for `pstack:comment-sicko`, and the `thermo-nuclear-review` or `thermo-nuclear-code-quality-review` skill for the two reviewers.
 - `subagent_type: "general-purpose"` maps to `agent_type: "general-purpose"`. Where a skill leaves the type unset, use `pstack:poteto-agent`.
 - `readonly: true` (reviewers, explorers, critics) maps to a read-only agent type: `explore` for code reading, `code-review` for diff review. When a read-only role must run commands or reach MCP tools, use `general-purpose` and tell it in the prompt not to write files; review its diff anyway.
 - `readonly: false`, or a role that needs MCP tools, maps to `general-purpose` or `pstack:poteto-agent`.
@@ -47,7 +48,7 @@ Skills name Claude Code model aliases in their Models sections. Those aliases ar
 - The plugin's `PreToolUse` hook enforces this for pstack agents. While the sheet is valid, it denies a `task` call whose `agent_type` starts with `pstack:` and whose `model` is not one of the sheet's values, and its reason lists the saved IDs. Retry with the role's saved model; never retry on another unsaved model. It leaves calls with no `model` and other agent types alone.
 - Roles that default to the worker model (`feature, refactoring`): the worker model the user chose.
 - Roles that default to the strongest model (`strongest judgment`): the strongest model the user chose.
-- Diverse-model panels (`arena`, `architect`, `interrogate`, `how` critics, `reflect`): the adversarial signal comes from model diversity, so fill a panel from distinct vendors in the `task` tool's `model` list (Claude, GPT, Gemini, Grok, and so on). pstack ships no default Copilot panel. If only one vendor is reachable, vary reasoning effort and note in the verdict that diversity was reduced.
+- Diverse-model panels (`arena`, `architect`, `interrogate`): the adversarial signal comes from model diversity, so fill a panel from distinct vendors in the `task` tool's `model` list (Claude, GPT, Gemini, Grok, and so on). pstack ships no default Copilot panel. If only one vendor is reachable, vary reasoning effort and note in the verdict that diversity was reduced.
 
 `setup-pstack` lists the models from the `model` enum of the `task` tool and writes only IDs it saw there. After it writes the sheet, it runs its `check-sheet.sh` script, which applies the hook's checks.
 
@@ -91,7 +92,7 @@ Claude Code keeps one directory per project under `${CLAUDE_CONFIG_DIR:-$HOME/.c
 - `workspace.yaml` names the session's `cwd`. Scope every transcript search to the current workspace: keep only session directories whose `cwd` is the workspace path (or a worktree of it), then read their `events.jsonl`. Never read other projects' sessions.
 - When a skill says "this session's transcript", it is the newest matching session directory whose `events.jsonl` contains the opening prompt.
 
-In poteto-mode's playbooks, `eval` reads candidate transcripts from Copilot session state, and `session-pickup` and `worktree-cleanup` search it scoped to the workspace. `orchestrate` and `multi-phase-plan` keep their store under `${COPILOT_HOME:-~/.copilot}/orchestrate/` instead of `~/.claude/orchestrate/`.
+In poteto-mode's playbooks, the Eval playbook reads candidate transcripts from Copilot session state, and `session-pickup` and `worktree-cleanup` search it scoped to the workspace. `orchestrate` and `multi-phase-plan` keep their store under `${COPILOT_HOME:-~/.copilot}/orchestrate/` instead of `~/.claude/orchestrate/`.
 
 ## Driver and bundled skills pstack references
 
@@ -111,7 +112,7 @@ Affected skill entry points point here. Most skills need only the tables above. 
 | Skill | On GitHub Copilot |
 |-------|-------------------|
 | `interrogate` | Each adversary is a `task` call: `subagent_type` becomes `agent_type`, and `model` comes from the sheet. Keep the panel's vendors distinct. |
-| `setup-pstack` | The skill's Other runtimes table names the Copilot sheet path and how it loads. Its [Copilot setup questions](../../setup-pstack/copilot.md) list models from the `task` tool's `model` enum and ask one `ask_user` question per tier and panel slot, grouped by vendor, with no recommended model; a first question lets a plan with one model, or anyone who wants no per-role choices, run every role on the session's model. The role rows are identical; the `session hook` line also controls the Copilot hook. |
+| `setup-pstack` | The skill's [Other runtimes](../../setup-pstack/references/runtimes.md) table names the Copilot sheet path and how it loads. Its [Copilot setup questions](../../setup-pstack/copilot.md) list models from the `task` tool's `model` enum and ask one `ask_user` question per tier and panel slot, grouped by vendor, with no recommended model; a first question lets a plan with one model, or anyone who wants no per-role choices, run every role on the session's model. The role rows are identical; the `session hook` line also controls the Copilot hook. |
 | `architect` | The runner panel goes through the **arena** skill: one `task` per runner, each with a model from the sheet's `architect runners` line. |
 | `how` | The explorers and the explainer are `task` calls with the sheet's `how` role models; critics use a read-only agent type (see Subagent policy). |
 | `arena` | Runners and the cross-judge pool come from the sheet's panel lines; pick the cross-judge from a different vendor than the candidate it grades. |
@@ -120,7 +121,7 @@ Affected skill entry points point here. Most skills need only the tables above. 
 | `swarm` | Workers are `task` calls with `mode: "background"`, each on its own worktree; in the app, `create_session` per worker. |
 | `teach` | Running `how` and `why` in parallel maps to `task` fan-out; image generation uses whatever image tool you have, or skip it and say so. |
 | `why` | Available MCP servers appear in your tool list; there is no `mcp__` prefix convention to scan for. |
-| `reflect` | Run `find-transcript.mjs <session-state directory> '<opening prompt fragment>' <workspace directory>` with the absolute session-state path under `${COPILOT_HOME:-~/.copilot}`. The workspace defaults to the current directory when omitted. The finder checks the session header's `cwd` against that workspace before reading Copilot's `user.message` records, so matching prompts in other projects are skipped. For a conversation in a related worktree, pass that worktree's directory explicitly. Reviewer references that name `.claude/skills/` and `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/` paths mean the Copilot skill locations below. |
+| `reflect` | Run `find-transcript.mjs <session-state directory> '<opening prompt fragment>' <workspace directory>` with the absolute session-state path under `${COPILOT_HOME:-~/.copilot}`. That directory is outside the workspace, so the call takes the normal permission flow. The workspace defaults to the current directory when omitted. The finder checks the session header's `cwd` against that workspace before reading Copilot's `user.message` records, so matching prompts in other projects are skipped. For a conversation in a related worktree, pass that worktree's directory explicitly. Reviewer references that name `.claude/skills/` and `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/` paths mean the Copilot skill locations below. |
 | `recall` | Search Copilot session state scoped to the current workspace (Transcripts above), not `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/`. |
 | `show-me-your-work` | The end-of-run check reads this session's `events.jsonl` (Transcripts above). |
 | `automate-me` | Mode skills live in the Copilot skill locations below; transcripts come from Transcripts above; `plugin-dev:skill-development` resolves through the skills table. |
@@ -132,7 +133,7 @@ Affected skill entry points point here. Most skills need only the tables above. 
 
 ## Vendored scripts
 
-`skills/poteto-mode/scripts/` ships the `watch-pr` PR watcher, the `orch` store CLI, `resume.mjs`, and `worktree-audit.mjs`. They use bun and Node.js and run the same on Copilot; invoke them through `bash` in the form Plugin file access above describes. They need `bun` and `gh`, or `origin` when the forge is Origin. `worktree-audit.mjs` finds each worktree's last chat in Claude Code transcripts under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/`, in Codex and Pi sessions, and in Copilot sessions under `${COPILOT_HOME:-~/.copilot}/session-state`. Pass transcript directories after the repo path to scan others instead. It imports the transcript walker from `skills/reflect/scripts/find-transcript.mjs`, so keep the `reflect` skill installed beside `poteto-mode`.
+`skills/poteto-mode/scripts/` ships the `watch-pr` PR watcher, `resume.mjs`, and `worktree-audit.mjs`. They use bun and Node.js and run the same on Copilot; invoke them through `bash` in the form Plugin file access above describes. They need `bun` and `gh`, or `origin` when the forge is Origin. `worktree-audit.mjs` finds each worktree's last chat in Claude Code transcripts under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/`, in Codex and Pi sessions, and in Copilot sessions under `${COPILOT_HOME:-~/.copilot}/session-state`. Pass transcript directories after the repo path to scan others instead. It imports the transcript walker from `skills/reflect/scripts/find-transcript.mjs`, so keep the `reflect` skill installed beside `poteto-mode`.
 
 ## Instructions file
 

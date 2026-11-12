@@ -139,7 +139,7 @@ Start a new agent conversation to discover the added skill.
 
 ## Pstack workflows
 
-Claude Code and Codex use the pinned [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) port (`7c045e5617b5`, version `0.9.119`) in `dotfiles/.agent/apps/pstack/canonical`. Cursor retains `cursor/plugins@ae5650febf43`, version `0.15.36`, in `dotfiles/.agent/apps/pstack/cursor`. The two standalone principles retain their separate source and explicit-invocation policy.
+Claude Code and Codex use the pinned [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) port (`36f43364d919`, version `0.9.136`) in `dotfiles/.agent/apps/pstack/canonical`. Cursor retains `cursor/plugins@a5539b15a3d5`, version `0.15.36`, in `dotfiles/.agent/apps/pstack/cursor`. The two standalone principles retain their separate source and explicit-invocation policy.
 
 Run `mise run pstack-setup` to register the corresponding package with installed Claude Code, Codex and Cursor Agent clients; `--agent claude|codex|cursor` limits the target and `--dry-run` previews without writing. Full setup also runs this task after mise tools. The local marketplace ID remains `pstack@dotfiles-pstack`. Both native marketplaces point to the unified `canonical` package and select its runtime-specific manifest. Claude installation is followed by a scoped update so both its source path and cached version metadata change. Existing Claude account profiles are included unless `CLAUDE_CONFIG_DIR` selects one profile.
 

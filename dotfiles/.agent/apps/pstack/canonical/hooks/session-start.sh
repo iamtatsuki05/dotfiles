@@ -1,12 +1,37 @@
 #!/bin/sh
 set -eu
 
-# Each runtime's hooks file passes its own name.
+# Each runtime's hooks file passes its own name. MiniMax Code runs Claude
+# Code's hooks file, so it is known by the MINIMAX_PLUGIN_ROOT it sets.
+runtime="${1:-}"
+if [ "$runtime" = claude ] && [ -n "${MINIMAX_PLUGIN_ROOT:-}" ]; then
+  runtime=minimax
+fi
+
 # Literal plugin paths, so a static reader of the hooks files can follow them.
-case "${1:-}" in
+case "$runtime" in
+  agy)
+    # Antigravity starts hooks in the plugin root.
+    sheet="$HOME/.gemini/config/pstack-models.md"
+    reader=./skills/setup-pstack/scripts/read-sheet.sh
+    ;;
   claude)
     sheet="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/pstack-models.md"
+    # A project sheet may override roles, but the user's disabled hook takes precedence.
+    if [ -f "$sheet" ] && sh "${CLAUDE_PLUGIN_ROOT}/skills/setup-pstack/scripts/read-sheet.sh" "$sheet" | grep -qx 'session hook: off'; then
+      exit 0
+    fi
+    # Claude Code may start in a subdirectory, so look at the repository root.
+    if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+      root=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null) || root=$CLAUDE_PROJECT_DIR
+      [ ! -f "$root/.claude/pstack-models.md" ] || sheet="$root/.claude/pstack-models.md"
+    fi
     reader="${CLAUDE_PLUGIN_ROOT}/skills/setup-pstack/scripts/read-sheet.sh"
+    ;;
+  minimax)
+    # MiniMax Code withholds MINIMAX_DATA_DIR from hooks and its bash tool.
+    sheet="$HOME/.minimax/pstack-models.md"
+    reader="${MINIMAX_PLUGIN_ROOT}/skills/setup-pstack/scripts/read-sheet.sh"
     ;;
   codex)
     sheet="${CODEX_HOME:-$HOME/.codex}/pstack-models.md"
@@ -27,7 +52,7 @@ case "${1:-}" in
     reader="${MUSE_PLUGIN_ROOT}/skills/setup-pstack/scripts/read-sheet.sh"
     ;;
   *)
-    echo "session-start.sh: unknown runtime '${1:-}' (expected claude, codex, copilot, or muse)" >&2
+    echo "session-start.sh: unknown runtime '${1:-}' (expected agy, claude, codex, copilot, or muse)" >&2
     exit 2
     ;;
 esac
@@ -40,6 +65,12 @@ else
   normalized=
 fi
 if printf '%s\n' "$normalized" | grep -qx 'session hook: off'; then
+  [ "$runtime" != agy ] || printf '{}\n'
+  exit 0
+fi
+
+if [ "$runtime" = agy ]; then
+  LC_ALL=C awk -f ./hooks/json.awk -f ./hooks/agy-context.awk ./hooks/session-start-agy.md
   exit 0
 fi
 
@@ -47,7 +78,7 @@ fi
 # Copilot's path sandbox, so the hook checks the sheet and adds its role lines
 # to the mandate, and the agent never reads the file. The hooks directory goes
 # through the environment, since awk expands backslash escapes in a -v value.
-if [ "$1" = copilot ]; then
+if [ "$runtime" = copilot ]; then
   printf '%s\n' "$normalized" | PSTACK_HOOKS="${COPILOT_PLUGIN_ROOT}/hooks" LC_ALL=C awk -v found="$found" \
     -f "${COPILOT_PLUGIN_ROOT}/hooks/json.awk" \
     -f "${COPILOT_PLUGIN_ROOT}/skills/setup-pstack/scripts/sheet.awk" \
@@ -58,10 +89,15 @@ fi
 # Muse reads stdout as plain additional context. Its sheet has no include
 # mechanism, so the hook adds the sheet's known role lines to the Muse
 # mandate itself, rebuilt from their checked values.
-if [ "$1" = muse ]; then
+if [ "$runtime" = muse ]; then
   printf '%s\n' "$normalized" | PSTACK_HOOKS="${MUSE_PLUGIN_ROOT}/hooks" LC_ALL=C awk -v found="$found" \
     -f "${MUSE_PLUGIN_ROOT}/skills/setup-pstack/scripts/sheet.awk" \
     -f "${MUSE_PLUGIN_ROOT}/hooks/muse-context.awk"
+  exit 0
+fi
+
+if [ "$runtime" = minimax ]; then
+  cat "${MINIMAX_PLUGIN_ROOT}/hooks/session-start-minimax.md"
   exit 0
 fi
 
