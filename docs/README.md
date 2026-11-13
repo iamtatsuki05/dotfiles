@@ -21,6 +21,8 @@ documents are references for maintenance and configuration changes.
   Homebrew fallback entries, Mac App Store apps, and Brewfile migration.
 - [AI agent configuration](ai-agents.md) covers managed agent files,
   synchronization, Waza evaluations, and Claude Code login profiles.
+- [Agent skill publishing](agent-skills-publishing.md) explains the allowlisted
+  mirror that runs only after a skill-changing pull request merges into `main`.
 - [Secrets and safety](secrets-and-safety.md) covers local credentials,
   dry-runs, backups, and destructive operations.
 
