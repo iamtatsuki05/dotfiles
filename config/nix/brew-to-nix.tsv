@@ -24,7 +24,7 @@ ghq	ghq
 git	git
 git-lfs	git-lfs
 git-secrets	git-secrets
-glances	glances
+glances	dotfiles.glances
 gnu-sed	gnused
 gnupg	gnupg
 gnuplot	gnuplot

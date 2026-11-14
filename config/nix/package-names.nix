@@ -35,7 +35,7 @@
   "git"
   "git-lfs"
   "git-secrets"
-  "glances"
+  "dotfiles.glances"
   "gnused"
   "gnupg"
   "gnuplot"

@@ -6,6 +6,20 @@ let
   darwinOnly = with lib.platforms; darwin;
 in
 {
+  glances = pkgs.glances.overridePythonAttrs (old: {
+    version = "4.5.9";
+    src = pkgs.fetchFromGitHub {
+      owner = "nicolargo";
+      repo = "glances";
+      tag = "v4.5.9";
+      hash = "sha256-CvT9GQ29xXTVxC7V2nGmfDhHLsAtF61+XMMLG8cmHww=";
+    };
+    # The pinned Nixpkgs still adds python-jose, affected by CVE-2026-120459.
+    dependencies = map
+      (dep: if dep.pname == "python-jose" then pkgs.python3Packages.pyjwt else dep)
+      old.dependencies;
+  });
+
   displayplacer = stdenv.mkDerivation rec {
     pname = "displayplacer";
     version = "1.4.0";
