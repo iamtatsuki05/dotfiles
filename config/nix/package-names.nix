@@ -71,6 +71,7 @@
   "ripgrep"
   "sl"
   "stern"
+  "dotfiles.superwhisper-cli"
   "texlive.combined.scheme-full"
   "tree"
   "util-linux"

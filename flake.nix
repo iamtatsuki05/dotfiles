@@ -118,6 +118,7 @@
           waza = dotfilesPackages.waza;
         } // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-rebuild = nix-darwin.packages.${system}.darwin-rebuild;
+          superwhisper-cli = dotfilesPackages.superwhisper-cli;
         };
     in
     {
