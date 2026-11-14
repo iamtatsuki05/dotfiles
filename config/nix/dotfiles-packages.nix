@@ -171,6 +171,44 @@ in
     };
   });
 
+  superwhisper-cli = pkgs.stdenvNoCC.mkDerivation rec {
+    pname = "superwhisper-cli";
+    version = "0.2.0";
+
+    src = pkgs.fetchurl {
+      url = "https://github.com/superultrainc/superwhisper-cli-release/releases/download/v${version}/superwhisper-v${version}-macos-universal.tar.gz";
+      sha256 = "1ac70b9b0505b0b878799e9f9e4a3c273fdbded0486c532266253fbab6c7acb8";
+    };
+
+    sourceRoot = ".";
+    dontBuild = true;
+    # Preserve the upstream universal binary and its code signature.
+    dontFixup = true;
+
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 superwhisper "$out/bin/superwhisper"
+      runHook postInstall
+    '';
+
+    doInstallCheck = true;
+    installCheckPhase = ''
+      runHook preInstallCheck
+      "$out/bin/superwhisper" --version
+      "$out/bin/superwhisper" transcribe --help
+      runHook postInstallCheck
+    '';
+
+    meta = {
+      description = "Command-line access to Superwhisper transcription history and app controls";
+      homepage = "https://superwhisper.com/docs/get-started/cli";
+      license = lib.licenses.unfree;
+      mainProgram = "superwhisper";
+      platforms = darwinOnly;
+      sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
+    };
+  };
+
   waza =
     let
       version = "0.31.0";
