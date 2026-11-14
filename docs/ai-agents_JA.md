@@ -250,6 +250,22 @@ claude-account auth-login work
 claude-account list
 ```
 
+ロックが解放されない場合は、管理中のプロセスを確認して終了できます。
+
+```sh
+claude-account ps                 # 全プロファイルの PID・親 PID・端末
+claude-account ps elyza
+claude-account kill elyza --force # elyza の管理プロセスを強制終了
+claude-account kill --all --force # 全プロファイルの管理プロセスを強制終了
+claude-account --help
+claude-account man
+```
+
+強制終了は SIGKILL を送り、実行中の処理や未保存の作業を失う可能性があります。通常は `/exit` を使い、強制終了は対象セッションの外にある別ターミナルから実行してください。対象は現在のユーザーのログイン用ロック保持者とその子孫です。通常起動した Claude、ロック保持者から切り離されたプロセス、一覧取得後に起動したプロセスは対象外です。終了後は `ps` で再確認してください。ロックファイルは削除しません。プロセス操作には `python3`・`ps`・`lsof` が必要です。
+
+`claude-account man` はリポジトリの man ページを直接開きます。chezmoi 適用後は `~/.local/share/man/man1/` にも配置され、そのディレクトリが man の検索対象なら `man claude-account` でも開けます。
+
+
 普段は名前で選択します。別アカウントのsessionを終了する必要はありません。
 
 ```sh

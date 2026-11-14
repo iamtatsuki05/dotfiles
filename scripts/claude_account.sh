@@ -15,6 +15,10 @@ Usage:
   claude-account default [<profile>|--clear]
   claude-account repair <profile>
   claude-account list
+  claude-account ps [<profile>]
+  claude-account kill <profile>|--all --force
+  claude-account help | --help | -h
+  claude-account man
   claude-account <profile> [claude arguments...]
 
 Each profile has an independent CLAUDE_CONFIG_DIR and full OAuth login.
@@ -22,6 +26,12 @@ Log in once per profile; other profiles may keep running.
 Local transcripts are shared for explicit --resume across profiles.
 --replace requires confirmation before replacing an existing identity.
 The shell's claude function uses the saved default for future launches.
+
+ps lists current-user lock holders and their descendants (PID, PPID, TTY).
+kill requires --force and sends SIGKILL; unfinished work can be lost.
+Use --all explicitly to stop all managed profiles. Native Claude is excluded.
+Process commands require python3, ps and lsof. Run kill from a separate terminal.
+For a busy login lock: claude-account ps <profile>, then exit or kill that profile.
 
 Profiles may contain lowercase letters, numbers, dots, underscores, and hyphens.
 EOF
@@ -35,7 +45,7 @@ validate_profile() {
       echo "ERROR: invalid profile name: $profile" >&2
       return 2
       ;;
-    auth-login|repair|default|run-default|list|help|add|add-token|token|__auth-login|__repair-login|__run-login|__list-login)
+    auth-login|repair|default|run-default|list|ps|kill|man|help|add|add-token|token|__auth-login|__repair-login|__run-login|__list-login)
       echo "ERROR: reserved profile name: $profile" >&2
       return 2
       ;;
@@ -99,15 +109,8 @@ prepare_profile() {
   done
 }
 
-run_with_login_lock() {
-  local lock_mode="$1"
-  shift
-  local lock_runner_code
-
-  umask 077
-  mkdir -p "$PROFILE_DIR"
-  chmod 700 "$PROFILE_DIR"
-  lock_runner_code="$(cat <<'PY'
+login_lock_runner_code() {
+  cat <<'PY'
 import fcntl
 import os
 import signal
@@ -144,7 +147,17 @@ signal.signal(signal.SIGTERM, forward_signal)
 signal.signal(signal.SIGHUP, forward_signal)
 raise SystemExit(process.wait())
 PY
-)"
+}
+
+run_with_login_lock() {
+  local lock_mode="$1"
+  shift
+  local lock_runner_code
+
+  umask 077
+  mkdir -p "$PROFILE_DIR"
+  chmod 700 "$PROFILE_DIR"
+  lock_runner_code="$(login_lock_runner_code)"
   exec python3 -c "$lock_runner_code" "$LOGIN_LOCK_FILE" "$lock_mode" "$0" "$@"
 }
 
@@ -630,6 +643,32 @@ main() {
   local profile
 
   case "$command_name" in
+    ps|kill)
+      if [[ $# -eq 2 && ( "$2" == --help || "$2" == -h ) ]]; then
+        usage
+        return
+      fi
+      profile=""
+      if [[ "$command_name" == ps ]]; then
+        [[ $# -le 2 ]] || { usage >&2; return 2; }
+        if [[ $# -eq 2 ]]; then
+          select_profile "$2"
+          profile="$2"
+        fi
+      else
+        [[ $# -eq 3 && "$3" == --force ]] || { usage >&2; return 2; }
+        if [[ "$2" != --all ]]; then
+          select_profile "$2"
+          profile="$2"
+        fi
+      fi
+      [[ "$CONFIG_DIR" == /* ]] || { echo 'ERROR: XDG_CONFIG_HOME must be an absolute path' >&2; return 1; }
+      login_lock_runner_code | python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/claude_account_processes.py" "$command_name" "$CONFIG_DIR" "$profile"
+      ;;
+    man)
+      [[ $# -eq 1 ]] || { usage >&2; return 2; }
+      man "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/man/claude-account.1"
+      ;;
     repair)
       [[ $# -eq 2 ]] || { usage >&2; return 2; }
       select_profile "$2"
