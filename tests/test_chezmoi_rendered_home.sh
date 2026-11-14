@@ -126,6 +126,7 @@ EOF
       DOTFILES_REPO_ROOT="$REPO_ROOT" PATH="/bin:/usr/bin:/usr/sbin:/sbin" \
       "$shell_bin" -c '
         . "$HOME/.config/shell/dotfiles-shell-common.sh"
+        man -w claude-account || exit 1
         type claude
         claude "prompt with spaces" --resume sample
         result=$?

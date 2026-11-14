@@ -253,6 +253,22 @@ claude-account auth-login work
 claude-account list
 ```
 
+If a login lock remains busy, inspect and stop managed processes:
+
+```sh
+claude-account ps                 # PID, parent PID and terminal for all profiles
+claude-account ps elyza
+claude-account kill elyza --force # Force-stop managed processes for elyza
+claude-account kill --all --force # Force-stop all managed profiles
+claude-account --help
+claude-account man
+```
+
+Forced termination sends SIGKILL and may lose running or unsaved work. Prefer `/exit`; run forced termination from a separate terminal outside the target session. Targets are the current user's login lock holders and their descendants. Native Claude launches, detached processes and processes started after discovery are excluded. Check `ps` again afterwards. Lock files are never deleted. Process commands require `python3`, `ps` and `lsof`.
+
+`claude-account man` opens the repository manual directly. After chezmoi apply, the page is also installed under `~/.local/share/man/man1/`; `man claude-account` works when that directory is on the manual search path.
+
+
 Select an account by name. Other accounts' sessions can keep running:
 
 ```sh

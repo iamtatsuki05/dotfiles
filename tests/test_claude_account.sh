@@ -432,6 +432,7 @@ test_remote_launch_flags_fail_before_session_start() {
 }
 
 main() {
+  python3 "$TEST_DIR/test_claude_account_processes.py"
   test_permission_mode_preserves_explicit_subprocess_hardening
   test_login_completes_onboarding_without_copying_account_or_trust
   test_repair_requires_matching_identity_and_preserves_other_config

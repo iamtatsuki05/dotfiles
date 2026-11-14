@@ -1,0 +1,5 @@
+{{- $repoRoot := dir .chezmoi.sourceDir -}}
+{{- if ne (env "DOTFILES_REPO_ROOT") "" -}}
+{{- $repoRoot = env "DOTFILES_REPO_ROOT" -}}
+{{- end -}}
+{{ $repoRoot }}/docs/man/claude-account.1

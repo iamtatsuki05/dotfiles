@@ -1,0 +1,103 @@
+.TH CLAUDE-ACCOUNT 1 "November 14, 2026" "dotfiles" "User Commands"
+.SH NAME
+claude-account \- run Claude Code with isolated account profiles
+.SH SYNOPSIS
+.B claude-account auth-login
+.I profile
+.RB [ --replace ]
+.br
+.B claude-account
+.I profile
+.RI [ "claude arguments..." ]
+.br
+.B claude-account default
+.RI [ profile | --clear ]
+.br
+.B claude-account repair
+.I profile
+.br
+.B claude-account list
+.br
+.B claude-account ps
+.RI [ profile ]
+.br
+.B claude-account kill
+.IR "profile | --all"
+.B --force
+.br
+.B claude-account
+.RB "help | --help | -h | man"
+.SH DESCRIPTION
+Each profile uses its own CLAUDE_CONFIG_DIR and regular OAuth login.
+Claude Code 2.1.261 or later is required for account operations.
+Other profiles may remain active during login.
+Local transcripts are shared for explicit resume across profiles.
+.SH COMMANDS
+.TP
+.BI "auth-login " profile " [--replace]"
+Log in and register the account identity. Replacing an identity requires
+--replace and an interactive confirmation. Active sessions block login,
+even with --replace.
+.TP
+.I "profile [claude arguments...]"
+Run Claude with the selected account and forward its arguments.
+.TP
+.BI "default " "[profile | --clear]"
+Show, select or clear the default for future shell launches.
+Existing sessions do not change accounts.
+.TP
+.BI "repair " profile
+Repair onboarding state after verifying the registered identity.
+.TP
+.B list
+List registered login profiles.
+.TP
+.BI "ps " [profile]
+List current-user processes attached to profile login locks
+and their descendants.
+Without a profile, list all managed profiles.
+Columns are profile, PID, parent PID,
+terminal, role and executable name. Arguments and credentials are not printed.
+.TP
+.BI "kill " "profile | --all" " --force"
+Send SIGKILL to the discovered processes, descendants first.
+A profile or explicit --all and --force are required.
+This interrupts running work without cleanup and may lose unsaved work.
+Prefer /exit for normal shutdown. Run this command from a separate terminal,
+not from inside a targeted session.
+.TP
+.B "help, --help, -h"
+Show usage. ps and kill also accept --help or -h.
+.TP
+.B man
+Open this manual directly from the repository.
+.SH PROCESS SCOPE
+Process commands require python3, ps and lsof.
+They identify current-user processes by open full-login.lock files and
+the complete claude-account launcher signature. File readers are excluded.
+Native Claude launches outside claude-account are excluded.
+Detached processes that no longer descend from a lock holder
+are excluded. Discovery is a snapshot; processes launched afterwards may
+require another invocation. Inspect ps again before retrying login.
+Lock files are never deleted. A leftover file without a live holder does
+not block login.
+.SH EXAMPLES
+.nf
+claude-account ps elyza
+claude-account kill elyza --force
+claude-account auth-login elyza --replace
+claude-account ps
+claude-account kill --all --force
+.fi
+.SH ENVIRONMENT
+.TP
+.B XDG_CONFIG_HOME
+Absolute configuration root; defaults to $HOME/.config.
+Profiles live under claude-account/accounts/PROFILE.
+.SH EXIT STATUS
+Zero indicates success, including no matching processes.
+Nonzero indicates an invalid argument, discovery error or signal failure.
+.SH SEE ALSO
+.BR ps (1),
+.BR kill (1),
+.BR lsof (8)
