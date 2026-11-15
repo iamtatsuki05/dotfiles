@@ -30,6 +30,7 @@ opencode = "latest"
 "npm:@deepseek-ai/dsh" = "0.2.0-rc.2"
 "npm:@earendil-works/pi-coding-agent" = "1.1.0"
 # infra
+"npm:cf" = "latest"
 docker-cli = "latest"
 docker-compose = "latest"
 kubectl = "latest"
