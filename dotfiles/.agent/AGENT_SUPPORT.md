@@ -18,6 +18,7 @@
 | `grok` | `grok` / `npm:@xai-official/grok` | Grok CLI (xAI) |
 | `deepseek` | `dsh` / `npm:@deepseek-ai/dsh` | DeepSeek Harness |
 | `pi` | `pi` / `npm:@earendil-works/pi-coding-agent` | Pi coding agent |
+| `muse` | `muse` / `scripts/setup_muse.sh` (公式 shell installer、launcher が自己更新) | Muse Code (Meta) |
 
 Hermes Agent は upstream が 2026-07-22 に pip/PyPI と Homebrew 配布を廃止したため、`mise` ではなく公式 shell installer 経由で管理します。導入は `mise run hermes-setup`、更新は `mise run hermes-update` です。
 
@@ -41,6 +42,7 @@ Herdr は agent を束ねる terminal multiplexer / runtime であり、ここ�
 | `grok` | このバージョンでは公式連携なし |
 | `deepseek` | native pluginがRTK利用指示を追加（自動書き換えなし） |
 | `pi` | 公式`extensions/rtk.ts`の`tool_call` |
+| `muse` | このバージョンでは公式連携なし |
 
 公式pluginの出典・license・更新方法は[RTK integration provenance](apps/rtk/README.md)を参照してください。
 
@@ -48,11 +50,11 @@ Herdr は agent を束ねる terminal multiplexer / runtime であり、ここ�
 
 | Code / tool | Supported agents | Notes |
 |---|---|---|
-| `scripts/agent_skill_upstreams.py` | `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, `pi` | `--review-agent` で upstream skill 更新前の security review を実行する。 |
-| `scripts/waza_eval_cli_agent.sh` | `codex`, `claude`, `antigravity`, `copilot`, `devin`, `cursor`, `opencode`, `hermes`, `openclaw`, `grok`, `deepseek`, `pi`, `all` | Waza model suite を CLI agent で実行する public entrypoint。実装は `scripts/agent/waza_eval_cli_agent.sh`。`all` は全 canonical agent を対象にする。 |
-| `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler` | `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, `pi` | CSV 台帳ベースの非対話ジョブスケジューラ。 |
+| `scripts/agent_skill_upstreams.py` | `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, `pi`, `muse` | `--review-agent` で upstream skill 更新前の security review を実行する。 |
+| `scripts/waza_eval_cli_agent.sh` | `codex`, `claude`, `antigravity`, `copilot`, `devin`, `cursor`, `opencode`, `hermes`, `openclaw`, `grok`, `deepseek`, `pi`, `muse`, `all` | Waza model suite を CLI agent で実行する public entrypoint。実装は `scripts/agent/waza_eval_cli_agent.sh`。`all` は全 canonical agent を対象にする。 |
+| `dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler` | `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, `pi`, `muse` | CSV 台帳ベースの非対話ジョブスケジューラ。 |
 
-DeepSeek Harness / Pi の導入、同期範囲、権限上の注意は [README_JA.md](README_JA.md#deepseek-harness--pi) を参照してください。
+DeepSeek Harness / Pi の導入、同期範囲、権限上の注意は [README_JA.md](README_JA.md#deepseek-harness--pi)、Muse Code は [README_JA.md](README_JA.md#muse-code) を参照してください。
 
 ## Checklist For Adding An Agent
 

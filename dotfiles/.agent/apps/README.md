@@ -23,6 +23,7 @@ This directory is for tool-specific settings, MCP configuration, hooks, permissi
 | `grok/` | Grok CLI (xAI) | Grok CLI config and settings. |
 | `deepseek/` | DeepSeek Harness | Native hooks, home MCP patch, and RTK usage guidance. |
 | `pi/` | Pi | Model defaults, MCP, native hooks, and the official RTK extension. |
+| `muse/` | Muse Code | Managed hooks and MCP entries merged into the client-owned `settings.json`. |
 
 ## File Types
 

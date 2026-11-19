@@ -955,7 +955,7 @@ test_waza_cli_agent_eval_script_preserves_new_agent_cli_contracts() {
   mkdir -p "$fake_bin"
   output="$temporary_root/runner.log"
 
-  for agent in dsh pi; do
+  for agent in dsh pi muse; do
     cat > "$fake_bin/$agent" <<'EOF'
 #!/bin/sh
 printf '%s\0' "$PWD" "$@" > "$AGENT_TEST_CAPTURE"
@@ -965,7 +965,7 @@ EOF
     chmod +x "$fake_bin/$agent"
   done
 
-  for agent in deepseek pi; do
+  for agent in deepseek pi muse; do
     result_dir="$output_dir/$agent/markdown-docs-model-eval/markdown-docs-restructure-guide-001"
     for requested_status in 0 23; do
       capture_file="$temporary_root/$agent-$requested_status.argv"
@@ -1012,6 +1012,8 @@ if agent == "deepseek":
     expected = ["headless", "--", prompt]
 elif agent == "pi":
     expected = ["--print", "--no-session", "--", prompt]
+elif agent == "muse":
+    expected = ["exec", "--disable-approval", "--", prompt]
 else:
     raise AssertionError(f"unexpected agent: {agent}")
 if arguments != expected:

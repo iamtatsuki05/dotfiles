@@ -20,6 +20,7 @@ class Agent(StrEnum):
     OPENCLAW = "openclaw"
     PI = "pi"
     GROK = "grok"
+    MUSE = "muse"
 
 
 class JobStatus(StrEnum):

@@ -36,6 +36,7 @@ REVIEW_AGENTS = (
     "openclaw",
     "pi",
     "grok",
+    "muse",
 )
 MISE_TOOLS_BY_REVIEW_AGENT = {
     "codex": "codex",
@@ -50,6 +51,7 @@ MISE_TOOLS_BY_REVIEW_AGENT = {
     "openclaw": "npm:openclaw",
     "pi": "npm:@earendil-works/pi-coding-agent",
     "grok": "npm:@xai-official/grok",
+    "muse": "mise-task:muse-setup",
 }
 
 
@@ -288,6 +290,9 @@ def run_direct_or_mise(
     if mise_tool.startswith("brew-cask:"):
         cask = mise_tool.removeprefix("brew-cask:")
         raise UpstreamError(f"{command[0]} CLI is not on PATH. Install it with: brew install --cask {cask}")
+    if mise_tool.startswith("mise-task:"):
+        task = mise_tool.removeprefix("mise-task:")
+        raise UpstreamError(f"{command[0]} CLI is not on PATH. Install it with: mise run {task}")
 
     mise = shutil.which("mise")
     if mise is None:
@@ -666,6 +671,13 @@ def run_review_agent(
                 "--cwd",
                 str(REPO_ROOT),
             ],
+            REPO_ROOT,
+            env,
+        )
+    elif review_agent == "muse":
+        output = run_direct_or_mise(
+            review_agent,
+            ["muse", "exec", "--workspace", str(REPO_ROOT), "--disable-approval", "--", prompt],
             REPO_ROOT,
             env,
         )

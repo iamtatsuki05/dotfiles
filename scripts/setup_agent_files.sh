@@ -20,7 +20,7 @@ Usage:
 Options:
   --dry-run        Preview changes without writing files or installing dependencies.
   --install-deps   Also install missing Hermes MCP dependencies (may access network).
-  --only AGENT     Sync only deepseek or pi, preserving all other agent homes.
+  --only AGENT     Sync only deepseek, pi, or muse, preserving all other agent homes.
   --repo-root PATH  Override repository root. Intended for tests.
   -h, --help        Show this help.
 EOF
@@ -37,8 +37,8 @@ parse_args() {
         ;;
       --only)
         shift
-        if ((! $#)) || [[ "$1" != "deepseek" && "$1" != "pi" ]]; then
-          echo "ERROR: --only requires deepseek or pi" >&2
+        if ((! $#)) || [[ "$1" != "deepseek" && "$1" != "pi" && "$1" != "muse" ]]; then
+          echo "ERROR: --only requires deepseek, pi, or muse" >&2
           return 1
         fi
         ONLY_AGENT="$1"
@@ -202,6 +202,9 @@ shared_link_specs() {
   elif [[ "$ONLY_AGENT" == "pi" ]]; then
     print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.pi/agent/AGENTS.md"
     return
+  elif [[ "$ONLY_AGENT" == "muse" ]]; then
+    print -r -- "$AGENT_DIR/skills"$'\t'"$xdg_config_home/muse/skills"
+    return
   fi
 
   print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$HOME/.codex/AGENTS.md"
@@ -226,6 +229,7 @@ shared_link_specs() {
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.hermes/dotfiles-skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.openclaw/workspace/skills"
   print -r -- "$AGENT_DIR/skills"$'\t'"$HOME/.grok/dotfiles-skills"
+  print -r -- "$AGENT_DIR/skills"$'\t'"$xdg_config_home/muse/skills"
 
   print -r -- "$AGENT_DIR/pets"$'\t'"$HOME/.codex/pets"
   print -r -- "$REPO_ROOT/scripts/agent-run-compact"$'\t'"$HOME/.local/bin/agent-run-compact"
@@ -261,8 +265,14 @@ sync_managed_skills() {
 
 sync_shared_files() {
   local grok_skills="$HOME/.grok/dotfiles-skills"
+  local muse_skills="${XDG_CONFIG_HOME:-$HOME/.config}/muse/skills"
 
-  if [[ "$ONLY_AGENT" == "deepseek" || "$ONLY_AGENT" == "pi" ]]; then
+  if [[ "$ONLY_AGENT" == "muse" ]]; then
+    preflight_required_shared_skill_link "$muse_skills"
+    sync_link_specs shared_link_specs
+    require_shared_skill_link "$muse_skills"
+    return
+  elif [[ -n "$ONLY_AGENT" ]]; then
     sync_managed_skills "$ONLY_AGENT"
     sync_link_specs shared_link_specs
     return
@@ -274,6 +284,7 @@ sync_shared_files() {
   preflight_required_shared_skill_link "$HOME/.codex/skills"
   preflight_required_shared_skill_link "$HOME/.claude/skills"
   preflight_required_shared_skill_link "$grok_skills"
+  preflight_required_shared_skill_link "$muse_skills"
   local agent
   for agent in deepseek pi; do
     python3 -B "$SCRIPT_DIR/sync_agent_skills.py" --repo-root "$REPO_ROOT" --agent "$agent" --dry-run >/dev/null
@@ -285,19 +296,29 @@ sync_shared_files() {
   require_shared_skill_link "$HOME/.codex/skills"
   require_shared_skill_link "$HOME/.claude/skills"
   require_shared_skill_link "$grok_skills"
+  require_shared_skill_link "$muse_skills"
 }
 
 new_agent_link_specs() {
   local agent="$1"
   local target_dir hook profile
+  local -a hooks=(agent_context_reminder.sh agent_turn_done_notify.sh jupytext_sync.sh japanese_prose_lint.sh)
   case "$agent" in
     pi) target_dir="$HOME/.pi/agent" ;;
     deepseek) target_dir="$HOME/.dsh" ;;
+    muse)
+      target_dir="${XDG_CONFIG_HOME:-$HOME/.config}/muse"
+      hooks=(agent_context_reminder.sh agent_turn_done_notify.sh jupytext_sync.sh)
+      ;;
   esac
-  for hook in agent_context_reminder.sh agent_turn_done_notify.sh jupytext_sync.sh japanese_prose_lint.sh; do
+  for hook in "${hooks[@]}"; do
     print -r -- "$AGENT_DIR/hooks/$hook"$'\t'"$target_dir/hooks/$hook"
   done
-  if [[ "$agent" == "pi" ]]; then
+  if [[ "$agent" == "muse" ]]; then
+    # Muse users keep personal rules in this file, so a conflict must stop the sync.
+    print -r -- "$AGENT_DIR/AGENTS.md"$'\t'"$target_dir/AGENTS.md"
+    return
+  elif [[ "$agent" == "pi" ]]; then
     print -r -- "$APPS_DIR/pi/extensions/dotfiles.ts"$'\t'"$target_dir/extensions/dotfiles.ts"
     print -r -- "$APPS_DIR/pi/extensions/rtk.ts"$'\t'"$target_dir/extensions/rtk.ts"
   else
@@ -317,43 +338,69 @@ preflight_new_agent_integrations() {
       return 1
     fi
   done < <(new_agent_link_specs "$agent")
-  if [[ "$agent" == "pi" ]]; then
-    sync_pi_runtime_configs check
+  if [[ "$agent" == "pi" || "$agent" == "muse" ]]; then
+    sync_runtime_configs "$agent" check
   fi
 }
 
-sync_pi_runtime_configs() {
-  python3 -B - "$APPS_DIR/pi" "$HOME/.pi/agent" "$1" <<'PY'
+# Pi and Muse rewrite their own settings files (device ids, UI state), so the
+# managed keys are merged into a regular file instead of replacing it with a link.
+sync_runtime_configs() {
+  local agent="$1"
+  local mode="$2"
+  local -a specs
+  case "$agent" in
+    pi) specs=("$APPS_DIR/pi" "$HOME/.pi/agent" Pi settings.json: mcp.json:mcpServers) ;;
+    muse) specs=("$APPS_DIR/muse" "${XDG_CONFIG_HOME:-$HOME/.config}/muse" Muse settings.json:mcp_servers) ;;
+  esac
+  python3 -B - "$mode" "${specs[@]}" <<'PY'
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 
-source, destination = map(Path, sys.argv[1:3])
-mode = sys.argv[3]
+mode, source, destination, label, *files = sys.argv[1:]
+source, destination = Path(source), Path(destination)
 updates = []
-for name in ("settings.json", "mcp.json"):
+for spec in files:
+    name, _, merge_key = spec.partition(":")
     target = destination / name
     if target.is_symlink() or (target.exists() and not target.is_file()):
-        raise SystemExit(f"ERROR: Pi runtime config must be a regular file: {target}")
+        raise SystemExit(f"ERROR: {label} runtime config must be a regular file: {target}")
     current = json.loads(target.read_text()) if target.exists() else {}
     managed = json.loads((source / name).read_text())
     if not isinstance(current, dict) or not isinstance(managed, dict):
-        raise SystemExit(f"ERROR: Pi runtime config must contain an object: {target}")
-    if name == "mcp.json":
-        servers = current.get("mcpServers", {})
+        raise SystemExit(f"ERROR: {label} runtime config must contain an object: {target}")
+    if "schema_version" in managed and current.get("schema_version", managed["schema_version"]) != managed["schema_version"]:
+        raise SystemExit(f"ERROR: {label} schema_version is not {managed['schema_version']}; update the managed settings first: {target}")
+    merged = {**current, **managed}
+    if merge_key:
+        servers = current.get(merge_key, {})
         if not isinstance(servers, dict):
-            raise SystemExit(f"ERROR: Pi mcpServers must contain an object: {target}")
-        current["mcpServers"] = {**servers, **managed["mcpServers"]}
-    else:
-        current.update(managed)
-    updates.append((target, json.dumps(current, ensure_ascii=False, indent=2) + "\n"))
+            raise SystemExit(f"ERROR: {label} {merge_key} must contain an object: {target}")
+        merged[merge_key] = {**servers, **managed[merge_key]}
+    if "hooks" in managed:
+        # Keep user hooks; only entries running scripts from the synced hooks dir are ours.
+        hooks_dir = f"{destination.name}/hooks/"
+        current_hooks = current.get("hooks", {})
+        if not isinstance(current_hooks, dict):
+            raise SystemExit(f"ERROR: {label} hooks must contain an object: {target}")
+        hooks = {}
+        for event in {**current_hooks, **managed["hooks"]}:
+            kept = [
+                entry for entry in current_hooks.get(event, [])
+                if entry not in managed["hooks"].get(event, [])
+                and not any(hooks_dir in str(hook.get("command", "")) for hook in entry.get("hooks", []))
+            ]
+            hooks[event] = kept + managed["hooks"].get(event, [])
+        merged["hooks"] = hooks
+    updates.append((target, json.dumps(merged, ensure_ascii=False, indent=2) + "\n"))
 if mode == "check":
     sys.exit(0)
 for target, text in updates:
     if mode == "preview":
-        print(f"merge managed Pi settings, preserving other fields: {target}")
+        print(f"merge managed {label} settings, preserving other fields: {target}")
         continue
     if target.exists() and target.read_text() == text:
         continue
@@ -371,11 +418,11 @@ PY
 
 sync_new_agent_integrations() {
   sync_link_specs new_agent_link_specs "$1"
-  if [[ "$1" == "pi" ]]; then
+  if [[ "$1" == "pi" || "$1" == "muse" ]]; then
     if (( DRY_RUN )); then
-      sync_pi_runtime_configs preview
+      sync_runtime_configs "$1" preview
     else
-      sync_pi_runtime_configs write
+      sync_runtime_configs "$1" write
     fi
   fi
 }
@@ -621,7 +668,7 @@ main() {
   if [[ -n "$ONLY_AGENT" ]]; then
     new_agents=("$ONLY_AGENT")
   else
-    new_agents=(deepseek pi)
+    new_agents=(deepseek pi muse)
   fi
   for agent in "${new_agents[@]}"; do
     preflight_new_agent_integrations "$agent"

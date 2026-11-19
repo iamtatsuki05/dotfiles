@@ -131,7 +131,7 @@ def test_new_agents_detect_default_rate_limits() -> None:
     settings = SchedulerSettings.model_validate({})
     observed_at = "2026-04-19T12:00:00+09:00"
 
-    for agent in (Agent.DEEPSEEK, Agent.PI):
+    for agent in (Agent.DEEPSEEK, Agent.PI, Agent.MUSE):
         window = detect_rate_limit(agent, "", "rate limit", observed_at, settings)
 
         assert window is not None

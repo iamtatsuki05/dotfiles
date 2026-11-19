@@ -121,6 +121,17 @@ def test_pi_print_command_matches_cli_contract(tmp_path: Path) -> None:
     assert spec.env == {}
 
 
+def test_muse_exec_command_matches_cli_contract(tmp_path: Path) -> None:
+    prompt = "--yolo must remain prompt text"
+    spec = AdapterRegistry().build(
+        _job(agent=Agent("muse"), workdir=tmp_path, prompt=prompt)
+    )
+
+    assert spec.argv == ("muse", "exec", "--disable-approval", "--", prompt)
+    assert spec.cwd == tmp_path
+    assert spec.env == {}
+
+
 def _job(*, agent: Agent, workdir: Path, prompt: str = "prompt") -> JobRecord:
     return JobRecord(
         job_id=f"{agent.value}-job",

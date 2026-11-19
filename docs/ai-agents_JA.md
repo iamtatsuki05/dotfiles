@@ -10,7 +10,7 @@
 通常のセットアップで[RTK](https://github.com/rtk-ai/rtk)をmise経由で導入します。
 Agent同期で、Claude Code、Codex、Copilot、Cursor、Antigravity CLI、Hermes、
 OpenCode、OpenClaw、Piの公式hook・pluginを有効にします。固定したバージョンでは、
-Devin、Grokの公式連携はありません。DeepSeek HarnessにはRTK利用指示を追加し、自動変換とは区別します。
+Devin、Grok、Muse Codeの公式連携はありません。DeepSeek HarnessにはRTK利用指示を追加し、自動変換とは区別します。
 
 ```sh
 mise install github:rtk-ai/rtk

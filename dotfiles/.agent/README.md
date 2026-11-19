@@ -20,6 +20,7 @@ Managed agents:
 - `grok`
 - `deepseek` (`dsh`)
 - `pi`
+- `muse`
 
 The tools themselves are installed by `mise` where available. Herdr is also installed by `mise`, but it is treated as a terminal multiplexer / agent runtime rather than a canonical agent. Antigravity CLI is managed as the Homebrew Cask `antigravity`, which provides the `agy` binary. The files here manage prompts, per-agent configuration, MCP servers, hooks, skills, and Waza eval suites.
 
@@ -81,6 +82,22 @@ DeepSeek's `web`/`headless` profile settings and credential store remain client-
 `transport: sse` avoids the pinned library's post-answer WebSocket cache delay ([upstream report](https://github.com/deepseek-ai/deepseek-harness/discussions/4190)) while retaining the same provider, model, credentials, and native tool loop. The home integration patch applies only to `web` and `headless`; sync links the local plugin package into those two profiles. Restart running clients after updating plugins.
 
 Run `dsh headless -- "task"` or `pi --print --no-session -- "task"`. Waza (`--agent deepseek` / `--agent pi`, including `all`), upstream skill review (`--review-agent`), and `agent-job-scheduler` accept both IDs. DeepSeek is a developer preview, and both agents execute tools with the launching user's access: see [DeepSeek safety](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md) and [Pi security](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md).
+
+## Muse Code
+
+[Muse Code](https://dev.meta.ai/docs/muse-code) uses `muse` as both its registered ID and command. It ships only through the official installer, and the `~/.local/bin/muse` launcher updates itself hourly, so mise does not manage it. The verified version is `1.4.24`.
+
+```sh
+mise run muse-setup
+zsh scripts/setup_agent_files.sh --only muse
+muse login
+```
+
+`muse-setup` runs the official installer with `MUSE_NO_MODIFY_PATH=1`, so it does not edit shell rc files (`~/.local/bin` is already on the dotfiles PATH). Sync links the shared policy to `${XDG_CONFIG_HOME:-~/.config}/muse/AGENTS.md` and the shared skills to `skills` in the same directory. Without them, Muse falls back to `~/.claude/CLAUDE.md` and `~/.claude/skills`; the native locations avoid loading both. An existing personal `AGENTS.md` stops the sync instead of being replaced.
+
+Muse itself and Superset (`managed_hooks_path`) write to `settings.json`, so sync merges into the regular file instead of replacing it with a symlink. It updates only the managed hooks and MCP servers, keeps other keys, user-added hooks, and unrelated MCP servers, and stops if `schema_version` is not 1. Hooks register repository context (`SessionStart`), completion notification (`Stop`), and paired `.py` Jupyter sync after `write_file`/`edit_file` (`PostToolUse`). The `tool_input.path` field that Jupyter sync relies on has not been confirmed in a logged-in run. Japanese prose lint and RTK are not integrated. MCP registers DeepWiki, Devin, and Figma with `mode: optional`, so a connection failure does not abort a run. Devin reads `DEVIN_API_KEY` from the process environment; run `muse mcp login <server>` for OAuth.
+
+Muse reads a project's `AGENTS.md`, skills, and hooks only after the workspace is trusted. Run it non-interactively with `muse exec --disable-approval -- "task"`, which skips approval prompts but keeps the OS sandbox on. Waza `--agent muse`, upstream skill review `--review-agent muse`, and `agent-job-scheduler` accept the ID.
 
 ## Herdr
 
@@ -225,7 +242,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, and `pi`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
+`codex` is the default review agent. Valid review agents are `codex`, `claude-code`, `antigravity-cli`, `copilot`, `cursor-agent`, `devin`, `hermes`, `opencode`, `openclaw`, `grok`, `deepseek`, `pi`, and `muse`. The default Japanese review prompt is `skills/review-prompts/skill-upstream-security.md`; pass `--review-prompt <path>` to use a different prompt template. Keep the report keys such as `update recommendation` in English because the updater parses them.
 
 For manual review workflows, lower-level commands are still available:
 

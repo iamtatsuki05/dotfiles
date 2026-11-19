@@ -18,6 +18,7 @@ This directory contains setup, migration, update, sync, and test helper scripts 
 | `analyze_agent_delegation.py` | Aggregates Codex subagent dispatch and observed-overlap metrics without emitting prompt, response, tool-argument, or tool-output content. |
 | `setup_agent_files.sh` | Canonical AI agent config, hook, skill, and pet sync script. |
 | `setup_hermes_agent.sh` | Installs or updates Hermes Agent through its official shell installer, because upstream dropped pip/PyPI and Homebrew distribution. |
+| `setup_muse.sh` | Installs Muse Code through its official shell installer without editing shell rc files; the launcher updates itself afterwards. |
 
 ## Update Rules
 

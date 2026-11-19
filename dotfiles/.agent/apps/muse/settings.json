@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${XDG_CONFIG_HOME:-$HOME/.config}/muse/hooks/agent_context_reminder.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${XDG_CONFIG_HOME:-$HOME/.config}/muse/hooks/jupytext_sync.sh\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${XDG_CONFIG_HOME:-$HOME/.config}/muse/hooks/agent_turn_done_notify.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "mcp_servers": {
+    "deepwiki": {
+      "transport": "streamable_http",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "mode": "optional"
+    },
+    "devin": {
+      "transport": "streamable_http",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
+      },
+      "mode": "optional"
+    },
+    "figma": {
+      "transport": "streamable_http",
+      "url": "https://mcp.figma.com/mcp",
+      "mode": "optional"
+    }
+  }
+}

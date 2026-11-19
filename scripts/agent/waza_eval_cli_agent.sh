@@ -12,7 +12,7 @@ Usage:
   zsh scripts/waza_eval_cli_agent.sh AGENT [--allow] [--dry-run] [--suite PATH]...
 
 Agents:
-  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, deepseek, pi, all
+  codex, claude, antigravity, copilot, devin, cursor, opencode, hermes, openclaw, grok, deepseek, pi, muse, all
 
 Aliases:
   claude-code -> claude
@@ -52,6 +52,7 @@ canonical_agent_specs() {
   print -r -- "openclaw"$'\t'"openclaw"
   print -r -- "grok"$'\t'"grok"
   print -r -- "pi"$'\t'"pi"
+  print -r -- "muse"$'\t'"muse"
   print -r -- "all"$'\t'"all"
 }
 
@@ -71,7 +72,7 @@ canonical_agent() {
 }
 
 all_cli_agents() {
-  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok deepseek pi
+  print -l codex claude antigravity copilot devin cursor opencode hermes openclaw grok deepseek pi muse
 }
 
 agents_for() {
@@ -281,6 +282,15 @@ run_direct_or_homebrew_cask() {
   fail "$bin CLI is not on PATH. Install it with: brew install --cask $cask"
 }
 
+run_direct_or_mise_task() {
+  local task="$1"
+  local bin="$2"
+  shift 2
+
+  command -v "$bin" >/dev/null 2>&1 || fail "$bin CLI is not on PATH. Install it with: mise run $task"
+  "$bin" "$@"
+}
+
 run_cli_agent() {
   local agent="$1"
   local workspace="$2"
@@ -352,6 +362,12 @@ run_cli_agent() {
       (cd "$workspace" && run_direct_or_mise "npm:@earendil-works/pi-coding-agent" pi \
         --print \
         --no-session \
+        -- \
+        "$prompt") >"$stdout_file" 2>"$stderr_file"
+      ;;
+    muse)
+      (cd "$workspace" && run_direct_or_mise_task muse-setup muse exec \
+        --disable-approval \
         -- \
         "$prompt") >"$stdout_file" 2>"$stderr_file"
       ;;

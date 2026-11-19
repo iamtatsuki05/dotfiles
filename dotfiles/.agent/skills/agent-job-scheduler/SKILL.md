@@ -1,6 +1,6 @@
 ---
 name: agent-job-scheduler
-description: "Use when the user wants to queue, inspect, retry, cancel, or run long non-interactive AI agent CLI jobs (codex, claude, copilot, cursor, deepseek, devin, antigravity, hermes, opencode, openclaw, pi, grok) via agent-job-scheduler, or to change its workdir allowlist, stale recovery, or launchd schedule. DO NOT USE FOR: a single interactive run."
+description: "Use when the user wants to queue, inspect, retry, cancel, or run long non-interactive AI agent CLI jobs (codex, claude, copilot, cursor, deepseek, devin, antigravity, hermes, opencode, openclaw, pi, grok, muse) via agent-job-scheduler, or to change its workdir allowlist, stale recovery, or launchd schedule. DO NOT USE FOR: a single interactive run."
 ---
 
 # Agent Job Scheduler
@@ -31,7 +31,7 @@ dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/scripts/inst
 dotfiles/.agent/skills/agent-job-scheduler/apps/agent-job-scheduler/scripts/uninstall_launch_agent.sh
 ```
 
-`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok`。ジョブ状態は `queued` / `running` / `succeeded` / `failed` / `retry_waiting` / `cancelled`。prompt の叩き台は `assets/examples/prompt.<agent>.txt`、agent ごとの実行コマンドと flag は [apps/agent-job-scheduler/README.md](apps/agent-job-scheduler/README.md) にある。
+`--agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok`、`muse`。ジョブ状態は `queued` / `running` / `succeeded` / `failed` / `retry_waiting` / `cancelled`。prompt の叩き台は `assets/examples/prompt.<agent>.txt`、agent ごとの実行コマンドと flag は [apps/agent-job-scheduler/README.md](apps/agent-job-scheduler/README.md) にある。
 
 ## 手順
 

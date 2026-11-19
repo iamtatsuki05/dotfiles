@@ -1,6 +1,6 @@
 # Agent Job Scheduler
 
-Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Harness、Devin CLI、Hermes Agent、opencode、OpenClaw、Pi、Grok CLI を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Harness、Devin CLI、Hermes Agent、opencode、OpenClaw、Pi、Grok CLI、Muse Code を対象にした、レートリミット考慮付きのジョブスケジューラです。ジョブは CSV 台帳で管理し、各 Agent について未完了ジョブを古い順に 1 件ずつ実行します。ある Agent がレートリミットに入った場合はその Agent だけを停止し、リセット時刻以降に自動で再開する前提です。
 
 現在は、runtime 初期化、CSV 台帳、prompt sidecar、atomic write、`enqueue`、`run-once`、`status`、`show`、`retry`、`cancel`、`requeue`、`active-runs`、allowlist、stale recovery、`launchd` 連携まで入った実用初版です。
 
@@ -172,6 +172,20 @@ openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$pr
 
 ```bash
 pi --print --no-session -- "$prompt"
+```
+
+### Muse Code
+
+- 非対話実行は `muse exec --disable-approval -- "$prompt"`
+- `--disable-approval` は承認 prompt だけを止め、Muse の OS sandbox は有効のまま残す。`--yolo` は sandbox と workspace trust も外すため使わない
+- workspace trust は付与しないため、未 trust の `workdir` では project の `AGENTS.md`・skills・hooks を読まない。必要なら対象 repo で一度 `muse` を対話起動して trust する
+- `--` 以降を prompt として渡すため、prompt が option として解釈されない
+- スケジューラ側で subprocess の `cwd` を `job.workdir` にして起動する
+
+想定コマンド:
+
+```bash
+muse exec --disable-approval -- "$prompt"
 ```
 
 ### Grok CLI

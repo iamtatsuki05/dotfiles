@@ -19,6 +19,8 @@ agent 固有の hook 登録は `../apps/` 配下にあり、agent によって J
 
 PiとDeepSeekはnativeのextension/pluginイベントから同じ共通hookを呼びます。文章lintは明示的な `--hook-agent pi` / `--hook-agent dsh` で処理し、成功した標準write/editだけに修正候補を返します。部分編集は追加した文だけを対象にします。完了通知はPiの非中断 `agent_settled`、DeepSeekの `turn/end`（`reason.kind=completed`）に接続します。
 
+Muse Code は settings の Claude 互換 `hooks` を読みます。作業context、完了通知、Jupyter同期を登録し、日本語lintは接続していません。
+
 ## 日本語 lint
 
 Markdown または plain text を共通 profile で検査します。

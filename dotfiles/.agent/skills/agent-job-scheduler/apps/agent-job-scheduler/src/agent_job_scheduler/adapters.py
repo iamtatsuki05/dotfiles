@@ -35,6 +35,7 @@ def default_builders() -> dict[Agent, CommandBuilder]:
         Agent.OPENCLAW: build_openclaw_command,
         Agent.PI: build_pi_command,
         Agent.GROK: build_grok_command,
+        Agent.MUSE: build_muse_command,
     }
 
 
@@ -162,6 +163,11 @@ def build_openclaw_command(job: JobRecord) -> CommandSpec:
 
 def build_pi_command(job: JobRecord) -> CommandSpec:
     argv = ("pi", "--print", "--no-session", "--", job.prompt)
+    return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
+
+
+def build_muse_command(job: JobRecord) -> CommandSpec:
+    argv = ("muse", "exec", "--disable-approval", "--", job.prompt)
     return CommandSpec(argv=argv, cwd=Path(job.workdir), display_command=shlex.join(argv))
 
 

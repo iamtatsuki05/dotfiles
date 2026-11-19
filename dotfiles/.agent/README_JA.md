@@ -20,6 +20,7 @@ Agent CLI を内部で呼び出すコードやツールの対応状況は [AGENT
 - `grok`
 - `deepseek` (`dsh`)
 - `pi`
+- `muse`
 
 CLI 本体は可能な範囲で `mise` から導入します。Herdr も `mise` で導入しますが、canonical agent ではなく terminal multiplexer / agent runtime として扱います。Antigravity CLI は Homebrew Cask `antigravity` として管理し、`agy` binary もそこから提供されます。このディレクトリでは prompt、agent 別設定、MCP、hooks、skills、Waza eval suite を管理します。
 
@@ -81,6 +82,22 @@ DeepSeekの`web`/`headless` profile設定と認証情報はクライアント所
 `transport: sse` は、同梱ライブラリの回答後のWebSocket解放待ち（[upstream報告](https://github.com/deepseek-ai/deepseek-harness/discussions/4190)）を避ける設定です。provider・モデル・認証・native tool実行は変えません。HOMEの連携patchは`web`と`headless`だけに適用し、同期時にその2つのprofileへlocal pluginをリンクします。plugin更新後は起動中のクライアントを再起動してください。
 
 実行は `dsh headless -- "task"` または `pi --print --no-session -- "task"` です。Wazaの `--agent deepseek` / `--agent pi`（`all` も含む）、外部skillレビューの `--review-agent`、`agent-job-scheduler` で両IDを指定できます。DeepSeekは開発者向けプレビュー版です。両Agentは起動ユーザーの権限でツールを実行します。[DeepSeekの安全上の注意](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md)と[Piのセキュリティ説明](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md)を参照してください。
+
+## Muse Code
+
+[Muse Code](https://dev.meta.ai/docs/muse-code) の登録ID・実行コマンドは `muse` です。公式installerだけで配布され、`~/.local/bin/muse` のlauncherが毎時自己更新するため、miseでは管理しません。確認済みバージョンは `1.4.24` です。
+
+```sh
+mise run muse-setup
+zsh scripts/setup_agent_files.sh --only muse
+muse login
+```
+
+`muse-setup` は公式installerを `MUSE_NO_MODIFY_PATH=1` で実行し、shellのrcファイルを書き換えません（`~/.local/bin` はdotfilesのPATHに含まれます）。同期では、共通指示を `${XDG_CONFIG_HOME:-~/.config}/muse/AGENTS.md`、共通skillを同じ場所の `skills` にリンクします。既存の個人用 `AGENTS.md` があれば上書きせずエラーで停止します。これらが無い場合、Museは `~/.claude/CLAUDE.md` と `~/.claude/skills` を互換fallbackとして読みますが、nativeの場所を置くことで二重読込を避けます。
+
+`settings.json` はMuse自身やSuperset（`managed_hooks_path`）も書き込むため、symlinkにせず実ファイルのまま統合します。更新するのは管理対象のhookとMCPサーバーだけです。他のキー、ユーザーが追加したhook、無関係なMCPサーバーは保持し、`schema_version` が1以外ならエラーで停止します。hookはrepoの作業context（`SessionStart`）、完了通知（`Stop`）、`write_file`/`edit_file`後のpaired `.py` のJupyter同期（`PostToolUse`）を登録します。Jupyter同期が前提にする `tool_input.path` は、ログイン済みの実行で未確認です。日本語lintとRTKの連携はありません。MCPはDeepWiki、Devin、Figmaを `mode: optional` で登録し、接続失敗で実行を止めません。Devinはプロセス環境の `DEVIN_API_KEY` を使い、OAuthは `muse mcp login <server>` で行います。
+
+project側の `AGENTS.md`・skills・hooksは、Museでworkspaceをtrustした後だけ読まれます。非対話実行は `muse exec --disable-approval -- "task"` です。承認promptだけを止め、OS sandboxは有効のまま残します。Wazaの `--agent muse`、外部skillレビューの `--review-agent muse`、`agent-job-scheduler` の `muse` で指定できます。
 
 ## Herdr
 
@@ -225,7 +242,7 @@ python3 scripts/agent_skill_upstreams.py update --review-agent claude-code
 python3 scripts/agent_skill_upstreams.py update --id superpowers --commit <40-char-sha>
 ```
 
-review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw`、`grok`、`deepseek`、`pi` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
+review agent の default は `codex` です。選択できる agent は `codex`、`claude-code`、`antigravity-cli`、`copilot`、`cursor-agent`、`devin`、`hermes`、`opencode`、`openclaw`、`grok`、`deepseek`、`pi`、`muse` です。既定の review prompt は日本語で、`skills/review-prompts/skill-upstream-security.md` に置いています。別 prompt を使う場合は `--review-prompt <path>` を指定します。`update recommendation` などの report key は updater が読むため英語のままにしてください。
 
 手動 review 用に、低レベルコマンドも残しています。
 

@@ -24,6 +24,7 @@ English version: [README.md](README.md)
 | `grok/` | Grok CLI (xAI) | Grok CLI config と MCP 設定。 |
 | `deepseek/` | DeepSeek Harness | Native hooks、MCPのhome patch、RTK利用指示。 |
 | `pi/` | Pi | モデル既定値、MCP、native hooks、公式RTK extension。 |
+| `muse/` | Muse Code | client所有の `settings.json` へ統合する管理hookとMCP定義。 |
 
 ## ファイル種別
 

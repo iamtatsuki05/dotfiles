@@ -321,17 +321,19 @@ prompt = '-- Keep "quoted" text, $variables, and\nnewlines intact.'
 expected_tools = {
     "deepseek": "npm:@deepseek-ai/dsh",
     "pi": "npm:@earendil-works/pi-coding-agent",
+    "muse": "mise-task:muse-setup",
 }
 expected_arguments = {
     "deepseek": ["headless", "--", prompt],
     "pi": ["--print", "--no-session", "--", prompt],
+    "muse": ["exec", "--workspace", str(module.REPO_ROOT), "--disable-approval", "--", prompt],
 }
 
 with TemporaryDirectory() as temporary_directory:
     root = Path(temporary_directory)
     fake_bin = root / "bin"
     fake_bin.mkdir()
-    for binary in ("dsh", "pi"):
+    for binary in ("dsh", "pi", "muse"):
         executable = fake_bin / binary
         executable.write_text(
             "#!/bin/sh\n"
@@ -371,6 +373,13 @@ with TemporaryDirectory() as temporary_directory:
             arguments = [os.fsdecode(value) for value in captured[1:-1]]
             assert cwd == module.REPO_ROOT, (agent, cwd, module.REPO_ROOT)
             assert arguments == expected_arguments[agent], (agent, arguments)
+
+    try:
+        module.run_direct_or_mise("muse", ["dotfiles-test-missing-muse"], module.REPO_ROOT)
+    except module.UpstreamError as error:
+        assert "mise run muse-setup" in str(error), error
+    else:
+        raise AssertionError("missing muse CLI should point to mise run muse-setup")
 PY
 }
 

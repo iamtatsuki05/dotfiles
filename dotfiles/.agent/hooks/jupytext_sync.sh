@@ -20,6 +20,9 @@ ti = d.get('tool_input', {})
 if isinstance(ti, dict):
     if 'file_path' in ti:
         paths.append(ti['file_path'])
+    # Muse Code の write_file / edit_file 向け。引数名 path は CLI の検証文言からの推定で、実 payload では未確認
+    elif isinstance(ti.get('path'), str):
+        paths.append(ti['path'])
     for edit in ti.get('edits', []):
         fp = edit.get('file_path', '')
         if fp and fp not in paths:

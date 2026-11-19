@@ -44,6 +44,7 @@ create_agent_fixture_repo() {
     "$repo/dotfiles/.agent/apps/grok" \
     "$repo/dotfiles/.agent/apps/pi/extensions" \
     "$repo/dotfiles/.agent/apps/deepseek" \
+    "$repo/dotfiles/.agent/apps/muse" \
     "$repo/dotfiles/.agent/hooks" \
     "$repo/dotfiles/.agent/skills" \
     "$repo/dotfiles/.agent/pets"
@@ -58,6 +59,7 @@ create_agent_fixture_repo() {
   print -r -- 'export default function () {}' > "$repo/dotfiles/.agent/apps/pi/extensions/rtk.ts"
   print -r -- '[]' > "$repo/dotfiles/.agent/apps/deepseek/cordis.patch.yml"
   print -r -- '{"name":"@dotfiles/deepseek-native","type":"module"}' > "$repo/dotfiles/.agent/apps/deepseek/package.json"
+  print -r -- '{"schema_version":1,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"notify"}]}]},"mcp_servers":{"deepwiki":{"transport":"streamable_http","url":"https://mcp.deepwiki.com/mcp"}}}' > "$repo/dotfiles/.agent/apps/muse/settings.json"
   cp "$SYNC_SCRIPT" "$repo/dotfiles/.agent/sync.sh"
   print -r -- '# agent prompt' > "$repo/dotfiles/.agent/AGENTS.md"
   print -r -- '#!/usr/bin/env bash' > "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
@@ -247,6 +249,126 @@ PY
   assert_symlink_target "$home_dir/.dsh/profiles/headless/node_modules/@dotfiles/deepseek-native" "$repo/dotfiles/.agent/apps/deepseek"
 }
 
+test_agent_sync_only_muse_merges_settings_and_links_shared_files() {
+  local repo home_dir muse_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  muse_dir="$home_dir/.config/muse"
+  mkdir -p "$muse_dir" "$home_dir/.claude"
+  print -r -- 'existing claude settings' > "$home_dir/.claude/settings.json"
+  print -r -- '{"schema_version":1,"managed_hooks_path":"/tmp/superset/hooks.json","tui":{"foreign_context_notice_shown":true},"mcp_servers":{"user-server":{"transport":"stdio","command":"user-mcp"}},"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"user-guard"}]}],"Stop":[{"hooks":[{"type":"command","command":"user-stop"}]},{"hooks":[{"type":"command","command":"$HOME/.config/muse/hooks/old_notify.sh"}]}]}}' > "$muse_dir/settings.json"
+
+  HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only muse --dry-run >/dev/null
+  assert_not_exists "$muse_dir/AGENTS.md"
+  assert_not_contains "$muse_dir/settings.json" 'deepwiki'
+
+  local iteration
+  for iteration in 1 2; do
+    HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+      "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only muse >/dev/null
+  done
+  assert_contains "$home_dir/.claude/settings.json" 'existing claude settings'
+  assert_symlink_target "$muse_dir/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$muse_dir/skills" "$repo/dotfiles/.agent/skills"
+  assert_symlink_target "$muse_dir/hooks/agent_context_reminder.sh" "$repo/dotfiles/.agent/hooks/agent_context_reminder.sh"
+  assert_symlink_target "$muse_dir/hooks/agent_turn_done_notify.sh" "$repo/dotfiles/.agent/hooks/agent_turn_done_notify.sh"
+  assert_symlink_target "$muse_dir/hooks/jupytext_sync.sh" "$repo/dotfiles/.agent/hooks/jupytext_sync.sh"
+  [[ -f "$muse_dir/settings.json" && ! -L "$muse_dir/settings.json" ]] || fail "Muse settings must stay a regular file"
+  assert_not_exists "$home_dir/.pi"
+  assert_not_exists "$home_dir/.dsh"
+  python3 - "$muse_dir/settings.json" <<'PY'
+import json, sys
+settings = json.load(open(sys.argv[1]))
+assert settings["schema_version"] == 1
+assert settings["managed_hooks_path"] == "/tmp/superset/hooks.json"
+assert settings["tui"] == {"foreign_context_notice_shown": True}
+assert settings["hooks"]["PreToolUse"] == [{"hooks": [{"type": "command", "command": "user-guard"}]}]
+assert [entry["hooks"][0]["command"] for entry in settings["hooks"]["Stop"]] == ["user-stop", "notify"]
+assert set(settings["mcp_servers"]) == {"deepwiki", "user-server"}
+assert settings["mcp_servers"]["user-server"]["command"] == "user-mcp"
+PY
+}
+
+test_muse_setup_runs_official_installer_without_editing_shell_profiles() {
+  local temp_root fake_bin capture
+  make_temp_dir
+  temp_root="$REPLY"
+  fake_bin="$temp_root/bin"
+  capture="$temp_root/installer.env"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'EOF'
+#!/bin/sh
+url=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift ;;
+    --proto) shift ;;
+    -*) ;;
+    *) url="$1" ;;
+  esac
+  shift
+done
+printf '%s\n' "$url" > "$MUSE_TEST_CAPTURE.url"
+printf '%s\n' 'printf "%s\n" "${MUSE_NO_MODIFY_PATH:-unset}" > "$MUSE_TEST_CAPTURE"' > "$output"
+EOF
+  chmod +x "$fake_bin/curl"
+
+  PATH="$fake_bin:$PATH" MUSE_TEST_CAPTURE="$capture" bash "$REPO_ROOT/scripts/setup_muse.sh" >/dev/null
+  [[ "$(cat "$capture.url")" == "https://dev.meta.ai/install.sh" ]] || fail "unexpected Muse installer URL"
+  [[ "$(cat "$capture")" == "1" ]] || fail "Muse installer must run with MUSE_NO_MODIFY_PATH=1"
+}
+
+test_agent_sync_preserves_conflicting_muse_files() {
+  local repo home_dir muse_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  muse_dir="$home_dir/.config/muse"
+  mkdir -p "$muse_dir"
+  print -r -- '# personal muse rules' > "$muse_dir/AGENTS.md"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only muse >/dev/null 2>&1; then
+    fail "expected an existing Muse AGENTS.md to stop the sync"
+  fi
+  assert_contains "$muse_dir/AGENTS.md" '# personal muse rules'
+  assert_not_exists "$muse_dir/skills"
+
+  rm -f "$muse_dir/AGENTS.md"
+  print -r -- '{"schema_version":2,"future":true}' > "$muse_dir/settings.json"
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only muse >/dev/null 2>&1; then
+    fail "expected a newer Muse settings schema to stop the sync"
+  fi
+  [[ "$(cat "$muse_dir/settings.json")" == '{"schema_version":2,"future":true}' ]] || fail "newer Muse settings changed"
+}
+
+test_agent_sync_rejects_symlinked_muse_settings() {
+  local repo home_dir muse_dir
+  make_temp_dir
+  repo="$REPLY"
+  make_temp_dir
+  home_dir="$REPLY"
+  create_agent_fixture_repo "$repo"
+  muse_dir="$home_dir/.config/muse"
+  mkdir -p "$muse_dir"
+  print -r -- '{"schema_version":1}' > "$home_dir/foreign-settings.json"
+  ln -s "$home_dir/foreign-settings.json" "$muse_dir/settings.json"
+
+  if HOME="$home_dir" XDG_CONFIG_HOME="$home_dir/.config" \
+    "$TEST_ZSH_BIN" "$repo/scripts/setup_agent_files.sh" --only muse >/dev/null 2>&1; then
+    fail "expected a symlinked Muse settings file to fail"
+  fi
+  assert_not_exists "$muse_dir/AGENTS.md"
+  [[ "$(cat "$home_dir/foreign-settings.json")" == '{"schema_version":1}' ]] || fail "foreign Muse settings changed"
+}
+
 test_agent_sync_preserves_unmanaged_new_agent_integrations() {
   local repo home_dir
   make_temp_dir
@@ -298,6 +420,9 @@ test_agent_sync_registers_deepseek_and_pi() {
   done
   assert_symlink_target "$home_dir/.dsh/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
   assert_symlink_target "$home_dir/.pi/agent/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.config/muse/AGENTS.md" "$repo/dotfiles/.agent/AGENTS.md"
+  assert_symlink_target "$home_dir/.config/muse/skills" "$skill_root"
+  assert_contains "$home_dir/.config/muse/settings.json" '"schema_version": 1'
   [[ -d "$home_dir/.pi/agent/skills" && ! -L "$home_dir/.pi/agent/skills" ]] || fail "expected managed Pi projection"
   assert_symlink_target "$home_dir/.pi/agent/skills/research/example" "$skill_root/research/example"
   assert_symlink_target "$home_dir/.grok/dotfiles-skills" "$skill_root"
@@ -1085,6 +1210,10 @@ test_colab_mcp_is_absent_from_managed_agent_assets() {
 
 main() {
   test_agent_sync_only_new_agents_preserves_existing_settings
+  test_agent_sync_only_muse_merges_settings_and_links_shared_files
+  test_agent_sync_rejects_symlinked_muse_settings
+  test_agent_sync_preserves_conflicting_muse_files
+  test_muse_setup_runs_official_installer_without_editing_shell_profiles
   test_agent_sync_preserves_unmanaged_new_agent_integrations
   test_agent_sync_registers_deepseek_and_pi
   test_agent_sync_preserves_conflicting_deepseek_skills

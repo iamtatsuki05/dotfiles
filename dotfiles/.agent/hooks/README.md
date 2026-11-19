@@ -20,6 +20,8 @@ Japanese prose lint runs automatically for all supported agents. Claude Code, Co
 
 Pi and DeepSeek use their native extension/plugin events for the same shared hooks. Their prose adapters are explicit `--hook-agent pi` and `--hook-agent dsh` contracts; successful built-in writes/edits receive advisory feedback, with in-place edits limited to newly written text. Pi completion uses non-aborted `agent_settled`; DeepSeek completion uses `turn/end` with `reason.kind=completed`.
 
+Muse Code reads Claude-compatible `hooks` entries from its settings file. It registers the context reminder, completion notification, and Jupyter sync; Japanese prose lint is not wired for Muse.
+
 ## Japanese prose lint
 
 Run the shared profile against Markdown or plain text:

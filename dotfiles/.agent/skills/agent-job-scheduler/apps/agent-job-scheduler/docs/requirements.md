@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Harness、Devin CLI、Hermes Agent、opencode、OpenClaw、Pi、Grok CLI に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
+Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Harness、Devin CLI、Hermes Agent、opencode、OpenClaw、Pi、Grok CLI、Muse Code に対して、レートリミットを考慮しながらジョブを自動実行するローカルスケジューラを作る。ジョブは CSV で管理し、各 Agent につき未完了ジョブを古い順に 1 件ずつ消化する。
 
 ## 2. 前提
 
@@ -33,7 +33,7 @@ Codex、Claude Code、Antigravity CLI、Copilot CLI、Cursor Agent、DeepSeek Ha
   - `workdir`
   - `agent`
 - `workdir` は絶対パスで保存すること
-- `agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok` を受け付けること
+- `agent` は `antigravity`、`claude`、`codex`、`copilot`、`cursor`、`deepseek`、`devin`、`hermes`、`opencode`、`openclaw`、`pi`、`grok`、`muse` を受け付けること
 
 ### 4.2 ジョブ台帳
 
@@ -217,6 +217,16 @@ openclaw agent --local --session-id "agent-job-scheduler-$job_id" --message "$pr
 
 ```bash
 pi --print --no-session -- "$prompt"
+```
+
+#### Muse Code
+
+- 非対話の一回実行は `muse exec --disable-approval -- "$prompt"`
+- 承認 prompt だけを止め、OS sandbox は有効のまま残す。`--yolo` と workspace trust は渡さない
+- `--` 以降を prompt として渡し、プロセスの `cwd` を `workdir` にする
+
+```bash
+muse exec --disable-approval -- "$prompt"
 ```
 
 #### Grok CLI

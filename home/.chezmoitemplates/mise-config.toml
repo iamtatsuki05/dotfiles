@@ -22,6 +22,8 @@ claude-code = "latest"
 opencode = "latest"
 # hermes は upstream が pip/PyPI と Homebrew 配布を廃止したため mise 管理外。
 # 導入/更新は mise run hermes-setup / hermes-update (公式 installer + hermes update)。
+# muse (Muse Code) は公式 installer のみで配布され、launcher が自己更新するため mise 管理外。
+# 導入は mise run muse-setup。
 "npm:agent-desktop" = "latest"
 "npm:ntn" = "latest"
 "npm:@github/copilot" = "latest"
@@ -140,6 +142,11 @@ run = "bash scripts/setup_steermouse.sh"
 description = "Hermes Agentを公式installerで導入"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/setup_hermes_agent.sh"
+
+[tasks.muse-setup]
+description = "Muse Codeを公式installerで導入（以後はlauncherが自動更新）"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "bash scripts/setup_muse.sh"
 
 [tasks.waza-check]
 description = "Wazaでmarkdown-docs skillをcheck"
