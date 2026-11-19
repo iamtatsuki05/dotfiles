@@ -148,6 +148,11 @@ description = "Muse Codeを公式installerで導入（以後はlauncherが自動
 dir = "__DOTFILES_REPO_ROOT__"
 run = "bash scripts/setup_muse.sh"
 
+[tasks.muse-app-setup]
+description = "Muse for Mac（Meta）を署名検証して/Applicationsへ導入（以後はアプリが自動更新）"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "bash scripts/setup_muse_app.sh"
+
 [tasks.waza-check]
 description = "Wazaでmarkdown-docs skillをcheck"
 dir = "__DOTFILES_REPO_ROOT__"

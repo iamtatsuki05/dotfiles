@@ -349,6 +349,70 @@ test_agent_sync_preserves_conflicting_muse_files() {
   [[ "$(cat "$muse_dir/settings.json")" == '{"schema_version":2,"future":true}' ]] || fail "newer Muse settings changed"
 }
 
+test_muse_app_setup_verifies_meta_signature_before_install() {
+  local temp_root fake_bin apps_dir
+  make_temp_dir
+  temp_root="$REPLY"
+  fake_bin="$temp_root/bin"
+  apps_dir="$temp_root/Applications"
+  mkdir -p "$fake_bin" "$apps_dir"
+  print -r -- '#!/bin/sh
+echo Darwin' > "$fake_bin/uname"
+  cat > "$fake_bin/curl" <<'EOF'
+#!/bin/sh
+output=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift ;;
+    --proto) shift ;;
+    -*) ;;
+    *) url="$1" ;;
+  esac
+  shift
+done
+printf '%s\n' "$url" >> "$MUSE_APP_TEST_LOG"
+case "$url" in
+  *appcast.xml*) printf '%s\n' '<rss><channel><item><enclosure url="https://cdn.example.test/Muse.dmg?sig=1&amp;x=2"/></item></channel></rss>' > "$output" ;;
+  *) printf 'dmg' > "$output" ;;
+esac
+EOF
+  cat > "$fake_bin/hdiutil" <<'EOF'
+#!/bin/sh
+if [ "$1" = attach ]; then
+  while [ "$#" -gt 0 ]; do
+    [ "$1" = -mountpoint ] && mkdir -p "$2/Muse.app/Contents" && printf 'app' > "$2/Muse.app/Contents/marker"
+    shift
+  done
+fi
+EOF
+  print -r -- '#!/bin/sh
+[ "$1" = -dv ] && echo "TeamIdentifier=$MUSE_APP_TEST_TEAM" >&2
+exit 0' > "$fake_bin/codesign"
+  print -r -- '#!/bin/sh
+exit 0' > "$fake_bin/spctl"
+  print -r -- '#!/bin/sh
+cp -R "$1" "$2"' > "$fake_bin/ditto"
+  chmod +x "$fake_bin"/*
+
+  if PATH="$fake_bin:$PATH" MUSE_APP_INSTALL_DIR="$apps_dir" MUSE_APP_TEST_TEAM=OTHERTEAM \
+    MUSE_APP_TEST_LOG="$temp_root/curl.log" bash "$REPO_ROOT/scripts/setup_muse_app.sh" >/dev/null 2>&1; then
+    fail "Muse app signed by another team must not install"
+  fi
+  assert_not_exists "$apps_dir/Muse.app"
+
+  PATH="$fake_bin:$PATH" MUSE_APP_INSTALL_DIR="$apps_dir" MUSE_APP_TEST_TEAM=V9WTTPBFK9 \
+    MUSE_APP_TEST_LOG="$temp_root/curl.log" bash "$REPO_ROOT/scripts/setup_muse_app.sh" >/dev/null
+  assert_contains "$apps_dir/Muse.app/Contents/marker" 'app'
+  assert_contains "$temp_root/curl.log" 'https://www.facebook.com/endo/release/appcast.xml?channel=production'
+  assert_contains "$temp_root/curl.log" 'https://cdn.example.test/Muse.dmg?sig=1&x=2'
+
+  : > "$temp_root/curl.log"
+  PATH="$fake_bin:$PATH" MUSE_APP_INSTALL_DIR="$apps_dir" MUSE_APP_TEST_TEAM=V9WTTPBFK9 \
+    MUSE_APP_TEST_LOG="$temp_root/curl.log" bash "$REPO_ROOT/scripts/setup_muse_app.sh" >/dev/null
+  [[ ! -s "$temp_root/curl.log" ]] || fail "installed Muse app must not be downloaded again"
+}
+
 test_agent_sync_rejects_symlinked_muse_settings() {
   local repo home_dir muse_dir
   make_temp_dir
@@ -1214,6 +1278,7 @@ main() {
   test_agent_sync_rejects_symlinked_muse_settings
   test_agent_sync_preserves_conflicting_muse_files
   test_muse_setup_runs_official_installer_without_editing_shell_profiles
+  test_muse_app_setup_verifies_meta_signature_before_install
   test_agent_sync_preserves_unmanaged_new_agent_integrations
   test_agent_sync_registers_deepseek_and_pi
   test_agent_sync_preserves_conflicting_deepseek_skills

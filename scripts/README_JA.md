@@ -18,6 +18,7 @@ English version: [README.md](README.md)
 | `analyze_agent_delegation.py` | prompt、response、tool引数・出力を表示せず、Codex subagent の起動バッチと観測上の重複実行時間を集計する。 |
 | `setup_agent_files.sh` | AI agent config、hook、skill、pet sync の canonical script。 |
 | `setup_hermes_agent.sh` | upstream が pip/PyPI と Homebrew 配布を廃止したため、Hermes Agent を公式 shell installer で導入・更新する script。 |
+| `setup_muse_app.sh` | Meta の Muse for Mac を Sparkle の appcast から取得し、Meta の署名と公証を確認して導入する script。導入済みなら何もしない。 |
 | `setup_muse.sh` | Muse Code を公式 shell installer で導入する script。shell の rc ファイルは書き換えず、以後は launcher が自己更新する。 |
 
 ## 更新ルール

@@ -99,6 +99,8 @@ muse login
 
 project側の `AGENTS.md`・skills・hooksは、Museでworkspaceをtrustした後だけ読まれます。非対話実行は `muse exec --disable-approval -- "task"` です。承認promptだけを止め、OS sandboxは有効のまま残します。Wazaの `--agent muse`、外部skillレビューの `--review-agent muse`、`agent-job-scheduler` の `muse` で指定できます。
 
+Metaのデスクトップ版AI agent [Muse for Mac](https://ai.meta.com/muse/download/)（`Muse.app`）は `mise run muse-app-setup` で導入します。CLIのMuse Codeとは別製品で、設定は共有しません。ダウンロードURLは期限付きの署名URLなのでNixでは固定できません。そのため、Sparkleのappcastから最新のdmgを取得し、Meta（Team ID `V9WTTPBFK9`）の署名と公証を確認してから `/Applications` に配置します。導入済みなら何もせず、以後の更新はアプリ自身が行います。macOS 14以上が必要です。
+
 ## Herdr
 
 Herdr 本体は `mise` の `github:ogulcancelik/herdr` で導入します。公式 Herdr skill は upstream license と local safety overlay 付きで `skills/herdr/` に vendoring しています。

@@ -99,6 +99,8 @@ Muse itself and Superset (`managed_hooks_path`) write to `settings.json`, so syn
 
 Muse reads a project's `AGENTS.md`, skills, and hooks only after the workspace is trusted. Run it non-interactively with `muse exec --disable-approval -- "task"`, which skips approval prompts but keeps the OS sandbox on. Waza `--agent muse`, upstream skill review `--review-agent muse`, and `agent-job-scheduler` accept the ID.
 
+Install Meta's desktop AI agent [Muse for Mac](https://ai.meta.com/muse/download/) (`Muse.app`) with `mise run muse-app-setup`. It is a separate product from the Muse Code CLI and shares no configuration. Its download URLs are expiring signed URLs, so Nix cannot pin them. The task reads the latest dmg from the Sparkle appcast, checks Meta's signature (Team ID `V9WTTPBFK9`) and notarization, and copies the app to `/Applications`. An existing install is left alone; the app updates itself. It requires macOS 14 or later.
+
 ## Herdr
 
 Herdr itself is installed by `mise` via `github:ogulcancelik/herdr`. The official Herdr skill is vendored under `skills/herdr/` with the upstream license and a local safety overlay.
