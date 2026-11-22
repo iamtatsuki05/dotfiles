@@ -121,12 +121,12 @@ test_reviewed_updates_preserve_local_security_and_compatibility_overlays() {
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" superpowers)"
   [[ "$pin" == "22f0b463e7a5e579904dd6211a520321035526f7" ]] || fail "unexpected superpowers pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" empirical-prompt-tuning)"
-  [[ "$pin" == "195bb34cb5220c3610ec4ba49007cae2fb10373e" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
+  [[ "$pin" == "8f7d73d69a12becb3cbbad5ad6cf733451fe4678" ]] || fail "unexpected empirical-prompt-tuning pin: $pin"
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" herdr)"
-  [[ "$pin" == "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde" ]] || fail "unexpected herdr pin: $pin"
+  [[ "$pin" == "e8d7d9705a7a2c89cef4dd42079379f05685af87" ]] || fail "unexpected herdr pin: $pin"
 
   pin="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print(next(item["pinned_commit"] for item in data["skills"] if item["id"] == sys.argv[2]))' "$MANIFEST" mattpocock-skills)"
-  [[ "$pin" == "5863806dd4e15c63174bee4e7515a4256792ecfa" ]] || fail "unexpected mattpocock-skills pin: $pin"
+  [[ "$pin" == "abeeaf95660ba9e8b7c753eb38f441ca707a8823" ]] || fail "unexpected mattpocock-skills pin: $pin"
 
   assert_file "$skills_root/dispatching-parallel-agents/LICENSE"
   assert_file "$skills_root/test-driven-development/LICENSE"
