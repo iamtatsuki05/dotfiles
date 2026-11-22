@@ -77,6 +77,7 @@
     "steermouse"
     "superset"
     "superwhisper"
+    "t3-code"
     "tailscale-app"
     "textsniper"
     "tunnelblick"

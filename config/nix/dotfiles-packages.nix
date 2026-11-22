@@ -118,6 +118,36 @@ in
       };
     };
 
+  openresearch = pkgs.stdenvNoCC.mkDerivation rec {
+    pname = "openresearch";
+    version = "0.2.29";
+
+    src = pkgs.fetchurl {
+      url = "https://github.com/alphaXiv/OpenResearch/releases/download/v${version}/OpenResearch.dmg";
+      sha256 = "708b58fc518280c1d63b6cb633e5e1e866217a4593198d145450c8671b345234";
+    };
+
+    nativeBuildInputs = [ pkgs.undmg ];
+    sourceRoot = ".";
+    dontBuild = true;
+    dontFixup = true;
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out/Applications"
+      cp -R OpenResearch.app "$out/Applications/"
+      runHook postInstall
+    '';
+
+    meta = {
+      description = "Local-first workspace for research agents";
+      homepage = "https://github.com/alphaXiv/OpenResearch";
+      license = lib.licenses.mit;
+      platforms = darwinOnly;
+      sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
+    };
+  };
+
   rancher-desktop =
     let
       version = "1.24.0";
