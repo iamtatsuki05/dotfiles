@@ -61,6 +61,19 @@ Macで `features.macos` が `false` の場合は、`--with-gui-apps` を指定�
 管理対象のHomebrew更新は有効になりません。CLIパッケージとmiseは維持します。
 詳しくは[Mac用の追加機能をOFFにする](configuration-ownership_JA.md#mac用の追加機能をoffにする)を参照してください。
 
+### Antigravity CLI のインストールを復旧する
+
+macOS で Homebrew が `bin/agy` に対して `already a Command Wrapper` と表示した場合は、
+リポジトリのルートで次を実行します。
+
+```sh
+bash scripts/repair_antigravity_cli.sh
+```
+
+旧版の実行ファイルの署名を確認し、表示されたパスに退避してから Homebrew でインストールします。
+インストールに失敗し、`bin/agy` が空いていれば旧版を元に戻します。
+復旧後は `mise run package-update -- --with-gui-apps` を再実行できます。
+
 ## Git pull hook が行う範囲を把握する
 
 `main.sh` は、リポジトリ内に3つの Git hook を設定します。

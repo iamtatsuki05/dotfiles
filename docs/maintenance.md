@@ -62,6 +62,20 @@ With `features.macos` set to `false` on macOS, `--with-gui-apps` does not enable
 GUI packages or managed Homebrew updates. CLI packages and mise remain enabled.
 See [Disable optional macOS features](configuration-ownership.md#disable-optional-macos-features).
 
+### Repair an Antigravity CLI installation
+
+If Homebrew reports `already a Command Wrapper` for `bin/agy`, run this from
+the repository root on macOS:
+
+```sh
+bash scripts/repair_antigravity_cli.sh
+```
+
+The script checks the signature of the old executable, saves it at the path it
+prints, and installs the Homebrew cask. If installation fails while `bin/agy`
+is empty, it restores the original executable. After the repair, rerun
+`mise run package-update -- --with-gui-apps`.
+
 ## Understand pull hooks
 
 `main.sh` installs three repository-local Git hooks:
