@@ -89,6 +89,7 @@ run_unit_tests() {
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_feature_flags.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_steermouse_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_repair_antigravity_cli.sh"
+  "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_doctor_homebrew_fallback.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_pi_extensions_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_tokeneconomizer_setup.sh"
   "$TEST_BASH_BIN" "$REPO_ROOT/tests/test_hallmark_setup.sh"

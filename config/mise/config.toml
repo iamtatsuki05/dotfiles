@@ -290,6 +290,12 @@ description = "Nix/mise/Hermes管理toolをまとめて更新"
 dir = "__DOTFILES_REPO_ROOT__"
 run = "zsh scripts/update_managed_versions.sh"
 
+[tasks.package-doctor]
+alias = "brew-doctor"
+description = "homebrew-fallback.nixのcask/brew定義を検証・修復"
+dir = "__DOTFILES_REPO_ROOT__"
+run = "zsh scripts/doctor_homebrew_fallback.sh"
+
 [tasks.git-head-commit-reset]
 description = "直近commitをsoft reset"
 run = "git reset --soft HEAD^"
