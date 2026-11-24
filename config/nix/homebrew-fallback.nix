@@ -83,7 +83,7 @@
     "tunnelblick"
     "unity-hub"
     "vlc"
-    "vnc-viewer"
+    "realvnc-connect-viewer"
     "webstorm"
     "wechat"
     "windows-app"
