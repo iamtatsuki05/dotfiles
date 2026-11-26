@@ -177,7 +177,7 @@
       "description": "External empirical prompt tuning skill kept in Japanese as local SKILL.md.",
       "repository": "https://github.com/mizchi/skills.git",
       "branch": "main",
-      "pinned_commit": "8f7d73d69a12becb3cbbad5ad6cf733451fe4678",
+      "pinned_commit": "672a5b282ab736e8cd7468094918b439f82f3918",
       "local_tree_sha256": "949bcc0840529f8b9f8a57e7279f0822d7fe8d4a83b0815a8bf8b3db1161978e",
       "mappings": [
         {
@@ -202,9 +202,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "8f7d73d69a12becb3cbbad5ad6cf733451fe4678",
-        "last_reviewed_at": "2026-11-22T05:15:27+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/empirical-prompt-tuning.md"
+        "last_reviewed_commit": "672a5b282ab736e8cd7468094918b439f82f3918",
+        "last_reviewed_at": "2026-11-26T13:48:56+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/empirical-prompt-tuning.md"
       },
       "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning",
       "provenance_note": "関連 skill への参照は flat discovery root で認識される namespace なしの名前へ変更している。"
@@ -214,8 +214,8 @@
       "description": "Current Matt Pocock engineering and productivity skills vendored into the shared agent skill tree without deprecated aliases.",
       "repository": "https://github.com/mattpocock/skills.git",
       "branch": "main",
-      "pinned_commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
-      "local_tree_sha256": "636f3fa79ad3575f606fa908ea057dd262d6f2aec94b7f199c6ccf3acaf37007",
+      "pinned_commit": "6f7f7831a625f040a8e06a0e7954826b87ce775a",
+      "local_tree_sha256": "eafb819c9e389f11e299261a535bdf343955357c2b368379c4ea0d1dd5d033ef",
       "mappings": [
         {
           "source_path": "skills/productivity/grilling",
@@ -453,11 +453,11 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
-        "last_reviewed_at": "2026-11-22T05:15:30+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/mattpocock-skills.md"
+        "last_reviewed_commit": "6f7f7831a625f040a8e06a0e7954826b87ce775a",
+        "last_reviewed_at": "2026-11-26T13:48:56+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/mattpocock-skills.md"
       },
-      "source_url": "https://github.com/mattpocock/skills/tree/abeeaf95660ba9e8b7c753eb38f441ca707a8823",
+      "source_url": "https://github.com/mattpocock/skills/tree/6f7f7831a625f040a8e06a0e7954826b87ce775a",
       "provenance_note": "Deprecated local aliases and removed upstream skills are not retained: grill-me, diagnose, and zoom-out are removed; diagnosing-bugs is the canonical replacement. domain-modeling and codebase-design are vendored because the current grill-with-docs and improve-codebase-architecture skills require them. Unsupported Claude frontmatter and Skill-tool wording are converted deterministically for Codex. Handoff uses active sessions; architecture reports are offline and user-opened; durable domain docs, bisect, artifact/test deletion, and raw HITL error input are approval- or redaction-gated. Each skill carries the unchanged upstream MIT LICENSE."
     },
     {
@@ -778,7 +778,7 @@
       "description": "Two selected pstack principles for shared-state isolation and retry-safe operations.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "pstack/skills/principle-make-operations-idempotent/SKILL.md",
@@ -811,15 +811,15 @@
           "expected_count": 1
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9/pstack",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/pstack",
       "provenance_note": "Only two principle SKILL.md files and the pstack MIT LICENSE are imported. Instruction bodies and license remain byte-for-byte upstream. The unsupported disable-model-invocation field is moved into metadata; repo-local agents/openai.yaml preserves explicit-only invocation in Codex. Other runtimes may not enforce this Codex policy. The poteto-mode orchestrator, other principles, hooks, scripts, and plugin manifests are excluded. Cleanup and retry examples remain subject to repository scope and authorization rules.",
       "local_tree_sha256": "603ee594e56f0c0d99e4b03f699261524a7bb439e3b9230318e97e4d0f0cd4b6",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
-        "last_reviewed_at": "2026-11-22T05:16:31+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/pstack-principles.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:48:57+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/pstack-principles.md"
       }
     },
     {
@@ -1145,22 +1145,22 @@
       "description": "Japanese prose revision with meaning-preservation checks and final-text verification.",
       "repository": "https://github.com/nanaism/yomiyasu.git",
       "branch": "main",
-      "pinned_commit": "c49d5f1bee91258e33e1febc3569c6c87be7669e",
+      "pinned_commit": "3979c750b5e1fe9892bd47bb354f0fb51d534ff2",
       "mappings": [
         {
           "source_path": "skills/yomiyasu",
           "local_path": "dotfiles/.agent/skills/yomiyasu"
         }
       ],
-      "source_url": "https://github.com/nanaism/yomiyasu/tree/c49d5f1bee91258e33e1febc3569c6c87be7669e/skills/yomiyasu",
+      "source_url": "https://github.com/nanaism/yomiyasu/tree/3979c750b5e1fe9892bd47bb354f0fb51d534ff2/skills/yomiyasu",
       "provenance_note": "Unmodified upstream skill including MIT and Unicode licenses. Explicit invocation; no optional hook registration or changes to existing writing skills. Checks store manuscript copies locally by default; respect user data-retention instructions.",
-      "local_tree_sha256": "c0129ec713b4d0b4ec8af278b7dc446798b88443e613381d8bb4fcd48c547872",
+      "local_tree_sha256": "b7d2a7c232aab17d49913b9490f6fe20f3a514e9e07831951f0e09b3d49ef7fe",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "c49d5f1bee91258e33e1febc3569c6c87be7669e",
-        "last_reviewed_at": "2026-11-22T05:16:12+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/yomiyasu.md"
+        "last_reviewed_commit": "3979c750b5e1fe9892bd47bb354f0fb51d534ff2",
+        "last_reviewed_at": "2026-11-26T13:48:58+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/yomiyasu.md"
       }
     },
     {
@@ -1168,7 +1168,7 @@
       "description": "Explicitly invoked action-first response style for the current session.",
       "repository": "https://github.com/ayghri/i-have-adhd.git",
       "branch": "main",
-      "pinned_commit": "1ecea1993b7fce257ffbd686c070948b5e07eda6",
+      "pinned_commit": "f3e783bae5f4820416492091b3abeb670616c23a",
       "mappings": [
         {
           "source_path": "skills/i-have-adhd",
@@ -1179,15 +1179,15 @@
           "local_path": "dotfiles/.agent/skills/i-have-adhd/LICENSE"
         }
       ],
-      "source_url": "https://github.com/ayghri/i-have-adhd/tree/1ecea1993b7fce257ffbd686c070948b5e07eda6/skills/i-have-adhd",
+      "source_url": "https://github.com/ayghri/i-have-adhd/tree/f3e783bae5f4820416492091b3abeb670616c23a/skills/i-have-adhd",
       "provenance_note": "Unmodified upstream skill and agent metadata, with the upstream MIT license. Explicit invocation only; no plugin, hook, always-on configuration, or persistent user-profile assumption is installed.",
       "local_tree_sha256": "35b4efc3989ed222635e2db48db3d3ce0faa88cfcffb824a04e80dbfc8f691df",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "1ecea1993b7fce257ffbd686c070948b5e07eda6",
-        "last_reviewed_at": "2026-11-01T19:10:58+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-i-have-adhd-codex/subagents/security-review.md"
+        "last_reviewed_commit": "f3e783bae5f4820416492091b3abeb670616c23a",
+        "last_reviewed_at": "2026-11-26T13:48:58+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/i-have-adhd.md"
       }
     },
     {
@@ -1234,7 +1234,7 @@
       "description": "Pinned michael-denyer/pstack-claude port for Claude Code and Codex; Cursor remains on pstack-cursor.",
       "repository": "https://github.com/michael-denyer/pstack-claude.git",
       "branch": "main",
-      "pinned_commit": "97d2ba2790822939ee43db0d7856219ea96c450d",
+      "pinned_commit": "1ab6b82cbacb04897094e1a3870357882e1e616d",
       "mappings": [
         {
           "source_path": "plugins/pstack",
@@ -1261,7 +1261,7 @@
           "local_path": "dotfiles/.agent/apps/pstack/canonical/NOTICE-skills.md"
         }
       ],
-      "source_url": "https://github.com/michael-denyer/pstack-claude/tree/97d2ba2790822939ee43db0d7856219ea96c450d/plugins/pstack",
+      "source_url": "https://github.com/michael-denyer/pstack-claude/tree/1ab6b82cbacb04897094e1a3870357882e1e616d/plugins/pstack",
       "provenance_note": "The complete unified native Claude Code/Codex plugin is imported at a fixed commit; marketplace ID remains pstack@dotfiles-pstack. Existing local authorization, data-handling, ownership and non-equivalent-fallback boundaries are retained in README and all skill/agent/playbook/delegated-prompt entrypoints. The SessionStart routing context is subordinate to those boundaries; installation does not grant hook trust, change model sheets, bootstrap helpers, start automations or authorize external actions. Root license/notice files are preserved alongside bundled notices. Cursor and the standalone two principles intentionally retain their previous sources.",
       "local_text_replacements": [
         {
@@ -1362,8 +1362,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/figure-it-out/SKILL.md",
-          "old": "---\nname: figure-it-out\ndescription: \"Design an auditable playbook when no narrower one fits: a large migration, an ambitious multi-part change, or work a human reviews after stepping away. Scales rigor to the task, runs a hypothesis loop, and logs decisions. Use for /figure-it-out or 'figure it out'.\"\n---\n\n# Figure it out\n\nWhen the task matches no playbook, design one. The deliverable ",
-          "new": "---\nname: figure-it-out\ndescription: \"Design an auditable playbook when no narrower one fits: a large migration, an ambitious multi-part change, or work a human reviews after stepping away. Scales rigor to the task, runs a hypothesis loop, and logs decisions. Use for /figure-it-out or 'figure it out'.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Figure it out\n\nWhen the task matches no playbook, design one. The deliverable ",
+          "old": "\n---\n\n# Figure it out",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Figure it out",
           "expected_count": 1
         },
         {
@@ -1812,8 +1812,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/typescript-best-practices/SKILL.md",
-          "old": "---\nname: typescript-best-practices\ndescription: TypeScript best practices. Use when reading or editing any .ts or .tsx file.\npaths: [\"**/*.ts\", \"**/*.tsx\"]\n---\n\n# TypeScript best practices\n\nOn Muse, read the [platform mapping](../poteto-mode",
-          "new": "---\nname: typescript-best-practices\ndescription: TypeScript best practices. Use when reading or editing any .ts or .tsx file.\npaths: [\"**/*.ts\", \"**/*.tsx\"]\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TypeScript best practices\n\nOn Muse, read the [platform mapping](../poteto-mode",
+          "old": "\n---\n\n# TypeScript best practices",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TypeScript best practices",
           "expected_count": 1
         },
         {
@@ -1857,30 +1857,36 @@
           "old": "You are working for the operator. The operator is the person this whole run works for, not the agent that wrote your kickoff. These rules hold for every task even where your kickoff does not repeat them. Your kickoff overrides one only when it says so in so many words.",
           "new": "Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. That policy and current host, repository and user instructions override conflicting rules below, including approval, required checks, and PR readiness. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nYou are working on the operator's authorized task. These defaults apply within that task and remain subordinate to the instructions above.",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reframe/SKILL.md",
+          "old": "\n---\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "expected_count": 1
         }
       ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "97d2ba2790822939ee43db0d7856219ea96c450d",
-        "last_reviewed_at": "2026-11-22T05:16:07+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/pstack.md"
+        "last_reviewed_commit": "1ab6b82cbacb04897094e1a3870357882e1e616d",
+        "last_reviewed_at": "2026-11-26T13:48:59+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/pstack.md"
       },
-      "local_tree_sha256": "9dea94efdae1aa1657f545dcb79ad0f7d1500065085ee13fe02fefe4b00cace2"
+      "local_tree_sha256": "048a079880f2292cf10659bb43baddb7b05752689a266a8b80336c6f1405786b"
     },
     {
       "id": "pstack-cursor",
       "description": "Retained Cursor pstack package; Claude Code and Codex use the separately pinned pstack-claude port.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "pstack",
           "local_path": "dotfiles/.agent/apps/pstack/cursor"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9/pstack",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/pstack",
       "provenance_note": "The native Cursor pstack payload remains sourced from cursor/plugins and is updated at the user request. MIT license and Lauren Tan attribution are preserved unchanged. Existing local authorization boundaries remain; worker entrypoint policy and explicit model-migration boundaries are added. The old Claude adapter is not part of this package.",
       "local_text_replacements": [
         {
@@ -2296,15 +2302,21 @@
           "old": "### 2. Load current state\n\nThe default role-to-model mapping is the rule shape shown in step 5 below. If `~/.cursor/rules/pstack-models.mdc` already exists, read it and treat its `# budget` line and its role values as the current choices. Otherwise start from those defaults. A line whose role is not in step 5, such as `hardest tasks`, `architect runners`, `reflect tooling`, or `why investigators`, is from a retired role. Drop it.",
           "new": "### 2. Load current state\n\nLocal migration boundary: A model name or missing defaults-version marker does not establish that an existing value was an unmodified default. Preserve existing model, provider and budget choices unless the user has authorized that exact migration. Present proposed replacements and dropped role lines alongside their original values before writing the rule; do not silently substitute a provider or reset a user choice.\n\nThe default role-to-model mapping is the rule shape shown in step 5 below. If `~/.cursor/rules/pstack-models.mdc` already exists, read it and treat its `# budget` line and its role values as the current choices. Otherwise start from those defaults. A line whose role is not in step 5, such as `hardest tasks`, `architect runners`, `reflect tooling`, or `why investigators`, is from a retired role. Drop it.",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/reframe/SKILL.md",
+          "old": "\n---\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "expected_count": 1
         }
       ],
-      "local_tree_sha256": "fd4677a00c7fb4e6462fa9aac9d09c2d85051ae0e24b87f17d57032e161e365f",
+      "local_tree_sha256": "4cc8dc864df88ae83fd53b6e2df465c20f4443791ae478152daaf69aede2eed5",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
-        "last_reviewed_at": "2026-11-22T05:16:34+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/pstack-cursor.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:01+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/pstack-cursor.md"
       }
     },
     {
@@ -2312,7 +2324,7 @@
       "description": "Selected portable cursor-team-kit skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "cursor-team-kit/skills/control-cli",
@@ -2347,7 +2359,7 @@
           "local_path": "dotfiles/.agent/skills/verify-this/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9/cursor-team-kit",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/cursor-team-kit",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2379,9 +2391,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
-        "last_reviewed_at": "2026-11-22T05:16:37+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/cursor-team-kit.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:01+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/cursor-team-kit.md"
       }
     },
     {
@@ -2389,7 +2401,7 @@
       "description": "Selected portable cli-for-agent skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "cli-for-agent/skills/cli-for-agents",
@@ -2400,7 +2412,7 @@
           "local_path": "dotfiles/.agent/skills/cli-for-agents/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9/cli-for-agent",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/cli-for-agent",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2426,9 +2438,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
-        "last_reviewed_at": "2026-11-22T05:16:41+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/cli-for-agent.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:02+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/cli-for-agent.md"
       }
     },
     {
@@ -2436,7 +2448,7 @@
       "description": "Selected portable create-plugin skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "create-plugin/skills/create-plugin-scaffold",
@@ -2455,7 +2467,7 @@
           "local_path": "dotfiles/.agent/skills/review-plugin-submission/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9/create-plugin",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/create-plugin",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2475,9 +2487,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
-        "last_reviewed_at": "2026-11-22T05:16:44+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/create-plugin.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:03+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/create-plugin.md"
       }
     },
     {
@@ -2485,7 +2497,7 @@
       "description": "Selected portable teaching skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "teaching/skills/create-learning-path",
@@ -2504,7 +2516,7 @@
           "local_path": "dotfiles/.agent/skills/run-learning-retrospective/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9/teaching",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/teaching",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2536,9 +2548,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
-        "last_reviewed_at": "2026-11-22T05:16:47+00:00",
-        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/teaching.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:04+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/teaching.md"
       }
     },
     {
@@ -2546,7 +2558,7 @@
       "description": "Interactive implementation-plan HTML skill and its bundled offline packer from Anthropic community plugins.",
       "repository": "https://github.com/anthropics/claude-plugins-community.git",
       "branch": "main",
-      "pinned_commit": "163301d1904c0a994539f5226ce0fcd65b8652bf",
+      "pinned_commit": "24479d5a1fb7a1c4f068a6d3b74d0c0fbc1acfda",
       "mappings": [
         {
           "source_path": "html-plan/skills/html-plan",
@@ -2561,7 +2573,7 @@
           "local_path": "dotfiles/.agent/skills/html-plan/upstream-plugin.json"
         }
       ],
-      "source_url": "https://github.com/anthropics/claude-plugins-community/tree/06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1/html-plan",
+      "source_url": "https://github.com/anthropics/claude-plugins-community/tree/24479d5a1fb7a1c4f068a6d3b74d0c0fbc1acfda/html-plan",
       "provenance_note": "The complete skill subtree is distributed through the shared skill tree, not registered as a native marketplace plugin. The plugin has no hooks or MCP servers; its metadata is retained as upstream-plugin.json. The repository LICENSE says Apache-2.0 while plugin metadata declares MIT; both are preserved unchanged without resolving that discrepancy. User/repository language, authorization and publication rules take precedence over upstream prose and approval conventions. Local packer changes reject missing requested Git revisions/blobs instead of substituting working-tree content.",
       "local_text_replacements": [
         {
@@ -2586,9 +2598,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "163301d1904c0a994539f5226ce0fcd65b8652bf",
-        "last_reviewed_at": "2026-11-12T10:47:16+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/html-plan.verified.md"
+        "last_reviewed_commit": "24479d5a1fb7a1c4f068a6d3b74d0c0fbc1acfda",
+        "last_reviewed_at": "2026-11-26T13:49:11+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/html-plan.md"
       },
       "local_tree_sha256": "c45dd5d7daf5fcd3d39acf7ade7208089b2322a0ea3199094de6590d6093914d"
     },

@@ -65,7 +65,7 @@ function summarizeArgs(args: unknown): string {
   return cap(oneLine(named ?? JSON.stringify(args) ?? ""), TOOL_ARGS_CAP);
 }
 
-function assistantText(content: unknown[]): string {
+export function assistantText(content: unknown[]): string {
   return content
     .filter((part) => Value.Check(textPart, part))
     .map((part) => part.text)
@@ -193,6 +193,7 @@ export class PiChild {
   // Ends the run now: stdin closes and one SIGTERM-then-SIGKILL ladder starts,
   // in place of the one close() would have armed.
   end(graceMs: number): void {
+    void this.command({ type: "abort" });
     this.endInput();
     clearTimeout(this.closeTimer);
     this.terminate(graceMs);
@@ -256,6 +257,15 @@ export class PiChild {
     }
   }
 }
+
+export type AgentChild = Pick<PiChild, "pid" | "exited" | "activity" | "steer" | "end" | "signal">;
+
+// What became of a restored running record's run, as its host reports it:
+// - kept: another live pi holds it;
+// - orphan: it is the record's run, and no live pi holds it;
+// - unknown: something runs, and the host cannot tell whether it is the agent's;
+// - gone: nothing of the run is left.
+export type Fate = "kept" | "orphan" | "unknown" | "gone";
 
 // Splits pi's stdout into lines on LF only: a Unicode line separator is valid
 // inside a JSON string.
