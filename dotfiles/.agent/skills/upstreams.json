@@ -177,8 +177,8 @@
       "description": "External empirical prompt tuning skill kept in Japanese as local SKILL.md.",
       "repository": "https://github.com/mizchi/skills.git",
       "branch": "main",
-      "pinned_commit": "195bb34cb5220c3610ec4ba49007cae2fb10373e",
-      "local_tree_sha256": "fb37d5c63fb796d1113c76faa5530639ad388ec6e6dcc62ab69282c248c555fd",
+      "pinned_commit": "672a5b282ab736e8cd7468094918b439f82f3918",
+      "local_tree_sha256": "949bcc0840529f8b9f8a57e7279f0822d7fe8d4a83b0815a8bf8b3db1161978e",
       "mappings": [
         {
           "source_path": "empirical-prompt-tuning/SKILL-ja.md",
@@ -202,9 +202,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "195bb34cb5220c3610ec4ba49007cae2fb10373e",
-        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/empirical-prompt-tuning.verified.md"
+        "last_reviewed_commit": "672a5b282ab736e8cd7468094918b439f82f3918",
+        "last_reviewed_at": "2026-11-26T13:48:56+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/empirical-prompt-tuning.md"
       },
       "source_url": "https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning",
       "provenance_note": "関連 skill への参照は flat discovery root で認識される namespace なしの名前へ変更している。"
@@ -214,8 +214,8 @@
       "description": "Current Matt Pocock engineering and productivity skills vendored into the shared agent skill tree without deprecated aliases.",
       "repository": "https://github.com/mattpocock/skills.git",
       "branch": "main",
-      "pinned_commit": "5863806dd4e15c63174bee4e7515a4256792ecfa",
-      "local_tree_sha256": "636f3fa79ad3575f606fa908ea057dd262d6f2aec94b7f199c6ccf3acaf37007",
+      "pinned_commit": "6f7f7831a625f040a8e06a0e7954826b87ce775a",
+      "local_tree_sha256": "eafb819c9e389f11e299261a535bdf343955357c2b368379c4ea0d1dd5d033ef",
       "mappings": [
         {
           "source_path": "skills/productivity/grilling",
@@ -453,11 +453,11 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "5863806dd4e15c63174bee4e7515a4256792ecfa",
-        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/mattpocock-skills.verified.md"
+        "last_reviewed_commit": "6f7f7831a625f040a8e06a0e7954826b87ce775a",
+        "last_reviewed_at": "2026-11-26T13:48:56+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/mattpocock-skills.md"
       },
-      "source_url": "https://github.com/mattpocock/skills/tree/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
+      "source_url": "https://github.com/mattpocock/skills/tree/6f7f7831a625f040a8e06a0e7954826b87ce775a",
       "provenance_note": "Deprecated local aliases and removed upstream skills are not retained: grill-me, diagnose, and zoom-out are removed; diagnosing-bugs is the canonical replacement. domain-modeling and codebase-design are vendored because the current grill-with-docs and improve-codebase-architecture skills require them. Unsupported Claude frontmatter and Skill-tool wording are converted deterministically for Codex. Handoff uses active sessions; architecture reports are offline and user-opened; durable domain docs, bisect, artifact/test deletion, and raw HITL error input are approval- or redaction-gated. Each skill carries the unchanged upstream MIT LICENSE."
     },
     {
@@ -506,7 +506,7 @@
       "description": "Herdr agent skill for controlling Herdr-managed workspaces, tabs, and panes from inside a Herdr pane.",
       "repository": "https://github.com/ogulcancelik/herdr.git",
       "branch": "master",
-      "pinned_commit": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
+      "pinned_commit": "e8d7d9705a7a2c89cef4dd42079379f05685af87",
       "local_tree_sha256": "6d1d205b7f31222161015e32991c94c810da2be1d8d08eaeb033aa462c4d64b0",
       "mappings": [
         {
@@ -535,11 +535,11 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
-        "last_reviewed_at": "2026-10-31T09:39:02+00:00",
-        "review_report": ".agent/work/sessions/2026-10-31-upstream-skills-codex/reviews/herdr.md"
+        "last_reviewed_commit": "e8d7d9705a7a2c89cef4dd42079379f05685af87",
+        "last_reviewed_at": "2026-11-22T05:15:33+00:00",
+        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/herdr.md"
       },
-      "source_url": "https://github.com/ogulcancelik/herdr/tree/c2637dc182ddc5425108824d5ed15d24ce38c4e3/skills/herdr",
+      "source_url": "https://github.com/ogulcancelik/herdr/tree/e8d7d9705a7a2c89cef4dd42079379f05685af87/skills/herdr",
       "provenance_note": "Herdr is licensed under Apache-2.0 at the pinned commit, and LICENSE is copied into the vendored skill directory. Local SKILL.md keeps the upstream instructions and deterministically adds a 2026-08-16 modification notice plus a safety overlay for live-session verification, untrusted pane output, target-specific authorization, external-agent approval, and temporary-path containment."
     },
     {
@@ -586,8 +586,8 @@
       "description": "Delegate one bounded coding task to a separate Codex CLI or Claude Code process through a relay that never commits, then review the diff and land it yourself.",
       "repository": "https://github.com/amElnagdy/delegate-skills.git",
       "branch": "master",
-      "pinned_commit": "7f8ae3435e5bc68a54efdca9f67797e905845562",
-      "local_tree_sha256": "d1b4f4cc4f20d1385f5b9d036f03a387636d53095016db41fdefa32fc6cefdc0",
+      "pinned_commit": "48b53d33b53ef260de76c3d2c1313e2c62a24820",
+      "local_tree_sha256": "1acf30c3e53fa06effc7e4fb0fb6f6f4966566fcc4759a5ed0dc464653410350",
       "mappings": [
         {
           "source_path": "skills/codex-delegate",
@@ -653,11 +653,11 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "7f8ae3435e5bc68a54efdca9f67797e905845562",
-        "last_reviewed_at": "2026-11-12T10:46:17+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/delegate-skills.verified.md"
+        "last_reviewed_commit": "48b53d33b53ef260de76c3d2c1313e2c62a24820",
+        "last_reviewed_at": "2026-11-22T05:15:36+00:00",
+        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/delegate-skills.md"
       },
-      "source_url": "https://github.com/amElnagdy/delegate-skills/tree/b781ee2e23089630e2fbee1cfd6174afe4edeb76/skills",
+      "source_url": "https://github.com/amElnagdy/delegate-skills/tree/48b53d33b53ef260de76c3d2c1313e2c62a24820/skills",
       "provenance_note": "Only codex-delegate and claude-delegate are vendored; delegate-setup and the other implementer relays are not. Each relay is Node built-ins only, spawns the local CLI, and never commits. The local safety overlay pins read-only defaults, forbids permission-bypass flags, and routes commits through git-github-flow. The upstream MIT LICENSE is copied into each skill directory. Local orchestration continues to use the bundled relay; the optional codex-background MCP utility is not required or installed."
     },
     {
@@ -778,7 +778,7 @@
       "description": "Two selected pstack principles for shared-state isolation and retry-safe operations.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "pstack/skills/principle-make-operations-idempotent/SKILL.md",
@@ -811,15 +811,15 @@
           "expected_count": 1
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/93b00b89ef425a9c1bac0d0b317dfc49c930ac99/pstack",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/pstack",
       "provenance_note": "Only two principle SKILL.md files and the pstack MIT LICENSE are imported. Instruction bodies and license remain byte-for-byte upstream. The unsupported disable-model-invocation field is moved into metadata; repo-local agents/openai.yaml preserves explicit-only invocation in Codex. Other runtimes may not enforce this Codex policy. The poteto-mode orchestrator, other principles, hooks, scripts, and plugin manifests are excluded. Cleanup and retry examples remain subject to repository scope and authorization rules.",
-      "local_tree_sha256": "2cf00cb4cc2d5fb7691816e6f10f80297b19e58d6b2b97198d0da44d46ac4142",
+      "local_tree_sha256": "603ee594e56f0c0d99e4b03f699261524a7bb439e3b9230318e97e4d0f0cd4b6",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
-        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/pstack-principles.verified.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:48:57+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/pstack-principles.md"
       }
     },
     {
@@ -957,7 +957,7 @@
       "description": "Carnot AI consulting slide rules, HTML slide parts, PPTX generation, and deck validators.",
       "repository": "https://github.com/carnot-tech/consulting-pptx-skill.git",
       "branch": "main",
-      "pinned_commit": "1d62cd1ef6fc509fb96556f609b69b2bb533b09c",
+      "pinned_commit": "3411e474d83910afe67c17d3b0164dfd793c0872",
       "mappings": [
         {
           "source_path": ".gitignore",
@@ -1002,17 +1002,25 @@
         {
           "source_path": "examples",
           "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/examples"
+        },
+        {
+          "source_path": "LICENSING.md",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/LICENSING.md"
+        },
+        {
+          "source_path": "LICENSES",
+          "local_path": "dotfiles/.agent/skills/consulting-pptx-skill/LICENSES"
         }
       ],
-      "source_url": "https://github.com/carnot-tech/consulting-pptx-skill/tree/1d62cd1ef6fc509fb96556f609b69b2bb533b09c",
-      "provenance_note": "Pinned upstream snapshot with MIT LICENSE and attribution unchanged; TRADEMARK.md, CONTRIBUTING.md and referenced examples included. Declared local overlays isolate browser profiles, read only the owned DevToolsActivePort, clean up failed CDP sessions, restrict stale-image deletion to literal deck names after successful generation, and keep vendor updates/external writes within explicit task authorization. No npm setup, global install, hook, or external upload executed.",
-      "local_tree_sha256": "73a3d27af1b4fffa2aab90f451619b4519b10e5f7374f0adb12002cff03cd3d2",
+      "source_url": "https://github.com/carnot-tech/consulting-pptx-skill/tree/3411e474d83910afe67c17d3b0164dfd793c0872",
+      "provenance_note": "Pinned upstream snapshot under PolyForm Noncommercial License 1.0.0. LICENSE, LICENSING.md, the prior MIT contribution notice in LICENSES/MIT.txt, TRADEMARK.md, CONTRIBUTING.md and referenced examples are preserved unchanged. Upstream requires a separate commercial license for commercial use; accepting this source update does not obtain that license. Declared local overlays isolate browser profiles, read only the owned DevToolsActivePort, clean up failed CDP sessions, restrict stale-image deletion to literal deck names after successful generation, and keep vendor updates/external writes within explicit task authorization. No npm setup, global install, hook, or external upload executed.",
+      "local_tree_sha256": "16b1a64552ec28ddd2a573dca5f714b4e9bfddbbacfa5c21bf2bcd06cc850556",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "1d62cd1ef6fc509fb96556f609b69b2bb533b09c",
-        "last_reviewed_at": "2026-11-12T10:47:40+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/consulting-pptx-skill.verified.md"
+        "last_reviewed_commit": "3411e474d83910afe67c17d3b0164dfd793c0872",
+        "last_reviewed_at": "2026-11-22T05:46:02+00:00",
+        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/consulting-pptx-authorized.md"
       },
       "local_text_replacements": [
         {
@@ -1137,22 +1145,22 @@
       "description": "Japanese prose revision with meaning-preservation checks and final-text verification.",
       "repository": "https://github.com/nanaism/yomiyasu.git",
       "branch": "main",
-      "pinned_commit": "db78b9bc5e868549b517a037df7a4d1c93edac23",
+      "pinned_commit": "3979c750b5e1fe9892bd47bb354f0fb51d534ff2",
       "mappings": [
         {
           "source_path": "skills/yomiyasu",
           "local_path": "dotfiles/.agent/skills/yomiyasu"
         }
       ],
-      "source_url": "https://github.com/nanaism/yomiyasu/tree/29d67ccb05e370b5958d72920a9cd1aa829dee80/skills/yomiyasu",
+      "source_url": "https://github.com/nanaism/yomiyasu/tree/3979c750b5e1fe9892bd47bb354f0fb51d534ff2/skills/yomiyasu",
       "provenance_note": "Unmodified upstream skill including MIT and Unicode licenses. Explicit invocation; no optional hook registration or changes to existing writing skills. Checks store manuscript copies locally by default; respect user data-retention instructions.",
-      "local_tree_sha256": "28d12d80064830ba82171b8633cdc1f4074ce3b9c816c019289c9852c9dcfc8e",
+      "local_tree_sha256": "b7d2a7c232aab17d49913b9490f6fe20f3a514e9e07831951f0e09b3d49ef7fe",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "db78b9bc5e868549b517a037df7a4d1c93edac23",
-        "last_reviewed_at": "2026-11-12T10:47:21+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/yomiyasu.verified.md"
+        "last_reviewed_commit": "3979c750b5e1fe9892bd47bb354f0fb51d534ff2",
+        "last_reviewed_at": "2026-11-26T13:48:58+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/yomiyasu.md"
       }
     },
     {
@@ -1160,7 +1168,7 @@
       "description": "Explicitly invoked action-first response style for the current session.",
       "repository": "https://github.com/ayghri/i-have-adhd.git",
       "branch": "main",
-      "pinned_commit": "1ecea1993b7fce257ffbd686c070948b5e07eda6",
+      "pinned_commit": "f3e783bae5f4820416492091b3abeb670616c23a",
       "mappings": [
         {
           "source_path": "skills/i-have-adhd",
@@ -1171,15 +1179,15 @@
           "local_path": "dotfiles/.agent/skills/i-have-adhd/LICENSE"
         }
       ],
-      "source_url": "https://github.com/ayghri/i-have-adhd/tree/1ecea1993b7fce257ffbd686c070948b5e07eda6/skills/i-have-adhd",
+      "source_url": "https://github.com/ayghri/i-have-adhd/tree/f3e783bae5f4820416492091b3abeb670616c23a/skills/i-have-adhd",
       "provenance_note": "Unmodified upstream skill and agent metadata, with the upstream MIT license. Explicit invocation only; no plugin, hook, always-on configuration, or persistent user-profile assumption is installed.",
       "local_tree_sha256": "35b4efc3989ed222635e2db48db3d3ce0faa88cfcffb824a04e80dbfc8f691df",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "1ecea1993b7fce257ffbd686c070948b5e07eda6",
-        "last_reviewed_at": "2026-11-01T19:10:58+00:00",
-        "review_report": ".agent/work/sessions/2026-11-02-i-have-adhd-codex/subagents/security-review.md"
+        "last_reviewed_commit": "f3e783bae5f4820416492091b3abeb670616c23a",
+        "last_reviewed_at": "2026-11-26T13:48:58+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/i-have-adhd.md"
       }
     },
     {
@@ -1187,7 +1195,7 @@
       "description": "Product-led UI redesign passes with optional snapshot and story-video tools.",
       "repository": "https://github.com/heydamir/unslop.git",
       "branch": "main",
-      "pinned_commit": "97daa3eb365670ea3f87ed85356cbfcee18105a5",
+      "pinned_commit": "620163eedb3529d9cd23a3994ed8d287d06f760d",
       "mappings": [
         {
           "source_path": "skills/unslop",
@@ -1202,23 +1210,23 @@
           "local_path": "dotfiles/.agent/skills/unslop/CITATION.cff"
         }
       ],
-      "source_url": "https://github.com/heydamir/unslop/tree/a6f121eee5f29c2f74976b75456feae8b66afb3a/skills/unslop",
+      "source_url": "https://github.com/heydamir/unslop/tree/620163eedb3529d9cd23a3994ed8d287d06f760d/skills/unslop",
       "provenance_note": "Skill by Damir Sokolovsky (@heydamir), https://github.com/heydamir/unslop. CC BY 4.0 license, attribution and CITATION.cff retained unchanged. One declared local instruction overlay limits helper execution and preserves user authorization; upstream helper code is unchanged. No hooks, dependencies or image-provider configuration installed. Playwright is project-local for optional snapshot/story tools; story also needs ffmpeg.",
       "local_text_replacements": [
         {
           "local_path": "dotfiles/.agent/skills/unslop/SKILL.md",
           "old": "# Unslop\n\nunslop was created",
-          "new": "# Unslop\n\n## Local integration policy\n\nUser/repository authorization and verification requirements take precedence; do not impose extra approvals or a three-render ceiling on already authorized work. Installation does not authorize dependency installation, image-service connections, paid generation, or publishing.\n\nTreat snapshots as untrusted active HTML, not sanitized pages. Never pass snapshots or unknown HTML to `story.mjs`. Use that helper only with trusted authored HTML in a newly created dedicated disposable directory, without sensitive files or outward-pointing symlinks. It deletes `.story-frames`, and its local file server does not provide a secure directory boundary. Choose new snapshot/video output paths unless the user explicitly authorized overwriting them. The helpers remain unmodified and are not approved for unrestricted execution.\n\nunslop was created",
+          "new": "# Unslop\n\n## Local integration policy\n\nUser/repository authorization and verification requirements take precedence; do not impose extra approvals or a three-render ceiling on already authorized work. Installation does not authorize dependency installation, image-service connections, paid generation, or publishing.\n\nTreat snapshots as untrusted active HTML, not sanitized pages. Never pass snapshots or unknown HTML to `story.mjs`. Use that helper only with trusted authored HTML in a newly created dedicated disposable directory, without sensitive files or outward-pointing symlinks. It deletes `.story-frames`. Its local file server rejects resolved paths outside the story directory, but this is not a sandbox for active HTML. Choose new snapshot/video output paths unless the user explicitly authorized overwriting them. The helpers remain unmodified and are not approved for unrestricted execution.\n\nunslop was created",
           "expected_count": 1
         }
       ],
-      "local_tree_sha256": "bada18705d60d4fb25a6e457e44d2d4c5f8e4207e3a68cba8108388555ad0e12",
+      "local_tree_sha256": "a352b4dd76b63bb76af3aeeb1ebcbcaac964f6aec3717ae312f83d41fe0b0463",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "97daa3eb365670ea3f87ed85356cbfcee18105a5",
-        "last_reviewed_at": "2026-11-12T10:47:21+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/unslop.verified.md"
+        "last_reviewed_commit": "620163eedb3529d9cd23a3994ed8d287d06f760d",
+        "last_reviewed_at": "2026-11-22T05:16:10+00:00",
+        "review_report": ".agent/work/sessions/2026-11-22-141217-upstream-refresh-codex/reviews/unslop.md"
       }
     },
     {
@@ -1226,7 +1234,7 @@
       "description": "Pinned michael-denyer/pstack-claude port for Claude Code and Codex; Cursor remains on pstack-cursor.",
       "repository": "https://github.com/michael-denyer/pstack-claude.git",
       "branch": "main",
-      "pinned_commit": "36f43364d9198e951f2b739bfb007eb747f834b7",
+      "pinned_commit": "1ab6b82cbacb04897094e1a3870357882e1e616d",
       "mappings": [
         {
           "source_path": "plugins/pstack",
@@ -1253,7 +1261,7 @@
           "local_path": "dotfiles/.agent/apps/pstack/canonical/NOTICE-skills.md"
         }
       ],
-      "source_url": "https://github.com/michael-denyer/pstack-claude/tree/7c045e5617b5c5f8e2aa3667f1377c50b192b6b9/plugins/pstack",
+      "source_url": "https://github.com/michael-denyer/pstack-claude/tree/1ab6b82cbacb04897094e1a3870357882e1e616d/plugins/pstack",
       "provenance_note": "The complete unified native Claude Code/Codex plugin is imported at a fixed commit; marketplace ID remains pstack@dotfiles-pstack. Existing local authorization, data-handling, ownership and non-equivalent-fallback boundaries are retained in README and all skill/agent/playbook/delegated-prompt entrypoints. The SessionStart routing context is subordinate to those boundaries; installation does not grant hook trust, change model sheets, bootstrap helpers, start automations or authorize external actions. Root license/notice files are preserved alongside bundled notices. Cursor and the standalone two principles intentionally retain their previous sources.",
       "local_text_replacements": [
         {
@@ -1290,12 +1298,6 @@
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/architect/SKILL.md",
           "old": "---\nname: architect\ndescription: \"Sketch types, signatures, and module structure before code, then stay in the loop while implementation fills in. Use for /architect, 'architect this', 'design this', or non-trivial work where jumping to code would lock in the wrong shape.\"\n---\n\n# Architect\n\nOn Codex, read the [platform mapping](../poteto-mode/references/cod",
           "new": "---\nname: architect\ndescription: \"Sketch types, signatures, and module structure before code, then stay in the loop while implementation fills in. Use for /architect, 'architect this', 'design this', or non-trivial work where jumping to code would lock in the wrong shape.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Architect\n\nOn Codex, read the [platform mapping](../poteto-mode/references/cod",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/architect/references/runner-prompt.md",
-          "old": "# Architect runner prompt\n\nThe orchestrator passes this file through to every parallel candidate runner dur",
-          "new": "# Architect runner prompt\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nThe orchestrator passes this file through to every parallel candidate runner dur",
           "expected_count": 1
         },
         {
@@ -1360,8 +1362,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/figure-it-out/SKILL.md",
-          "old": "---\nname: figure-it-out\ndescription: \"Design an auditable playbook when no narrower one fits: a large migration, an ambitious multi-part change, or work a human reviews after stepping away. Scales rigor to the task, runs a hypothesis loop, and logs decisions. Use for /figure-it-out or 'figure it out'.\"\n---\n\n# Figure it out\n\nWhen the task matches no playbook, design one. The deliverable ",
-          "new": "---\nname: figure-it-out\ndescription: \"Design an auditable playbook when no narrower one fits: a large migration, an ambitious multi-part change, or work a human reviews after stepping away. Scales rigor to the task, runs a hypothesis loop, and logs decisions. Use for /figure-it-out or 'figure it out'.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Figure it out\n\nWhen the task matches no playbook, design one. The deliverable ",
+          "old": "\n---\n\n# Figure it out",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Figure it out",
           "expected_count": 1
         },
         {
@@ -1386,18 +1388,6 @@
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/how/SKILL.md",
           "old": "---\nname: how\ndescription: \"Use for \\\"how does X work\\\", code walkthroughs before changing something, and placement / ownership / layering questions (\\\"where should this live\\\", \\\"which package owns this\\\", \\\"is this the right layer\\\"). Explains subsystem architecture, runtime flow, onboarding mental models. Use why for motivation.\"\n---\n\n# How\n\nOn Codex, read the [platform mapping](../poteto-mode/references/codex-too",
           "new": "---\nname: how\ndescription: \"Use for \\\"how does X work\\\", code walkthroughs before changing something, and placement / ownership / layering questions (\\\"where should this live\\\", \\\"which package owns this\\\", \\\"is this the right layer\\\"). Explains subsystem architecture, runtime flow, onboarding mental models. Use why for motivation.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# How\n\nOn Codex, read the [platform mapping](../poteto-mode/references/codex-too",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/how/references/explainer-prompt.md",
-          "old": "# Explainer Prompt Template\n\nBuild the explainer subagent's prompt from this template. Fill in the placeholde",
-          "new": "# Explainer Prompt Template\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nBuild the explainer subagent's prompt from this template. Fill in the placeholde",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/how/references/explorer-prompt.md",
-          "old": "# Explorer Prompt Template\n\nBuild each explorer subagent's prompt from this template. Fill in the placeholde",
-          "new": "# Explorer Prompt Template\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nBuild each explorer subagent's prompt from this template. Fill in the placeholde",
           "expected_count": 1
         },
         {
@@ -1528,14 +1518,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/poteto-mode/playbooks/opening-a-pr.md",
-          "old": "### Opening a PR\n\nInvoked at the end of every other playbook.\n\n**Worktree.** Work from a git workt",
-          "new": "### Opening a PR\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nInvoked at the end of every other playbook.\n\n**Worktree.** Work from a git workt",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/poteto-mode/playbooks/orchestrate.md",
-          "old": "### Orchestrate\n\nResolve the driver skill through [poteto-mode's Non-negotiables](../SKILL.md#non",
-          "new": "### Orchestrate\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nResolve the driver skill through [poteto-mode's Non-negotiables](../SKILL.md#non",
+          "old": "### Opening a PR\n\nInvoked at the end of every other playbook.",
+          "new": "### Opening a PR\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nInvoked at the end of every other playbook.",
           "expected_count": 1
         },
         {
@@ -1612,14 +1596,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-boundary-discipline/SKILL.md",
-          "old": "---\nname: principle-boundary-discipline\ndescription: \"Apply when wiring validation, error handling, or framework adapters. Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions.\"\nuser-invocable: false\n---\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at s",
-          "new": "---\nname: principle-boundary-discipline\ndescription: \"Apply when wiring validation, error handling, or framework adapters. Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at s",
+          "old": "---\nname: principle-boundary-discipline\ndescription: \"Apply when wiring validation, error handling, or framework adapters. Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions.\"\nuser-invocable: false\n---\n\n# Boundary Discipline",
+          "new": "---\nname: principle-boundary-discipline\ndescription: \"Apply when wiring validation, error handling, or framework adapters. Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Boundary Discipline",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-build-the-lever/SKILL.md",
-          "old": "---\nname: principle-build-the-lever\ndescription: \"Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build the tool that does it or proves it (codemod, script, generator, or a skill your subagents follow) instead of working by hand. The tool is the artifact a reviewer can rerun.\"\nuser-invocable: false\n---\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it inst",
-          "new": "---\nname: principle-build-the-lever\ndescription: \"Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build the tool that does it or proves it (codemod, script, generator, or a skill your subagents follow) instead of working by hand. The tool is the artifact a reviewer can rerun.\"\nuser-invocable: false\n---\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it inst",
+          "old": "---\nname: principle-build-the-lever\ndescription: \"Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build the tool that does it or proves it (codemod, script, generator, or a skill your subagents follow) instead of working by hand. The tool is the artifact a reviewer can rerun.\"\nuser-invocable: false\n---\n\n# Build the Lever",
+          "new": "---\nname: principle-build-the-lever\ndescription: \"Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build the tool that does it or proves it (codemod, script, generator, or a skill your subagents follow) instead of working by hand. The tool is the artifact a reviewer can rerun.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Build the Lever",
           "expected_count": 1
         },
         {
@@ -1648,14 +1632,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-fix-root-causes/SKILL.md",
-          "old": "---\nname: principle-fix-root-causes\ndescription: \"Apply when debugging. Trace each symptom back to the first place the system went wrong and fix it there. A guard is a fix only when the state it handles is legitimate.\"\nuser-invocable: false\n---\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surface",
-          "new": "---\nname: principle-fix-root-causes\ndescription: \"Apply when debugging. Trace each symptom back to the first place the system went wrong and fix it there. A guard is a fix only when the state it handles is legitimate.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surface",
+          "old": "---\nname: principle-fix-root-causes\ndescription: \"Apply when debugging. Trace each symptom back to the first place the system went wrong and fix it there. A guard is a fix only when the state it handles is legitimate.\"\nuser-invocable: false\n---\n\n# Fix Root Causes",
+          "new": "---\nname: principle-fix-root-causes\ndescription: \"Apply when debugging. Trace each symptom back to the first place the system went wrong and fix it there. A guard is a fix only when the state it handles is legitimate.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Fix Root Causes",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-foundational-thinking/SKILL.md",
-          "old": "---\nname: principle-foundational-thinking\ndescription: \"Apply before writing logic: choosing core types and data structures, sequencing scaffold-vs-feature work, asking what concurrent actors share. Get the data structures right so downstream code becomes obvious.\"\nuser-invocable: false\n---\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-l",
-          "new": "---\nname: principle-foundational-thinking\ndescription: \"Apply before writing logic: choosing core types and data structures, sequencing scaffold-vs-feature work, asking what concurrent actors share. Get the data structures right so downstream code becomes obvious.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-l",
+          "old": "---\nname: principle-foundational-thinking\ndescription: \"Apply before writing logic: choosing core types and data structures, sequencing scaffold-vs-feature work, asking what concurrent actors share. Get the data structures right so downstream code becomes obvious.\"\nuser-invocable: false\n---\n\n# Foundational Thinking",
+          "new": "---\nname: principle-foundational-thinking\ndescription: \"Apply before writing logic: choosing core types and data structures, sequencing scaffold-vs-feature work, asking what concurrent actors share. Get the data structures right so downstream code becomes obvious.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Foundational Thinking",
           "expected_count": 1
         },
         {
@@ -1672,8 +1656,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-make-operations-idempotent/SKILL.md",
-          "old": "---\nname: principle-make-operations-idempotent\ndescription: \"Apply when designing commands, lifecycle steps, or processing loops that run amid crashes, restarts, and retries. Converge to the same end state regardless of partial prior runs.\"\nuser-invocable: false\n---\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct ",
-          "new": "---\nname: principle-make-operations-idempotent\ndescription: \"Apply when designing commands, lifecycle steps, or processing loops that run amid crashes, restarts, and retries. Converge to the same end state regardless of partial prior runs.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct ",
+          "old": "---\nname: principle-make-operations-idempotent\ndescription: \"Apply when designing commands, lifecycle steps, or processing loops that run amid crashes, restarts, and retries. Converge to the same end state regardless of partial prior runs.\"\nuser-invocable: false\n---\n\n# Make Operations Idempotent",
+          "new": "---\nname: principle-make-operations-idempotent\ndescription: \"Apply when designing commands, lifecycle steps, or processing loops that run amid crashes, restarts, and retries. Converge to the same end state regardless of partial prior runs.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Make Operations Idempotent",
           "expected_count": 1
         },
         {
@@ -1684,14 +1668,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-minimize-reader-load/SKILL.md",
-          "old": "---\nname: principle-minimize-reader-load\ndescription: \"Apply when reviewing or shaping code that's hard to trace. Count layers between question and answer, and hidden state in the reader's head; collapse one-caller wrappers and shrink mutable scope.\"\nuser-invocable: false\n---\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understa",
-          "new": "---\nname: principle-minimize-reader-load\ndescription: \"Apply when reviewing or shaping code that's hard to trace. Count layers between question and answer, and hidden state in the reader's head; collapse one-caller wrappers and shrink mutable scope.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understa",
+          "old": "---\nname: principle-minimize-reader-load\ndescription: \"Apply when reviewing or shaping code that's hard to trace. Count layers between question and answer, and hidden state in the reader's head; collapse one-caller wrappers and shrink mutable scope.\"\nuser-invocable: false\n---\n\n# Minimize Reader Load",
+          "new": "---\nname: principle-minimize-reader-load\ndescription: \"Apply when reviewing or shaping code that's hard to trace. Count layers between question and answer, and hidden state in the reader's head; collapse one-caller wrappers and shrink mutable scope.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Minimize Reader Load",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-model-the-domain/SKILL.md",
-          "old": "---\nname: principle-model-the-domain\ndescription: \"Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files.\"\nuser-invocable: false\n---\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scatte",
-          "new": "---\nname: principle-model-the-domain\ndescription: \"Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scatte",
+          "old": "---\nname: principle-model-the-domain\ndescription: \"Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files.\"\nuser-invocable: false\n---\n\n# Model the Domain",
+          "new": "---\nname: principle-model-the-domain\ndescription: \"Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Model the Domain",
           "expected_count": 1
         },
         {
@@ -1708,8 +1692,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-prove-it-works/SKILL.md",
-          "old": "---\nname: principle-prove-it-works\ndescription: \"Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'\"\nuser-invocable: false\n---\n\n# Prove It Works\n\nVerify every task output by checking the real thing directly. ",
-          "new": "---\nname: principle-prove-it-works\ndescription: \"Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Prove It Works\n\nVerify every task output by checking the real thing directly. ",
+          "old": "---\nname: principle-prove-it-works\ndescription: \"Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'\"\nuser-invocable: false\n---\n\n# Prove It Works",
+          "new": "---\nname: principle-prove-it-works\ndescription: \"Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Prove It Works",
           "expected_count": 1
         },
         {
@@ -1720,14 +1704,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-separate-before-serializing-shared-state/SKILL.md",
-          "old": "---\nname: principle-separate-before-serializing-shared-state\ndescription: \"Apply when concurrent actors might write to the same file, branch, key, or state object. Eliminate the sharing first; serialize structurally only when one shared writer is a real invariant.\"\nuser-invocable: false\n---\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share m",
-          "new": "---\nname: principle-separate-before-serializing-shared-state\ndescription: \"Apply when concurrent actors might write to the same file, branch, key, or state object. Eliminate the sharing first; serialize structurally only when one shared writer is a real invariant.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share m",
+          "old": "---\nname: principle-separate-before-serializing-shared-state\ndescription: \"Apply when concurrent actors might write to the same file, branch, key, or state object. Eliminate the sharing first; serialize structurally only when one shared writer is a real invariant.\"\nuser-invocable: false\n---\n\n# Separate Before Serializing Shared State",
+          "new": "---\nname: principle-separate-before-serializing-shared-state\ndescription: \"Apply when concurrent actors might write to the same file, branch, key, or state object. Eliminate the sharing first; serialize structurally only when one shared writer is a real invariant.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Separate Before Serializing Shared State",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-sequence-verifiable-units/SKILL.md",
-          "old": "---\nname: principle-sequence-verifiable-units\ndescription: \"Apply to multi-step work (sweeps, migrations, runs of similar edits) and to how you stack commits and PRs. Break work into small units that each end in a verifiable state, check each before the next, and order delivery so the sequence proves itself to a reviewer.\"\nuser-invocable: false\n---\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, ",
-          "new": "---\nname: principle-sequence-verifiable-units\ndescription: \"Apply to multi-step work (sweeps, migrations, runs of similar edits) and to how you stack commits and PRs. Break work into small units that each end in a verifiable state, check each before the next, and order delivery so the sequence proves itself to a reviewer.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, ",
+          "old": "---\nname: principle-sequence-verifiable-units\ndescription: \"Apply to multi-step work (sweeps, migrations, runs of similar edits) and to how you stack commits and PRs. Break work into small units that each end in a verifiable state, check each before the next, and order delivery so the sequence proves itself to a reviewer.\"\nuser-invocable: false\n---\n\n# Sequence work into verifiable units",
+          "new": "---\nname: principle-sequence-verifiable-units\ndescription: \"Apply to multi-step work (sweeps, migrations, runs of similar edits) and to how you stack commits and PRs. Break work into small units that each end in a verifiable state, check each before the next, and order delivery so the sequence proves itself to a reviewer.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Sequence work into verifiable units",
           "expected_count": 1
         },
         {
@@ -1738,8 +1722,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/principle-test-behavior-not-implementation/SKILL.md",
-          "old": "---\nname: principle-test-behavior-not-implementation\ndescription: \"Apply when you write, change, or keep a test. Assert what the code's users can observe, so that the test fails when that behavior breaks and keeps passing when only the internals change.\"\nuser-invocable: false\n---\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does ",
-          "new": "---\nname: principle-test-behavior-not-implementation\ndescription: \"Apply when you write, change, or keep a test. Assert what the code's users can observe, so that the test fails when that behavior breaks and keeps passing when only the internals change.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does ",
+          "old": "---\nname: principle-test-behavior-not-implementation\ndescription: \"Apply when you write, change, or keep a test. Assert what the code's users can observe, so that the test fails when that behavior breaks and keeps passing when only the internals change.\"\nuser-invocable: false\n---\n\n# Test Behavior, Not Implementation",
+          "new": "---\nname: principle-test-behavior-not-implementation\ndescription: \"Apply when you write, change, or keep a test. Assert what the code's users can observe, so that the test fails when that behavior breaks and keeps passing when only the internals change.\"\nuser-invocable: false\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Test Behavior, Not Implementation",
           "expected_count": 1
         },
         {
@@ -1756,26 +1740,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reflect/SKILL.md",
-          "old": "---\nname: reflect\ndescription: Spawn three parallel review subagents over the active transcript, surface learnings, and route each to a concrete edit on an existing skill. Use when the user says reflect.\n---\n\n# Reflect\n\nOn Codex, read the [platform mapping](../poteto-mode/references/codex",
-          "new": "---\nname: reflect\ndescription: Spawn three parallel review subagents over the active transcript, surface learnings, and route each to a concrete edit on an existing skill. Use when the user says reflect.\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Reflect\n\nOn Codex, read the [platform mapping](../poteto-mode/references/codex",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reflect/references/divergent-reviewer.md",
-          "old": "You are a reviewer applying the divergent lens to a session transcript. Your strength is divergent angles and blind-spot coverage. The things the other reviewers will miss. Second-order effects. What didn't happen but should have. Anti-patterns avoided. Alternative paths not taken.\n\nLook for the contrarian framing. If two reviewers will probably surface principl",
-          "new": "You are a reviewer applying the divergent lens to a session transcript. Your strength is divergent angles and blind-spot coverage. The things the other reviewers will miss. Second-order effects. What didn't happen but should have. Anti-patterns avoided. Alternative paths not taken.\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nLook for the contrarian framing. If two reviewers will probably surface principl",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reflect/references/judgment-reviewer.md",
-          "old": "You are a reviewer applying the judgment lens to a session transcript. Your strength is judgment and synthesis. Name the durable principle behind a specific incident, the thing that saves future agents real time.\n\nDo not modify files, write code, edit skills, or commit. The parent agent applie",
-          "new": "You are a reviewer applying the judgment lens to a session transcript. Your strength is judgment and synthesis. Name the durable principle behind a specific incident, the thing that saves future agents real time.\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nDo not modify files, write code, edit skills, or commit. The parent agent applie",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reflect/references/tooling-reviewer.md",
-          "old": "You are a reviewer applying the tooling lens to a session transcript. Your strength is code and tooling specifics. Name the concrete tool, command, path, or flag detail that future agents would otherwise re-derive. The load-bearing technical fact that survives code drift.\n\nDo not modify files, write code, edit skills, or commit. The parent agent applie",
-          "new": "You are a reviewer applying the tooling lens to a session transcript. Your strength is code and tooling specifics. Name the concrete tool, command, path, or flag detail that future agents would otherwise re-derive. The load-bearing technical fact that survives code drift.\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nDo not modify files, write code, edit skills, or commit. The parent agent applie",
+          "old": "---\nname: reflect\ndescription: Mine the active transcript for durable learnings and route each to a concrete edit on an existing skill. Use when the user says reflect.\n---\n\n# Reflect",
+          "new": "---\nname: reflect\ndescription: Mine the active transcript for durable learnings and route each to a concrete edit on an existing skill. Use when the user says reflect.\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Reflect",
           "expected_count": 1
         },
         {
@@ -1822,8 +1788,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/technical-writing/SKILL.md",
-          "old": "---\nname: technical-writing\ndescription: \"Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages.\"\n---\n\n# Technical writing\n\nWrite so a tired engineer understands on the first read. Ap",
-          "new": "---\nname: technical-writing\ndescription: \"Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Technical writing\n\nWrite so a tired engineer understands on the first read. Ap",
+          "old": "---\nname: technical-writing\ndescription: \"Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages.\"\n---\n\n# Technical writing",
+          "new": "---\nname: technical-writing\ndescription: \"Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Technical writing",
           "expected_count": 1
         },
         {
@@ -1846,8 +1812,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/typescript-best-practices/SKILL.md",
-          "old": "---\nname: typescript-best-practices\ndescription: TypeScript best practices. Use when reading or editing any .ts or .tsx file.\npaths: [\"**/*.ts\", \"**/*.tsx\"]\n---\n\n# TypeScript best practices\n\nOn Muse, read the [platform mapping](../poteto-mode",
-          "new": "---\nname: typescript-best-practices\ndescription: TypeScript best practices. Use when reading or editing any .ts or .tsx file.\npaths: [\"**/*.ts\", \"**/*.tsx\"]\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TypeScript best practices\n\nOn Muse, read the [platform mapping](../poteto-mode",
+          "old": "\n---\n\n# TypeScript best practices",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# TypeScript best practices",
           "expected_count": 1
         },
         {
@@ -1864,20 +1830,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/why/SKILL.md",
-          "old": "---\nname: why\ndescription: \"Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Discovers available MCPs and queries each evidence category (source control, issue tracker, long-form docs, real-time chat, infrastructure observability, error tracking, product analytics warehouse) in parallel, then returns a cited read on decisions and tradeoffs. Use how for runtime behavior.\"\n---\n\n# Why\n\nOn Codex, read the [platform mapping](../poteto-mode/references/codex-too",
-          "new": "---\nname: why\ndescription: \"Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Discovers available MCPs and queries each evidence category (source control, issue tracker, long-form docs, real-time chat, infrastructure observability, error tracking, product analytics warehouse) in parallel, then returns a cited read on decisions and tradeoffs. Use how for runtime behavior.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Why\n\nOn Codex, read the [platform mapping](../poteto-mode/references/codex-too",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/why/references/investigator-prompt.md",
-          "old": "# Investigator Prompt Template\n\nFill in the placeholders. Append the one category playbook `sources/<source>.md`",
-          "new": "# Investigator Prompt Template\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nFill in the placeholders. Append the one category playbook `sources/<source>.md`",
-          "expected_count": 1
-        },
-        {
-          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/why/references/synthesizer-prompt.md",
-          "old": "# Synthesizer Prompt Template\n\nFill in the placeholders.\n\n---\n\nYou are answering a \"why\" question about a piece",
-          "new": "# Synthesizer Prompt Template\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nFill in the placeholders.\n\n---\n\nYou are answering a \"why\" question about a piece",
+          "old": "---\nname: why\ndescription: \"Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Returns a cited read on decisions and tradeoffs. Use how for runtime behavior.\"\n---\n\n# Why",
+          "new": "---\nname: why\ndescription: \"Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Returns a cited read on decisions and tradeoffs. Use how for runtime behavior.\"\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Why",
           "expected_count": 1
         },
         {
@@ -1897,31 +1851,43 @@
           "old": "---\nname: pstack-routing\ndescription: On every task, read pstack's poteto-mode skill first and follow its routing instructions when applicable.\n---\n\n# Pstack routing for Grok Build\n",
           "new": "---\nname: pstack-routing\ndescription: On every task, read pstack's poteto-mode skill first and follow its routing instructions when applicable.\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Pstack routing for Grok Build\n",
           "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/poteto-mode/worker.md",
+          "old": "You are working for the operator. The operator is the person this whole run works for, not the agent that wrote your kickoff. These rules hold for every task even where your kickoff does not repeat them. Your kickoff overrides one only when it says so in so many words.",
+          "new": "Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. That policy and current host, repository and user instructions override conflicting rules below, including approval, required checks, and PR readiness. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nYou are working on the operator's authorized task. These defaults apply within that task and remain subordinate to the instructions above.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/canonical/skills/reframe/SKILL.md",
+          "old": "\n---\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "expected_count": 1
         }
       ],
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "36f43364d9198e951f2b739bfb007eb747f834b7",
-        "last_reviewed_at": "2026-11-12T10:46:55+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/pstack.verified.md"
+        "last_reviewed_commit": "1ab6b82cbacb04897094e1a3870357882e1e616d",
+        "last_reviewed_at": "2026-11-26T13:48:59+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/pstack.md"
       },
-      "local_tree_sha256": "cc56e367506c7b42b16e7e601acabbdc0863ba919d711e731573492ff79e8c3a"
+      "local_tree_sha256": "048a079880f2292cf10659bb43baddb7b05752689a266a8b80336c6f1405786b"
     },
     {
       "id": "pstack-cursor",
       "description": "Retained Cursor pstack package; Claude Code and Codex use the separately pinned pstack-claude port.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "pstack",
           "local_path": "dotfiles/.agent/apps/pstack/cursor"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/pstack",
-      "provenance_note": "The previous canonical pstack payload is retained byte-for-byte for Cursor at the user's explicit request. Its pinned source, MIT license, Lauren Tan attribution and existing local authorization overlays are unchanged. The old Claude adapter is not part of this retained package.",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/pstack",
+      "provenance_note": "The native Cursor pstack payload remains sourced from cursor/plugins and is updated at the user request. MIT license and Lauren Tan attribution are preserved unchanged. Existing local authorization boundaries remain; worker entrypoint policy and explicit model-migration boundaries are added. The old Claude adapter is not part of this package.",
       "local_text_replacements": [
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/README.md",
@@ -1979,8 +1945,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/architect/SKILL.md",
-          "old": "---\n\n# Architect\n\nSketch types, function signatures, class shapes, and module boundaries with `not implem",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Architect\n\nSketch types, function signatures, class shapes, and module boundaries with `not implem",
+          "old": "# Architect\n\nBefore writing code, trace every system the change touches, then sketch two different shapes for it (types, signatures, module boundaries) and pick the one where each piece of state has one owner, each task has one way to do it, and callers need to know least. Redesign instead of patching if workarounds repeat.",
+          "new": "# Architect\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nBefore writing code, trace every system the change touches, then sketch two different shapes for it (types, signatures, module boundaries) and pick the one where each piece of state has one owner, each task has one way to do it, and callers need to know least. Redesign instead of patching if workarounds repeat.",
           "expected_count": 1
         },
         {
@@ -2039,8 +2005,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/how/SKILL.md",
-          "old": "---\n\n# How\n\nExplore the codebase to answer \"how does X work?\" questions. Produce architectural explanatio",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# How\n\nExplore the codebase to answer \"how does X work?\" questions. Produce architectural explanatio",
+          "old": "# How\n\nExplore the codebase to answer \"how does X work?\" questions.",
+          "new": "# How\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nExplore the codebase to answer \"how does X work?\" questions.",
           "expected_count": 1
         },
         {
@@ -2111,14 +2077,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-boundary-discipline/SKILL.md",
-          "old": "---\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at system boundaries. Tr",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Boundary Discipline\n\nPlace validation, type narrowing, and error handling at system boundaries. Tr",
+          "old": "# Boundary Discipline\n\nValidate, narrow types, and handle errors where data crosses a system boundary (CLI args, config files, external APIs, network). Inside, trust the types: no re-validation and no redundant nil checks. Parse raw data into domain types at the boundary, and keep transport and framework types out of the public surface. Business logic lives in pure functions with no framework dependencies. The shell that calls them is thin.",
+          "new": "# Boundary Discipline\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nValidate, narrow types, and handle errors where data crosses a system boundary (CLI args, config files, external APIs, network). Inside, trust the types: no re-validation and no redundant nil checks. Parse raw data into domain types at the boundary, and keep transport and framework types out of the public surface. Business logic lives in pure functions with no framework dependencies. The shell that calls them is thin.",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-build-the-lever/SKILL.md",
-          "old": "---\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it instead of doing it by h",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it instead of doing it by h",
+          "old": "# Build the Lever\n\nWhen the work isn't trivial, build the tool that does it (a codemod, script, generator, or rerunnable check) instead of doing it by hand. The bar is triviality, not repetition. Skip the tool only for a couple of obvious edits.",
+          "new": "# Build the Lever\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nWhen the work isn't trivial, build the tool that does it (a codemod, script, generator, or rerunnable check) instead of doing it by hand. The bar is triviality, not repetition. Skip the tool only for a couple of obvious edits.",
           "expected_count": 1
         },
         {
@@ -2141,20 +2107,20 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-explain-the-number/SKILL.md",
-          "old": "---\n\n# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change a d",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change a d",
+          "old": "# Explain the Number\n\n- **Write the decision before you run.** Name the result that would change it, and the noise floor. Stop when the run-to-run spread is larger than the effect.",
+          "new": "# Explain the Number\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n- **Write the decision before you run.** Name the result that would change it, and the noise floor. Stop when the run-to-run spread is larger than the effect.",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-fix-root-causes/SKILL.md",
-          "old": "---\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surfaced. The symptom is wh",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Fix Root Causes\n\nWhen debugging, fix the fault, not the place where it surfaced. The symptom is wh",
+          "old": "# Fix Root Causes\n\nFix the fault, not the place where it surfaced. The root cause is the first place the system did something it should not do, or failed to handle a state it should handle.",
+          "new": "# Fix Root Causes\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nFix the fault, not the place where it surfaced. The root cause is the first place the system did something it should not do, or failed to handle a state it should handle.",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-foundational-thinking/SKILL.md",
-          "old": "---\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-level decisions** pro",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Foundational Thinking\n\n**Structural decisions** protect option value. **Code-level decisions** pro",
+          "old": "# Foundational Thinking\n\nGet the data shape right before writing logic. Define core types early, trace every access pattern, and choose structures that match the dominant paths. DRY the structure, not every line.",
+          "new": "# Foundational Thinking\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nGet the data shape right before writing logic. Define core types early, trace every access pattern, and choose structures that match the dominant paths. DRY the structure, not every line.",
           "expected_count": 1
         },
         {
@@ -2171,8 +2137,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-make-operations-idempotent/SKILL.md",
-          "old": "---\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct state regardless of ",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Make Operations Idempotent\n\nDesign operations so they converge to the correct state regardless of ",
+          "old": "# Make Operations Idempotent\n\nDesign every state-changing operation to converge to the correct state however many times it runs and wherever the previous run stopped.",
+          "new": "# Make Operations Idempotent\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nDesign every state-changing operation to converge to the correct state however many times it runs and wherever the previous run stopped.",
           "expected_count": 1
         },
         {
@@ -2183,14 +2149,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-minimize-reader-load/SKILL.md",
-          "old": "---\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understand code. Track two a",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Minimize Reader Load\n\nMaintainability is the work a reader must do to understand code. Track two a",
+          "old": "# Minimize Reader Load\n\nReader load is the work a reader must do to understand code. It has two independent axes: layers to trace between the question and the answer, and hidden or mutable state to hold in their head. Guard both.",
+          "new": "# Minimize Reader Load\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nReader load is the work a reader must do to understand code. It has two independent axes: layers to trace between the question and the answer, and hidden or mutable state to hold in their head. Guard both.",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-model-the-domain/SKILL.md",
-          "old": "---\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scattering it across condi",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Model the Domain\n\nEncode the real domain in a data structure instead of scattering it across condi",
+          "old": "# Model the Domain\n\nEncode the domain in a data structure instead of scattering it across conditionals. The right structure makes invalid states unrepresentable and deletes branches.",
+          "new": "# Model the Domain\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nEncode the domain in a data structure instead of scattering it across conditionals. The right structure makes invalid states unrepresentable and deletes branches.",
           "expected_count": 1
         },
         {
@@ -2207,8 +2173,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-prove-it-works/SKILL.md",
-          "old": "---\n\n# Prove It Works\n\nVerify every task output by checking the real thing directly. Do not infer from pr",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Prove It Works\n\nVerify every task output by checking the real thing directly. Do not infer from pr",
+          "old": "# Prove It Works\n\nVerify every output by checking the real thing directly: run the feature, read the actual value, inspect the diff. Proxies (file mtimes, self-reports, cached output, \"it compiles\") do not count. When a check fails, suspect the observation method before the system.",
+          "new": "# Prove It Works\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nVerify every output by checking the real thing directly: run the feature, read the actual value, inspect the diff. Proxies (file mtimes, self-reports, cached output, \"it compiles\") do not count. When a check fails, suspect the observation method before the system.",
           "expected_count": 1
         },
         {
@@ -2219,14 +2185,14 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-separate-before-serializing-shared-state/SKILL.md",
-          "old": "---\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share mutable state, first ",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Separate Before Serializing Shared State\n\nWhen concurrent actors might share mutable state, first ",
+          "old": "# Separate Before Serializing Shared State\n\nWhen concurrent actors might write the same file, branch, key, or object, first ask whether they need one shared object or are publishing independent facts. Default to giving each actor its own file, key, branch, or state directory, and merge only where the state is read. Two workers writing their own field into one `state.json` is still shared mutation.",
+          "new": "# Separate Before Serializing Shared State\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nWhen concurrent actors might write the same file, branch, key, or object, first ask whether they need one shared object or are publishing independent facts. Default to giving each actor its own file, key, branch, or state directory, and merge only where the state is read. Two workers writing their own field into one `state.json` is still shared mutation.",
           "expected_count": 1
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-sequence-verifiable-units/SKILL.md",
-          "old": "---\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, each ending in a sta",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Sequence work into verifiable units\n\nOrder work as a sequence of small units, each ending in a sta",
+          "old": "# Sequence work into verifiable units\n\nOrder work as small units that each end in a state you can check, and do not advance until the current one is green.",
+          "new": "# Sequence work into verifiable units\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nOrder work as small units that each end in a state you can check, and do not advance until the current one is green.",
           "expected_count": 1
         },
         {
@@ -2237,8 +2203,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/principle-test-behavior-not-implementation/SKILL.md",
-          "old": "---\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does for its users: a cal",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Test Behavior, Not Implementation\n\nA test is a claim about what the code does for its users: a cal",
+          "old": "# Test Behavior, Not Implementation\n\nA test is a claim about what users of the code can observe through its interface: return values, errors, state they can read back, and effects on outside systems. Private helpers, internal call order, and intermediate data are implementation.",
+          "new": "# Test Behavior, Not Implementation\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nA test is a claim about what users of the code can observe through its interface: return values, errors, state they can read back, and effects on outside systems. Private helpers, internal call order, and intermediate data are implementation.",
           "expected_count": 1
         },
         {
@@ -2255,8 +2221,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/reflect/SKILL.md",
-          "old": "---\n\n# Reflect\n\nMine the current conversation for durable learnings, then route them into skill edits.\n\nI",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Reflect\n\nMine the current conversation for durable learnings, then route them into skill edits.\n\nI",
+          "old": "# Reflect\n\nMine this conversation for durable learnings and route each to an edit on an existing skill.",
+          "new": "# Reflect\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nMine this conversation for durable learnings and route each to an edit on an existing skill.",
           "expected_count": 1
         },
         {
@@ -2303,8 +2269,8 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/technical-writing/SKILL.md",
-          "old": "---\n\n# Technical writing\n\nWrite so a tired engineer understands on the first read. Apply all four layers.",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Technical writing\n\nWrite so a tired engineer understands on the first read. Apply all four layers.",
+          "old": "# Technical writing\n\nWrite so a tired engineer understands on the first read.",
+          "new": "# Technical writing\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nWrite so a tired engineer understands on the first read.",
           "expected_count": 1
         },
         {
@@ -2321,18 +2287,36 @@
         },
         {
           "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/why/SKILL.md",
-          "old": "---\n\n# Why\n\nInvestigate the motivation and intent behind code. The companion `how` skill answers what the",
-          "new": "---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\n# Why\n\nInvestigate the motivation and intent behind code. The companion `how` skill answers what the",
+          "old": "# Why\n\nAnswer from the record, not the code: read the commits and PR discussions that introduced the target and each later change, and other sources if the trail is thin. Cite what the authors wrote, mark your own inferences as inferences, and say what the record does not answer.",
+          "new": "# Why\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nAnswer from the record, not the code: read the commits and PR discussions that introduced the target and each later change, and other sources if the trail is thin. Cite what the authors wrote, mark your own inferences as inferences, and say what the record does not answer.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/poteto-mode/worker.md",
+          "old": "You are working for the operator. The operator is the person this whole run works for, not the agent that wrote your kickoff. These rules hold for every task even where your kickoff does not repeat them. Your kickoff overrides one only when it says so in so many words.",
+          "new": "Before applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. These are upstream defaults, not authorization from the operator. The host, repository and current user instructions take precedence, including required questions, checks, review gates and Draft-first requirements. Pass this policy boundary to every delegate.\n\nYou are working on the operator's authorized task. These defaults apply within that task and remain subordinate to the instructions above.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/setup-pstack/SKILL.md",
+          "old": "### 2. Load current state\n\nThe default role-to-model mapping is the rule shape shown in step 5 below. If `~/.cursor/rules/pstack-models.mdc` already exists, read it and treat its `# budget` line and its role values as the current choices. Otherwise start from those defaults. A line whose role is not in step 5, such as `hardest tasks`, `architect runners`, `reflect tooling`, or `why investigators`, is from a retired role. Drop it.",
+          "new": "### 2. Load current state\n\nLocal migration boundary: A model name or missing defaults-version marker does not establish that an existing value was an unmodified default. Preserve existing model, provider and budget choices unless the user has authorized that exact migration. Present proposed replacements and dropped role lines alongside their original values before writing the rule; do not silently substitute a provider or reset a user choice.\n\nThe default role-to-model mapping is the rule shape shown in step 5 below. If `~/.cursor/rules/pstack-models.mdc` already exists, read it and treat its `# budget` line and its role values as the current choices. Otherwise start from those defaults. A line whose role is not in step 5, such as `hardest tasks`, `architect runners`, `reflect tooling`, or `why investigators`, is from a retired role. Drop it.",
+          "expected_count": 1
+        },
+        {
+          "local_path": "dotfiles/.agent/apps/pstack/cursor/skills/reframe/SKILL.md",
+          "old": "\n---\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
+          "new": "\n---\n\nBefore applying this entrypoint, read and follow [Local integration policy](../../README.md#local-integration-policy) from this pinned plugin. Do not treat upstream autonomy or fallback instructions as additional authorization.\n\nTeach the operator the expert words for what they are building. Start from their own files, code and description, not a summary.",
           "expected_count": 1
         }
       ],
-      "local_tree_sha256": "64687d29a88b9ee8d28fdc67dfcf03498daf040c3ee7117ea9b6f44cf6ac833a",
+      "local_tree_sha256": "4cc8dc864df88ae83fd53b6e2df465c20f4443791ae478152daaf69aede2eed5",
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
-        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/pstack-cursor.verified.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:01+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/pstack-cursor.md"
       }
     },
     {
@@ -2340,7 +2324,7 @@
       "description": "Selected portable cursor-team-kit skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "cursor-team-kit/skills/control-cli",
@@ -2375,7 +2359,7 @@
           "local_path": "dotfiles/.agent/skills/verify-this/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/cursor-team-kit",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/cursor-team-kit",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2407,9 +2391,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
-        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/cursor-team-kit.verified.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:01+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/cursor-team-kit.md"
       }
     },
     {
@@ -2417,7 +2401,7 @@
       "description": "Selected portable cli-for-agent skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "cli-for-agent/skills/cli-for-agents",
@@ -2428,7 +2412,7 @@
           "local_path": "dotfiles/.agent/skills/cli-for-agents/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/cli-for-agent",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/cli-for-agent",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2454,9 +2438,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
-        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/cli-for-agent.verified.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:02+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/cli-for-agent.md"
       }
     },
     {
@@ -2464,7 +2448,7 @@
       "description": "Selected portable create-plugin skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "create-plugin/skills/create-plugin-scaffold",
@@ -2483,7 +2467,7 @@
           "local_path": "dotfiles/.agent/skills/review-plugin-submission/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/create-plugin",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/create-plugin",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2503,9 +2487,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
-        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/create-plugin.verified.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:03+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/create-plugin.md"
       }
     },
     {
@@ -2513,7 +2497,7 @@
       "description": "Selected portable teaching skills; no plugin hooks, rules, MCP servers or agents are activated.",
       "repository": "https://github.com/cursor/plugins.git",
       "branch": "main",
-      "pinned_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
+      "pinned_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
       "mappings": [
         {
           "source_path": "teaching/skills/create-learning-path",
@@ -2532,7 +2516,7 @@
           "local_path": "dotfiles/.agent/skills/run-learning-retrospective/LICENSE"
         }
       ],
-      "source_url": "https://github.com/cursor/plugins/tree/ae5650febf4320793844c12c4adaa937f417f8da/teaching",
+      "source_url": "https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/teaching",
       "provenance_note": "Selected instruction-only skills; MIT license and Cursor attribution retained. Declared local overlays enforce authorized scope, managed destinations, owned-process cleanup and host tool boundaries. Other plugin components excluded. Selection covers the 129-plugin inventory; pstack remains separately managed.",
       "local_text_replacements": [
         {
@@ -2564,9 +2548,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "a5539b15a3d56e04992565aafee2b37051329ce3",
-        "last_reviewed_at": "2026-11-12T10:45:53+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/teaching.verified.md"
+        "last_reviewed_commit": "b7b93c36be9bcc36a74db438e0fd385d660bc559",
+        "last_reviewed_at": "2026-11-26T13:49:04+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/teaching.md"
       }
     },
     {
@@ -2574,7 +2558,7 @@
       "description": "Interactive implementation-plan HTML skill and its bundled offline packer from Anthropic community plugins.",
       "repository": "https://github.com/anthropics/claude-plugins-community.git",
       "branch": "main",
-      "pinned_commit": "163301d1904c0a994539f5226ce0fcd65b8652bf",
+      "pinned_commit": "24479d5a1fb7a1c4f068a6d3b74d0c0fbc1acfda",
       "mappings": [
         {
           "source_path": "html-plan/skills/html-plan",
@@ -2589,7 +2573,7 @@
           "local_path": "dotfiles/.agent/skills/html-plan/upstream-plugin.json"
         }
       ],
-      "source_url": "https://github.com/anthropics/claude-plugins-community/tree/06ec7b6a0a82bdc4bec44bd82d4368c42f20d7c1/html-plan",
+      "source_url": "https://github.com/anthropics/claude-plugins-community/tree/24479d5a1fb7a1c4f068a6d3b74d0c0fbc1acfda/html-plan",
       "provenance_note": "The complete skill subtree is distributed through the shared skill tree, not registered as a native marketplace plugin. The plugin has no hooks or MCP servers; its metadata is retained as upstream-plugin.json. The repository LICENSE says Apache-2.0 while plugin metadata declares MIT; both are preserved unchanged without resolving that discrepancy. User/repository language, authorization and publication rules take precedence over upstream prose and approval conventions. Local packer changes reject missing requested Git revisions/blobs instead of substituting working-tree content.",
       "local_text_replacements": [
         {
@@ -2614,9 +2598,9 @@
       "security_review": {
         "status": "reviewed",
         "review_agent": "codex",
-        "last_reviewed_commit": "163301d1904c0a994539f5226ce0fcd65b8652bf",
-        "last_reviewed_at": "2026-11-12T10:47:16+00:00",
-        "review_report": ".agent/work/sessions/2026-11-12-194232-upstreams-codex/reviews/html-plan.verified.md"
+        "last_reviewed_commit": "24479d5a1fb7a1c4f068a6d3b74d0c0fbc1acfda",
+        "last_reviewed_at": "2026-11-26T13:49:11+00:00",
+        "review_report": ".agent/work/sessions/2026-11-26-222233-refresh-skills-codex/reviews/html-plan.md"
       },
       "local_tree_sha256": "c45dd5d7daf5fcd3d39acf7ade7208089b2322a0ea3199094de6590d6093914d"
     },

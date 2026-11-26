@@ -137,13 +137,13 @@ Notion公式CLIの `ntn` を、miseのツール（`"npm:ntn" = "latest"`）と�
 
 ## Pstackのワークフロー
 
-Claude CodeとCodexには、固定した [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) 版（`36f43364d919`、version `0.9.136`）を `dotfiles/.agent/apps/pstack/canonical` から配布します。Cursorは `cursor/plugins@a5539b15a3d5`、version `0.15.36` を `dotfiles/.agent/apps/pstack/cursor` に保持します。独立した2個の原則skillは、従来の導入元と明示呼び出しの方針を維持します。
+Claude CodeとCodexには、固定した [michael-denyer/pstack-claude](https://github.com/michael-denyer/pstack-claude) 版（`1ab6b82cbacb`、version `0.9.158`）を `dotfiles/.agent/apps/pstack/canonical` から配布します。Cursorは `cursor/plugins@b7b93c36be9b`、version `0.15.48` を `dotfiles/.agent/apps/pstack/cursor` に保持します。独立した2個の原則skillは、従来の導入元と明示呼び出しの方針を維持します。
 
 `mise run pstack-setup` で、導入済みのClaude Code・Codex・Cursor Agentへそれぞれの版を登録します。`--agent claude|codex|cursor` で対象を限定でき、`--dry-run` では変更せず予定を表示します。通常の全体セットアップでもmiseのツール導入後に実行します。登録名は `pstack@dotfiles-pstack` のままです。両native marketplaceは統合された `canonical` を参照し、各実行環境用のmanifestを使います。Claudeはinstallに続けて対象scopeのupdateを行い、参照先とcacheの版情報を更新します。既存アカウントも対象とし、`CLAUDE_CONFIG_DIR` を指定した場合はその設定先だけに登録します。
 
 Cursorの `~/.cursor/plugins/local/pstack` には保持した旧版だけを配置します。再実行では同じ内容を保持し、記録と内容が一致する管理済みコピーだけを更新します。非管理の同名ディレクトリやローカル変更がある場合は停止します。起動ごとに指定するパスは `cursor-agent --plugin-dir <repo>/dotfiles/.agent/apps/pstack/cursor` です。`canonical` の変更でCursorの版が切り替わることはありません。
 
-再起動後、Codexでは `$pstack:poteto-mode`、Claudeでは `/pstack:poteto-mode` と指定してください。新しいforkは67 skillで、従来のcanonical版に対して `babysit`、`deslop`、`fix-ci`、`fix-merge-conflicts`、`get-pr-comments`、`make-pr-easy-to-review`、`thermo-nuclear-code-quality-review`、`thermo-nuclear-review`、`thermos`、`what-did-i-get-done` が追加され、`make-bot-ui` は含みません。Cursorは元の58 skillを維持します。旧Benny automationテンプレートはnative版には含まれず、保持したCursor版に残ります。セットアップは既存の稼働中automationを変更しません。名前空間付きの `pstack:unslop` と、独立したUIデザイン用の `unslop` は別のままです。
+再起動後、Codexでは `$pstack:poteto-mode`、Claudeでは `/pstack:poteto-mode` と指定してください。新しいforkは68 skillで、従来のcanonical版に対して `babysit`、`deslop`、`fix-ci`、`fix-merge-conflicts`、`get-pr-comments`、`make-pr-easy-to-review`、`thermo-nuclear-code-quality-review`、`thermo-nuclear-review`、`thermos`、`what-did-i-get-done` が追加され、`make-bot-ui` は含みません。Cursor版は59個で、両方に `reframe` が含まれます。旧Benny automationテンプレートはnative版には含まれず、保持したCursor版に残ります。セットアップは既存の稼働中automationを変更しません。名前空間付きの `pstack:unslop` と、独立したUIデザイン用の `unslop` は別のままです。
 
 新しいClaude Code・Codex用SessionStart hookは、モデル設定シートを読み、複数ファイルの変更・設計・原因未特定の不具合調査でpstackへ誘導する文面を出力します。通信や永続ファイルへの書き込みはありません。Codexでは実行環境のhook信頼操作が必要で、セットアップはその許可を与えません。既存の `session hook: off` 設定も尊重します。導入時に `setup-pstack` の実行、モデル設定シートの変更、helperの初期セットアップ、automationの起動は行いません。commit・公開・有料サービス利用の許可も追加しません。各入口には従来のローカル統合方針を適用し、利用できないモデル・ツール・実行経路へ黙って代替しないよう制約しています。
 
