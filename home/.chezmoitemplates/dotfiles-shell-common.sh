@@ -370,3 +370,11 @@ fi
 if [ "$dotfiles_secrets_status" -ne 0 ]; then
   return "$dotfiles_secrets_status"
 fi
+
+case "$dotfiles_shell_name:$-" in
+  bash:*i*|zsh:*i*)
+    if [ -r "$HOME/.safe-chain/scripts/init-posix.sh" ] && ! typeset -f wrapSafeChainCommand >/dev/null; then
+      . "$HOME/.safe-chain/scripts/init-posix.sh"
+    fi
+    ;;
+esac
